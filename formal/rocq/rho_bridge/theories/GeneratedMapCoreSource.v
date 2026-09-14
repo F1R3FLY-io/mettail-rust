@@ -26,11 +26,13 @@
     Box-in-task interpretation and parked-owner noninterference must use those
     ownership laws; task-list frame preservation alone does not prove them.
 
-    The local response/copy laws here do not yet assert a whole Map segment
-    theorem. The remaining connective proof is an induction that projects the
-    existing sequenced MapEvents witness to RawResume paths through silent
-    copies, reset/swap and phase changes, retaining its arbitrary-prefix answer
-    frontier. No completed-core hypothesis is substituted for that induction.
+    The lifting theorems construct a complete raw source dialogue from the
+    existing sequenced MapEvents witness through actual copies, reset/swap,
+    scratch release and phase changes. Each dialogue exposes its first return
+    and exact response continuation without crossing a return internally.
+    First-return determinism and association with the actual generated
+    traversal, reached parked Box and lower-height child-answer theorem remain
+    separate obligations. No completed-core hypothesis replaces this lifting.
     Source association of these projections with Rust is a source audit, not
     a theorem about Rust compilation, arbitrary callbacks, or allocator work. *)
 From Stdlib Require Import List Arith.PeanoNat Bool Lia.
@@ -556,8 +558,9 @@ Qed.
 
 (** This is the precise local physical bridge: the same supplied response
     is used by raw accept and by the existing NativeCopyStep. No result is
-    chosen by the raw relation. The future whole-spine proof must establish
-    this hypothesis from the completed child's lower-height factor theorem. *)
+    chosen by the raw relation. Relating the constructed whole dialogue to an
+    actual generated traversal still requires the completed child's
+    lower-height factor theorem to establish the matching-answer hypothesis. *)
 Theorem matching_raw_pair_accepts_the_existing_indexed_copy :
   forall source target width cursor done lhs rhs answers ordering next,
   MergeSortPdaNativeRun.MergeSortPdaNativeRun.NativeRequest source cursor lhs rhs ->
@@ -581,6 +584,897 @@ Proof.
 Qed.
 End PairRefinement.
 
+(** A dialogue is a sequence of ACTUAL source invocations, cut only at a
+    ReturnReply. Its response list records what the caller supplied; it has no
+    comparison function. In particular this definition neither predicts nor
+    checks a response. A native witness is related to it only by the lifting
+    lemmas below. *)
+Section RawDialogues.
+Context {Key Value : Type}.
+Variable key_alias : Key -> Key -> bool.
+Variable value_alias : Value -> Value -> bool.
+Variable maximum : nat.
+Local Notation Path := (@RawCorePath Key Value key_alias value_alias maximum).
+Local Notation Step := (@RawCoreStep Key Value key_alias value_alias maximum).
+Local Notation Exchange := ((@RawRequest Key Value) * comparison)%type.
+
+Inductive RawDialogue :
+    @RawControl Key Value -> @RawMapState Key Value -> list Exchange ->
+    @RawControl Key Value -> @RawMapState Key Value -> Prop :=
+| DialogueQuiet : forall control state last next,
+    Path control state last next ->
+    RawDialogue control state [] last next
+| DialogueAnswer : forall control state request parked ordering answers last next,
+    Path control state (ReturnReply (Requests request)) parked ->
+    RawDialogue (Ingress (Some ordering)) parked answers last next ->
+    RawDialogue control state ((request, ordering) :: answers) last next.
+
+Lemma raw_dialogue_prepend_path : forall first state middle parked answers last next,
+  Path first state middle parked ->
+  RawDialogue middle parked answers last next ->
+  RawDialogue first state answers last next.
+Proof.
+  intros first state middle parked answers last next PREFIX DIALOGUE.
+  destruct DIALOGUE.
+  - apply DialogueQuiet. eapply raw_core_paths_compose; eassumption.
+  - eapply DialogueAnswer; [|eassumption].
+    eapply raw_core_paths_compose; eassumption.
+Qed.
+
+Lemma raw_dialogues_compose : forall first state middle parked prefix last next suffix
+    final_control final_state,
+  RawDialogue first state prefix middle parked ->
+  RawDialogue middle parked suffix final_control final_state ->
+  last = final_control -> next = final_state ->
+  RawDialogue first state (prefix ++ suffix) last next.
+Proof.
+  intros first state middle parked prefix last next suffix final_control final_state
+    PREFIX SUFFIX LAST NEXT. subst last next.
+  induction PREFIX.
+  - cbn. eapply raw_dialogue_prepend_path; eassumption.
+  - cbn. eapply DialogueAnswer; [eassumption|]. now apply IHPREFIX.
+Qed.
+
+Theorem returned_reply_has_no_internal_successor : forall reply state control next,
+  ~ Step (ReturnReply reply) state control next.
+Proof. intros reply state control next STEP. inversion STEP. Qed.
+
+Theorem a_path_cannot_cross_its_first_return : forall reply state last next,
+  Path (ReturnReply reply) state last next ->
+  last = ReturnReply reply /\ next = state.
+Proof.
+  intros reply state last next PATH. inversion PATH; subst.
+  - split; reflexivity.
+  - exfalso. eapply returned_reply_has_no_internal_successor; eassumption.
+Qed.
+
+Theorem nonempty_dialogue_exposes_its_exact_first_resume :
+  forall control state request ordering remaining last next,
+  RawDialogue control state ((request, ordering) :: remaining) last next ->
+  exists parked,
+    Path control state (ReturnReply (Requests request)) parked /\
+    RawDialogue (Ingress (Some ordering)) parked remaining last next.
+Proof.
+  intros control state request ordering remaining last next DIALOGUE.
+  inversion DIALOGUE; subst. eexists. split; eassumption.
+Qed.
+
+(** Pending is taken, not cloned, by ingress. Clearing the just-created
+    pending slot restores the same complete payload, including both sort
+    buffers and every lexicographic counter. *)
+Lemma clearing_the_just_created_pending_restores_the_payload :
+  forall (state : @RawMapState Key Value) pending,
+  map_pending state = None ->
+  set_pending (set_pending state (Some pending)) None = state.
+Proof.
+  intros state pending NONE. destruct state.
+  cbn [map_pending] in NONE. cbn [set_pending]. subst. reflexivity.
+Qed.
+
+Local Notation Primary :=
+  AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.Primary.
+Local Notation Secondary :=
+  AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.Secondary.
+Local Notation Answer :=
+  CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.Answer.
+
+Definition requested_answers (lhs rhs : Key * Value) (answers : list Answer) : list Exchange :=
+  map (fun answer =>
+    ((match fst answer with
+      | Primary => PrimaryRequest (fst lhs) (fst rhs)
+      | Secondary => SecondaryRequest (snd lhs) (snd rhs)
+      end), snd answer)) answers.
+
+Lemma raw_secondary_exchange_constructs_the_source_dialogue :
+  forall lhs rhs answers ordering destination state,
+  RawSecondaryExchange value_alias (snd lhs) (snd rhs) answers ordering ->
+  map_pending state = None ->
+  RawDialogue (RequestSecondary destination lhs rhs) state
+    (requested_answers lhs rhs answers) (AcceptItem destination ordering) state.
+Proof.
+  intros lhs rhs answers ordering destination state EXCHANGE NONE.
+  destruct EXCHANGE.
+  - apply DialogueQuiet. eapply CorePathMore.
+    + apply RequestAliasedSecondary. exact H.
+    + constructor.
+  - cbn [requested_answers].
+    eapply DialogueAnswer with
+      (parked := set_pending state (Some (PendingSecondary destination))).
+    + eapply CorePathMore.
+      * apply RequestFreshSecondary. exact H.
+      * constructor.
+    + apply DialogueQuiet.
+      rewrite <- (clearing_the_just_created_pending_restores_the_payload
+        state (PendingSecondary destination) NONE) at 2.
+      eapply CorePathMore.
+      * apply IngressSecondary. reflexivity.
+      * constructor.
+Qed.
+
+Theorem raw_pair_exchange_constructs_the_source_dialogue :
+  forall lhs rhs answers ordering destination state,
+  RawPairExchange key_alias value_alias lhs rhs answers ordering ->
+  map_pending state = None ->
+  RawDialogue (RequestItem destination lhs rhs) state
+    (requested_answers lhs rhs answers) (AcceptItem destination ordering) state.
+Proof.
+  intros lhs rhs answers ordering destination state EXCHANGE NONE.
+  destruct EXCHANGE.
+  - eapply raw_dialogue_prepend_path.
+    + eapply CorePathMore; [apply RequestAliasedPrimary; exact H|constructor].
+    + eapply raw_secondary_exchange_constructs_the_source_dialogue; eassumption.
+  - cbn [requested_answers].
+    eapply DialogueAnswer with
+      (parked := set_pending state (Some (PendingPrimary lhs rhs destination))).
+    + eapply CorePathMore; [apply RequestFreshPrimary; exact H|constructor].
+    + apply DialogueQuiet.
+      rewrite <- (clearing_the_just_created_pending_restores_the_payload
+        state (PendingPrimary lhs rhs destination) NONE) at 2.
+      eapply CorePathMore; [eapply IngressPrimaryDecisive; [reflexivity|exact H0]|constructor].
+  - cbn [requested_answers].
+    eapply DialogueAnswer with
+      (parked := set_pending state (Some (PendingPrimary lhs rhs destination))).
+    + eapply CorePathMore; [apply RequestFreshPrimary; exact H|constructor].
+    + eapply raw_dialogue_prepend_path with
+        (middle := RequestSecondary destination lhs rhs)
+        (parked := set_pending
+          (set_pending state (Some (PendingPrimary lhs rhs destination))) None).
+      * eapply CorePathMore; [apply IngressPrimaryEqual; reflexivity|constructor].
+      * rewrite (clearing_the_just_created_pending_restores_the_payload
+          state (PendingPrimary lhs rhs destination) NONE).
+        eapply raw_secondary_exchange_constructs_the_source_dialogue; eassumption.
+Qed.
+End RawDialogues.
+
+(** The merge trace projects the existing nested step/accept calls. A silent
+    transition is an original tail copy, scratch allocation, or run/pass
+    boundary. An exchange is an original ready request followed by arbitrary
+    answers and an actual indexed accept. This is not another merge sorter:
+    both transitions use the already defined source operations. *)
+Section NativeRunDialogueLift.
+Context {Key Value : Type}.
+Variable key_alias : Key -> Key -> bool.
+Variable value_alias : Value -> Value -> bool.
+Variable maximum : nat.
+Local Notation Entry := (Key * Value)%type.
+Local Notation Answer :=
+  CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.Answer.
+Local Notation Block := (Entry * Entry * list Answer)%type.
+
+Inductive RawMergeTrace : @RawMergeState Entry -> list Block ->
+    @RawMergeState Entry -> Prop :=
+| MergeTraceDone : forall state, RawMergeTrace state [] state
+| MergeTraceSilent : forall state middle blocks final,
+    RawMergeSilent maximum state middle ->
+    RawMergeTrace middle blocks final ->
+    RawMergeTrace state blocks final
+| MergeTraceExchange : forall state lhs rhs waiting answers ordering middle blocks final,
+    RawMergeStep maximum state (MergeRequests lhs rhs) waiting ->
+    RawPairExchange key_alias value_alias lhs rhs answers ordering ->
+    raw_merge_accept waiting ordering = Some middle ->
+    RawMergeTrace middle blocks final ->
+    RawMergeTrace state ((lhs, rhs, answers) :: blocks) final.
+
+Lemma raw_merge_traces_compose : forall first middle prefix last suffix,
+  RawMergeTrace first prefix middle -> RawMergeTrace middle suffix last ->
+  RawMergeTrace first (prefix ++ suffix) last.
+Proof.
+  intros first middle prefix last suffix PREFIX SUFFIX.
+  induction PREFIX.
+  - exact SUFFIX.
+  - eapply MergeTraceSilent; [eassumption|]. now apply IHPREFIX.
+  - cbn. eapply MergeTraceExchange; try eassumption. now apply IHPREFIX.
+Qed.
+
+Variable key_compare : Key -> Key -> comparison.
+Variable value_compare : Value -> Value -> comparison.
+Import NativeMapRunSuspension.NativeMapRunSuspension.
+
+Definition event_pair_blocks (events : list (@NativeEvent Key Value)) : list Block :=
+  flat_map (fun event =>
+    match event with
+    | PairAnswers _ lhs rhs answers => [(lhs, rhs, answers)]
+    | _ => []
+    end) events.
+
+Lemma event_pair_blocks_append : forall first rest,
+  event_pair_blocks (first ++ rest) =
+  event_pair_blocks first ++ event_pair_blocks rest.
+Proof. intros. apply flat_map_app. Qed.
+
+Theorem native_copy_events_construct_the_actual_raw_merge_trace :
+  forall destination source cursor target after_cursor next events width,
+  CopyEvents key_compare value_compare key_alias value_alias
+    destination source cursor target after_cursor next events ->
+  RawMergeTrace (merge_state source (Some target) width cursor false false)
+    (event_pair_blocks events)
+    (merge_state source (Some next) width after_cursor false false).
+Proof.
+  intros destination source cursor target after_cursor next events width EVENTS.
+  destruct EVENTS as
+    [cursor target next lhs rhs answers decision REQUEST PAIR COPY
+    |cursor target next LIVE END COPY|cursor target next END LIVE COPY].
+  - cbn [event_pair_blocks pair_events].
+    eapply MergeTraceExchange with
+      (waiting := merge_state source (Some target) width cursor true false)
+      (middle := merge_state source (Some next) width
+        (advance (accept_side decision) cursor) false false)
+      (ordering := decision).
+    + apply MergeStepRequests with (target := target); try reflexivity. exact REQUEST.
+    + eapply original_pair_protocol_erases_to_raw. exact PAIR.
+    + apply arbitrary_waiting_response_copies_its_selected_side. exact COPY.
+    + constructor.
+  - cbn [event_pair_blocks].
+    eapply MergeTraceSilent; [|constructor].
+    eapply MergeLeftTail with (target := target); try reflexivity.
+    + exact LIVE.
+    + change (~ can_copy FromRight cursor). unfold can_copy. lia.
+    + exact COPY.
+  - cbn [event_pair_blocks].
+    eapply MergeTraceSilent; [|constructor].
+    eapply MergeRightTail with (target := target); try reflexivity.
+    + change (~ can_copy FromLeft cursor). unfold can_copy. lia.
+    + exact LIVE.
+    + exact COPY.
+Qed.
+
+Theorem native_run_events_construct_the_actual_raw_merge_trace :
+  forall destination source count cursor target final_cursor final_target events width,
+  RunEvents key_compare value_compare key_alias value_alias
+    destination source count cursor target final_cursor final_target events ->
+  RawMergeTrace (merge_state source (Some target) width cursor false false)
+    (event_pair_blocks events)
+    (merge_state source (Some final_target) width final_cursor false false).
+Proof.
+  intros destination source count cursor target final_cursor final_target events width EVENTS.
+  induction EVENTS as [cursor target EL ER|
+    count cursor target middle next final_cursor final_target first rest COPY RUN IH].
+  - constructor.
+  - rewrite event_pair_blocks_append. eapply raw_merge_traces_compose.
+    + eapply native_copy_events_construct_the_actual_raw_merge_trace; exact COPY.
+    + exact IH.
+Qed.
+
+Lemma native_run_events_end_at_both_exhausted_counters :
+  forall destination source count cursor target final_cursor final_target events,
+  RunEvents key_compare value_compare key_alias value_alias
+    destination source count cursor target final_cursor final_target events ->
+  left_index final_cursor = run_middle final_cursor /\
+  right_index final_cursor = run_end final_cursor.
+Proof.
+  intros destination source count cursor target final_cursor final_target events EVENTS.
+  induction EVENTS; auto.
+Qed.
+
+Lemma native_pass_event_start_is_bounded :
+  forall destination width source start target final_target events,
+  PassEvents key_compare value_compare key_alias value_alias
+    destination maximum width source start target final_target events ->
+  start <= length source.
+Proof.
+  intros destination width source start target final_target events EVENTS.
+  destruct EVENTS; lia.
+Qed.
+
+(** Stop immediately BEFORE the final run-boundary action. This retains the
+    real last cursor, which the final swap deliberately does not reset. *)
+Theorem native_nonempty_pass_events_construct_the_actual_raw_merge_trace :
+  forall destination width source start target final_target events,
+  PassEvents key_compare value_compare key_alias value_alias
+    destination maximum width source start target final_target events ->
+  start < length source ->
+  exists final_cursor,
+    RawMergeTrace
+      (merge_state source (Some target) width
+        (reset_cursor maximum (length source) start width) false false)
+      (event_pair_blocks events)
+      (merge_state source (Some final_target) width final_cursor false false) /\
+    run_end final_cursor = length source /\
+    left_index final_cursor = run_middle final_cursor /\
+    right_index final_cursor = run_end final_cursor.
+Proof.
+  intros destination width source start target final_target events EVENTS.
+  induction EVENTS as [target|
+    start target count final_cursor next final_target first rest LIVE RUN PASS IH];
+    intros NONEMPTY.
+  - lia.
+  - pose proof (native_run_events_end_at_both_exhausted_counters
+      destination source count (reset_cursor maximum (length source) start width)
+      target final_cursor next first RUN) as [EL ER].
+    pose proof (native_pass_event_start_is_bounded
+      destination width source (run_end final_cursor) next final_target rest PASS) as BOUND.
+    destruct (Nat.lt_ge_cases (run_end final_cursor) (length source)) as [MORE|FINISHED].
+    + destruct (IH MORE) as [last [TAIL [END [LL RR]]]].
+      exists last. split; [|auto].
+      change (RawMergeTrace
+        (merge_state source (Some target) width
+          (reset_cursor maximum (length source) start width) false false)
+        (event_pair_blocks (first ++ rest))
+        (merge_state source (Some final_target) width last false false)).
+      rewrite event_pair_blocks_append.
+      eapply raw_merge_traces_compose.
+      * eapply native_run_events_construct_the_actual_raw_merge_trace. exact RUN.
+      * eapply MergeTraceSilent with
+          (middle := merge_after_run maximum
+            (merge_state source (Some next) width final_cursor false false) next).
+        -- eapply MergeEndsRun with (target := next); try reflexivity.
+           ++ change (~ can_copy FromLeft final_cursor). unfold can_copy. lia.
+           ++ change (~ can_copy FromRight final_cursor). unfold can_copy. lia.
+        -- rewrite nonfinal_run_reset_uses_the_actual_absolute_end by exact MORE.
+           exact TAIL.
+    + assert (END : run_end final_cursor = length source) by lia.
+      inversion PASS; subst; [|lia].
+      exists final_cursor. split; [|auto].
+      change (event_pair_blocks
+        (RunBoundary destination maximum width source start target :: first ++ []))
+        with (event_pair_blocks (first ++ [])).
+      rewrite app_nil_r.
+      eapply native_run_events_construct_the_actual_raw_merge_trace. exact RUN.
+Qed.
+(** The source boundary test decides whether the saved final cursor is dead
+    or a reset cursor is required. This lemma does not reset the final one. *)
+Theorem native_outer_events_construct_the_actual_raw_merge_trace :
+  forall destination count width source scratch output final_scratch events,
+  OuterEvents key_compare value_compare key_alias value_alias
+    destination maximum count width source scratch output final_scratch events ->
+  forall cursor,
+  (width < length source ->
+    cursor = reset_cursor maximum (length source) 0 width) ->
+  exists final_width final_cursor,
+    RawMergeTrace
+      (merge_state source scratch width cursor false (length source <=? width))
+      (event_pair_blocks events)
+      (merge_state output final_scratch final_width final_cursor false true).
+Proof.
+  intros destination count width source scratch output final_scratch events EVENTS.
+  induction EVENTS as [width source scratch FINISHED|
+    count width source scratch completed output final_scratch first rest LIVE PASS OUTER IH];
+    intros cursor CURSOR.
+  - exists width, cursor.
+    rewrite (proj2 (Nat.leb_le _ _) FINISHED). constructor.
+  - rewrite (CURSOR LIVE), (proj2 (Nat.leb_gt _ _) LIVE).
+    destruct (native_nonempty_pass_events_construct_the_actual_raw_merge_trace
+      destination width source 0 (MergeSortPdaNativeOuter.MergeSortPdaNativeOuter.scratch_payload
+        source scratch) completed first PASS ltac:(lia))
+      as [last_cursor [PASS_TRACE [END [EL ER]]]].
+    set (next_width := saturated_double maximum width).
+    set (next_cursor :=
+      if length completed <=? next_width then cursor_after_run last_cursor
+      else reset_cursor maximum (length completed) 0 next_width).
+    assert (NEXT_CURSOR : next_width < length completed ->
+      next_cursor = reset_cursor maximum (length completed) 0 next_width).
+    { intros LIVE_NEXT. unfold next_cursor.
+      now rewrite (proj2 (Nat.leb_gt _ _) LIVE_NEXT). }
+    destruct (IH next_cursor NEXT_CURSOR) as [final_width [final_cursor TAIL]].
+    exists final_width, final_cursor.
+    change (event_pair_blocks (ScratchBoundary destination source scratch :: first ++
+      SwappedBuffers destination maximum width source completed :: rest))
+      with (event_pair_blocks (first ++
+        SwappedBuffers destination maximum width source completed :: rest)).
+    rewrite event_pair_blocks_append.
+    change (event_pair_blocks
+      (SwappedBuffers destination maximum width source completed :: rest))
+      with (event_pair_blocks rest).
+    assert (ALLOCATED :
+      RawMergeTrace
+        (merge_state source scratch width
+          (reset_cursor maximum (length source) 0 width) false false)
+        (event_pair_blocks first)
+        (merge_state source (Some completed) width last_cursor false false)).
+    { destruct scratch as [target|].
+      - exact PASS_TRACE.
+      - eapply MergeTraceSilent; [|exact PASS_TRACE].
+        apply MergeAllocatesScratch; reflexivity. }
+    eapply raw_merge_traces_compose; [exact ALLOCATED|].
+    eapply MergeTraceSilent with
+      (middle := merge_after_run maximum
+        (merge_state source (Some completed) width last_cursor false false) completed).
+    + eapply MergeEndsRun with (target := completed); try reflexivity.
+      * change (~ can_copy FromLeft last_cursor). unfold can_copy. lia.
+      * change (~ can_copy FromRight last_cursor). unfold can_copy. lia.
+    + unfold merge_after_run.
+      cbn [merge_state merge_source merge_cursor merge_width].
+      rewrite END, Nat.ltb_irrefl.
+      fold next_width. fold next_width in TAIL. unfold next_cursor in TAIL.
+      destruct (length completed <=? next_width); exact TAIL.
+Qed.
+
+Theorem native_initial_sort_events_construct_the_actual_raw_merge_trace :
+  forall destination count source output final_scratch events,
+  OuterEvents key_compare value_compare key_alias value_alias
+    destination maximum count 1 source None output final_scratch events ->
+  exists final_width final_cursor,
+    RawMergeTrace (initial_merge maximum source) (event_pair_blocks events)
+      (merge_state output final_scratch final_width final_cursor false true).
+Proof.
+  intros destination count source output final_scratch events EVENTS.
+  destruct (native_outer_events_construct_the_actual_raw_merge_trace
+    destination count 1 source None output final_scratch events EVENTS
+    (reset_cursor maximum (length source) 0 1) ltac:(intros; reflexivity))
+    as [final_width [final_cursor TRACE]].
+  exists final_width, final_cursor. unfold initial_merge.
+  replace (length source <? 2) with (length source <=? 1).
+  - exact TRACE.
+  - destruct (length source) as [|[|n]]; reflexivity.
+Qed.
+End NativeRunDialogueLift.
+
+Section NativeLexDialogueLift.
+Context {Key Value : Type}.
+Variable key_alias : Key -> Key -> bool.
+Variable value_alias : Value -> Value -> bool.
+Variable maximum : nat.
+Variable key_compare : Key -> Key -> comparison.
+Variable value_compare : Value -> Value -> comparison.
+Import NativeMapRunSuspension.NativeMapRunSuspension.
+Local Notation Dialogue := (@RawDialogue Key Value key_alias value_alias maximum).
+Local Notation Entry := (Key * Value)%type.
+
+Definition event_requested_answers (events : list (@NativeEvent Key Value)) :=
+  flat_map (fun event =>
+    match event with
+    | PairAnswers _ lhs rhs answers => requested_answers lhs rhs answers
+    | _ => []
+    end) events.
+
+Lemma event_requested_answers_append : forall first rest,
+  event_requested_answers (first ++ rest) =
+    event_requested_answers first ++ event_requested_answers rest.
+Proof. intros. apply flat_map_app. Qed.
+
+Definition unit_lex_payload (left_sort right_sort : @RawMergeState Entry) index :=
+  map_state left_sort right_sort Lexicographic None Eq
+    (length (merge_source left_sort)) (length (merge_source right_sort))
+    index index 0 0.
+
+Lemma raw_dialogue_append : forall first state middle parked prefix suffix last next,
+  Dialogue first state prefix middle parked ->
+  Dialogue middle parked suffix last next ->
+  Dialogue first state (prefix ++ suffix) last next.
+Proof.
+  intros. eapply raw_dialogues_compose; [eassumption|eassumption|reflexivity|reflexivity].
+Qed.
+
+(** LexEvents is the existing unit-pair walk, not a comparison-result oracle.
+    Its PairProtocols are erased to arbitrary-response source dialogues. The
+    caller's lower-height theorem is still needed to prove those are the
+    responses actually supplied during generated traversal. *)
+Theorem native_unit_lex_events_construct_the_actual_raw_dialogue :
+  forall lhs rhs index count result events,
+  LexEvents key_compare value_compare key_alias value_alias
+    lhs rhs index count result events ->
+  forall left_sort right_sort,
+  merge_source left_sort = lhs -> merge_source right_sort = rhs ->
+  exists final,
+    Dialogue PhaseLoop (unit_lex_payload left_sort right_sort index)
+      (event_requested_answers events) (ReturnReply (Completes result)) final.
+Proof.
+  intros lhs rhs index count result events EVENTS.
+  induction EVENTS as [index END|index lhs_entry LEFT END|
+    index count lhs_entry rhs_entry answers result rest LEFT RIGHT PAIR LEX IH|
+    index lhs_entry rhs_entry answers result LEFT RIGHT PAIR DEC];
+    intros left_sort right_sort SOURCE_LEFT SOURCE_RIGHT.
+  - eexists. apply DialogueQuiet. eapply CorePathMore.
+    + apply LoopLeftExhausted; [reflexivity|].
+      cbn [unit_lex_payload map_state map_left map_left_index]. now rewrite SOURCE_LEFT.
+    + cbn [unit_lex_payload map_state map_left_total map_right_total].
+      rewrite SOURCE_LEFT, SOURCE_RIGHT. constructor.
+  - eexists. apply DialogueQuiet. eapply CorePathMore.
+    + eapply LoopRightExhausted with (lhs := lhs_entry); [reflexivity| |].
+      * cbn [unit_lex_payload map_state map_left map_left_index]. now rewrite SOURCE_LEFT.
+      * cbn [unit_lex_payload map_state map_right map_right_index]. now rewrite SOURCE_RIGHT.
+    + cbn [unit_lex_payload map_state map_left_total map_right_total].
+      rewrite SOURCE_LEFT, SOURCE_RIGHT. constructor.
+  - destruct (IH left_sort right_sort SOURCE_LEFT SOURCE_RIGHT) as [final TAIL].
+    exists final.
+    change (event_requested_answers
+      (pair_events (AtLexPair lhs rhs index) lhs_entry rhs_entry answers ++
+        AdvancedUnitLex lhs rhs index :: rest))
+      with (requested_answers lhs_entry rhs_entry answers ++ event_requested_answers rest).
+    eapply raw_dialogue_prepend_path with
+      (middle := RequestItem ToLexicographic lhs_entry rhs_entry)
+      (parked := initialize_both_remaining (unit_lex_payload left_sort right_sort index)).
+    + eapply CorePathMore.
+      * eapply LoopLexRequest with (lhs := lhs_entry) (rhs := rhs_entry); [reflexivity| |].
+        -- cbn [unit_lex_payload map_state map_left map_left_index]. rewrite SOURCE_LEFT. exact LEFT.
+        -- cbn [unit_lex_payload map_state map_right map_right_index]. rewrite SOURCE_RIGHT. exact RIGHT.
+      * constructor.
+    + eapply raw_dialogue_append with
+        (middle := AcceptItem ToLexicographic Eq)
+        (parked := initialize_both_remaining (unit_lex_payload left_sort right_sort index)).
+      * apply raw_pair_exchange_constructs_the_source_dialogue; [|reflexivity].
+        eapply original_pair_protocol_erases_to_raw. exact PAIR.
+      * eapply raw_dialogue_prepend_path with
+          (middle := PhaseLoop)
+          (parked := advance_equal
+            (initialize_both_remaining (unit_lex_payload left_sort right_sort index))).
+        -- eapply CorePathMore; [apply AcceptLexEqual|constructor].
+        -- exact TAIL.
+  - exists (set_phase (set_lead
+      (initialize_both_remaining (unit_lex_payload left_sort right_sort index)) result) Done).
+    change (event_requested_answers
+      (pair_events (AtLexPair lhs rhs index) lhs_entry rhs_entry answers ++ [LexLeadDone result]))
+      with (requested_answers lhs_entry rhs_entry answers ++ []).
+    rewrite app_nil_r.
+    eapply raw_dialogue_prepend_path with
+      (middle := RequestItem ToLexicographic lhs_entry rhs_entry)
+      (parked := initialize_both_remaining (unit_lex_payload left_sort right_sort index)).
+    + eapply CorePathMore.
+      * eapply LoopLexRequest with (lhs := lhs_entry) (rhs := rhs_entry); [reflexivity| |].
+        -- cbn [unit_lex_payload map_state map_left map_left_index]. rewrite SOURCE_LEFT. exact LEFT.
+        -- cbn [unit_lex_payload map_state map_right map_right_index]. rewrite SOURCE_RIGHT. exact RIGHT.
+      * constructor.
+    + rewrite <- app_nil_r at 1.
+      eapply raw_dialogue_append with
+        (middle := AcceptItem ToLexicographic result)
+        (parked := initialize_both_remaining (unit_lex_payload left_sort right_sort index)).
+      * apply raw_pair_exchange_constructs_the_source_dialogue; [|reflexivity].
+        eapply original_pair_protocol_erases_to_raw. exact PAIR.
+      * apply DialogueQuiet. eapply CorePathMore.
+        -- apply AcceptLexDecisive. exact DEC.
+        -- eapply CorePathMore.
+           ++ apply LoopDecisiveLead; [reflexivity|exact DEC].
+           ++ constructor.
+Qed.
+End NativeLexDialogueLift.
+
+(** Absorb silent merge work into the same original step invocation. There is
+    no additional Map-loop transition for this work in the Rust source. *)
+Section MergeBoxEmbedding.
+Context {Key Value : Type}.
+Variable key_alias : Key -> Key -> bool.
+Variable value_alias : Value -> Value -> bool.
+Variable maximum : nat.
+Local Notation Path := (@RawCorePath Key Value key_alias value_alias maximum).
+Local Notation Dialogue := (@RawDialogue Key Value key_alias value_alias maximum).
+Local Notation Trace := (@RawMergeTrace Key Value key_alias value_alias maximum).
+
+Lemma left_merge_silent_prefixes_the_same_invocation :
+  forall original first middle reply final,
+  map_phase original = SortLeft ->
+  RawMergeSilent maximum first middle ->
+  Path PhaseLoop (set_left original middle) (ReturnReply reply) final ->
+  Path PhaseLoop (set_left original first) (ReturnReply reply) final.
+Proof.
+  intros original first middle reply final PHASE SILENT PATH.
+  inversion PATH as [control state|
+    control state middle_control middle_state last next FIRST REST]; subst.
+  inversion FIRST; subst; cbn [map_state map_phase map_left set_left] in *; try congruence.
+  - eapply CorePathMore with
+      (middle := RequestItem ToLeftSort lhs rhs)
+      (middle_state := set_left original next).
+    + eapply LoopLeftRequest with (state := set_left original first) (next := next).
+      * exact PHASE.
+      * eapply MergeStepInternal; [exact SILENT|exact H0].
+    + exact REST.
+  - match goal with
+    | FINISH : RawMergeStep maximum middle MergeCompletes ?after |- _ =>
+      eapply CorePathMore with
+        (middle := PhaseLoop)
+        (middle_state := set_phase
+          (set_left original (merge_set_target after None)) SortRight);
+      [eapply LoopLeftDone with (state := set_left original first) (next := after);
+        [exact PHASE|eapply MergeStepInternal; [exact SILENT|exact FINISH]]
+      |exact REST]
+    end.
+Qed.
+
+Lemma right_merge_silent_prefixes_the_same_invocation :
+  forall original first middle reply final,
+  map_phase original = SortRight ->
+  RawMergeSilent maximum first middle ->
+  Path PhaseLoop (set_right original middle) (ReturnReply reply) final ->
+  Path PhaseLoop (set_right original first) (ReturnReply reply) final.
+Proof.
+  intros original first middle reply final PHASE SILENT PATH.
+  inversion PATH as [control state|
+    control state middle_control middle_state last next FIRST REST]; subst.
+  inversion FIRST; subst; cbn [map_state map_phase map_right set_right] in *; try congruence.
+  - match goal with
+    | REQUEST : RawMergeStep maximum middle (MergeRequests ?lhs ?rhs) ?after |- _ =>
+      eapply CorePathMore with
+        (middle := RequestItem ToRightSort lhs rhs)
+        (middle_state := set_right original after);
+      [eapply LoopRightRequest with (state := set_right original first) (next := after);
+        [exact PHASE|eapply MergeStepInternal; [exact SILENT|exact REQUEST]]
+      |exact REST]
+    end.
+  - match goal with
+    | FINISH : RawMergeStep maximum middle MergeCompletes ?after |- _ =>
+      eapply CorePathMore with
+        (middle := PhaseLoop)
+        (middle_state := set_phase
+          (set_right original (merge_set_target after None)) Lexicographic);
+      [eapply LoopRightDone with (state := set_right original first) (next := after);
+        [exact PHASE|eapply MergeStepInternal; [exact SILENT|exact FINISH]]
+      |exact REST]
+    end.
+Qed.
+
+Definition selected_sort_phase (is_left : bool) := if is_left then SortLeft else SortRight.
+Definition selected_sort_destination (is_left : bool) :=
+  if is_left then ToLeftSort else ToRightSort.
+Definition install_sort (is_left : bool) (state : @RawMapState Key Value)
+    (sort : @RawMergeState (Key * Value)) :=
+  if is_left then set_left state sort else set_right state sort.
+
+Lemma selected_merge_silent_prefixes_the_same_dialogue :
+  forall is_left original first middle answers reply final,
+  map_phase original = selected_sort_phase is_left ->
+  RawMergeSilent maximum first middle ->
+  Dialogue PhaseLoop (install_sort is_left original middle) answers (ReturnReply reply) final ->
+  Dialogue PhaseLoop (install_sort is_left original first) answers (ReturnReply reply) final.
+Proof.
+  intros is_left original first middle answers reply final PHASE SILENT DIALOGUE.
+  inversion DIALOGUE as [control state last next PATH|
+    control state request parked ordering more_answers last next PATH REST]; subst.
+  - apply DialogueQuiet. destruct is_left.
+    + eapply left_merge_silent_prefixes_the_same_invocation; eassumption.
+    + eapply right_merge_silent_prefixes_the_same_invocation; eassumption.
+  - eapply DialogueAnswer; [|exact REST]. destruct is_left.
+    + eapply left_merge_silent_prefixes_the_same_invocation; eassumption.
+    + eapply right_merge_silent_prefixes_the_same_invocation; eassumption.
+Qed.
+
+Lemma selected_merge_request_enters_the_same_pair_control :
+  forall is_left original first lhs rhs waiting,
+  map_phase original = selected_sort_phase is_left ->
+  RawMergeStep maximum first (MergeRequests lhs rhs) waiting ->
+  Path PhaseLoop (install_sort is_left original first)
+    (RequestItem (selected_sort_destination is_left) lhs rhs)
+    (install_sort is_left original waiting).
+Proof.
+  intros is_left original first lhs rhs waiting PHASE REQUEST.
+  destruct is_left; eapply CorePathMore; [|constructor| |constructor].
+  - eapply LoopLeftRequest with (state := set_left original first) (next := waiting);
+      [exact PHASE|exact REQUEST].
+  - eapply LoopRightRequest with (state := set_right original first) (next := waiting);
+      [exact PHASE|exact REQUEST].
+Qed.
+
+Lemma selected_merge_accept_returns_to_the_same_box :
+  forall is_left original waiting ordering after,
+  raw_merge_accept waiting ordering = Some after ->
+  Path (AcceptItem (selected_sort_destination is_left) ordering)
+    (install_sort is_left original waiting) PhaseLoop (install_sort is_left original after).
+Proof.
+  intros is_left original waiting ordering after ACCEPT.
+  destruct is_left; eapply CorePathMore; [|constructor| |constructor].
+  - apply AcceptLeft with (state := set_left original waiting) (next := after). exact ACCEPT.
+  - apply AcceptRight with (state := set_right original waiting) (next := after). exact ACCEPT.
+Qed.
+
+Definition block_requested_answers
+    (blocks : list ((Key * Value) * (Key * Value) *
+      list CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.Answer)) :=
+  flat_map (fun block =>
+    let '(lhs, rhs, answers) := block in requested_answers lhs rhs answers) blocks.
+
+(** This continuation transformer supplies source invocations from the merge
+    trace; the continuation is an actual subsequent dialogue, not a result
+    premise or an assumption that the sort succeeded. Pending remains None
+    between blocks, so a new request cannot overwrite a previous request. *)
+Theorem raw_merge_trace_constructs_the_enclosing_box_dialogue :
+  forall first blocks after,
+  Trace first blocks after ->
+  forall is_left original suffix reply final,
+  map_phase original = selected_sort_phase is_left ->
+  map_pending original = None ->
+  Dialogue PhaseLoop (install_sort is_left original after) suffix (ReturnReply reply) final ->
+  Dialogue PhaseLoop (install_sort is_left original first)
+    (block_requested_answers blocks ++ suffix) (ReturnReply reply) final.
+Proof.
+  intros first blocks after TRACE.
+  induction TRACE as [state|
+    state middle blocks final_sort SILENT TRACE IH|
+    state lhs rhs waiting answers ordering middle blocks final_sort REQUEST PAIR ACCEPT TRACE IH];
+    intros is_left original suffix reply final PHASE NONE CONTINUATION.
+  - exact CONTINUATION.
+  - eapply selected_merge_silent_prefixes_the_same_dialogue; [exact PHASE|exact SILENT|].
+    eapply IH; eassumption.
+  - cbn [block_requested_answers flat_map]. rewrite <- app_assoc.
+    eapply raw_dialogue_prepend_path.
+    + eapply selected_merge_request_enters_the_same_pair_control;
+        [exact PHASE|exact REQUEST].
+    + eapply raw_dialogues_compose with
+        (middle := AcceptItem (selected_sort_destination is_left) ordering)
+        (parked := install_sort is_left original waiting).
+      * apply raw_pair_exchange_constructs_the_source_dialogue; [exact PAIR|].
+        destruct is_left; exact NONE.
+      * eapply raw_dialogue_prepend_path.
+        -- apply selected_merge_accept_returns_to_the_same_box. exact ACCEPT.
+        -- eapply IH; eassumption.
+      * reflexivity.
+      * reflexivity.
+Qed.
+End MergeBoxEmbedding.
+
+Section CompleteMapDialogueLift.
+Context {Key Value : Type}.
+Variable key_alias : Key -> Key -> bool.
+Variable value_alias : Value -> Value -> bool.
+Variable maximum : nat.
+Variable key_compare : Key -> Key -> comparison.
+Variable value_compare : Value -> Value -> comparison.
+Import NativeMapRunSuspension.NativeMapRunSuspension.
+Local Notation Dialogue := (@RawDialogue Key Value key_alias value_alias maximum).
+
+Lemma native_event_blocks_retain_exactly_the_requested_answers :
+  forall events : list (@NativeEvent Key Value),
+  block_requested_answers (event_pair_blocks events) = event_requested_answers events.
+Proof.
+  induction events as [|event events IH]; [reflexivity|].
+  destruct event; try exact IH.
+  change (requested_answers p p0 l ++
+    block_requested_answers (event_pair_blocks events) =
+    requested_answers p p0 l ++ event_requested_answers events).
+  now rewrite IH.
+Qed.
+
+(** The length premises below are physical buffer facts, not successful-core
+    premises. They relate the source's original unit totals to its sorted
+    buffers, and are obtained from the existing native outer-pass theorem in
+    the corollary that follows. *)
+Theorem sequenced_map_events_construct_the_complete_raw_dialogue :
+  forall left_input right_input left_output right_output result events,
+  MapEvents key_compare value_compare key_alias value_alias maximum
+    left_input right_input left_output right_output result events ->
+  length left_output = length left_input ->
+  length right_output = length right_input ->
+  exists final,
+    Dialogue (Ingress None)
+      (initial_map maximum left_input right_input (length left_input) (length right_input))
+      (event_requested_answers events) (ReturnReply (Completes result)) final.
+Proof.
+  intros left_input right_input left_output right_output result events EVENTS LEFT_LENGTH RIGHT_LENGTH.
+  destruct EVENTS as [lc ls rc rs count left_events right_events lex_events LEFT RIGHT LEX].
+  destruct (@native_initial_sort_events_construct_the_actual_raw_merge_trace
+    Key Value key_alias value_alias maximum key_compare value_compare
+    InLeftSort lc left_input left_output ls left_events LEFT)
+    as [left_width [left_cursor LEFT_TRACE]].
+  destruct (@native_initial_sort_events_construct_the_actual_raw_merge_trace
+    Key Value key_alias value_alias maximum key_compare value_compare
+    InRightSort rc right_input right_output rs right_events RIGHT)
+    as [right_width [right_cursor RIGHT_TRACE]].
+  set (left_done := merge_state left_output ls left_width left_cursor false true).
+  set (right_done := merge_state right_output rs right_width right_cursor false true).
+  set (left_released := merge_set_target left_done None).
+  set (right_released := merge_set_target right_done None).
+  destruct (@native_unit_lex_events_construct_the_actual_raw_dialogue
+    Key Value key_alias value_alias maximum key_compare value_compare
+    left_output right_output 0 count result lex_events LEX
+    left_released right_released ltac:(reflexivity) ltac:(reflexivity))
+    as [final LEX_DIALOGUE].
+  exists final.
+  set (right_original :=
+    map_state left_released (initial_merge maximum right_input) SortRight None Eq
+      (length left_input) (length right_input) 0 0 0 0).
+  assert (RIGHT_CONTINUATION :
+    Dialogue PhaseLoop (install_sort false right_original right_done)
+      (event_requested_answers lex_events) (ReturnReply (Completes result)) final).
+  { eapply raw_dialogue_prepend_path with
+      (middle := PhaseLoop)
+      (parked := set_phase
+        (set_right right_original right_released) Lexicographic).
+    - eapply CorePathMore.
+      + eapply LoopRightDone; [reflexivity|].
+        apply MergeStepDone; reflexivity.
+      + constructor.
+    - unfold right_original, left_released, right_released, left_done, right_done in *.
+      unfold unit_lex_payload in LEX_DIALOGUE.
+      cbn [merge_state merge_source merge_set_target] in LEX_DIALOGUE.
+      rewrite LEFT_LENGTH, RIGHT_LENGTH in LEX_DIALOGUE.
+      exact LEX_DIALOGUE. }
+  assert (RIGHT_DIALOGUE :
+    Dialogue PhaseLoop right_original
+      (block_requested_answers (event_pair_blocks right_events) ++
+        event_requested_answers lex_events)
+      (ReturnReply (Completes result)) final).
+  { eapply raw_merge_trace_constructs_the_enclosing_box_dialogue with
+      (is_left := false) (original := right_original) (after := right_done).
+    - exact RIGHT_TRACE.
+    - reflexivity.
+    - reflexivity.
+    - exact RIGHT_CONTINUATION. }
+  set (left_original :=
+    map_state (initial_merge maximum left_input) (initial_merge maximum right_input)
+      SortLeft None Eq (length left_input) (length right_input) 0 0 0 0).
+  assert (LEFT_CONTINUATION :
+    Dialogue PhaseLoop (install_sort true left_original left_done)
+      (block_requested_answers (event_pair_blocks right_events) ++
+        event_requested_answers lex_events)
+      (ReturnReply (Completes result)) final).
+  { eapply raw_dialogue_prepend_path with (middle := PhaseLoop) (parked := right_original).
+    - eapply CorePathMore.
+      + eapply LoopLeftDone; [reflexivity|].
+        apply MergeStepDone; reflexivity.
+      + constructor.
+    - exact RIGHT_DIALOGUE. }
+  assert (LEFT_DIALOGUE :
+    Dialogue PhaseLoop left_original
+      (block_requested_answers (event_pair_blocks left_events) ++
+       (block_requested_answers (event_pair_blocks right_events) ++
+        event_requested_answers lex_events))
+      (ReturnReply (Completes result)) final).
+  { eapply raw_merge_trace_constructs_the_enclosing_box_dialogue with
+      (is_left := true) (original := left_original) (after := left_done).
+    - exact LEFT_TRACE.
+    - reflexivity.
+    - reflexivity.
+    - exact LEFT_CONTINUATION. }
+  repeat rewrite native_event_blocks_retain_exactly_the_requested_answers in LEFT_DIALOGUE.
+  unfold event_requested_answers.
+  repeat first [ rewrite flat_map_app | progress (cbn [flat_map]) ].
+  rewrite app_nil_r.
+  eapply raw_dialogue_prepend_path; [|exact LEFT_DIALOGUE].
+  eapply CorePathMore; [apply IngressInitial; reflexivity|].
+  eapply CorePathMore; [apply LoopEqualLead; reflexivity|constructor].
+Qed.
+
+Hypothesis key_alias_sound : forall x y, key_alias x y = true -> key_compare x y = Eq.
+Hypothesis value_alias_sound : forall x y, value_alias x y = true -> value_compare x y = Eq.
+
+Lemma native_initial_outer_events_preserve_the_original_unit_total :
+  forall destination count source output scratch events,
+  length source <= maximum ->
+  OuterEvents key_compare value_compare key_alias value_alias
+    destination maximum count 1 source None output scratch events ->
+  length output = length source.
+Proof.
+  intros destination count source output scratch events BOUND EVENTS.
+  pose proof (@sequenced_outer_events_forget_to_the_same_native_outer
+    Key Value key_compare value_compare key_alias value_alias
+    key_alias_sound value_alias_sound destination maximum count 1 source None output scratch events EVENTS)
+    as NATIVE.
+  destruct (@MergeSortPdaNativeOuter.MergeSortPdaNativeOuter.actual_buffer_lifecycle_projects_to_the_existing_outer_trace
+    (Key * Value) unit
+    (fun lhs rhs (_ : unit) =>
+      (Some (SemanticComparisonLaws.SemanticComparisonLaws.pair_compare
+        key_compare value_compare lhs rhs), tt))
+    maximum count 1 source None tt output scratch tt NATIVE ltac:(lia) BOUND I)
+    as [TRACE [LENGTH SCRATCH]].
+  exact LENGTH.
+Qed.
+
+Theorem bounded_native_map_events_construct_the_complete_raw_dialogue :
+  forall left_input right_input left_output right_output result events,
+  length left_input <= maximum -> length right_input <= maximum ->
+  MapEvents key_compare value_compare key_alias value_alias maximum
+    left_input right_input left_output right_output result events ->
+  exists final,
+    Dialogue (Ingress None)
+      (initial_map maximum left_input right_input (length left_input) (length right_input))
+      (event_requested_answers events) (ReturnReply (Completes result)) final.
+Proof.
+  intros left_input right_input left_output right_output result events LEFT_BOUND RIGHT_BOUND EVENTS.
+  eapply sequenced_map_events_construct_the_complete_raw_dialogue; [exact EVENTS| |].
+  - destruct EVENTS.
+    eapply native_initial_outer_events_preserve_the_original_unit_total; eassumption.
+  - destruct EVENTS.
+    eapply native_initial_outer_events_preserve_the_original_unit_total; eassumption.
+Qed.
+End CompleteMapDialogueLift.
+
 End GeneratedMapCoreSource.
 
 Print Assumptions GeneratedMapCoreSource.arbitrary_waiting_response_copies_its_selected_side.
@@ -600,3 +1494,30 @@ Print Assumptions GeneratedMapCoreSource.matching_raw_secondary_restores_origina
 Print Assumptions GeneratedMapCoreSource.matching_actual_raw_answers_restore_the_original_pair_protocol.
 Print Assumptions GeneratedMapCoreSource.matching_actual_raw_pair_returns_key_then_value.
 Print Assumptions GeneratedMapCoreSource.matching_raw_pair_accepts_the_existing_indexed_copy.
+Print Assumptions GeneratedMapCoreSource.raw_dialogue_prepend_path.
+Print Assumptions GeneratedMapCoreSource.raw_dialogues_compose.
+Print Assumptions GeneratedMapCoreSource.returned_reply_has_no_internal_successor.
+Print Assumptions GeneratedMapCoreSource.a_path_cannot_cross_its_first_return.
+Print Assumptions GeneratedMapCoreSource.nonempty_dialogue_exposes_its_exact_first_resume.
+Print Assumptions GeneratedMapCoreSource.clearing_the_just_created_pending_restores_the_payload.
+Print Assumptions GeneratedMapCoreSource.raw_secondary_exchange_constructs_the_source_dialogue.
+Print Assumptions GeneratedMapCoreSource.raw_pair_exchange_constructs_the_source_dialogue.
+Print Assumptions GeneratedMapCoreSource.raw_merge_traces_compose.
+Print Assumptions GeneratedMapCoreSource.native_copy_events_construct_the_actual_raw_merge_trace.
+Print Assumptions GeneratedMapCoreSource.native_run_events_construct_the_actual_raw_merge_trace.
+Print Assumptions GeneratedMapCoreSource.native_run_events_end_at_both_exhausted_counters.
+Print Assumptions GeneratedMapCoreSource.native_pass_event_start_is_bounded.
+Print Assumptions GeneratedMapCoreSource.native_nonempty_pass_events_construct_the_actual_raw_merge_trace.
+Print Assumptions GeneratedMapCoreSource.native_outer_events_construct_the_actual_raw_merge_trace.
+Print Assumptions GeneratedMapCoreSource.native_initial_sort_events_construct_the_actual_raw_merge_trace.
+Print Assumptions GeneratedMapCoreSource.native_unit_lex_events_construct_the_actual_raw_dialogue.
+Print Assumptions GeneratedMapCoreSource.left_merge_silent_prefixes_the_same_invocation.
+Print Assumptions GeneratedMapCoreSource.right_merge_silent_prefixes_the_same_invocation.
+Print Assumptions GeneratedMapCoreSource.selected_merge_silent_prefixes_the_same_dialogue.
+Print Assumptions GeneratedMapCoreSource.selected_merge_request_enters_the_same_pair_control.
+Print Assumptions GeneratedMapCoreSource.selected_merge_accept_returns_to_the_same_box.
+Print Assumptions GeneratedMapCoreSource.raw_merge_trace_constructs_the_enclosing_box_dialogue.
+Print Assumptions GeneratedMapCoreSource.native_event_blocks_retain_exactly_the_requested_answers.
+Print Assumptions GeneratedMapCoreSource.sequenced_map_events_construct_the_complete_raw_dialogue.
+Print Assumptions GeneratedMapCoreSource.native_initial_outer_events_preserve_the_original_unit_total.
+Print Assumptions GeneratedMapCoreSource.bounded_native_map_events_construct_the_complete_raw_dialogue.
