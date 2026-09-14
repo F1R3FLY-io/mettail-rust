@@ -107,6 +107,7 @@ theories/GeneratedSourceRowComparison.v
 theories/GeneratedCollectionOwnerFrame.v
 theories/GeneratedMapSourceOwnership.v
 theories/GeneratedMapOwnerTraversal.v
+theories/GeneratedCategorySourceAssociation.v
 theories/GeneratedMapProjectedTasks.v
 theories/GeneratedMapActualSegment.v
 theories/BehavioralFlatCopy.v
