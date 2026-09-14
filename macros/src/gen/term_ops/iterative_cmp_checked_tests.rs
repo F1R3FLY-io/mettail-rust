@@ -212,6 +212,117 @@ fn checked_comparison_captures_actual_production_layout_executable() {
             Proc::ApplyMap(Arc::new(Proc::PZero), Arc::new(value))
         }
 
+        fn bag(entries: impl IntoIterator<Item = (Proc, usize)>) -> mettail_runtime::HashBag<Proc> {
+            let mut result = mettail_runtime::HashBag::new();
+            for (key, count) in entries { result.insert_n(key, count); }
+            result
+        }
+
+        fn bag_cases() {
+            let empty = Proc::PBag(bag([]));
+            exercise(&empty, &empty);
+            exercise(&empty, &Proc::PBag(bag([])));
+            let left = Proc::PBag(bag([(token("a"), 2), (token("b"), 1)]));
+            let permuted = Proc::PBag(bag([(token("b"), 1), (token("a"), 1), (token("a"), 1)]));
+            assert_eq!(left.cmp(&permuted), Ordering::Equal);
+            exercise(&left, &permuted);
+            exercise(&empty, &left);
+            exercise(&left, &empty);
+            let changed = Proc::PBag(bag([(token("a"), 1), (token("b"), 2)]));
+            assert_ne!(left.cmp(&changed), Ordering::Equal);
+            exercise(&left, &changed);
+            exercise(&changed, &left);
+            let short = Proc::PBag(bag([(token("z"), 1)]));
+            let long = Proc::PBag(bag([(token("a"), 2)]));
+            assert_eq!(short.cmp(&long), Ordering::Less, "stored total precedes key order");
+            exercise(&short, &long);
+            exercise(&long, &short);
+            exercise(&Bag::#bag_literal(bag([(token("a"), 3)])),
+                &Bag::#bag_literal(bag([(token("a"), 3)])));
+            exercise(&Proc::PBag(bag([(token("a"), usize::MAX)])),
+                &Proc::PBag(bag([(token("a"), usize::MAX)])));
+            exercise(&Proc::PBag(bag([(token("a"), usize::MAX)])),
+                &Proc::PBag(bag([(token("b"), usize::MAX)])));
+
+            let mut sparse = bag((0..64).map(|id| (token(&id.to_string()), 1)));
+            let history = sparse.historical_capacity();
+            for id in 0..60 { assert!(sparse.remove(&token(&id.to_string()))); }
+            assert_eq!(sparse.historical_capacity(), history);
+            assert!(history > sparse.distinct_len());
+            let dense = bag((60..64).map(|id| (token(&id.to_string()), 1)));
+            exercise(&Proc::PBag(sparse), &Proc::PBag(dense));
+
+            let transported = |total, count| {
+                let source = bag([(token("source"), total)]);
+                Proc::PBag(source.rebuild_binding_entries([(token("a"), count)]))
+            };
+            exercise(&transported(7, 5), &transported(7, 6));
+            exercise(&transported(7, 5), &transported(8, 5));
+            exercise(&transported(7, 5), &transported(7, 5));
+            let nested = |value: &str| Proc::PBag(bag([
+                (map_proc(map([(Proc::PBag(bag([(token("key"), 2)])),
+                    Proc::PBag(bag([(token(value), 3)])))])), 2),
+                (token("other"), 1),
+            ]));
+            exercise(&nested("a"), &nested("a"));
+            exercise(&nested("a"), &nested("b"));
+            let scoped = |value| Proc::PMulti(Vec::new(),
+                Scope::from_parts_unsafe(Vec::new(), Arc::new(nested(value))));
+            exercise(&scoped("a"), &scoped("a"));
+            exercise(&scoped("a"), &scoped("b"));
+
+            let predicate = |name: &str| Proc::PPredicate(mettail_runtime::BehavioralPred::RelationQuery {
+                relation_name: name.into(), args: Vec::new(), negated: false,
+            });
+            refuse(&Proc::PBag(bag([(predicate("left"), 1)])),
+                &Proc::PBag(bag([(predicate("right"), 1)])), "Proc", "PPredicate", None);
+        }
+
+        fn malformed_bag_cases() {
+            let source = bag([(token("source"), 7)]);
+            let zero = Proc::PBag(source.rebuild_binding_entries([(token("a"), 0)]));
+            let overflow = Proc::PBag(source.rebuild_binding_entries([
+                (token("a"), usize::MAX), (token("b"), 1),
+            ]));
+            let healthy = Proc::PBag(bag([(token("healthy"), 1)]));
+            // Distinct operands avoid the permitted root-alias equality shortcut.
+            // Unequal stored totals must not skip validation of either roster.
+            for (bad, size_overflow) in [(&zero, false), (&overflow, true)] {
+                for (left, right) in [(bad, &healthy), (&healthy, bad)] {
+                    for ordering in [false, true] {
+                        let mut trace = Vec::new();
+                        let result = run(left, right, ordering, &mut |w,u| {
+                            trace.push((w,u)); Ok::<_, usize>(())
+                        });
+                        match (size_overflow, result) {
+                            (false, Err(NativeComparisonFailure::InvalidCollectionInput(_))) => {},
+                            (true, Err(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow))) => {},
+                            other => panic!("named malformed Bag refusal: {other:?}"),
+                        }
+                        for stop in 1..=trace.len() {
+                            let mut seen = Vec::new();
+                            let result = run(left, right, ordering, &mut |w,u| {
+                                seen.push((w,u)); if seen.len() == stop { Err(stop) } else { Ok(()) }
+                            });
+                            assert!(matches!(result, Err(NativeComparisonFailure::Admission(
+                                BindingFailure::Reservation(n))) if n == stop));
+                            assert_eq!(seen, trace[..stop]);
+                        }
+                    }
+                }
+            }
+            match (&zero, &overflow) {
+                (Proc::PBag(zero), Proc::PBag(overflow)) => {
+                    assert_eq!(zero.len(), 7);
+                    assert_eq!(zero.iter().next().expect("retained zero record").1, 0);
+                    assert_eq!(overflow.len(), 7);
+                    assert_eq!(overflow.count(&token("a")), usize::MAX);
+                    assert_eq!(overflow.count(&token("b")), 1);
+                },
+                _ => panic!("original Bag constructors preserved"),
+            }
+        }
+
         fn map_cases() {
             let empty = map([]);
             exercise(&empty, &empty);
@@ -472,6 +583,12 @@ fn checked_comparison_captures_actual_production_layout_executable() {
             value
         }
 
+        fn deep_bag(bottom: &str) -> Proc {
+            let mut value = token(bottom);
+            for _ in 0..20_000 { value = Proc::PBag(bag([(value, 1)])); }
+            value
+        }
+
         fn deep(bottom: &str) -> Proc {
             let mut value = Proc::PToken(bottom.into());
             for depth in 0..20_000 {
@@ -483,7 +600,8 @@ fn checked_comparison_captures_actual_production_layout_executable() {
 
         fn deep_small_stack() {
             std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
-                for build in [deep as fn(&str) -> Proc, deep_map as fn(&str) -> Proc] {
+                for build in [deep as fn(&str) -> Proc, deep_map as fn(&str) -> Proc,
+                    deep_bag as fn(&str) -> Proc] {
                 // Independent trees prevent Arc aliasing from hiding traversal.
                 let left = build("a"); let equal = build("a"); let different = build("b");
                 for right in [&equal, &different] {
@@ -593,10 +711,8 @@ fn checked_comparison_captures_actual_production_layout_executable() {
                 "Proc", "PPredicate", None);
             let optional = Proc::POptional("prefix".into(), None, None, None);
             refuse(&optional, &optional, "Proc", "POptional", Some(5));
-            let bag = Proc::PBag(mettail_runtime::HashBag::new());
-            refuse(&bag, &bag, "Proc", "PBag", Some(5));
-            let bag = Bag::#bag_literal(mettail_runtime::HashBag::new());
-            refuse(&bag, &bag, "Bag", stringify!(#bag_literal), Some(5));
+            bag_cases();
+            malformed_bag_cases();
             map_cases();
             map_owner_is_pushed_before_its_requested_child();
             secondary_dispatch_preserves_the_distinct_lower_parked_owner();

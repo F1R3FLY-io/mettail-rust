@@ -463,7 +463,7 @@ fn checked_cmp_collection_supported(
         CollectionPlan::WholeValue {
             reason: WholeValueReason::UnorderedContainer,
         } => {
-            matches!(kind, CollectionType::HashMap)
+            matches!(kind, CollectionType::HashMap | CollectionType::HashBag)
         },
         _ => false,
     }
@@ -737,6 +737,17 @@ fn unordered_collection_cmp_machine_expr(
                 mettail_runtime::CheckedCollectionCmpPda::try_new(
                     std::cmp::Ordering::Equal, __cmp_left, __cmp_right, reserve)?
             }},
+            CollectionType::HashBag => {
+                let lead =
+                    emission.usize_cmp(quote! { #left_expr.len() }, quote! { #right_expr.len() });
+                quote! {{
+                    let __cmp_lead = #lead;
+                    let __cmp_left = (#left_expr).try_comparison_roster(reserve)?;
+                    let __cmp_right = (#right_expr).try_comparison_roster(reserve)?;
+                    mettail_runtime::CheckedCollectionCmpPda::try_new(
+                        __cmp_lead, __cmp_left, __cmp_right, reserve)?
+                }}
+            },
             _ => {
                 quote! { compile_error!("checked comparison source roster is unavailable for this collection") }
             },

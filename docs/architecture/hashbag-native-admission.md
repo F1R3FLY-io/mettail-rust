@@ -264,8 +264,9 @@ The [roster regressions](../../runtime/src/hashbag_roster_tests.rs) cover real
 sparse/tombstone history, original pointers and entry order, absence of key
 operations, every reservation cut, exact and one-under limits, stored-zero and
 count-sum overflow refusals, and transported-total distinctions. This adapter
-does not itself enable generated `PPar` comparison, pay for sorting or key
-comparisons, or admit consuming reconstruction.
+does not itself pay for sorting or key comparisons, or admit consuming
+reconstruction. Generated comparison adds the existing owned comparison
+machine and its typed child callbacks as described below.
 
 ## Generated comparison initialization
 
@@ -284,8 +285,8 @@ Checked admission adds reservation and refusal behavior, not a different
 sorting machine. Initialization correspondence concerns those exact arguments;
 it does not assume the final comparison result or introduce another comparator.
 
-The generated Bag factory must compute the stored-total ordering first, then
-build both original rosters, then initialize that shared machine. An unequal
+The generated Bag factory computes the stored-total ordering first, then
+builds both original rosters, then initializes that shared machine. An unequal
 lead must not skip either roster: ordinary construction also builds its
 arguments before the machine can return that ordering. Consequently, a stored
 zero count or overflowing repetition sum produces the named checked refusal
@@ -306,6 +307,20 @@ unprojected `U` record, together with its full operational carrier checks and
 both original generated arms. It must not receive an invented formal field or
 a false runtime-refusal annotation. This initialization proof does not establish
 the outstanding whole-category factorization for nested weighted collections.
+
+The [generated comparison regressions](../../macros/src/gen/term_ops/iterative_cmp_checked_tests.rs)
+exercise the existing production-layout fixture rather than a second language
+or comparison implementation. They check ordinary/checked equality and order,
+insertion permutations, repeated counts including the maximum machine-word
+count, sparse history, transported-total anomalies, nested bags and maps,
+scope bodies, every small reservation cut, exact and one-under budgets, and
+20,000-level Bag traversal with teardown on a 256 KiB stack. Malformed counts
+use named-error checks without invoking the potentially panicking ordinary
+oracle. The [actual Rholang constructor census](../../macros/src/gen/term_ops/iterative_cmp_census_tests.rs)
+also checks the `PPar` and `BagLit` factories and original typed callbacks.
+These checks do not establish complete Rholang scope-opening/reconstruction
+or public-node behavior; those source contexts remain separate acceptance
+obligations.
 
 ## Remaining concrete coverage
 

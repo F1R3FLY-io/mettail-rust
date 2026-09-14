@@ -26,6 +26,50 @@ fn assert_original_map_factory(source: &str, left: &str, right: &str, category: 
     );
 }
 
+fn assert_original_bag_factory(source: &str, left: &str, right: &str, category: &Ident) {
+    let factory = format!(
+        "CheckedCmpTask::StartCollection({{\
+         let__cmp_lead={{mettail_runtime::reserve_binding_parts(2usize,0,0,reserve)\
+         .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;\
+         {left}.len().cmp(&{right}.len())}};\
+         let__cmp_left=({left}).try_comparison_roster(reserve)?;\
+         let__cmp_right=({right}).try_comparison_roster(reserve)?;\
+         mettail_runtime::CheckedCollectionCmpPda::try_new(\
+         __cmp_lead,__cmp_left,__cmp_right,reserve)?\
+         }},checked_cmp_resume_collection_{},)",
+        category.to_string().to_lowercase()
+    );
+    assert!(
+        source.contains(&factory),
+        "Bag factory must compare original stored totals before both paid original rosters \
+         and retain the element-category callback: expected {factory} in {source}"
+    );
+}
+
+// Runtime support and eligibility for the existing formal Row vocabulary are
+// independent. A Bag-bearing row has no BaseField constructor in that model.
+fn formal_projection_eligible(kind: &VariantKind) -> bool {
+    let has_bag = |field: &FieldInfo| {
+        matches!(
+            field_carrier(field),
+            FieldCarrier::Collection { coll_type: CollectionType::HashBag }
+                | FieldCarrier::OptionalCollection { coll_type: CollectionType::HashBag }
+        )
+    };
+    match kind {
+        VariantKind::Collection { coll_type, .. }
+        | VariantKind::CollectionLiteral { coll_type, .. } => {
+            !matches!(coll_type, CollectionType::HashBag)
+        },
+        VariantKind::Regular { fields, .. } => !fields.iter().any(has_bag),
+        VariantKind::Binder { pre_scope_fields, .. }
+        | VariantKind::MultiBinder { pre_scope_fields, .. } => {
+            !pre_scope_fields.iter().any(has_bag)
+        },
+        _ => true,
+    }
+}
+
 fn actual_rholang() -> LanguageDef {
     let source = syn::parse_file(include_str!("../../../../languages/src/rholang.rs"))
         .expect("actual Rholang source must parse as Rust items");
@@ -147,6 +191,7 @@ fn check_supported_field(field: &FieldInfo, actual: &syn::Type) {
             match coll_type {
                 CollectionType::Vec => format!("Vec<{category}>"),
                 CollectionType::HashMap => format!("HashMapLit<{category},{category}>"),
+                CollectionType::HashBag => format!("HashBag<{category}>"),
                 _ => panic!("unsupported collection entered the checked comparison field census"),
             }
         },
@@ -208,6 +253,7 @@ fn inspect_variant(
     projection: &mut String,
 ) -> bool {
     let supported = checked_cmp_variant_supported(category, kind, language);
+    let projection_eligible = formal_projection_eligible(kind);
     let label = kind.label();
     let fields = declaration
         .fields
@@ -216,7 +262,7 @@ fn inspect_variant(
         .collect::<Vec<_>>();
     let mut recipes = Vec::<String>::new();
     // Each entry is an existing formal Field and its two original selectors.
-    // Refused rows retain their ordinal but have no invented payload recipe.
+    // Refused and unprojected rows have no invented payload recipe.
     let mut logical = Vec::<(String, String, String)>::new();
     let checked_arm =
         generate_cmp_variant_arm(category, kind, language, &CmpEmissionNames::checked());
@@ -329,26 +375,40 @@ fn inspect_variant(
                 let expected = match coll_type {
                     CollectionType::Vec => format!("Vec<{element_cat}>"),
                     CollectionType::HashMap => format!("HashMapLit<{element_cat},{element_cat}>"),
+                    CollectionType::HashBag => format!("HashBag<{element_cat}>"),
                     _ => panic!("unsupported whole collection entered checked comparison census"),
                 };
                 assert_eq!(shape(fields[0]), expected, "{category}::{label}");
                 if matches!(coll_type, CollectionType::HashMap) {
                     assert_original_map_factory(
-                        &compact(checked_arm.clone()), &left[0], &right[0], element_cat,
+                        &compact(checked_arm.clone()),
+                        &left[0],
+                        &right[0],
+                        element_cat,
                     );
                 }
-                let (base, selector) = match coll_type {
-                    CollectionType::Vec => ("Vector", "iter(): original element order"),
-                    CollectionType::HashMap => {
-                        ("MapPairs", "iter(): original paired (key,value) entry order")
-                    },
-                    _ => unreachable!(),
-                };
-                logical.push((
-                    formal_field(&format!("{base} {element_cat}"), false),
-                    format!("{}.{selector}", left[0]),
-                    format!("{}.{selector}", right[0]),
-                ));
+                if matches!(coll_type, CollectionType::HashBag) {
+                    assert_original_bag_factory(
+                        &compact(checked_arm.clone()),
+                        &left[0],
+                        &right[0],
+                        element_cat,
+                    );
+                }
+                if projection_eligible {
+                    let (base, selector) = match coll_type {
+                        CollectionType::Vec => ("Vector", "iter(): original element order"),
+                        CollectionType::HashMap => {
+                            ("MapPairs", "iter(): original paired (key,value) entry order")
+                        },
+                        _ => unreachable!(),
+                    };
+                    logical.push((
+                        formal_field(&format!("{base} {element_cat}"), false),
+                        format!("{}.{selector}", left[0]),
+                        format!("{}.{selector}", right[0]),
+                    ));
+                }
             }
             recipes.push(format!("collection:{coll_type:?}:element={element_cat}"));
             if matches!(kind, VariantKind::CollectionLiteral { .. }) {
@@ -359,7 +419,7 @@ fn inspect_variant(
         },
         VariantKind::RecursiveNativeLiteral { .. } => {
             assert_eq!(fields.len(), 1, "{category}::{label} recursive native width");
-            assert!(!supported, "recursive native must stay refused in the checked Map profile");
+            assert!(!supported, "recursive native must stay refused in this checked profile");
             recipes.push("recursive-native-refused".to_owned());
             "recursive-native".to_owned()
         },
@@ -370,54 +430,89 @@ fn inspect_variant(
             match field_carrier(field) {
                 FieldCarrier::Collection { coll_type: CollectionType::HashMap } => {
                     assert_original_map_factory(
-                        &compact(checked_arm.clone()), &left[position], &right[position],
+                        &compact(checked_arm.clone()),
+                        &left[position],
+                        &right[position],
                         &field.category,
                     );
                 },
                 FieldCarrier::OptionalCollection { coll_type: CollectionType::HashMap } => {
                     let source = compact(checked_arm.clone());
-                    assert!(source.contains(&format!(
-                        "match({}.as_ref(),{}.as_ref())", left[position], right[position]
-                    )), "optional Map must retain the original None/Some selectors");
+                    assert!(
+                        source.contains(&format!(
+                            "match({}.as_ref(),{}.as_ref())",
+                            left[position], right[position]
+                        )),
+                        "optional Map must retain the original None/Some selectors"
+                    );
                     assert_original_map_factory(
-                        &source, "__left_collection", "__right_collection", &field.category,
+                        &source,
+                        "__left_collection",
+                        "__right_collection",
+                        &field.category,
+                    );
+                },
+                FieldCarrier::Collection { coll_type: CollectionType::HashBag } => {
+                    assert_original_bag_factory(
+                        &compact(checked_arm.clone()),
+                        &left[position],
+                        &right[position],
+                        &field.category,
+                    );
+                },
+                FieldCarrier::OptionalCollection { coll_type: CollectionType::HashBag } => {
+                    let source = compact(checked_arm.clone());
+                    assert!(
+                        source.contains(&format!(
+                            "match({}.as_ref(),{}.as_ref())",
+                            left[position], right[position]
+                        )),
+                        "optional Bag must retain the original None/Some selectors"
+                    );
+                    assert_original_bag_factory(
+                        &source,
+                        "__left_collection",
+                        "__right_collection",
+                        &field.category,
                     );
                 },
                 _ => {},
             }
-            let (base, selector) = match field_carrier(field) {
-                FieldCarrier::Leaf => match field.opaque_leaf {
-                    Some(OpaqueLeafKind::TokenText) => ("Native Bytes".to_owned(), "borrow"),
-                    Some(OpaqueLeafKind::GuestBody) => {
-                        ("Native GuestFlt".to_owned(), "Arc payload borrow")
+            if projection_eligible {
+                let (base, selector) = match field_carrier(field) {
+                    FieldCarrier::Leaf => match field.opaque_leaf {
+                        Some(OpaqueLeafKind::TokenText) => ("Native Bytes".to_owned(), "borrow"),
+                        Some(OpaqueLeafKind::GuestBody) => {
+                            ("Native GuestFlt".to_owned(), "Arc payload borrow")
+                        },
+                        None => unreachable!(),
                     },
-                    None => unreachable!(),
-                },
-                FieldCarrier::Child | FieldCarrier::OptionalChild => {
-                    (format!("Child {}", field.category), "Arc payload borrow")
-                },
-                FieldCarrier::Collection { coll_type }
-                | FieldCarrier::OptionalCollection { coll_type } => match coll_type {
-                    CollectionType::Vec => {
-                        (format!("Vector {}", field.category), "iter(): original element order")
+                    FieldCarrier::Child | FieldCarrier::OptionalChild => {
+                        (format!("Child {}", field.category), "Arc payload borrow")
                     },
-                    CollectionType::HashMap => (
-                        format!("MapPairs {}", field.category),
-                        "iter(): original paired (key,value) entry order",
-                    ),
-                    _ => unreachable!(),
-                },
-            };
-            let option = if field.is_optional {
-                "as_ref(): preserve None/Some; "
-            } else {
-                ""
-            };
-            logical.push((
-                formal_field(&base, field.is_optional),
-                format!("{}: {option}{selector}", left[position]),
-                format!("{}: {option}{selector}", right[position]),
-            ));
+                    FieldCarrier::Collection { coll_type }
+                    | FieldCarrier::OptionalCollection { coll_type } => match coll_type {
+                        CollectionType::Vec => {
+                            (format!("Vector {}", field.category), "iter(): original element order")
+                        },
+                        CollectionType::HashMap => (
+                            format!("MapPairs {}", field.category),
+                            "iter(): original paired (key,value) entry order",
+                        ),
+                        _ => unreachable!(),
+                    },
+                };
+                let option = if field.is_optional {
+                    "as_ref(): preserve None/Some; "
+                } else {
+                    ""
+                };
+                logical.push((
+                    formal_field(&base, field.is_optional),
+                    format!("{}: {option}{selector}", left[position]),
+                    format!("{}: {option}{selector}", right[position]),
+                ));
+            }
         }
         recipes.push(field_recipe(field));
     }
@@ -425,22 +520,24 @@ fn inspect_variant(
         recipes.push(description.clone());
         if supported {
             let (position, body_cat) = scope_boundary.expect("original scope boundary");
-            assert_eq!(logical.len(), position, "all prefields precede the scope telescope");
-            let atom = if matches!(kind, VariantKind::MultiBinder { .. }) {
-                "Native MultiPattern"
-            } else {
-                "Native SinglePattern"
-            };
-            logical.push((
-                formal_field(atom, false),
-                format!("&{}.inner().unsafe_pattern", left[position]),
-                format!("&{}.inner().unsafe_pattern", right[position]),
-            ));
-            logical.push((
-                formal_field(&format!("Child {body_cat}"), false),
-                format!("&*{}.inner().unsafe_body", left[position]),
-                format!("&*{}.inner().unsafe_body", right[position]),
-            ));
+            if projection_eligible {
+                assert_eq!(logical.len(), position, "all prefields precede the scope telescope");
+                let atom = if matches!(kind, VariantKind::MultiBinder { .. }) {
+                    "Native MultiPattern"
+                } else {
+                    "Native SinglePattern"
+                };
+                logical.push((
+                    formal_field(atom, false),
+                    format!("&{}.inner().unsafe_pattern", left[position]),
+                    format!("&{}.inner().unsafe_pattern", right[position]),
+                ));
+                logical.push((
+                    formal_field(&format!("Child {body_cat}"), false),
+                    format!("&*{}.inner().unsafe_body", left[position]),
+                    format!("&*{}.inner().unsafe_body", right[position]),
+                ));
+            }
             for arm in [&checked_arm, &ordinary_arm] {
                 let source = compact(arm.clone());
                 assert!(source.contains(&format!("letl_scope={}.inner();", left[position])));
@@ -458,7 +555,7 @@ fn inspect_variant(
     }
     assert_eq!(
         logical.len(),
-        if supported {
+        if supported && projection_eligible {
             fields.len() + usize::from(scope_boundary.is_some())
         } else {
             0
@@ -477,13 +574,18 @@ fn inspect_variant(
         VariantKind::CollectionLiteral { .. } => "CollectionLiteral",
         VariantKind::RecursiveNativeLiteral { .. } => "RecursiveNativeLiteral",
     };
-    writeln!(projection, "R\t{category}\t{index}\t{label}\t{variant_kind}\tprefields={}\t{{| row_ordinal := {index}; row_admitted := {supported}; row_fields := [{}] |}}",
+    if projection_eligible {
+        writeln!(projection, "R\t{category}\t{index}\t{label}\t{variant_kind}\tprefields={}\t{{| row_ordinal := {index}; row_admitted := {supported}; row_fields := [{}] |}}",
         scope_boundary.map_or_else(|| "-".to_owned(), |(n, _)| n.to_string()),
         logical.iter().map(|(field, _, _)| field.as_str()).collect::<Vec<_>>().join("; "))
         .expect("append existing formal Row recipe");
-    for (position, (field, left, right)) in logical.iter().enumerate() {
-        writeln!(projection, "L\t{category}\t{index}\t{position}\t{field}\t{left}\t{right}")
-            .expect("append original-source logical projection");
+        for (position, (field, left, right)) in logical.iter().enumerate() {
+            writeln!(projection, "L\t{category}\t{index}\t{position}\t{field}\t{left}\t{right}")
+                .expect("append original-source logical projection");
+        }
+    } else {
+        writeln!(projection, "U\t{category}\t{index}\t{label}\t{variant_kind}\toperational-supported={supported}\tBag carrier is outside the existing formal Row/BaseField vocabulary")
+            .expect("record an unprojected row without inventing a formal recipe");
     }
     for (mode, arm) in [("ordinary", &ordinary_arm), ("checked", &checked_arm)] {
         writeln!(projection, "A\t{category}\t{index}\t{mode}\t{}", compact(arm.clone()))
@@ -563,9 +665,12 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
     let mut rows = BTreeMap::new();
     let mut projection = String::from(
         "# Audited Rust source-association evidence, not a kernel-checked Rust interpretation.\n\
-         # Recipes use existing GeneratedConstructorComparisonClasses Row/Field constructors.\n\
+         # R/L recipes use existing GeneratedConstructorComparisonClasses Row/Field constructors.\n\
+         # U marks a whole Bag-bearing row outside that vocabulary, not an operational refusal.\n\
+         # Every row has R or U plus both A arms; C/F retain all operational carrier checks.\n\
          # Category identifiers denote the actual census categories; refused payloads have no recipe.\n\
          # R category ordinal constructor VariantKind scope-prefield-boundary formal-Row\n\
+         # U category ordinal constructor VariantKind operational-supported projection-limitation\n\
          # L category ordinal logical-position formal-Field original-left-selector original-right-selector\n\
          # A category ordinal ordinary/checked actual-generated-arm\n",
     );
@@ -640,14 +745,22 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
     }
     assert_eq!(rows.len(), 1990, "bounded actual Rholang constructor snapshot");
     assert_eq!(
+        capture
+            .lines()
+            .filter(|line| line.starts_with("C\t"))
+            .count(),
+        rows.len(),
+        "operational census includes projected and unprojected constructors"
+    );
+    assert_eq!(
         (single_scopes, multi_scopes, refused),
-        (441, 443, 12),
+        (441, 443, 10),
         "bounded scope/refusal snapshot must be reviewed if the actual language changes"
     );
     assert_eq!(
         projection
             .lines()
-            .filter(|line| line.starts_with("R\t"))
+            .filter(|line| line.starts_with("R\t") || line.starts_with("U\t"))
             .count(),
         rows.len()
     );
@@ -662,16 +775,28 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
         ("Proc", "PNew", true),
         ("Proc", "PNewUris", true),
         ("Map", "MapLit", true),
-        ("Proc", "PPar", false),
-        ("Bag", "BagLit", false),
+        ("Proc", "PPar", true),
+        ("Bag", "BagLit", true),
         ("Set", "SetLit", false),
         ("Pathmap", "PathmapLit", false),
     ] {
         assert_eq!(
             rows.get(&(category.to_owned(), constructor.to_owned())),
             Some(&expected),
-            "required checked Map comparison boundary {category}::{constructor}"
+            "required checked collection comparison boundary {category}::{constructor}"
         );
+    }
+    for (category, constructor) in [("Proc", "PPar"), ("Bag", "BagLit")] {
+        let unprojected = projection
+            .lines()
+            .find(|line| {
+                let columns = line.split('\t').collect::<Vec<_>>();
+                columns.first() == Some(&"U")
+                    && columns.get(1) == Some(&category)
+                    && columns.get(3) == Some(&constructor)
+            })
+            .expect("operational Bag constructor must be explicitly unprojected");
+        assert!(unprojected.contains("operational-supported=true"));
     }
     assert!(
         maps > 0 && refused > 0,
