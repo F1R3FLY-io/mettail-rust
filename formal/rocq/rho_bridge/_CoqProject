@@ -102,9 +102,11 @@ theories/GeneratedMapCoreSource.v
 theories/GeneratedMapCoreDeterminism.v
 theories/GeneratedMapCoreErasure.v
 theories/GeneratedAdmittedMapReference.v
+theories/GeneratedAdmittedMapDialogue.v
 theories/GeneratedSourceRowComparison.v
 theories/GeneratedCollectionOwnerFrame.v
 theories/GeneratedMapSourceOwnership.v
+theories/GeneratedMapOwnerTraversal.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
