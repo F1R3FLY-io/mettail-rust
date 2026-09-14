@@ -134,8 +134,52 @@ Proof.
 Qed.
 End OriginalTypedPayload.
 
+Import GeneratedChildTraversal.GeneratedChildTraversal.
+Import AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.
+
+(** These expressions select the existing driver entry constructors; they do
+    not define another execution relation or manufacture a callback result. *)
+Definition callback_entry_task owner callback (input : option comparison) :=
+  match input with None => Start owner callback | Some _ => Resume owner callback end.
+Definition callback_entry_mode (input : option comparison) :=
+  match input with None => Run | Some ordering => completion_mode ordering end.
+
+Section ExistingCallbackEntry.
+Context {SourceState : Type}.
+Variable arm_source :
+  AdmittedGeneratedComparisonScheduling.AdmittedGeneratedComparisonScheduling.Position ->
+  SourceState -> HandlerExit -> list Observation -> SourceState -> Prop.
+Variable callback_source : nat -> nat -> option comparison -> SourceState ->
+  CoreReply -> list Observation -> SourceState -> Prop.
+Variable discard_source : Task -> SourceState -> SourceState -> Prop.
+Local Notation Trace := (@ChildTraversal SourceState arm_source callback_source discard_source).
+
+Theorem an_actual_callback_entry_exposes_its_original_call_and_continuation :
+  forall owner callback input count before events result after,
+  Trace [] count (callback_entry_mode input) [callback_entry_task owner callback input]
+    before events result after ->
+  exists reply core_events next later_count later_events,
+    callback_source owner callback input before reply core_events next /\
+    Trace [] later_count (reply_mode reply) (reply_prefix owner callback reply)
+      next later_events result after /\
+    count = S later_count /\
+    events = resume_observations owner input core_events reply ++ later_events.
+Proof.
+  intros owner callback input count before events result after TRACE.
+  destruct input as [[| |]|];
+    cbn [callback_entry_mode callback_entry_task completion_mode] in TRACE.
+  all: inversion TRACE as [| |later_count mode head rest state first_events
+      next_mode prefix next later_events actual last STEP TAIL]; subst.
+  all: rewrite !app_nil_r in STEP.
+  all: inversion STEP; subst; cbn [not_resume] in *; try discriminate.
+  all: rewrite !app_nil_r in *.
+  all: do 5 eexists; repeat split; try reflexivity; eassumption.
+Qed.
+End ExistingCallbackEntry.
+
 Print Assumptions equal_original_owner_payloads_have_the_same_category.
 Print Assumptions equal_same_category_owners_have_the_exact_same_native_state.
 Print Assumptions the_taken_owner_is_the_original_complete_stored_payload.
 Print Assumptions an_actual_callback_uses_the_exact_stored_typed_native_state.
+Print Assumptions an_actual_callback_entry_exposes_its_original_call_and_continuation.
 End GeneratedMapActualSegment.
