@@ -512,6 +512,100 @@ fn sort_pair_projection_pays_before_validation_and_preserves_exact_pointers() {
 }
 
 #[test]
+fn paid_map_sort_reverse_pops_reconstruct_the_native_hash_stream() {
+    use std::hash::{Hash, Hasher};
+
+    // Compare the actual native HashMapLit stream, not only its digest. This
+    // checks the existing roster/sort interface needed by generated hashing;
+    // admission and generated-category traversal have their own tests.
+    #[derive(Default, Debug, PartialEq, Eq)]
+    struct Writes(Vec<Vec<u8>>);
+    impl Hasher for Writes {
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.push(bytes.to_vec());
+        }
+        fn finish(&self) -> u64 {
+            panic!("stream comparison must not substitute a digest equality")
+        }
+    }
+
+    for keys in [vec![], vec![7], vec![3, -2, 0, 7, 1], vec![7, 3, 1, 0, -2]] {
+        let source: crate::HashMapLit<i32, String> = keys
+            .into_iter()
+            .map(|key| (key, format!("value:{key}:λ")))
+            .collect();
+        let original: Vec<_> = source
+            .iter()
+            .map(|(key, value)| (*key, value.clone()))
+            .collect();
+        let mut reserve = |_, _| Ok::<_, ()>(());
+        let input = source
+            .try_comparison_roster(&mut reserve)
+            .expect("paid source roster");
+        let mut machine = CheckedCollectionSortPda::try_new(input, &mut reserve)
+            .expect("existing consuming sort");
+        let mut response = None;
+        let mut sorted = loop {
+            match machine
+                .try_resume(response.take(), &mut reserve)
+                .expect("sort step")
+            {
+                CheckedCollectionSortStep::CompareEntries { machine: next, left, right } => {
+                    let (left_key, left_value) =
+                        left.try_pair_ptrs(&mut reserve).expect("left pair");
+                    let (right_key, right_value) =
+                        right.try_pair_ptrs(&mut reserve).expect("right pair");
+                    response =
+                        Some(compare(CollectionCmpRole::Primary, left_key, right_key).then_with(
+                            || compare(CollectionCmpRole::Secondary, left_value, right_value),
+                        ));
+                    machine = next;
+                },
+                CheckedCollectionSortStep::Done(sorted) => break sorted,
+            }
+        };
+        enum HashWork<'a> {
+            Key(&'a i32),
+            Value(&'a String),
+            Length(usize),
+        }
+        let mut work = Vec::with_capacity(2 * source.len() + 1);
+        while let Some(item) = sorted.try_pop(&mut reserve).expect("paid reverse pop") {
+            let (key, value) = item
+                .try_pair_ptrs(&mut reserve)
+                .expect("sorted original pair");
+            // Source is retained and immutable; the roster came only from this
+            // i32/String map, so these are its original, still-live borrows.
+            unsafe {
+                work.push(HashWork::Value(&*value.cast::<String>()));
+                work.push(HashWork::Key(&*key.cast::<i32>()));
+            }
+        }
+        work.push(HashWork::Length(source.len()));
+        let mut expected = Writes::default();
+        let mut actual = Writes::default();
+        "already populated".hash(&mut expected);
+        "already populated".hash(&mut actual);
+        source.hash(&mut expected);
+        while let Some(task) = work.pop() {
+            match task {
+                HashWork::Key(key) => key.hash(&mut actual),
+                HashWork::Value(value) => value.hash(&mut actual),
+                HashWork::Length(length) => length.hash(&mut actual),
+            }
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(
+            source
+                .iter()
+                .map(|(key, value)| (*key, value.clone()))
+                .collect::<Vec<_>>(),
+            original
+        );
+    }
+}
+
+#[test]
 fn map_producer_preserves_pairs_without_key_operations_at_every_budget_boundary() {
     use std::hash::{Hash, Hasher};
     use std::sync::atomic::{AtomicBool, Ordering as MemoryOrder};
