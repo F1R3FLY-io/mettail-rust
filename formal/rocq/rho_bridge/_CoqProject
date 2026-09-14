@@ -109,6 +109,7 @@ theories/GeneratedMapSourceOwnership.v
 theories/GeneratedMapOwnerTraversal.v
 theories/GeneratedCategorySourceAssociation.v
 theories/GeneratedMapProjectedTasks.v
+theories/GeneratedMapCategoryProjection.v
 theories/GeneratedMapActualSegment.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
