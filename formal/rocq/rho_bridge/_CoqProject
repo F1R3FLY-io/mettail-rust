@@ -72,6 +72,7 @@ theories/BinderPatternCopy.v
 theories/ScopeBindingReservation.v
 theories/RequiredVecBindingReservation.v
 theories/RequiredHashBagBindingReservation.v
+theories/NativeHashBagExtent.v
 theories/AdmittedKeyHashExecution.v
 theories/AdmittedStructuralKeyHash.v
 theories/AdmittedGeneratedHashScheduling.v
