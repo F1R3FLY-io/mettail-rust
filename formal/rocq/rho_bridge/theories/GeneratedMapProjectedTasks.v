@@ -140,6 +140,92 @@ Proof.
   intros tasks decision [decisions [BOUND RESULT]] state.
   exists decisions. split; [now apply existing_borrowed_bindings_are_original_initial_certificates|exact RESULT].
 Qed.
+
+Section OriginalConstruction.
+Variable owner_ceiling : nat.
+Local Notation Make := (@GeneratedMapSourceOwnership.GeneratedMapSourceOwnership.make_map_box
+  Cat Term maximum owner_ceiling category_callback).
+Local Notation BC := (@BaseConstruction Cat Term State uid_digest binder_digest lookup Make).
+Local Notation FC := (@FieldConstruction Cat Term State uid_digest binder_digest lookup Make).
+Local Notation ProjectField := (project_field Term uid_digest binder_digest children next).
+
+Theorem original_map_factory_constructs_its_current_start_certificate :
+  forall category left right before owner callback after,
+  Make category left right before owner callback after -> forall left_key right_key,
+  ProjectBase (MapPairs category) left = Some left_key ->
+  ProjectBase (MapPairs category) right = Some right_key ->
+  ProjectedInitialBatch after [Start owner callback]
+    (comparison_function (base_order children (MapPairs category)) left_key right_key).
+Proof.
+  intros category left right before owner callback after FACTORY left_key right_key LEFT RIGHT.
+  destruct FACTORY as [before extended after buffers WIDTH_LEFT WIDTH_RIGHT ALLOCATE WRITE].
+  exists [comparison_function (base_order children (MapPairs category)) left_key right_key]. split.
+  - constructor; [|constructor].
+    eapply OriginalMapStart; [exact WIDTH_LEFT|exact WIDTH_RIGHT|exact LEFT|exact RIGHT|].
+    eapply successful_write_contains_exactly_the_tagged_payload. exact WRITE.
+  - destruct (comparison_function (base_order children (MapPairs category)) left_key right_key);
+      reflexivity.
+Qed.
+
+Lemma existing_nonmap_base_construction_lifts_to_current_initial_certificates :
+  forall base left right position before word events after,
+  BC base left right position before word events after -> nonmap_base base ->
+  forall left_key right_key,
+  ProjectBase base left = Some left_key -> ProjectBase base right = Some right_key ->
+  ProjectedInitialBatch after (rev word)
+    (comparison_function (base_order children base) left_key right_key).
+Proof.
+  intros base left right position before word events after BUILD NONMAP left_key right_key LEFT RIGHT.
+  apply existing_borrowed_batch_lifts_without_rederiving_its_recipes.
+  eapply constructed_nonmap_base_binds_its_successful_projection; eassumption.
+Qed.
+
+Theorem original_base_construction_certifies_its_successful_projection :
+  forall base left right position before word events after,
+  BC base left right position before word events after -> forall left_key right_key,
+  ProjectBase base left = Some left_key -> ProjectBase base right = Some right_key ->
+  ProjectedInitialBatch after (rev word)
+    (comparison_function (base_order children base) left_key right_key).
+Proof.
+  intros base left right position before word events after BUILD.
+  pose proof BUILD as ORIGINAL. destruct BUILD; intros left_key right_key LEFT RIGHT.
+  - eapply existing_nonmap_base_construction_lifts_to_current_initial_certificates;
+      [exact ORIGINAL|exact I|exact LEFT|exact RIGHT].
+  - eapply existing_nonmap_base_construction_lifts_to_current_initial_certificates;
+      [exact ORIGINAL|exact I|exact LEFT|exact RIGHT].
+  - eapply existing_nonmap_base_construction_lifts_to_current_initial_certificates;
+      [exact ORIGINAL|exact I|exact LEFT|exact RIGHT].
+  - eapply original_map_factory_constructs_its_current_start_certificate; eassumption.
+Qed.
+
+Theorem original_field_construction_certifies_its_successful_projection :
+  forall field left right position before word events after,
+  FC field left right position before word events after -> forall left_key right_key,
+  ProjectField field left = Some left_key -> ProjectField field right = Some right_key ->
+  ProjectedInitialBatch after (rev word)
+    (comparison_function (field_order children field) left_key right_key).
+Proof.
+  intros field left right position before word events after BUILD.
+  destruct BUILD; intros left_key right_key LEFT RIGHT.
+  - eapply original_base_construction_certifies_its_successful_projection; eassumption.
+  - cbn [project_field optional_field] in LEFT, RIGHT.
+    inversion LEFT; inversion RIGHT; subst.
+    apply existing_borrowed_batch_lifts_without_rederiving_its_recipes. apply projected_batch_empty.
+  - cbn [project_field optional_field] in LEFT, RIGHT.
+    destruct (ProjectBase base right) as [key|] eqn:KEY; try discriminate.
+    inversion LEFT; inversion RIGHT; subst.
+    apply existing_borrowed_batch_lifts_without_rederiving_its_recipes. apply projected_batch_verdict.
+  - cbn [project_field optional_field] in LEFT, RIGHT.
+    destruct (ProjectBase base left) as [key|] eqn:KEY; try discriminate.
+    inversion LEFT; inversion RIGHT; subst.
+    apply existing_borrowed_batch_lifts_without_rederiving_its_recipes. apply projected_batch_verdict.
+  - cbn [project_field optional_field] in LEFT, RIGHT.
+    destruct (ProjectBase base left) as [lk|] eqn:LK; try discriminate.
+    destruct (ProjectBase base right) as [rk|] eqn:RK; try discriminate.
+    inversion LEFT; inversion RIGHT; subst.
+    eapply original_base_construction_certifies_its_successful_projection; eassumption.
+Qed.
+End OriginalConstruction.
 End OriginalTaskCertificates.
 End GeneratedMapProjectedTasks.
 
@@ -151,3 +237,7 @@ Print Assumptions GeneratedMapProjectedTasks.original_initial_batch_has_no_resum
 Print Assumptions GeneratedMapProjectedTasks.original_initial_bindings_append.
 Print Assumptions GeneratedMapProjectedTasks.original_initial_batch_append.
 Print Assumptions GeneratedMapProjectedTasks.existing_borrowed_batch_lifts_without_rederiving_its_recipes.
+Print Assumptions GeneratedMapProjectedTasks.original_map_factory_constructs_its_current_start_certificate.
+Print Assumptions GeneratedMapProjectedTasks.existing_nonmap_base_construction_lifts_to_current_initial_certificates.
+Print Assumptions GeneratedMapProjectedTasks.original_base_construction_certifies_its_successful_projection.
+Print Assumptions GeneratedMapProjectedTasks.original_field_construction_certifies_its_successful_projection.
