@@ -63,6 +63,55 @@ fn binding_found_after_reserve_records_growth_without_a_new_key() {
 }
 
 #[test]
+fn pinned_insert_only_growth_matches_small_and_large_source_sizing() {
+    if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+        return;
+    }
+    let mut bag = HashBag::new();
+    let mut next_key = 0usize;
+    let mut expected_history = 0;
+    let mut entry_bag = HashBag::new();
+    let mut entry_history = 0;
+    // These are observable full capacities, not guessed raw table addresses.
+    // Each clean boundary follows the pinned source's 4,8,16,32,... buckets.
+    for capacity in [3usize, 7, 14, 28, 56, 112] {
+        if next_key == 0 {
+            bag.insert_binding_entry(CollisionKey(next_key), 1);
+            next_key += 1;
+        } else {
+            let width = bag.distinct_len();
+            let previous_capacity = bag.counts.capacity();
+            assert_eq!(width, previous_capacity);
+            bag.insert_binding_entry(CollisionKey(0), 9);
+            assert_eq!(bag.distinct_len(), width, "reserve precedes a found binding key");
+            assert_eq!(bag.counts.get(&CollisionKey(0)), Some(&9));
+        }
+        assert_eq!(bag.counts.capacity(), capacity);
+        observe(&bag, &mut expected_history);
+        while next_key < capacity {
+            bag.insert_binding_entry(CollisionKey(next_key), 1);
+            next_key += 1;
+            assert_eq!(bag.counts.capacity(), capacity);
+            observe(&bag, &mut expected_history);
+        }
+        // Keep the entry-based Clone recipe separate from the unfinished
+        // binding rebuild: its total and hash summary are maintained eagerly.
+        while entry_bag.distinct_len() < capacity {
+            let key = entry_bag.distinct_len();
+            entry_bag.insert_n(CollisionKey(key), 1);
+            observe(&entry_bag, &mut entry_history);
+        }
+        // Entry lookup precedes reservation. A found key at zero growth
+        // credit must not take the binding recipe's resize path.
+        entry_bag.insert_n(CollisionKey(0), 2);
+        assert_eq!(entry_bag.counts.capacity(), capacity);
+        assert_eq!(entry_bag.distinct_len(), capacity);
+        observe(&entry_bag, &mut entry_history);
+    }
+    bag.rebuild_hash_summary();
+}
+
+#[test]
 fn collisions_and_tombstones_do_not_erase_history_or_clone_allocation() {
     let mut bag = HashBag::new();
     let mut expected = 0;

@@ -193,6 +193,49 @@ does not prove invariance after an arbitrary interrupted native mutation or
 panic unwinding. Nor can a capacity observation made after growth be used as
 prepayment for that same growth.
 
+## Prospective growth before insertion
+
+The [growth refinement](../../formal/rocq/rho_bridge/theories/NativeHashBagGrowth.v)
+derives the selected allocation from the pinned source's sizing function.
+For a one-entry reservation, valid counters reduce the resize request to
+$`C(B)+1`$. The source's small-capacity branch applies below fifteen; the
+counts tuple contains a machine-word count, so its minimum capacity is three.
+The singleton selects four buckets. Each allocated table selects twice its
+previous bucket count, including the small eight-to-sixteen-bucket step.
+
+Let $`B'`$ be the bucket count after optional reservation and insertion, and
+$`I'`$ the resulting number of stored entries. The existing history invariant
+and the derived allocation selection give the prospective bounds:
+
+```math
+B'\leq\max(4,4H),\qquad I'\leq I+1.
+```
+
+Here $`H`$ is the history **before** insertion. The model also proves that the
+completed insertion preserves history reachability. Its optional-reservation
+relation refines the earlier native transition projection; it does not assume
+the desired bound as a resize premise. The unchanged branch deliberately
+includes skipped reservation and does not identify which native lookup guard
+was taken.
+
+A reconstruction accumulator starts without tombstones, and insertion
+preserves that property. When such a table has no growth credit, its stored
+entry count equals full capacity. The native in-place compaction condition
+cannot hold, so a required reservation selects resize instead. An update to a
+found binding key can still take that resize, as explained above.
+
+The [growth regression](../../runtime/src/hashbag_history_tests.rs) exercises
+public capacities three through 112 using separate binding and entry-based
+accumulators with colliding keys. It checks that binding reservation can grow
+before finding an existing key, whereas an occupied entry update does not.
+It does not inspect raw table addresses or certify allocation costs.
+
+These results concern successful native arithmetic under the pinned `Global`
+allocation contract. A concrete admission provider must still check machine
+arithmetic and table-layout limits before the original insertion. Checking
+the bucket bound alone does not establish those guards, account for retained
+key rehashing, or pay for the new table's lookup and storage work.
+
 ## Borrowed iteration accounting
 
 The borrowed-roster path must use the original iterator through explicit
