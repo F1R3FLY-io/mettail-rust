@@ -299,6 +299,41 @@ Proof.
       as [ANSWER RESTORED]. subst child_result.
     eapply IH; [exact DIALOGUE_TAIL|exact TAIL|exact RESTORED|exact CONTINUE].
 Qed.
+Hypothesis original_alias_identity : forall category (lhs rhs : Term category),
+  alias category lhs rhs = true -> lhs = rhs.
+Local Notation initial_map := GeneratedMapCoreSource.GeneratedMapCoreSource.initial_map.
+
+(** This is the initial Map field certificate consumed by the original row
+    batch theorem. The dialogue and every requested answer are constructed
+    from successful original projections, not supplied as a result premise. *)
+Theorem an_actual_original_map_start_returns_its_projected_map_comparison :
+  forall category owner buffers left right left_key right_key count before events result after,
+  length left <= maximum -> length right <= maximum ->
+  project_base Term uid_digest binder_digest children next (MapPairs category) left = Some left_key ->
+  project_base Term uid_digest binder_digest children next (MapPairs category) right = Some right_key ->
+  nth_error before owner = Some (Some (category_callback category,
+    owned_map category buffers (initial_map maximum left right (length left) (length right)))) ->
+  Trace [] count Run [Start owner (category_callback category)] before events result after ->
+  result = comparison_function (base_order children (MapPairs category)) left_key right_key.
+Proof.
+  intros category owner buffers left right left_key right_key count before events result after
+    LEFT_BOUND RIGHT_BOUND LEFT RIGHT STORED TRAVERSAL.
+  destruct (successful_map_projection_keeps_original_pairing_before_canonicalization
+    Term uid_digest binder_digest children next category left left_key LEFT)
+    as [left_keys [LEFT_PAIRS LEFT_CANONICAL]].
+  destruct (successful_map_projection_keeps_original_pairing_before_canonicalization
+    Term uid_digest binder_digest children next category right right_key RIGHT)
+    as [right_keys [RIGHT_PAIRS RIGHT_CANONICAL]].
+  destruct (@GeneratedAdmittedMapDialogue.GeneratedAdmittedMapDialogue.successful_original_map_projections_construct_a_certified_raw_dialogue
+    (Term category) (Term category) (children category) (children category) (next category) (next category)
+    (alias category) (alias category) (original_alias_identity category) (original_alias_identity category)
+    maximum left right left_keys right_keys left_key right_key LEFT_BOUND RIGHT_BOUND
+    LEFT_PAIRS RIGHT_PAIRS LEFT_CANONICAL RIGHT_CANONICAL)
+    as [answers [raw_final [DIALOGUE CERTIFICATE]]].
+  eapply an_actual_map_segment_follows_its_retained_original_dialogue
+    with (category := category) (answers := answers) (input := None) (raw_final := raw_final);
+    [exact DIALOGUE|exact CERTIFICATE|exact STORED|exact TRAVERSAL].
+Qed.
 End OriginalRequestedChild.
 
 Print Assumptions equal_original_owner_payloads_have_the_same_category.
@@ -308,4 +343,5 @@ Print Assumptions an_actual_callback_uses_the_exact_stored_typed_native_state.
 Print Assumptions an_actual_callback_entry_exposes_its_original_call_and_continuation.
 Print Assumptions an_original_requested_child_returns_its_certified_answer_and_exact_parked_payload.
 Print Assumptions an_actual_map_segment_follows_its_retained_original_dialogue.
+Print Assumptions an_actual_original_map_start_returns_its_projected_map_comparison.
 End GeneratedMapActualSegment.
