@@ -322,6 +322,69 @@ These checks do not establish complete Rholang scope-opening/reconstruction
 or public-node behavior; those source contexts remain separate acceptance
 obligations.
 
+## Normal owned cleanup boundaries
+
+Borrowed iteration, consuming iteration, and destruction of a retained result
+have different ownership effects. In the pinned native source, consuming
+`RawIntoIter::next` forwards to its embedded `RawIter::next`, then moves the
+returned bucket's record with `Bucket::read`. Its destructor continues that
+same iterator through `RawIter::drop_elements`; it does not start another
+table scan. Direct `RawTable` destruction instead calls
+`RawTableInner::drop_inner_table`, which may construct a fresh iterator.
+
+| Owner being released | Native scan during normal cleanup | Key and allocation effects |
+|---|---|---|
+| Borrowed comparison iterator | None | No key destruction or table release |
+| Partially consumed `RawIntoIter` | Continue its existing cursor only if keys require destruction and stored entries remain | Destroy each remaining stored key once; release its allocation once if present |
+| Retained reconstruction result | Fresh scan only if allocated, nonempty, and keys require destruction | Destroy each stored key once; release the allocation even when allocated but empty |
+
+Let $`S`$ be the original sequence of occupied bucket positions, $`M`$ the
+positions already moved out, and $`R`$ the positions remaining in the cursor.
+Concatenation is denoted by $`\mathbin{+\!+}`$. A consuming prefix preserves
+the exact occurrence partition:
+
+```math
+S=M\mathbin{+\!+}R.
+```
+
+When normal iterator destruction visits all remaining positions, the moved
+prefix and destruction suffix belong to one scan with one initial group load.
+After the final successful `next`, an empty suffix needs no terminal `next`
+call during destruction. A previously constructed empty iterator has already
+paid its initial load; an empty retained table destroyed directly never
+constructs that iterator. These distinctions prevent charging an invented
+second scan or omitting a real first scan.
+
+The [owned-cursor composition](../../formal/rocq/rho_bridge/theories/NativeHashBagOwnedScan.v)
+reuses the borrowed scan transitions. It proves that an actual consuming prefix
+followed by a continuation is one original scan, preserves the exact pending
+slot sequence, and partitions the original sequence at exhaustion. Both
+segments share the existing historical event allowance, componentwise and
+under any declared nonnegative cursor-event weights. This proof covers the
+cursor events, not the separate ownership and destruction effects below.
+
+One stored key is one owned occurrence, even when its count is zero or greater
+than one. Equal key values or aliased child pointers do not merge ownership
+receipts. Invoking a key destructor transfers to its complete, independently
+admitted root-cleanup path; it is not a constant-time operation. Bucket reads,
+ownership handoff, wrapper guards, and allocation release also require their
+own source-backed accounting. The borrowed scan's event bound alone does not
+cover those effects.
+
+`try_rebuild_entries_with` receives a `Vec<(T, usize)>`, not a consuming
+`HashBag` iterator. A refused insertion leaves three distinct cleanup owners:
+the current input key, the pending vector suffix, and the retained result bag.
+Reuse the existing vector and root-occurrence cleanup laws for the first two;
+the last uses the direct-table path above. Do not add a nonexistent incoming
+hash-table scan to this interface.
+
+Cleanup credit must be retained before mutation. In particular, a pending
+insertion can enlarge the retained table, so observing its capacity after
+growth is insufficient prepayment for cleanup. The prospective growth bound
+and checked arithmetic must cover that future allocation before the original
+native insertion runs. These are normal returned-error obligations, distinct
+from arbitrary panic unwinding or physical allocator behavior.
+
 ## Remaining concrete coverage
 
 The extent invariant is one input to admission, not the complete allowance.
