@@ -177,9 +177,80 @@ Proof.
 Qed.
 End ExistingCallbackEntry.
 
+Import GeneratedConstructorComparisonClasses.GeneratedConstructorComparisonClasses.
+Import GeneratedConstructorSourceProjection.GeneratedConstructorSourceProjection.
+Import GeneratedSourceRowComparison.GeneratedSourceRowComparison.
+
+Section OriginalRequestedChild.
+Context {Cat : Type}.
+Variable Term : Cat -> Type.
+Variables maximum owner_ceiling : nat.
+Variable category_callback : Cat -> nat.
+Variables uid_digest binder_digest : nat -> nat.
+Local Notation Position := AdmittedGeneratedComparisonScheduling.AdmittedGeneratedComparisonScheduling.Position.
+Variable lookup : Position -> option { category : Cat & (Term category * Term category)%type }.
+Variable signature : Cat -> list (@Row Cat).
+Variable observe : forall category, Term category -> SourceObservation signature Term category.
+Variable alias : forall category, Term category -> Term category -> bool.
+Local Notation Cells := (@State Cat Term).
+Local Notation owned_map := (@GeneratedMapSourceOwnership.GeneratedMapSourceOwnership.owned_map Cat Term).
+Local Notation OriginalArm := (@GeneratedMapOwnerTraversal.GeneratedMapOwnerTraversal.arm_source
+  Cat Term maximum owner_ceiling category_callback uid_digest binder_digest lookup signature observe).
+Local Notation OriginalCore := (@core_source Cat Term maximum alias category_callback lookup).
+Local Notation OriginalDiscard := (@GeneratedMapSourceOwnership.GeneratedMapSourceOwnership.discard_source Cat Term).
+Local Notation Trace := (@ChildTraversal Cells OriginalArm OriginalCore OriginalDiscard).
+Local Notation RawState :=
+  (fun category : Cat => @GeneratedMapCoreSource.GeneratedMapCoreSource.RawMapState (Term category) (Term category)).
+Local Notation RawRequest := GeneratedMapCoreSource.GeneratedMapCoreSource.RawRequest.
+Local Notation RawRequests := GeneratedMapCoreSource.GeneratedMapCoreSource.Requests.
+Variable children : Cat -> Ordered.
+Variable next : forall category, Term category -> option (carrier (children category)).
+Local Notation AnswerCertificate :=
+  (fun category => @GeneratedAdmittedMapDialogue.GeneratedAdmittedMapDialogue.original_answer_has_projected_operands
+    (Term category) (Term category) (children category) (children category) (next category) (next category)).
+Hypothesis lower_height_completed_child : forall category position left right left_key right_key,
+  pair_at Term lookup category position left right ->
+  next category left = Some left_key -> next category right = Some right_key ->
+  forall count state events result last,
+  Trace [] count Run [child_task position] state events result last ->
+  result = comparison_function (children category) left_key right_key.
+
+(** The answer is justified for these original operands, including pairs from
+    within one sorting roster. Parked-state preservation is derived from the
+    original move discipline, not included in the child induction premise. *)
+Theorem an_original_requested_child_returns_its_certified_answer_and_exact_parked_payload :
+  forall category owner callback position role
+    (request : @RawRequest (Term category) (Term category)) answer
+    (raw : RawState category) buffers count before events result after,
+  original_reply_binding Term lookup category (RawRequests request) (Requests role position) ->
+  AnswerCertificate category (request, answer) ->
+  nth_error before owner = Some (Some (callback, owned_map category buffers raw)) ->
+  Trace [Resume owner callback] count Run [child_task position] before events result after ->
+  result = answer /\
+  nth_error after owner = Some (Some (callback, owned_map category buffers raw)).
+Proof.
+  intros category owner callback position role request answer raw buffers count before events result after
+    BINDING CERTIFICATE STORED CHILD.
+  assert (ISOLATED : Trace [] count Run [child_task position] before events result after).
+  { eapply finite_child_traversal_strips_to_a_genuine_isolated_trace; exact CHILD. }
+  split.
+  - destruct request, role; cbn [original_reply_binding] in BINDING; try contradiction;
+      destruct CERTIFICATE as [left_key [right_key [LEFT [RIGHT ANSWER]]]];
+      cbn [fst snd] in ANSWER;
+      rewrite <- ANSWER; eapply lower_height_completed_child; eassumption.
+  - eapply GeneratedMapOwnerTraversal.GeneratedMapOwnerTraversal.a_completed_child_retains_its_exact_parent_resume_payload
+      with (outer := []) (prefix := [child_task position]); [exact CHILD| |exact STORED].
+    change (NoDup [owner] /\ Forall (live_owner before) [owner]).
+    split.
+    + constructor; [intro ABSENT; inversion ABSENT|constructor].
+    + constructor; [exists callback, (owned_map category buffers raw); exact STORED|constructor].
+Qed.
+End OriginalRequestedChild.
+
 Print Assumptions equal_original_owner_payloads_have_the_same_category.
 Print Assumptions equal_same_category_owners_have_the_exact_same_native_state.
 Print Assumptions the_taken_owner_is_the_original_complete_stored_payload.
 Print Assumptions an_actual_callback_uses_the_exact_stored_typed_native_state.
 Print Assumptions an_actual_callback_entry_exposes_its_original_call_and_continuation.
+Print Assumptions an_original_requested_child_returns_its_certified_answer_and_exact_parked_payload.
 End GeneratedMapActualSegment.
