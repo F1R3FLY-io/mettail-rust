@@ -444,6 +444,20 @@ ownership handoff, wrapper guards, and allocation release also require their
 own source-backed accounting. The borrowed scan's event bound alone does not
 cover those effects.
 
+The [retained-table cleanup composition](../../formal/rocq/rho_bridge/theories/NativeHashBagRetainedCleanup.v)
+selects the fresh scan using the native allocation, destructor, and entry-count
+guards. It proves exact original-slot visitation and applies the historical
+scan envelope. Its wrapper projection distinguishes destructor dispatch from
+bucket moves: direct table cleanup invokes no `Bucket::read` and frees only
+allocated tables. These are invocation counts, not constant destructor or
+allocator costs.
+
+Physical bucket order need not equal the reconstruction model's retained-list
+order. The cleanup proof transfers existing full root receipts through a
+permutation of retained ownership occurrences, then composes the existing
+retained/discarded/pending partition. The native slot-to-owner association is
+an explicit source obligation, not an equality-by-key or pointer shortcut.
+
 `try_rebuild_entries_with` receives a `Vec<(T, usize)>`, not a consuming
 `HashBag` iterator. A refused insertion leaves three distinct cleanup owners:
 the current input key, the pending vector suffix, and the retained result bag.

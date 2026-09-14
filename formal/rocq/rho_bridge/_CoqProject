@@ -79,6 +79,7 @@ theories/NativeHashBagProbeSequence.v
 theories/NativeHashBagBorrowedScan.v
 theories/NativeHashBagScanBound.v
 theories/NativeHashBagOwnedScan.v
+theories/NativeHashBagRetainedCleanup.v
 theories/AdmittedKeyHashExecution.v
 theories/AdmittedStructuralKeyHash.v
 theories/AdmittedGeneratedHashScheduling.v
