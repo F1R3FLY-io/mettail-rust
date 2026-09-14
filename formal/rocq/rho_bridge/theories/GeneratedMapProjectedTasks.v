@@ -24,6 +24,8 @@ Import GeneratedSourceRowComparison.GeneratedSourceRowComparison.
 Import GeneratedComparisonFieldResults.GeneratedComparisonFieldResults.
 Import GeneratedCollectionOwnerFrame.GeneratedCollectionOwnerFrame.
 Import AdmittedGeneratedCollectionScheduling.AdmittedGeneratedCollectionScheduling.
+Import GeneratedChildTraversal.GeneratedChildTraversal.
+Import SemanticComparisonLaws.SemanticComparisonLaws.
 
 Module GeneratedMapProjectedTasks.
 Section OriginalTaskCertificates.
@@ -285,6 +287,89 @@ Proof.
     + eapply a_complete_owner_frame_transports_the_original_batch; eassumption.
 Qed.
 End OriginalReverseFields.
+
+Local Notation TC := (@TrailerConstruction Cat Term State uid_digest binder_digest lookup).
+
+Theorem the_existing_scope_recipe_certifies_its_projection_at_any_owner_state :
+  forall fields left right before word events after,
+  TC fields left right before word events after -> forall left_key right_key state,
+  project_fields Term uid_digest binder_digest children next fields left = Some left_key ->
+  project_fields Term uid_digest binder_digest children next fields right = Some right_key ->
+  ProjectedInitialBatch state (rev word)
+    (comparison_function (fields_order children fields) left_key right_key).
+Proof.
+  intros fields left right before word events after BUILD left_key right_key state LEFT RIGHT.
+  apply existing_borrowed_batch_lifts_without_rederiving_its_recipes.
+  eapply constructed_scope_binds_its_successful_projection; eassumption.
+Qed.
+
+Definition ProjectedInitialHandler state exit decision : Prop := match exit with
+  | Signalled result => result = decision
+  | Scheduled tasks => ProjectedInitialBatch state tasks decision
+  end.
+
+Section OriginalArm.
+Variable field_position : nat -> AdmittedGeneratedComparisonScheduling.AdmittedGeneratedComparisonScheduling.Position.
+Variable trailer_fields : list (@Field Cat).
+Variables trailer_left trailer_right : source_fields_type Term trailer_fields.
+Local Notation AC := (@ArmConstruction Cat Term State uid_digest binder_digest lookup
+  Make field_position trailer_fields trailer_left trailer_right).
+Local Notation ProjectFields := (project_fields Term uid_digest binder_digest children next).
+
+Theorem the_original_arm_certifies_its_entire_projected_row_at_the_resulting_owner_state :
+  forall fields left right index before exit events after,
+  AC fields left right index before exit events after ->
+  forall left_key right_key trailer_left_key trailer_right_key,
+  ProjectFields fields left = Some left_key -> ProjectFields fields right = Some right_key ->
+  ProjectFields trailer_fields trailer_left = Some trailer_left_key ->
+  ProjectFields trailer_fields trailer_right = Some trailer_right_key ->
+  ProjectedInitialHandler after exit
+    (lex (comparison_function (fields_order children fields) left_key right_key)
+      (comparison_function (fields_order children trailer_fields) trailer_left_key trailer_right_key)).
+Proof.
+  intros fields left right index before exit events after BUILD.
+  induction BUILD; intros left_key right_key tlk trk LEFT RIGHT TRAILER_LEFT TRAILER_RIGHT.
+  - destruct left_key as [lk lks], right_key as [rk rks].
+    apply successful_pair_projection_keeps_both_original_positions in LEFT as [LP LR].
+    apply successful_pair_projection_keeps_both_original_positions in RIGHT as [RP RR].
+    pose proof (successful_native_field_projection_has_the_original_leaf_result
+      Term uid_digest binder_digest children next atom left right lk rk LP RP) as NATIVE.
+    change (atom_source_compare uid_digest binder_digest atom left right =
+      lex (lex (comparison_function (atom_order atom) lk rk)
+        (comparison_function (fields_order children rest) lks rks))
+        (comparison_function (fields_order children trailer_fields) tlk trk)).
+    rewrite <- NATIVE. destruct (atom_source_compare uid_digest binder_digest atom left right);
+      [contradiction|reflexivity|reflexivity].
+  - destruct left_key as [lk lks], right_key as [rk rks].
+    apply successful_pair_projection_keeps_both_original_positions in LEFT as [LP LR].
+    apply successful_pair_projection_keeps_both_original_positions in RIGHT as [RP RR].
+    pose proof (successful_native_field_projection_has_the_original_leaf_result
+      Term uid_digest binder_digest children next atom left right lk rk LP RP) as NATIVE.
+    change (ProjectedInitialHandler after exit
+      (lex (lex (comparison_function (atom_order atom) lk rk)
+        (comparison_function (fields_order children rest) lks rks))
+        (comparison_function (fields_order children trailer_fields) tlk trk))).
+    rewrite <- NATIVE, H. eapply IHBUILD; eassumption.
+  - unfold ProjectedInitialHandler. rewrite rev_app_distr. apply original_initial_batch_append.
+    + eapply reverse_field_construction_certifies_the_original_forward_field_order; eassumption.
+    + eapply the_existing_scope_recipe_certifies_its_projection_at_any_owner_state; eassumption.
+  - destruct left_key, right_key. cbn [ProjectedInitialHandler fields_order comparison_function].
+    eapply the_existing_scope_recipe_certifies_its_projection_at_any_owner_state; eassumption.
+Qed.
+
+Theorem a_scheduled_original_arm_has_distinct_live_initial_owners :
+  forall fields left right index before tasks events after,
+  AC fields left right index before (Scheduled tasks) events after ->
+  pending_owners_valid tasks after.
+Proof.
+  intros fields left right index before tasks events after BUILD.
+  pose proof (GeneratedMapOwnerTraversal.GeneratedMapOwnerTraversal.original_arm_construction_retains_its_complete_owner_frame
+    Term maximum owner_ceiling category_callback uid_digest binder_digest lookup field_position
+    trailer_fields trailer_left trailer_right fields left right index before (Scheduled tasks) events after
+    BUILD [] (an_empty_pending_word_has_valid_owner_inventory before)) as [LIVE FRAME].
+  now rewrite app_nil_r in LIVE.
+Qed.
+End OriginalArm.
 End OriginalConstruction.
 End OriginalTaskCertificates.
 End GeneratedMapProjectedTasks.
@@ -305,3 +390,6 @@ Print Assumptions GeneratedMapProjectedTasks.a_complete_owner_frame_transports_t
 Print Assumptions GeneratedMapProjectedTasks.an_empty_pending_word_has_valid_owner_inventory.
 Print Assumptions GeneratedMapProjectedTasks.reverse_constructed_original_fields_have_distinct_live_owners.
 Print Assumptions GeneratedMapProjectedTasks.reverse_field_construction_certifies_the_original_forward_field_order.
+Print Assumptions GeneratedMapProjectedTasks.the_existing_scope_recipe_certifies_its_projection_at_any_owner_state.
+Print Assumptions GeneratedMapProjectedTasks.the_original_arm_certifies_its_entire_projected_row_at_the_resulting_owner_state.
+Print Assumptions GeneratedMapProjectedTasks.a_scheduled_original_arm_has_distinct_live_initial_owners.
