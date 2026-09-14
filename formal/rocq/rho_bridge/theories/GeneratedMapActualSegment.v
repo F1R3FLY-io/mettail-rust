@@ -245,6 +245,60 @@ Proof.
     + constructor; [intro ABSENT; inversion ABSENT|constructor].
     + constructor; [exists callback, (owned_map category buffers raw); exact STORED|constructor].
 Qed.
+Variable category_eq_dec : forall lhs rhs : Cat, {lhs = rhs} + {lhs <> rhs}.
+Local Notation RawDialogue := GeneratedMapCoreSource.GeneratedMapCoreSource.RawDialogue.
+Local Notation Ingress := GeneratedMapCoreSource.GeneratedMapCoreSource.Ingress.
+Local Notation ReturnReply := GeneratedMapCoreSource.GeneratedMapCoreSource.ReturnReply.
+Local Notation RawCompletes := GeneratedMapCoreSource.GeneratedMapCoreSource.Completes.
+
+(** The retained dialogue is advanced only by the actual completed child.
+    First-return determinism identifies the precise returned native payload;
+    the preceding child theorem preserves that payload until its Resume. *)
+Theorem an_actual_map_segment_follows_its_retained_original_dialogue :
+  forall category answers input (raw raw_final : RawState category) expected
+    owner callback buffers count before events result after,
+  @RawDialogue (Term category) (Term category) (alias category) (alias category) maximum
+    (Ingress input) raw answers (ReturnReply (RawCompletes expected)) raw_final ->
+  Forall (AnswerCertificate category) answers ->
+  nth_error before owner = Some (Some (callback, owned_map category buffers raw)) ->
+  Trace [] count (callback_entry_mode input) [callback_entry_task owner callback input]
+    before events result after ->
+  result = expected.
+Proof.
+  intros category answers. induction answers as [|[request answer] rest IH];
+    intros input raw raw_final expected owner callback buffers count before events result after
+      DIALOGUE CERTIFICATE STORED TRAVERSAL.
+  all: destruct (@an_actual_callback_entry_exposes_its_original_call_and_continuation
+    Cells OriginalArm OriginalCore OriginalDiscard owner callback input count before events result after TRAVERSAL)
+    as [reply [core_events [callback_after [remaining [later_events [CALL [CONT [COUNT EVENTS]]]]]]]].
+  all: destruct (@an_actual_callback_uses_the_exact_stored_typed_native_state
+    Cat category_eq_dec Term maximum alias category_callback lookup
+    owner callback input before reply core_events callback_after CALL category buffers raw STORED)
+    as [CALLBACK [native_reply [native_after [RAW [BINDING CELL]]]]].
+  all: pose proof
+    (GeneratedMapCoreDeterminism.GeneratedMapCoreDeterminism.actual_resume_keeps_the_exact_retained_dialogue_frontier
+      (alias category) (alias category) maximum _ _ _ _ _ DIALOGUE _ _ RAW) as FRONTIER.
+  - destruct FRONTIER as [RETURN FINAL]. subst native_reply.
+    destruct reply as [role position|ordering]; cbn [original_reply_binding] in BINDING; try contradiction.
+    subst ordering. destruct expected; inversion CONT; reflexivity.
+  - destruct FRONTIER as [RETURN DIALOGUE_TAIL]. subst native_reply.
+    assert (REQUESTED : exists role position, reply = Requests role position).
+    { destruct request, reply; cbn [original_reply_binding] in BINDING; try contradiction;
+        do 2 eexists; reflexivity. }
+    destruct REQUESTED as [role [position ->]].
+    destruct CELL as [next_buffers STORED_NEXT].
+    apply Forall_cons_iff in CERTIFICATE as [HEAD TAIL].
+    destruct (@running_child_trace_splits_before_its_untouched_frame
+      Cells OriginalArm OriginalCore OriginalDiscard remaining
+      [child_task position] [Resume owner callback] callback_after later_events result after CONT)
+      as [child_count [continuation_count [child_result [middle [child_events [continuation_events
+        [CHILD [CONTINUE [COUNTS SPLIT_EVENTS]]]]]]]]].
+    destruct (an_original_requested_child_returns_its_certified_answer_and_exact_parked_payload
+      category owner callback position role request answer native_after next_buffers
+      child_count callback_after child_events child_result middle BINDING HEAD STORED_NEXT CHILD)
+      as [ANSWER RESTORED]. subst child_result.
+    eapply IH; [exact DIALOGUE_TAIL|exact TAIL|exact RESTORED|exact CONTINUE].
+Qed.
 End OriginalRequestedChild.
 
 Print Assumptions equal_original_owner_payloads_have_the_same_category.
@@ -253,4 +307,5 @@ Print Assumptions the_taken_owner_is_the_original_complete_stored_payload.
 Print Assumptions an_actual_callback_uses_the_exact_stored_typed_native_state.
 Print Assumptions an_actual_callback_entry_exposes_its_original_call_and_continuation.
 Print Assumptions an_original_requested_child_returns_its_certified_answer_and_exact_parked_payload.
+Print Assumptions an_actual_map_segment_follows_its_retained_original_dialogue.
 End GeneratedMapActualSegment.
