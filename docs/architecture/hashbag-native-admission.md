@@ -236,6 +236,36 @@ arithmetic and table-layout limits before the original insertion. Checking
 the bucket bound alone does not establish those guards, account for retained
 key rehashing, or pay for the new table's lookup and storage work.
 
+## Lookup probe sequence
+
+Native lookup and insertion use a triangular group probe, not the sequential
+iterator walk. For an allocated table with $`B\geq16`$, define the number of
+groups as $`q=B/16`$, the initial bucket position as $`p_0`$, and the triangular
+numbers and subsequent probe positions as follows:
+
+```math
+T_0=0,\qquad T_{k+1}=T_k+k+1,\qquad
+p_k=(p_0+16T_k)\bmod B.
+```
+
+The [probe-sequence algebra](../../formal/rocq/rho_bridge/theories/NativeHashBagProbeSequence.v)
+derives that the first $`q`$ triangular residues modulo $`q`$ permute the whole
+range from zero through $`q-1`$. It uses the fact that $`q`$ is a power of two
+and proves injectivity through parity and divisibility; coverage is not an
+assumption. It also proves the incremented-stride recurrence and the exact
+formula retaining the initial offset modulo sixteen. These are shifted,
+possibly unaligned windows, not the aligned groups of the iterator model.
+
+This integer result alone does not prove native lookup termination or bound
+its equality callbacks. Those require the control-window and mirrored-byte
+interpretation, coherent occupied/deleted counts, an empty control entry, and
+the actual loop's candidate-before-empty-test order. Four- and eight-bucket
+tables have empty padding and a separate small-window interpretation; the
+singleton uses static empty controls. A possible small-table insertion-index
+repair is a separate load. Native `ProbeSeq::move_next` uses ordinary machine
+addition before masking, so its reached-prefix arithmetic guards must also
+hold; modular arithmetic is not permission to assume wrapping addition.
+
 ## Borrowed iteration accounting
 
 The borrowed-roster path must use the original iterator through explicit
