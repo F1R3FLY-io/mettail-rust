@@ -85,6 +85,7 @@ theories/AdmittedFltComparison.v
 theories/AdmittedGeneratedComparisonScheduling.v
 theories/GeneratedComparisonFieldResults.v
 theories/AdmittedCollectionComparisonOwnership.v
+theories/GeneratedBagComparisonInitialization.v
 theories/AdmittedGeneratedCollectionScheduling.v
 theories/GeneratedChildTraversal.v
 theories/MergeSortPdaCursor.v

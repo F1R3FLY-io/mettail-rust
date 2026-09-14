@@ -267,6 +267,46 @@ count-sum overflow refusals, and transported-total distinctions. This adapter
 does not itself enable generated `PPar` comparison, pay for sorting or key
 comparisons, or admit consuming reconstruction.
 
+## Generated comparison initialization
+
+The [initialization model](../../formal/rocq/rho_bridge/theories/GeneratedBagComparisonInitialization.v)
+connects the repeated-item adapter to the existing paid-roster model. A
+successful walk preserves each original borrowed key, absent secondary value,
+positive count, and native iteration position. Its cached total equals the
+sum of those counts and fits the checked maximum. The general append lemma
+requires the initial cached total to fit too; an empty source does not validate
+an arbitrary pre-existing total. Fresh generated rosters start at zero.
+
+Both public comparison constructors call the same private
+`CollectionCmpPda::from_parts` initializer with five value arguments: lead,
+left entries, right entries, left repetition sum, and right repetition sum.
+Checked admission adds reservation and refusal behavior, not a different
+sorting machine. Initialization correspondence concerns those exact arguments;
+it does not assume the final comparison result or introduce another comparator.
+
+The generated Bag factory must compute the stored-total ordering first, then
+build both original rosters, then initialize that shared machine. An unequal
+lead must not skip either roster: ordinary construction also builds its
+arguments before the machine can return that ordering. Consequently, a stored
+zero count or overflowing repetition sum produces the named checked refusal
+even when the two stored totals differ. Root-alias equality may retain its
+existing shortcut; malformed-input tests must not confuse that shortcut with
+an executed collection factory.
+
+Ordinary `map`/`collect` may use the native specialized `fold`, whereas the
+checked adapter uses explicit `next`. Both visit increasing control groups and
+the lowest remaining occupied position within each group, giving the same
+ordered values. Their terminal mask-probe counts differ. This value-order
+correspondence does not extend the borrowed `next` cost proof to `fold`.
+
+The constructor census keeps operational support separate from eligibility
+for its existing formal row vocabulary. That vocabulary has paired maps but
+no weighted Bag field. A whole Bag-bearing row therefore has an explicit
+unprojected `U` record, together with its full operational carrier checks and
+both original generated arms. It must not receive an invented formal field or
+a false runtime-refusal annotation. This initialization proof does not establish
+the outstanding whole-category factorization for nested weighted collections.
+
 ## Remaining concrete coverage
 
 The extent invariant is one input to admission, not the complete allowance.
