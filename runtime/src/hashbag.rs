@@ -39,6 +39,11 @@ use moniker::{OnBoundFn, OnFreeFn, ScopeState};
 pub struct HashBag<T: Clone + Hash + Eq> {
     /// Map from elements to their counts
     counts: HashMap<T, usize, BuildHasherDefault<FxHasher>>,
+    /// Maximum native capacity observed since this backing table was created.
+    /// Deletion may lower current capacity without shrinking its allocation.
+    /// Clone preserves this metadata; replacing the backing table resets it.
+    /// It is deliberately absent from equality, ordering, and hash streams.
+    capacity_high_water: usize,
     /// Total number of elements (sum of all counts)
     total_count: usize,
     /// Order-independent element/count lanes maintained incrementally by every mutation.
@@ -151,6 +156,10 @@ pub enum HashBagRebuildStep<'a, T> {
 }
 
 impl<T: Clone + Hash + Eq> HashBag<T> {
+    fn observe_counts_capacity(&mut self) {
+        self.capacity_high_water = self.capacity_high_water.max(self.counts.capacity());
+    }
+
     fn from_elements(iter: impl IntoIterator<Item = T>) -> Self {
         let mut bag = Self::new();
         for item in iter {
@@ -179,6 +188,8 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
 
     fn insert_binding_entry(&mut self, element: T, count: usize) {
         self.counts.insert(element, count);
+        // Native insert may reserve before discovering an existing key.
+        self.observe_counts_capacity();
     }
 
     /// Rebuild already-transformed binding entries using the native binding
@@ -277,6 +288,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     pub fn new() -> Self {
         Self {
             counts: HashMap::default(),
+            capacity_high_water: 0,
             total_count: 0,
             hash_summary: HashBagHashSummary::default(),
         }
@@ -330,6 +342,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         }
         self.hash_summary.add(new_lanes);
         self.total_count += 1;
+        self.observe_counts_capacity();
     }
 
     /// Removes one occurrence of an element from the bag.
@@ -439,6 +452,20 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         self.counts.len()
     }
 
+    /// Maximum observed native capacity for the current backing table.
+    ///
+    /// This constant-time metadata survives deletion and native cloning, but
+    /// resets when binding replaces the backing map. On the audited native
+    /// profile, `NativeHashBagHistory.v` derives a bucket bound of the larger
+    /// of one and twice this value. Consumers must check arithmetic, admit
+    /// their own inspection, and separately cover scanning and key work.
+    /// This query grants no execution budget and is not an allocation bound
+    /// for unsupported toolchains or arbitrary interrupted native mutations.
+    #[doc(hidden)]
+    pub fn historical_capacity(&self) -> usize {
+        self.capacity_high_water
+    }
+
     /// Returns `true` if the bag contains no elements.
     ///
     /// # Examples
@@ -493,6 +520,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
             }
             self.hash_summary.add(new_lanes);
             self.total_count += count;
+            self.observe_counts_capacity();
         }
     }
 
@@ -746,6 +774,7 @@ where
         // Close each unique element
         // We need to rebuild the map because closing might change element identity
         let old_counts = std::mem::take(&mut self.counts);
+        self.capacity_high_water = 0;
         self.insert_binding_entries(old_counts.into_iter().map(|(mut elem, count)| {
             elem.close_term(state, on_free);
             (elem, count)
@@ -755,6 +784,7 @@ where
     fn open_term(&mut self, state: ScopeState, on_bound: &impl OnBoundFn<N>) {
         // Open each unique element
         let old_counts = std::mem::take(&mut self.counts);
+        self.capacity_high_water = 0;
         self.insert_binding_entries(old_counts.into_iter().map(|(mut elem, count)| {
             elem.open_term(state, on_bound);
             (elem, count)
@@ -771,10 +801,11 @@ where
         // Need to rebuild the map since we need mutable access to keys
         let old_counts = std::mem::take(&mut self.counts);
         self.counts = HashMap::default();
+        self.capacity_high_water = 0;
 
         for (mut elem, count) in old_counts {
             elem.visit_mut_vars(on_var);
-            self.counts.insert(elem, count);
+            self.insert_binding_entry(elem, count);
         }
         self.rebuild_hash_summary();
     }
@@ -806,6 +837,10 @@ impl<T: Clone + Hash + Eq + Ord + fmt::Display> fmt::Display for HashBag<T> {
         write!(f, "}}")
     }
 }
+
+#[cfg(test)]
+#[path = "hashbag_history_tests.rs"]
+mod history_tests;
 
 #[cfg(test)]
 mod tests {
@@ -863,6 +898,9 @@ mod tests {
         result.total_count = source.total_count;
         for (key, count) in entries {
             result.counts.insert(key, count);
+            // Keep the oracle's original native insertion recipe independent
+            // of the production helper while maintaining valid metadata.
+            result.capacity_high_water = result.capacity_high_water.max(result.counts.capacity());
         }
         result.rebuild_hash_summary();
         result

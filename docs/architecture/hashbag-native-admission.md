@@ -133,7 +133,17 @@ derives the boundary invariant and bucket bound by induction over completed
 insertions, erases, clones, and fresh-table resets. Neither model assumes the
 history bound as a transition premise. Resize sizes are overapproximated by
 valid native bucket sizes with sufficient room; the proof does not yet verify
-allocation rounding, scan coverage, prepayment, or Rust metadata maintenance.
+allocation rounding, scan coverage, or prepayment.
+
+The Rust owner maintains `capacity_high_water` at these operation boundaries
+and exposes it through the constant-time `historical_capacity()` query. The
+[focused regression tests](../../runtime/src/hashbag_history_tests.rs) compare
+that field against independently observed native capacities, including real
+tombstones, replacement-triggered growth without a new key, inherited clone
+history, and all binding-table reset paths. They also check that differing
+allocation histories leave native equality, ordering, and hash bytes unchanged.
+This validates metadata maintenance on the tested profile, not the unfinished
+concrete traversal allowance or end-to-end frontend admission.
 
 ## Mutation and observation order
 
