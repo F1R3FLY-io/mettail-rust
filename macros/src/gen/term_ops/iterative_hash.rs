@@ -190,6 +190,10 @@ impl HashEmissionNames {
         format_ident!("{}{}", self.handler_prefix, category.to_string().to_lowercase())
     }
 
+    fn map_scheduler(&self, category: &Ident) -> Ident {
+        format_ident!("checked_hash_schedule_map_{}", category.to_string().to_lowercase())
+    }
+
     /// Preserve the native call expression at its existing stream position.
     fn hash_value(&self, value: TokenStream) -> TokenStream {
         if self.checked {
@@ -433,7 +437,9 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
     let absorb_pathmap_mode = emission.hash_value(quote! { &mode });
 
     if emission.checked {
+        let map_helpers = generate_checked_map_hash_helpers(language, emission);
         return quote! {
+            #(#map_helpers)*
             #(#helper_fns)*
 
             #[allow(dead_code, unused_variables)]
@@ -572,6 +578,113 @@ fn hash_collection_stmts(
     }
 }
 
+/// Schedule original Map borrows using the existing admitted stable sorter.
+/// Only element categories actually needed by admitted Map arms get a helper.
+/// Sorting never receives a hasher; reverse pops schedule value then key, and
+/// the length is pushed last so the native length/key/value stream drains first.
+fn generate_checked_map_hash_helpers(
+    language: &LanguageDef,
+    emission: &HashEmissionNames,
+) -> Vec<TokenStream> {
+    let mut required = std::collections::BTreeSet::new();
+    for ty in &language.types {
+        for variant in collect_category_variants(&ty.name, language) {
+            if !checked_hash_variant_supported(&ty.name, &variant, language) {
+                continue;
+            }
+            match variant {
+                VariantKind::Collection {
+                    element_cat,
+                    coll_type: CollectionType::HashMap,
+                    ..
+                }
+                | VariantKind::CollectionLiteral {
+                    element_cat,
+                    coll_type: CollectionType::HashMap,
+                    ..
+                } => {
+                    required.insert(element_cat.to_string());
+                },
+                VariantKind::Regular { fields, .. }
+                | VariantKind::Binder { pre_scope_fields: fields, .. }
+                | VariantKind::MultiBinder { pre_scope_fields: fields, .. } => {
+                    for field in fields {
+                        if field.is_collection
+                            && field.coll_type.as_ref() == Some(&CollectionType::HashMap)
+                        {
+                            required.insert(field.category.to_string());
+                        }
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+    language.types.iter().filter(|ty| required.contains(&ty.name.to_string())).map(|ty| {
+        let category = &ty.name;
+        let helper = emission.map_scheduler(category);
+        let task_enum = &emission.task_enum;
+        let task_variant = format_ident!("Hash{}", category);
+        let routing = emission.routing();
+        let push_value = emission.push_task(quote! { #task_enum::#task_variant(value.cast::<#category>()) });
+        let push_key = emission.push_task(quote! { #task_enum::#task_variant(key.cast::<#category>()) });
+        let push_length = emission.push_task(quote! { #task_enum::AbsorbUsize(length) });
+        quote! {
+            #[inline(never)]
+            #[allow(dead_code)]
+            fn #helper<E>(
+                source: &mettail_runtime::HashMapLit<#category, #category>,
+                stack: &mut Vec<#task_enum<E>>,
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+            ) -> Result<(), mettail_runtime::KeyHashFailure<E>> {
+                #routing
+                let roster = source.try_comparison_roster(reserve)?;
+                let mut machine = mettail_runtime::CheckedCollectionSortPda::try_new(roster, reserve)?;
+                let mut response = None;
+                let mut sorted = loop {
+                    #routing
+                    match machine.try_resume(response.take(), reserve)? {
+                        mettail_runtime::CheckedCollectionSortStep::CompareEntries { machine: next, left, right } => {
+                            let (left_key, left_value) = left.try_pair_ptrs(reserve)?;
+                            let (right_key, right_value) = right.try_pair_ptrs(reserve)?;
+                            // The sole roster producer borrowed this immutable
+                            // Map. Restore exactly its original category; the
+                            // root remains borrowed throughout Hash task draining.
+                            let ordering = unsafe {
+                                <#category as mettail_runtime::CheckedIterativeComparison>::try_cmp_iterative(
+                                    &*left_key.cast::<#category>(), &*right_key.cast::<#category>(), reserve,
+                                )
+                            }?;
+                            #routing
+                            response = Some(match ordering {
+                                std::cmp::Ordering::Equal => unsafe {
+                                    <#category as mettail_runtime::CheckedIterativeComparison>::try_cmp_iterative(
+                                        &*left_value.cast::<#category>(), &*right_value.cast::<#category>(), reserve,
+                                    )
+                                }?,
+                                other => other,
+                            });
+                            machine = next;
+                        },
+                        mettail_runtime::CheckedCollectionSortStep::Done(sorted) => break sorted,
+                    }
+                };
+                loop {
+                    #routing
+                    let Some(item) = sorted.try_pop(reserve)? else { break };
+                    let (key, value) = item.try_pair_ptrs(reserve)?;
+                    #push_value;
+                    #push_key;
+                }
+                #routing
+                let length = source.len();
+                #push_length;
+                Ok(())
+            }
+        }
+    }).collect()
+}
+
 fn unordered_collection_hash_stmts(
     element_cat: &Ident,
     coll_type: &CollectionType,
@@ -584,6 +697,10 @@ fn unordered_collection_hash_stmts(
     if emission.checked && *coll_type == CollectionType::HashBag {
         let push = emission.push_task(emission.opaque_task(quote! { #coll_expr }));
         return quote! { #push; };
+    }
+    if emission.checked && *coll_type == CollectionType::HashMap {
+        let helper = emission.map_scheduler(element_cat);
+        return quote! { #helper(#coll_expr, stack, reserve)?; };
     }
     match coll_type {
         CollectionType::HashSet => quote! {
@@ -676,7 +793,7 @@ fn checked_hash_collection_supported(
     kind: &CollectionType,
     language: &LanguageDef,
 ) -> bool {
-    matches!(kind, CollectionType::Vec | CollectionType::HashBag)
+    matches!(kind, CollectionType::Vec | CollectionType::HashBag | CollectionType::HashMap)
         && language.types.iter().any(|ty| ty.name == *category)
 }
 

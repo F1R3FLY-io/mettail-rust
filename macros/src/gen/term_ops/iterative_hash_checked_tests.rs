@@ -91,7 +91,7 @@ fn checked_opaque_constructor_defers_native_execution_to_its_callback() {
 fn checked_unsupported_whole_arms_never_emit_native_sorting_or_predicate_hashing() {
     let language = fixture_language();
     let emission = HashEmissionNames::checked();
-    for category in ["Map", "Set", "Pathmap", "Bytes"] {
+    for category in ["Set", "Pathmap", "Bytes"] {
         let label = literal_label(&language, category);
         let arm = generate_hash_variant_arm(
             &format_ident!("{}", category),
@@ -118,6 +118,52 @@ fn checked_unsupported_whole_arms_never_emit_native_sorting_or_predicate_hashing
 }
 
 #[test]
+fn checked_map_arm_uses_only_the_needed_element_category_scheduling_helper() {
+    let language = fixture_language();
+    let emission = HashEmissionNames::checked();
+    let label = literal_label(&language, "Map");
+    let arm = generate_hash_variant_arm(
+        &format_ident!("Map"),
+        &variant(&language, "Map", &label.to_string()),
+        &language,
+        &emission,
+    )
+    .to_string()
+    .split_whitespace()
+    .collect::<String>();
+    assert!(arm.contains("checked_hash_schedule_map_proc("), "{arm}");
+    for forbidden in ["UnsupportedConstructor", "collect", "sort_by", "Hash::hash", "try_hash_fx"] {
+        assert!(!arm.contains(forbidden), "Map arm must route through its paid helper: {arm}");
+    }
+    let tasks = generate_hash_task_enum(&language, &emission);
+    let engine = generate_hash_engine(&language, &emission);
+    let interfaces = generate_hash_impls(&language, &emission);
+    let items = syn::parse2::<syn::File>(quote! { #tasks #engine #interfaces })
+        .expect("checked hash emission syntax");
+    let helpers: Vec<_> = items
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            syn::Item::Fn(item)
+                if item
+                    .sig
+                    .ident
+                    .to_string()
+                    .starts_with("checked_hash_schedule_map_") =>
+            {
+                Some(item.sig.ident.to_string())
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        helpers,
+        ["checked_hash_schedule_map_proc"],
+        "only the required element category gets a helper, not the outer Map or scalar categories"
+    );
+}
+
+#[test]
 fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
     let language = fixture_language();
     let declarations =
@@ -139,6 +185,8 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
     assert_eq!(enum_types.len(), language.types.len());
     let ordinary_clone = crate::gen::term_ops::iterative_clone::generate_iterative_clone(&language);
     let ordinary_cmp = crate::gen::term_ops::iterative_cmp::generate_iterative_cmp(&language);
+    let checked_cmp =
+        crate::gen::term_ops::iterative_cmp::generate_checked_iterative_cmp(&language);
     let ordinary_hash = generate_iterative_hash(&language);
     let ordinary_drop = crate::gen::term_ops::iterative_drop::generate_iterative_drop(&language);
     let emission = HashEmissionNames::checked();
@@ -164,7 +212,7 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
             FltHole, FltHoleId, FltNode, FltSourceRange, FltTemplateBounds, FltTemplatePiece,
             FreeVar, KeyHashFailure, OrdVar, Scope, Var};
         #(#enum_types)*
-        #ordinary_clone #ordinary_cmp #ordinary_hash #ordinary_drop
+        #ordinary_clone #ordinary_cmp #ordinary_hash #ordinary_drop #checked_cmp
         #checked_tasks #checked_engine #checked_impls
 
         fn initial(seed: usize) -> CheckedFxHasher {
@@ -238,6 +286,89 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
                     if c == category && k == constructor));
         }
 
+        fn token(text: &str) -> Proc { Proc::PToken(text.into()) }
+
+        fn map(entries: impl IntoIterator<Item = (Proc, Proc)>) -> Map {
+            Map::#map_literal(entries.into_iter().collect())
+        }
+
+        fn map_proc(value: Map) -> Proc {
+            Proc::ApplyMap(Arc::new(Proc::PZero), Arc::new(value))
+        }
+
+        // Preserve both method boundaries and bytes, rather than accepting
+        // digest equality as evidence of the generated Map task ordering.
+        #[derive(Default, Debug, PartialEq, Eq)]
+        struct NativeWrites(Vec<(&'static str, Vec<u8>)>);
+        macro_rules! record_native_writes {
+            ($($method:ident: $ty:ty),* $(,)?) => {
+                $(fn $method(&mut self, value: $ty) {
+                    self.0.push((stringify!($method), value.to_ne_bytes().to_vec()));
+                })*
+            };
+        }
+        impl Hasher for NativeWrites {
+            fn write(&mut self, bytes: &[u8]) { self.0.push(("write", bytes.to_vec())); }
+            fn finish(&self) -> u64 { panic!("native stream oracle must not compare digests") }
+            record_native_writes! {
+                write_u8: u8, write_u16: u16, write_u32: u32, write_u64: u64,
+                write_u128: u128, write_usize: usize,
+                write_i8: i8, write_i16: i16, write_i32: i32, write_i64: i64,
+                write_i128: i128, write_isize: isize,
+            }
+        }
+
+        fn exercise_map(value: &Map) {
+            let Map::#map_literal(source) = value else { panic!("original Map literal") };
+            let original: Vec<_> = source.iter()
+                .map(|(key, value)| (key as *const Proc, value as *const Proc)).collect();
+            let lower = Proc::PZero;
+            for seed in [0, 1, usize::MAX] {
+                let mut stack = vec![CheckedHashTask::<()>::HashProc(&lower)];
+                // This production helper accepts no hasher: it only schedules
+                // the original child borrows and the native length prefix.
+                checked_hash_schedule_map_proc(source, &mut stack, &mut |_,_| Ok(()))
+                    .expect("actual generated Map scheduling");
+                assert_eq!(stack.len(), 2 * source.len() + 2,
+                    "one length, both original children per entry, and untouched lower task");
+                let mut expected = NativeWrites::default();
+                let mut actual = NativeWrites::default();
+                for writes in [&mut expected, &mut actual] {
+                    seed.hash(writes);
+                    29u8.hash(writes);
+                    "already populated".hash(writes);
+                }
+                source.hash(&mut expected);
+                match stack.pop().expect("Map length prefix") {
+                    CheckedHashTask::AbsorbUsize(length) => {
+                        assert_eq!(length, source.len()); length.hash(&mut actual);
+                    },
+                    _ => panic!("Map length must precede its entry children"),
+                }
+                let mut remaining = original.clone();
+                for _ in 0..source.len() {
+                    let (Some(CheckedHashTask::HashProc(key)), Some(CheckedHashTask::HashProc(value))) =
+                        (stack.pop(), stack.pop()) else { panic!("original typed key then value") };
+                    let index = remaining.iter().position(|pair| *pair == (key, value))
+                        .expect("each scheduled pair is one exact, unrepeated original entry");
+                    remaining.swap_remove(index);
+                    // The immutable Map outlives these actual generated tasks;
+                    // both typed pointers were checked against its own pairs.
+                    unsafe { (&*key).hash(&mut actual); (&*value).hash(&mut actual); }
+                }
+                assert!(remaining.is_empty());
+                assert_eq!(actual, expected, "exact native method/byte stream, not digest-only");
+                assert!(matches!(stack.pop(), Some(CheckedHashTask::HashProc(ptr))
+                    if ptr == &lower as *const Proc));
+                assert!(stack.is_empty());
+                assert_eq!(source.iter().map(|(k,v)| (k as *const Proc, v as *const Proc))
+                    .collect::<Vec<_>>(), original, "source insertion order and borrows are unchanged");
+            }
+            // Reuse every reservation cut, exact/one-under limits and all Fx
+            // seeds; the stream oracle above does not replace admission tests.
+            exercise(value);
+        }
+
         fn guest() -> Arc<FltNode> {
             // Hashing observes all captured fields; it is not FLT validation.
             Arc::new(FltNode {
@@ -261,36 +392,42 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
 
         fn deep_small_stack() {
             std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
-                let mut value = Proc::PToken("bottom".into());
-                for depth in 0..20_000 {
-                    value = if depth % 2 == 0 {
-                        Proc::PVector(vec![value])
-                    } else {
-                        // The empty-pattern closed scope is assembled without
-                        // cloning, freshening or repeated binding traversal.
-                        Proc::PMulti(Vec::new(), Scope::from_parts_unsafe(Vec::new(), Arc::new(value)))
-                    };
-                }
-                let start = initial(313);
-                let mut expected = start.clone();
-                value.hash(&mut expected);
-                let mut state = start.clone();
-                let mut calls = 0usize;
-                value.try_hash_iterative(&mut state, &mut |_,_| {
-                    calls += 1; Ok::<_, ()>(())
-                }).expect("deep admitted generated hash");
-                assert_eq!(state.finish(), expected.finish());
-                for stop in [1, calls / 2, calls] {
+                for nested_maps in [false, true] {
+                    let mut value = Proc::PToken("bottom".into());
+                    for depth in 0..20_000 {
+                        value = if nested_maps {
+                            // Insertion hashes only these distinct shallow keys;
+                            // sorting never needs to descend into the deep values.
+                            map_proc(map([(token("a"), value), (token("z"), Proc::PZero)]))
+                        } else if depth % 2 == 0 {
+                            Proc::PVector(vec![value])
+                        } else {
+                            // The empty-pattern closed scope is assembled without
+                            // cloning, freshening or repeated binding traversal.
+                            Proc::PMulti(Vec::new(), Scope::from_parts_unsafe(Vec::new(), Arc::new(value)))
+                        };
+                    }
+                    let start = initial(313);
+                    let mut expected = start.clone();
+                    value.hash(&mut expected);
                     let mut state = start.clone();
-                    let mut seen = 0usize;
-                    let result = value.try_hash_iterative(&mut state, &mut |_,_| {
-                        seen += 1; if seen == stop { Err(()) } else { Ok(()) }
-                    });
-                    assert!(matches!(result,
-                        Err(KeyHashFailure::Admission(BindingFailure::Reservation(())))));
-                    assert_eq!(seen, stop);
+                    let mut calls = 0usize;
+                    value.try_hash_iterative(&mut state, &mut |_,_| {
+                        calls += 1; Ok::<_, ()>(())
+                    }).expect("deep admitted generated hash");
+                    assert_eq!(state.finish(), expected.finish());
+                    for stop in [1, calls / 2, calls] {
+                        let mut state = start.clone();
+                        let mut seen = 0usize;
+                        let result = value.try_hash_iterative(&mut state, &mut |_,_| {
+                            seen += 1; if seen == stop { Err(()) } else { Ok(()) }
+                        });
+                        assert!(matches!(result,
+                            Err(KeyHashFailure::Admission(BindingFailure::Reservation(())))));
+                        assert_eq!(seen, stop);
+                    }
+                    drop(value);
                 }
-                drop(value);
             }).expect("spawn small-stack hash worker").join().expect("small-stack hash worker");
         }
 
@@ -331,11 +468,44 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
             bag.insert_n(Proc::PToken("member".into()), 7);
             exercise(&Proc::PBag(bag));
             exercise(&Bag::#bag_literal(mettail_runtime::HashBag::new()));
+            for keys in [vec![], vec!["one"], vec!["c", "a", "b"], vec!["b", "a", "c"]] {
+                let value = map(keys.into_iter().map(|key| (token(key), token(&format!("value:{key}:λ")))));
+                exercise_map(&value);
+                exercise(&map_proc(value));
+            }
+            let nested = map([
+                (map_proc(map([(token("k2"), token("v2")), (token("k1"), Proc::PZero)])),
+                    map_proc(map([(token("child"), token("nested value"))]))),
+                (map_proc(map([(token("k0"), Proc::PZero)])),
+                    Proc::PVector(vec![map_proc(map([(token("vector child"), Proc::PZero)]))])),
+            ]);
+            exercise_map(&nested);
+            exercise(&map_proc(nested));
+            // A Map inside the existing multi-binder body follows the same
+            // pattern-before-body scope schedule, not a separate Map entrypoint.
+            exercise(&Proc::PMulti(vec![Proc::PZero], Scope::from_parts_unsafe(Vec::new(),
+                Arc::new(map_proc(map([(token("scoped key"), token("scoped value"))]))))));
+            let unadmitted = |name: &str| Proc::PPredicate(mettail_runtime::BehavioralPred::RelationQuery {
+                relation_name: name.into(), args: Vec::new(), negated: false,
+            });
+            refuse(&map([(token("supported key"), unadmitted("Map value"))]), "Proc", "PPredicate");
+            let refused_keys = map([
+                (unadmitted("first distinct key"), Proc::PZero),
+                (unadmitted("second distinct key"), Proc::PZero),
+            ]);
+            let Map::#map_literal(source) = &refused_keys else { panic!("original Map literal") };
+            let mut pending = Vec::<CheckedHashTask<()>>::new();
+            let sort_error = checked_hash_schedule_map_proc(source, &mut pending, &mut |_,_| Ok(()))
+                .expect_err("checked sorting refuses the original unsupported key category arm");
+            assert!(matches!(sort_error, KeyHashFailure::UnsupportedConstructor {
+                category: "Proc", constructor: "PPredicate",
+            }));
+            assert!(pending.is_empty(), "sorting fails before publishing any entry hash task");
+            refuse(&refused_keys, "Proc", "PPredicate");
             let predicate = mettail_runtime::BehavioralPred::RelationQuery {
                 relation_name: "unadmitted".into(), args: Vec::new(), negated: false,
             };
             refuse(&Proc::PPredicate(predicate), "Proc", "PPredicate");
-            refuse(&Map::#map_literal(mettail_runtime::HashMapLit::new()), "Map", stringify!(#map_literal));
             refuse(&Set::#set_literal(mettail_runtime::HashSetLit::new()), "Set", stringify!(#set_literal));
             refuse(&Pathmap::#pathmap_literal(mettail_runtime::PathMapLit::new()), "Pathmap", stringify!(#pathmap_literal));
             refuse(&Bytes::#bytes_literal(vec![0,1,255]), "Bytes", stringify!(#bytes_literal));
@@ -346,7 +516,7 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
             }));
             exercise(&Proc::PBag(hidden));
             deep_small_stack();
-            println!("checked generated Hash matches native streams; all cutpoints, cumulative limits, unsupported arms and 20k small-stack traversal verified");
+            println!("checked generated Hash matches native streams, including exact original Map task methods/bytes; all cutpoints, cumulative limits, unsupported arms and 20k small-stack scope/Map-value traversals verified");
         }
     };
     syn::parse2::<syn::File>(fixture.clone()).expect("actual checked hash fixture Rust syntax");
