@@ -9,6 +9,12 @@ fn check_equality_pair<T: CheckedNativeEqualityLeaf>(
     eq_work: usize,
     ne_work: usize,
 ) {
+    check_inspection(eq_work, |reserve| {
+        left.try_inspect_native_eq_work(right, &mut |work, units| reserve(work, units))
+    });
+    check_inspection(ne_work, |reserve| {
+        left.try_inspect_native_ne_work(right, &mut |work, units| reserve(work, units))
+    });
     check_operation(PartialEq::eq(left, right), eq_work, |reserve| {
         left.try_native_eq(right, &mut |work, units| reserve(work, units))
     });
@@ -229,6 +235,30 @@ fn identity_vector_allowances_reject_equal_width_overflow_but_skip_unvisited_wid
 type TestFailure = NativeComparisonFailure<usize>;
 type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), usize> + 'a;
 
+fn check_inspection(
+    expected_work: usize,
+    mut inspect: impl FnMut(&mut Reservation<'_>) -> Result<usize, TestFailure>,
+) {
+    for limit in [0usize, 1] {
+        let mut remaining = limit;
+        let mut trace = Vec::new();
+        let result = inspect(&mut |work, units| {
+            trace.push((work, units));
+            remaining = remaining.checked_sub(work).ok_or(limit)?;
+            Ok(())
+        });
+        assert_eq!(trace, [(1, 0)], "inspection never reserves native execution");
+        assert_eq!(remaining, 0);
+        match limit {
+            0 => assert_eq!(
+                result,
+                Err(NativeComparisonFailure::Admission(BindingFailure::Reservation(0)))
+            ),
+            _ => assert_eq!(result, Ok(expected_work)),
+        }
+    }
+}
+
 fn check_operation<R: Copy + Debug + Eq>(
     expected: R,
     execution_work: usize,
@@ -298,6 +328,15 @@ fn check_pair<T: CheckedNativeEqualityLeaf + CheckedNativeOrderingLeaf>(
     ne_work: usize,
     cmp_work: usize,
 ) {
+    check_inspection(eq_work, |reserve| {
+        left.try_inspect_native_eq_work(right, &mut |work, units| reserve(work, units))
+    });
+    check_inspection(ne_work, |reserve| {
+        left.try_inspect_native_ne_work(right, &mut |work, units| reserve(work, units))
+    });
+    check_inspection(cmp_work, |reserve| {
+        left.try_inspect_native_cmp_work(right, &mut |work, units| reserve(work, units))
+    });
     check_operation(PartialEq::eq(left, right), eq_work, |reserve| {
         left.try_native_eq(right, &mut |work, units| reserve(work, units))
     });
@@ -414,6 +453,54 @@ impl Probe<'_> {
     fn native_cmp(&self, _other: &Self) -> Ordering {
         self.events.borrow_mut().push(Event::Action("cmp"));
         Ordering::Less
+    }
+}
+
+#[test]
+fn inspection_only_runner_preserves_operation_and_refuses_before_unpaid_work() {
+    for operation in [ComparisonOperation::Eq, ComparisonOperation::Ne, ComparisonOperation::Cmp] {
+        for (supported, allowed, work) in [
+            (false, true, Some(23)),
+            (true, false, Some(23)),
+            (true, true, None),
+            (true, true, Some(23)),
+        ] {
+            let name = operation_name(&operation);
+            let events = RefCell::new(Vec::new());
+            let left = Probe { events: &events, work };
+            let right = Probe { events: &events, work: Some(99) };
+            // The error owns its payload; no Clone bound is needed to return it.
+            #[derive(Debug, PartialEq, Eq)]
+            struct Refusal(Box<str>);
+            let result = inspect_native_work(
+                &mut |work, units| {
+                    events.borrow_mut().push(Event::Reserve(work, units));
+                    match allowed {
+                        true => Ok(()),
+                        false => Err(Refusal("inspection refused".into())),
+                    }
+                },
+                supported,
+                |reserve| sealed::Leaf::execution_work(&left, &right, operation, reserve),
+            );
+            let expected = match (supported, allowed, work) {
+                (false, _, _) => Err(NativeComparisonFailure::UnsupportedProfile),
+                (true, false, _) => Err(NativeComparisonFailure::Admission(
+                    BindingFailure::Reservation(Refusal("inspection refused".into())),
+                )),
+                (true, true, None) => {
+                    Err(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow))
+                },
+                (true, true, Some(work)) => Ok(work),
+            };
+            assert_eq!(result, expected);
+            let expected_events = match (supported, allowed) {
+                (false, _) => vec![],
+                (true, false) => vec![Event::Reserve(1, 0)],
+                (true, true) => vec![Event::Reserve(1, 0), Event::Inspect(name)],
+            };
+            assert_eq!(*events.borrow(), expected_events);
+        }
     }
 }
 

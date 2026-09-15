@@ -177,6 +177,60 @@ fn check<T: CheckedNativeEqualityLeaf + CheckedNativeOrderingLeaf>(
                 .try_native_cmp(right, &mut |w, u| reserve(w, u))
                 .map(Outcome::Ordering),
         };
+        let inspect = |reserve: &mut dyn FnMut(usize, usize) -> Result<(), usize>| match op {
+            0 => left.try_inspect_native_eq_work(right, &mut |w, u| reserve(w, u)),
+            1 => left.try_inspect_native_ne_work(right, &mut |w, u| reserve(w, u)),
+            _ => left.try_inspect_native_cmp_work(right, &mut |w, u| reserve(w, u)),
+        };
+        // Check the exact existing metadata prefix independently of execution.
+        let mut inspection_trace = Vec::new();
+        assert_eq!(
+            inspect(&mut |w, u| {
+                invariant();
+                inspection_trace.push((w, u));
+                Ok(())
+            }),
+            Ok(work[op])
+        );
+        assert_eq!(inspection_trace, vec![(1, 0); inspections[op]]);
+        let inspection_stops: Vec<_> = match every_cutpoint {
+            true => (0..inspections[op]).collect(),
+            false => vec![0, inspections[op] / 2, inspections[op] - 1],
+        };
+        for stop in inspection_stops {
+            let mut seen = Vec::new();
+            let result = inspect(&mut |w, u| {
+                invariant();
+                let index = seen.len();
+                seen.push((w, u));
+                match index == stop {
+                    true => Err(stop),
+                    false => Ok(()),
+                }
+            });
+            assert_eq!(
+                result,
+                Err(NativeComparisonFailure::Admission(BindingFailure::Reservation(stop)))
+            );
+            assert_eq!(seen, inspection_trace[..=stop]);
+        }
+        for limit in [0, inspections[op] - 1, inspections[op]] {
+            let mut remaining = limit;
+            let result = inspect(&mut |w, u| {
+                invariant();
+                assert_eq!(u, 0);
+                remaining = remaining.checked_sub(w).ok_or(limit)?;
+                Ok(())
+            });
+            assert_eq!(remaining, 0);
+            match limit == inspections[op] {
+                true => assert_eq!(result, Ok(work[op])),
+                false => assert_eq!(
+                    result,
+                    Err(NativeComparisonFailure::Admission(BindingFailure::Reservation(limit)))
+                ),
+            }
+        }
         let mut expected_trace = vec![(1, 0); inspections[op]];
         expected_trace.push((work[op], 0));
         let mut seen = Vec::new();

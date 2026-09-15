@@ -114,6 +114,38 @@ use sealed::ComparisonOperation;
 /// acquire an ordering. Structural FLTs additionally admit each paired metadata
 /// advance before inspection; declared template bounds are not size receipts.
 pub trait CheckedNativeEqualityLeaf: Eq + sealed::EqualityLeaf {
+    /// Inspect the original equality call's work without comparing operands.
+    ///
+    /// The same paid metadata inspections as `try_native_eq` run, but no
+    /// execution reservation or native call follows. The returned allowance
+    /// excludes inspection charges and has not been reserved. It applies only
+    /// to this operation on the unchanged borrowed operand pair and audited
+    /// profile; it grants no replay authority. Retaining the value and executing
+    /// the comparison require their own admission. No owned payload is built.
+    fn try_inspect_native_eq_work<E>(
+        &self,
+        other: &Self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, NativeComparisonFailure<E>> {
+        inspect_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |reserve| {
+            self.equality_work(other, false, reserve)
+        })
+    }
+
+    /// Inspect inequality's own work, not equality or ordering as a substitute.
+    ///
+    /// This has the inspection-only contract of `try_inspect_native_eq_work`,
+    /// but retains the original inequality operation's metadata allowance.
+    fn try_inspect_native_ne_work<E>(
+        &self,
+        other: &Self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, NativeComparisonFailure<E>> {
+        inspect_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |reserve| {
+            self.equality_work(other, true, reserve)
+        })
+    }
+
     fn try_native_eq<E>(
         &self,
         other: &Self,
@@ -145,6 +177,22 @@ pub trait CheckedNativeEqualityLeaf: Eq + sealed::EqualityLeaf {
 /// primitive, not physical machine loads, CPU instructions or memcmp internals.
 /// It borrows the operands without constructing a buffer or retaining a plan.
 pub trait CheckedNativeOrderingLeaf: Ord + sealed::Leaf {
+    /// Inspect ordering's work without executing or reserving the comparison.
+    ///
+    /// Metadata and arithmetic are paid exactly as in `try_native_cmp`.
+    /// The returned allowance excludes those charges and applies only to the
+    /// same unchanged operand pair, operation and audited profile. It is not
+    /// permission to execute, retain a plan, or reuse a comparison result.
+    fn try_inspect_native_cmp_work<E>(
+        &self,
+        other: &Self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, NativeComparisonFailure<E>> {
+        inspect_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |reserve| {
+            self.execution_work(other, ComparisonOperation::Cmp, reserve)
+        })
+    }
+
     fn try_native_cmp<E>(
         &self,
         other: &Self,
@@ -175,19 +223,27 @@ fn admit_comparison<T: sealed::Leaf + ?Sized, E, R>(
     Ok(action(left, right))
 }
 
-// Private inspection callback only. Public entrypoints select concrete audited
-// metadata; callers cannot supply their own cost or receive reusable authority.
-fn admit_native_work<E, F: FnMut(usize, usize) -> Result<(), E>>(
+// Both public interpretations select the same sealed metadata inspector.
+// Returning its unreserved work does not execute a comparator or grant authority.
+fn inspect_native_work<E, F: FnMut(usize, usize) -> Result<(), E>>(
     reserve: &mut F,
     supported: bool,
     inspect: impl FnOnce(&mut F) -> Result<usize, BindingFailure<E>>,
-) -> Result<(), NativeComparisonFailure<E>> {
+) -> Result<usize, NativeComparisonFailure<E>> {
     if !supported {
         return Err(NativeComparisonFailure::UnsupportedProfile);
     }
     reserve(1, 0)
         .map_err(|error| NativeComparisonFailure::Admission(BindingFailure::Reservation(error)))?;
-    let work = inspect(reserve).map_err(NativeComparisonFailure::Admission)?;
+    inspect(reserve).map_err(NativeComparisonFailure::Admission)
+}
+
+fn admit_native_work<E, F: FnMut(usize, usize) -> Result<(), E>>(
+    reserve: &mut F,
+    supported: bool,
+    inspect: impl FnOnce(&mut F) -> Result<usize, BindingFailure<E>>,
+) -> Result<(), NativeComparisonFailure<E>> {
+    let work = inspect_native_work(reserve, supported, inspect)?;
     reserve(work, 0)
         .map_err(|error| NativeComparisonFailure::Admission(BindingFailure::Reservation(error)))?;
     Ok(())

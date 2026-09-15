@@ -49,6 +49,40 @@ silently drop stored entries or claim that native Bag equality and ordering
 are interchangeable. This does not change the binding reconstruction policy,
 which can store zero counts and transport a differing original total.
 
+## Inspecting native leaf work without replay
+
+The existing sealed [hash leaf interface](../../runtime/src/checked_hash.rs)
+exposes `try_inspect_hash_fx_work`. It performs the same paid metadata
+inspection as `try_hash_fx`, but neither reserves execution nor invokes
+`Hash`. The existing [comparison leaf interfaces](../../runtime/src/checked_cmp.rs)
+likewise expose `try_inspect_native_eq_work`, `try_inspect_native_ne_work`,
+and `try_inspect_native_cmp_work`. Equality, inequality and ordering retain
+their separate native operations; equality-only binders acquire no ordering.
+
+Each result is a source-specific logical-work allowance, excluding inspection
+charges already spent. It is not execution permission. A caller must separately
+reserve the original operation's work on the same unchanged borrowed operands
+and audited profile, and pay for any retained accounting storage. Hasher
+creation and finishing remain separate caller operations. Unsupported profiles
+refuse before inspection; arithmetic overflow and reservation failure preserve
+their original error kinds and do not refund earlier metadata work.
+
+The ordinary checked-execution methods use the same private inspector, followed
+by their original execution reservation and native call. The extraction reuses
+the inspection/execution separation in the
+[hash model](../../formal/rocq/rho_bridge/theories/AdmittedKeyHashExecution.v),
+[structural hash model](../../formal/rocq/rho_bridge/theories/AdmittedStructuralKeyHash.v),
+and [comparison model](../../formal/rocq/rho_bridge/theories/AdmittedNativeLeafComparison.v).
+Inspection does not hash into a scratch hasher or execute an extra comparator.
+The tests compare metadata-only reservation prefixes with the existing full
+execution schedules, including structural FLT metadata and refused advances.
+
+These are leaf interfaces, not complete generated-category allowances. A
+cached Bag hash still covers only its summary, not descendant reconstruction.
+The generated category traversal, nested collection comparison, and movement
+of retained roots during resizing must supply their own coverage before these
+allowances can be composed into a complete reconstruction provider.
+
 ## Exact library boundary
 
 `HashBag` stores `std::collections::HashMap`, not the workspace's direct

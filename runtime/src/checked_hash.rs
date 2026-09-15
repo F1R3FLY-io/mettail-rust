@@ -91,6 +91,25 @@ mod sealed {
 /// HashBag admission covers only its cached six-scalar summary: it does not
 /// inspect or admit descendant keys, rebuilding, or insertion operations.
 pub trait CheckedFxHashLeaf: Hash + sealed::Leaf {
+    /// Inspect this audited leaf without invoking its native `Hash`.
+    ///
+    /// Pays the same metadata inspection as [`Self::try_hash_fx`] and returns
+    /// its native execution work, excluding those inspection charges. No
+    /// execution charge is reserved and no hasher is created or modified.
+    /// Profile refusal precedes inspection; reservation errors and arithmetic
+    /// overflow retain their existing kinds and earlier charges remain spent.
+    ///
+    /// This accounting value is not permission to execute another value or
+    /// profile. A caller must separately admit execution against unchanged
+    /// source metadata, plus any retained receipt storage and hasher setup or
+    /// finish. This does not inspect generated categories or HashBag keys.
+    fn try_inspect_hash_fx_work<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, KeyHashFailure<E>> {
+        inspect_leaf_work(self, reserve, CHECKED_FX_PROFILE_AVAILABLE)
+    }
+
     fn try_hash_fx<E>(
         &self,
         state: &mut FxHasher,
@@ -100,9 +119,12 @@ pub trait CheckedFxHashLeaf: Hash + sealed::Leaf {
     }
 }
 
-fn hash_leaf<T: Hash + sealed::Leaf + ?Sized, E>(
+// AdmittedKeyHashExecution.paid_inspection and
+// AdmittedStructuralKeyHash.inspect_node already separate paid metadata from
+// execution. This extraction preserves that boundary in the Rust source; it
+// neither executes a speculative hash nor supplies a generic category receipt.
+fn inspect_leaf_work<T: sealed::Leaf + ?Sized, E>(
     value: &T,
-    state: &mut FxHasher,
     reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
     supported: bool,
 ) -> Result<usize, KeyHashFailure<E>> {
@@ -110,9 +132,18 @@ fn hash_leaf<T: Hash + sealed::Leaf + ?Sized, E>(
         return Err(KeyHashFailure::UnsupportedProfile);
     }
     reserve(1, 0).map_err(|error| KeyHashFailure::Admission(BindingFailure::Reservation(error)))?;
-    let work = value
+    value
         .execution_work(reserve)
-        .map_err(KeyHashFailure::Admission)?;
+        .map_err(KeyHashFailure::Admission)
+}
+
+fn hash_leaf<T: Hash + sealed::Leaf + ?Sized, E>(
+    value: &T,
+    state: &mut FxHasher,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    supported: bool,
+) -> Result<usize, KeyHashFailure<E>> {
+    let work = inspect_leaf_work(value, reserve, supported)?;
     reserve(work, 0)
         .map_err(|error| KeyHashFailure::Admission(BindingFailure::Reservation(error)))?;
     value.hash(state);
@@ -290,6 +321,150 @@ mod tests {
     use super::*;
     use std::hash::Hasher;
 
+    // Test-only source-effect probe, not a production leaf or a cost claim for
+    // arbitrary Hash implementations. Its accounting branch exercises the
+    // same checked-add failure as the sealed metadata providers.
+    #[cfg(mettail_checked_fx_profile)]
+    struct InspectionProbe {
+        hashes: std::cell::Cell<usize>,
+        inspections: std::cell::Cell<usize>,
+        overflow: std::cell::Cell<bool>,
+    }
+
+    #[cfg(mettail_checked_fx_profile)]
+    impl Clone for InspectionProbe {
+        fn clone(&self) -> Self {
+            panic!("leaf inspection/execution must not clone its source")
+        }
+    }
+
+    #[cfg(mettail_checked_fx_profile)]
+    impl PartialEq for InspectionProbe {
+        fn eq(&self, _: &Self) -> bool {
+            panic!("leaf inspection/execution must not compare its source")
+        }
+    }
+
+    #[cfg(mettail_checked_fx_profile)]
+    impl Eq for InspectionProbe {}
+
+    #[cfg(mettail_checked_fx_profile)]
+    impl Hash for InspectionProbe {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.hashes.set(self.hashes.get() + 1);
+            37u8.hash(state);
+        }
+    }
+
+    #[cfg(mettail_checked_fx_profile)]
+    impl sealed::Leaf for InspectionProbe {
+        fn execution_work<E>(
+            &self,
+            _: &mut impl FnMut(usize, usize) -> Result<(), E>,
+        ) -> Result<usize, BindingFailure<E>> {
+            self.inspections.set(self.inspections.get() + 1);
+            add_work(if self.overflow.get() { usize::MAX } else { 1 }, 1)
+        }
+    }
+
+    #[cfg(mettail_checked_fx_profile)]
+    impl CheckedFxHashLeaf for InspectionProbe {}
+
+    #[test]
+    #[cfg(mettail_checked_fx_profile)]
+    fn inspection_has_no_native_effects_and_execution_still_hashes_once() {
+        let probe = InspectionProbe {
+            hashes: std::cell::Cell::new(0),
+            inspections: std::cell::Cell::new(0),
+            overflow: std::cell::Cell::new(false),
+        };
+        let unsupported = inspect_leaf_work(
+            &probe,
+            &mut |_, _| -> Result<(), ()> {
+                panic!("unsupported profile must refuse before admission")
+            },
+            false,
+        );
+        assert_eq!(unsupported, Err(KeyHashFailure::UnsupportedProfile));
+        assert_eq!((probe.inspections.get(), probe.hashes.get()), (0, 0));
+
+        let mut charges = Vec::new();
+        assert_eq!(
+            probe.try_inspect_hash_fx_work(&mut |work, units| {
+                charges.push((work, units));
+                Ok::<_, ()>(())
+            }),
+            Ok(2)
+        );
+        assert_eq!(charges, [(1, 0)]);
+        assert_eq!((probe.inspections.get(), probe.hashes.get()), (1, 0));
+
+        probe.overflow.set(true);
+        charges.clear();
+        assert_eq!(
+            probe.try_inspect_hash_fx_work(&mut |work, units| {
+                charges.push((work, units));
+                Ok::<_, ()>(())
+            }),
+            Err(KeyHashFailure::Admission(BindingFailure::SizeOverflow))
+        );
+        assert_eq!(charges, [(1, 0)]);
+        assert_eq!((probe.inspections.get(), probe.hashes.get()), (2, 0));
+        probe.overflow.set(false);
+
+        let mut state = FxHasher::with_seed(19);
+        11u8.hash(&mut state);
+        let initial = state.clone();
+        for stop in 0..2 {
+            let mut seen = 0;
+            let result = probe.try_hash_fx(&mut state, &mut |_, _| {
+                let current = seen;
+                seen += 1;
+                if current == stop {
+                    Err(stop)
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(result, Err(KeyHashFailure::Admission(BindingFailure::Reservation(stop))));
+            assert_eq!(seen, stop + 1);
+            assert_eq!(probe.hashes.get(), 0);
+            assert_eq!(state.finish(), initial.finish());
+        }
+        charges.clear();
+        assert_eq!(
+            probe.try_hash_fx(&mut state, &mut |work, units| {
+                charges.push((work, units));
+                Ok::<_, ()>(())
+            }),
+            Ok(2)
+        );
+        assert_eq!(charges, [(1, 0), (2, 0)]);
+        assert_eq!(probe.hashes.get(), 1);
+        let mut expected = initial;
+        37u8.hash(&mut expected);
+        assert_eq!(state.finish(), expected.finish());
+    }
+
+    #[test]
+    #[cfg(mettail_checked_fx_profile)]
+    fn inspection_reservation_moves_nonclone_error_payload() {
+        struct Payload(u32);
+        let payload = Box::new(Payload(41));
+        let address = std::ptr::from_ref(payload.as_ref());
+        let mut pending = Some(payload);
+        let result = 7usize.try_inspect_hash_fx_work(&mut |work, units| {
+            assert_eq!((work, units), (1, 0));
+            Err(pending.take().expect("one refused inspection"))
+        });
+        let Err(KeyHashFailure::Admission(BindingFailure::Reservation(payload))) = result else {
+            panic!("inspection must preserve reservation failure kind");
+        };
+        assert_eq!(std::ptr::from_ref(payload.as_ref()), address);
+        assert_eq!(payload.0, 41);
+        assert!(pending.is_none());
+    }
+
     #[test]
     fn comparison_failures_retain_their_exact_kind_and_payload() {
         use crate::{BindingSlotError, NativeComparisonFailure};
@@ -355,6 +530,52 @@ mod tests {
             CHECKED_FX_PROFILE_AVAILABLE,
             "this correspondence gate requires the audited build profile"
         );
+        let expected_inspection_charges = vec![(1, 0); inspections];
+        let mut inspection_charges = Vec::new();
+        let work = value
+            .try_inspect_hash_fx_work(&mut |work, units| {
+                inspection_charges.push((work, units));
+                Ok::<_, usize>(())
+            })
+            .expect("paid metadata inspection without native execution");
+        assert_eq!(work, expected_work);
+        assert_eq!(inspection_charges, expected_inspection_charges);
+        for stop in 0..inspections {
+            let mut seen = 0;
+            let mut spent = 0;
+            let result = value.try_inspect_hash_fx_work(&mut |work, units| {
+                let current = seen;
+                seen += 1;
+                assert_eq!((work, units), expected_inspection_charges[current]);
+                if current == stop {
+                    Err(stop)
+                } else {
+                    spent += work;
+                    Ok(())
+                }
+            });
+            assert_eq!(result, Err(KeyHashFailure::Admission(BindingFailure::Reservation(stop))));
+            assert_eq!((seen, spent), (stop + 1, stop));
+        }
+        for limit in [0, inspections - 1, inspections] {
+            let mut remaining = limit;
+            let result = value.try_inspect_hash_fx_work(&mut |work, units| {
+                assert_eq!(units, 0);
+                remaining = remaining.checked_sub(work).ok_or("inspection budget")?;
+                Ok(())
+            });
+            if limit == inspections {
+                assert_eq!(result, Ok(expected_work));
+            } else {
+                assert_eq!(
+                    result,
+                    Err(KeyHashFailure::Admission(BindingFailure::Reservation(
+                        "inspection budget"
+                    )))
+                );
+            }
+            assert_eq!(remaining, 0);
+        }
         for seed in [0, 1, usize::MAX] {
             let mut expected = FxHasher::with_seed(seed);
             // Nonempty initial state tests composition, not just standalone digest.
