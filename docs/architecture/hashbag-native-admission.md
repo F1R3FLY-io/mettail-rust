@@ -699,6 +699,31 @@ These checks do not establish complete Rholang scope-opening/reconstruction
 or public-node behavior; those source contexts remain separate acceptance
 obligations.
 
+## Collection control-work coverage
+
+The [control-work model](../../formal/rocq/rho_bridge/theories/GeneratedCollectionWorkCover.v)
+reuses the original raw merge transitions. Successful copying preserves every
+already-exhausted side, and an allocated target remains allocated through a
+complete raw step. These invariants support grouping the native tail loops
+without inventing a second executor or assuming a whole-call work bound.
+
+A completed run executes the outer guard and comparison-readiness guard,
+both tail loops including their terminal guards, and the run-end block. It
+may also finish a pass and reset the next run. Let $`l`$ and $`r`$ be the
+numbers of left and right tail copies, and let $`W_{\mathrm{run}}`$ denote
+the control work of one completed run. The named control groups in
+[`collection_cmp_pda.rs`](../../runtime/src/collection_cmp_pda.rs) give:
+
+```math
+W_{\mathrm{run}}\leq 7+2(l+r).
+```
+
+The final pass breaks without another outer guard. Scratch-buffer allocation
+and disposal retain their separate existing allowance; requested term
+comparisons retain their own typed coverage. These checked local laws are not
+yet a factorization of every complete raw-step derivation, nor proof that a
+whole native comparison has been prepaid.
+
 ## Weighted-run comparison results
 
 The [weighted result model](../../formal/rocq/rho_bridge/theories/CollectionWeightedLexResults.v)

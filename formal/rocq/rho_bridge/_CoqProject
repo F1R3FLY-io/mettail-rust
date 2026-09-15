@@ -122,6 +122,7 @@ theories/GeneratedMapCoreSource.v
 theories/GeneratedMapCoreDeterminism.v
 theories/GeneratedMapCoreErasure.v
 theories/GeneratedBagCoreSource.v
+theories/GeneratedCollectionWorkCover.v
 theories/GeneratedAdmittedMapReference.v
 theories/GeneratedAdmittedMapDialogue.v
 theories/GeneratedSourceRowComparison.v
