@@ -212,7 +212,7 @@ Theorem initial_map_erasure : forall maximum lhs rhs left_total right_total,
   erase_map (initial_map maximum lhs rhs left_total right_total) =
     initial_map maximum (map erase_entry lhs) (map erase_entry rhs) left_total right_total.
 Proof.
-  intros. unfold initial_map, erase_map.
+  intros. unfold initial_map, initial_collection, erase_map.
   cbn [map_state map_left map_right map_phase map_pending map_lead map_left_total
     map_right_total map_left_index map_right_index map_left_remaining map_right_remaining].
   now rewrite !initial_merge_erasure.
@@ -310,7 +310,9 @@ Proof.
         (map_left_index state) = Some (erase_entry lhs)). now rewrite nth_error_map, H0.
     + change (nth_error (map erase_entry (merge_source (map_right state)))
         (map_right_index state) = None). now rewrite nth_error_map, H1.
-  - eapply LoopLexRequest; [exact H| |].
+  - fold (initialize_both_remaining state).
+    rewrite both_counter_initialization_erasure.
+    eapply LoopLexRequest; [exact H| |].
     + change (nth_error (map erase_entry (merge_source (map_left state)))
         (map_left_index state) = Some (erase_entry lhs)). now rewrite nth_error_map, H0.
     + change (nth_error (map erase_entry (merge_source (map_right state)))
@@ -321,10 +323,16 @@ Proof.
   - apply RequestFreshPrimary.
     change (target_key_alias (erase_key (fst lhs)) (erase_key (fst rhs)) = false).
     now rewrite key_alias_compatible.
-  - apply RequestAliasedSecondary.
+  - cbn [select_secondary] in H.
+    destruct (source_value_alias (snd lhs) (snd rhs)) eqn:ALIAS;
+      inversion H; subst.
+    apply RequestAliasedSecondary.
     change (target_value_alias (erase_value (snd lhs)) (erase_value (snd rhs)) = true).
     now rewrite value_alias_compatible.
-  - apply RequestFreshSecondary.
+  - cbn [select_secondary] in H.
+    destruct (source_value_alias (snd lhs) (snd rhs)) eqn:ALIAS;
+      inversion H; subst.
+    apply RequestFreshSecondary.
     change (target_value_alias (erase_value (snd lhs)) (erase_value (snd rhs)) = false).
     now rewrite value_alias_compatible.
   - apply AcceptLeft.

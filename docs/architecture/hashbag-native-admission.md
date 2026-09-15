@@ -586,13 +586,27 @@ writes, length updates, and the repetition-sum loop still need their own
 source-work coverage; value-order correspondence does not supply those charges.
 
 The [existing raw comparison model](../../formal/rocq/rho_bridge/theories/GeneratedMapCoreSource.v)
-now exposes count-parameterized remaining-counter restoration. Its Map
-entrypoints remain unit-count wrappers, definitionally equal to their original
-operations. A direct projection also equates its four-counter advancement
-with the existing shared minimum/subtraction operation. These are reuse
-prerequisites: a Bag caller must still supply each fetched original count,
-and the optional-secondary routing and full source-policy correspondence
-must be generalized before this constitutes a complete Bag execution proof.
+uses one control relation with separate stored-payload and secondary-operand
+types. Payload projections supply the optional secondary operand and original
+repetition count. A supplied lead preserves the native constructor's initial
+comparison. Map entrypoints specialize this relation to present secondary
+values, unit repetitions, and an equal lead; their initialization and counter
+restoration retain the original formulas. No second transition engine is kept.
+
+The optional-secondary selector retains all native cases: two absent values
+compare equal, absence precedes presence, and two present values either use
+the original pointer-alias shortcut or request comparison of those exact
+operands. Counter restoration uses the fetched original count only when its
+remaining counter is zero. Its four-counter advancement is the existing
+shared minimum/subtraction operation. Successful repeated-item construction
+must still establish positive counts; arbitrary model projections do not
+grant permission to construct a zero-count native item.
+
+These are source-model reuse prerequisites, not complete Bag execution
+coverage. The existing Map erasure theorems remain specialized to Map.
+Generalized source-policy erasure and the actual typed Bag callback and
+event-cost correspondence still have to connect the generic relation to
+the admitted native execution.
 
 The constructor census keeps operational support separate from eligibility
 for its existing formal row vocabulary. That vocabulary has paired maps but

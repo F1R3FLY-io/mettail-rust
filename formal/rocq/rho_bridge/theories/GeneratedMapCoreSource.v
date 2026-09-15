@@ -1,4 +1,4 @@
-(** Comparator-free successful source control for CollectionCmpPda Map pairs.
+(** Comparator-free successful source control for CollectionCmpPda entries.
 
     Source: runtime/src/collection_cmp_pda.rs, resume_with, request_item_comparison,
     request_secondary_or_accept, accept_term_comparison, accept_item_comparison,
@@ -13,11 +13,17 @@
     behavior only after the actual answers have been established by child
     traversal. Primary Equal may request Secondary without copying a record.
 
-    Map producers supply paired entries with unit repetitions. Original totals
+    Entry payloads supply their optional secondary and original repetitions;
+    Map is the present-secondary, unit-repetition specialization. Original totals
     remain stored and exhaustion compares those totals: no normalization or
     source-enumeration completeness follows from this projection. The two
     remaining counters are still represented, including left initialization
     before discovering that the right roster is exhausted.
+
+    Payload projections describe already constructed entries. Association
+    with a repeated-item producer requires its successful construction laws,
+    including positive repetitions. Arbitrary projections here do not prove
+    acceptance of zero counts, termination, or successful policy admission.
 
     This file concerns successful native control. Protocol errors, admission,
     overflow, owned-slot inventory and refusal cleanup retain their existing
@@ -245,9 +251,19 @@ Definition map_state left_sort right_sort phase pending lead lt rt li ri lr rr :
      map_left_index := li; map_right_index := ri;
      map_left_remaining := lr; map_right_remaining := rr |}.
 
-Definition initial_map maximum left_items right_items left_total right_total :=
+Definition initial_collection maximum left_items right_items lead left_total right_total :=
   map_state (initial_merge maximum left_items) (initial_merge maximum right_items)
-    Lead None Eq left_total right_total 0 0 0 0.
+    Lead None lead left_total right_total 0 0 0 0.
+
+Definition initial_map maximum left_items right_items left_total right_total :=
+  initial_collection maximum left_items right_items Eq left_total right_total.
+
+Theorem map_initialization_is_the_unit_specialization :
+  forall maximum left_items right_items left_total right_total,
+  initial_map maximum left_items right_items left_total right_total =
+    map_state (initial_merge maximum left_items) (initial_merge maximum right_items)
+      Lead None Eq left_total right_total 0 0 0 0.
+Proof. reflexivity. Qed.
 
 Definition set_pending state pending :=
   map_state (map_left state) (map_right state) (map_phase state) pending (map_lead state)
@@ -344,116 +360,238 @@ Theorem raw_equal_advance_reuses_existing_count_operation : forall state,
       (raw_lex_cursor state).
 Proof. reflexivity. Qed.
 
+End MapControl.
+
+(** Selection mirrors request_secondary_or_accept: absence is ordered before
+    presence, while two present operands use only the original alias guard. *)
+Inductive SecondarySelection (Secondary : Type) :=
+| SecondaryAccept (ordering : comparison)
+| SecondaryCompare (lhs rhs : Secondary).
+Arguments SecondaryAccept {Secondary} _.
+Arguments SecondaryCompare {Secondary} _ _.
+
+Definition select_secondary {Secondary : Type} (alias : Secondary -> Secondary -> bool)
+    (lhs rhs : option Secondary) : SecondarySelection Secondary :=
+  match lhs, rhs with
+  | None, None => SecondaryAccept Eq
+  | None, Some _ => SecondaryAccept Lt
+  | Some _, None => SecondaryAccept Gt
+  | Some lhs, Some rhs =>
+      if alias lhs rhs then SecondaryAccept Eq else SecondaryCompare lhs rhs
+  end.
+
+Theorem secondary_absence_accepts_equal : forall Secondary alias,
+  @select_secondary Secondary alias None None = SecondaryAccept Eq.
+Proof. reflexivity. Qed.
+Theorem secondary_absence_precedes_presence : forall Secondary alias rhs,
+  @select_secondary Secondary alias None (Some rhs) = SecondaryAccept Lt.
+Proof. reflexivity. Qed.
+Theorem secondary_presence_follows_absence : forall Secondary alias lhs,
+  @select_secondary Secondary alias (Some lhs) None = SecondaryAccept Gt.
+Proof. reflexivity. Qed.
+Theorem secondary_original_alias_accepts_equal : forall Secondary alias lhs rhs,
+  alias lhs rhs = true ->
+  @select_secondary Secondary alias (Some lhs) (Some rhs) = SecondaryAccept Eq.
+Proof. intros. cbn. now rewrite H. Qed.
+Theorem secondary_original_nonalias_requests_originals : forall Secondary alias lhs rhs,
+  alias lhs rhs = false ->
+  @select_secondary Secondary alias (Some lhs) (Some rhs) = SecondaryCompare lhs rhs.
+Proof. intros. cbn. now rewrite H. Qed.
+Theorem present_secondary_selection_is_the_original_map_branch :
+  forall Secondary alias lhs rhs,
+  @select_secondary Secondary alias (Some lhs) (Some rhs) =
+    if alias lhs rhs then SecondaryAccept Eq else SecondaryCompare lhs rhs.
+Proof. reflexivity. Qed.
+
+Section RequestTypes.
+Context {Key Value : Type}.
 Inductive RawRequest := PrimaryRequest (lhs rhs : Key) | SecondaryRequest (lhs rhs : Value).
 Inductive RawReply := Requests (request : RawRequest) | Completes (ordering : comparison).
+End RequestTypes.
 
-(** These are existing call-stack locations, not fields added to the Box. *)
-Inductive RawControl :=
+Section PayloadControl.
+Context {Key Value Secondary : Type}.
+Local Notation Entry := (Key * Value)%type.
+Local Notation State := (@RawMapState Key Value).
+
+(** The payload remains in its original merge entries and pending pair. Only
+    the callback operand type is independent of that payload. These are call
+    locations, not additional runtime Box fields. *)
+Inductive RawPayloadControl :=
 | Ingress (input : option comparison)
 | PhaseLoop
 | RequestItem (destination : RawDestination) (lhs rhs : Entry)
 | RequestSecondary (destination : RawDestination) (lhs rhs : Entry)
 | AcceptItem (destination : RawDestination) (ordering : comparison)
-| ReturnReply (reply : RawReply).
+| ReturnReply (reply : @RawReply Key Secondary).
 
+Variable payload_secondary : Value -> option Secondary.
+Variable payload_repetitions : Value -> nat.
 Variable key_alias : Key -> Key -> bool.
-Variable value_alias : Value -> Value -> bool.
+Variable secondary_alias : Secondary -> Secondary -> bool.
 Variable maximum : nat.
 
-Inductive RawCoreStep : RawControl -> RawMapState -> RawControl -> RawMapState -> Prop :=
+Inductive RawPayloadCoreStep : RawPayloadControl -> State -> RawPayloadControl -> State -> Prop :=
 | IngressInitial : forall state,
-    map_pending state = None -> RawCoreStep (Ingress None) state PhaseLoop state
+    map_pending state = None -> RawPayloadCoreStep (Ingress None) state PhaseLoop state
 | IngressPrimaryEqual : forall state lhs rhs destination,
     map_pending state = Some (PendingPrimary lhs rhs destination) ->
-    RawCoreStep (Ingress (Some Eq)) state (RequestSecondary destination lhs rhs)
+    RawPayloadCoreStep (Ingress (Some Eq)) state (RequestSecondary destination lhs rhs)
       (set_pending state None)
 | IngressPrimaryDecisive : forall state lhs rhs destination ordering,
     map_pending state = Some (PendingPrimary lhs rhs destination) -> ordering <> Eq ->
-    RawCoreStep (Ingress (Some ordering)) state (AcceptItem destination ordering)
+    RawPayloadCoreStep (Ingress (Some ordering)) state (AcceptItem destination ordering)
       (set_pending state None)
 | IngressSecondary : forall state destination ordering,
     map_pending state = Some (PendingSecondary destination) ->
-    RawCoreStep (Ingress (Some ordering)) state (AcceptItem destination ordering)
+    RawPayloadCoreStep (Ingress (Some ordering)) state (AcceptItem destination ordering)
       (set_pending state None)
 | LoopEqualLead : forall state,
     map_phase state = Lead -> map_lead state = Eq ->
-    RawCoreStep PhaseLoop state PhaseLoop (set_phase state SortLeft)
+    RawPayloadCoreStep PhaseLoop state PhaseLoop (set_phase state SortLeft)
 | LoopDecisiveLead : forall state,
     map_phase state = Lead -> map_lead state <> Eq ->
-    RawCoreStep PhaseLoop state (ReturnReply (Completes (map_lead state))) (set_phase state Done)
+    RawPayloadCoreStep PhaseLoop state (ReturnReply (Completes (map_lead state))) (set_phase state Done)
 | LoopLeftRequest : forall state lhs rhs next,
     map_phase state = SortLeft ->
     RawMergeStep maximum (map_left state) (MergeRequests lhs rhs) next ->
-    RawCoreStep PhaseLoop state (RequestItem ToLeftSort lhs rhs) (set_left state next)
+    RawPayloadCoreStep PhaseLoop state (RequestItem ToLeftSort lhs rhs) (set_left state next)
 | LoopRightRequest : forall state lhs rhs next,
     map_phase state = SortRight ->
     RawMergeStep maximum (map_right state) (MergeRequests lhs rhs) next ->
-    RawCoreStep PhaseLoop state (RequestItem ToRightSort lhs rhs) (set_right state next)
+    RawPayloadCoreStep PhaseLoop state (RequestItem ToRightSort lhs rhs) (set_right state next)
 | LoopLeftDone : forall state next,
     map_phase state = SortLeft -> RawMergeStep maximum (map_left state) MergeCompletes next ->
-    RawCoreStep PhaseLoop state PhaseLoop
+    RawPayloadCoreStep PhaseLoop state PhaseLoop
       (set_phase (set_left state (merge_set_target next None)) SortRight)
 | LoopRightDone : forall state next,
     map_phase state = SortRight -> RawMergeStep maximum (map_right state) MergeCompletes next ->
-    RawCoreStep PhaseLoop state PhaseLoop
+    RawPayloadCoreStep PhaseLoop state PhaseLoop
       (set_phase (set_right state (merge_set_target next None)) Lexicographic)
 | LoopLeftExhausted : forall state,
     map_phase state = Lexicographic ->
     nth_error (merge_source (map_left state)) (map_left_index state) = None ->
-    RawCoreStep PhaseLoop state
+    RawPayloadCoreStep PhaseLoop state
       (ReturnReply (Completes (Nat.compare (map_left_total state) (map_right_total state))))
       (set_phase state Done)
 | LoopRightExhausted : forall state lhs,
     map_phase state = Lexicographic ->
     nth_error (merge_source (map_left state)) (map_left_index state) = Some lhs ->
     nth_error (merge_source (map_right state)) (map_right_index state) = None ->
-    RawCoreStep PhaseLoop state
+    RawPayloadCoreStep PhaseLoop state
       (ReturnReply (Completes (Nat.compare (map_left_total state) (map_right_total state))))
-      (set_phase (initialize_left_remaining state) Done)
+      (set_phase (initialize_left_remaining_with (payload_repetitions (snd lhs)) state) Done)
 | LoopLexRequest : forall state lhs rhs,
     map_phase state = Lexicographic ->
     nth_error (merge_source (map_left state)) (map_left_index state) = Some lhs ->
     nth_error (merge_source (map_right state)) (map_right_index state) = Some rhs ->
-    RawCoreStep PhaseLoop state (RequestItem ToLexicographic lhs rhs)
-      (initialize_both_remaining state)
+    RawPayloadCoreStep PhaseLoop state (RequestItem ToLexicographic lhs rhs)
+      (initialize_both_remaining_with (payload_repetitions (snd lhs))
+        (payload_repetitions (snd rhs)) state)
 | RequestAliasedPrimary : forall state destination lhs rhs,
     key_alias (fst lhs) (fst rhs) = true ->
-    RawCoreStep (RequestItem destination lhs rhs) state
+    RawPayloadCoreStep (RequestItem destination lhs rhs) state
       (RequestSecondary destination lhs rhs) state
 | RequestFreshPrimary : forall state destination lhs rhs,
     key_alias (fst lhs) (fst rhs) = false ->
-    RawCoreStep (RequestItem destination lhs rhs) state
+    RawPayloadCoreStep (RequestItem destination lhs rhs) state
       (ReturnReply (Requests (PrimaryRequest (fst lhs) (fst rhs))))
       (set_pending state (Some (PendingPrimary lhs rhs destination)))
-| RequestAliasedSecondary : forall state destination lhs rhs,
-    value_alias (snd lhs) (snd rhs) = true ->
-    RawCoreStep (RequestSecondary destination lhs rhs) state (AcceptItem destination Eq) state
-| RequestFreshSecondary : forall state destination lhs rhs,
-    value_alias (snd lhs) (snd rhs) = false ->
-    RawCoreStep (RequestSecondary destination lhs rhs) state
-      (ReturnReply (Requests (SecondaryRequest (snd lhs) (snd rhs))))
+| RequestSelectedSecondary : forall state destination lhs rhs ordering,
+    select_secondary secondary_alias (payload_secondary (snd lhs))
+      (payload_secondary (snd rhs)) = SecondaryAccept ordering ->
+    RawPayloadCoreStep (RequestSecondary destination lhs rhs) state
+      (AcceptItem destination ordering) state
+| RequestComparedSecondary : forall state destination lhs rhs lhs_secondary rhs_secondary,
+    select_secondary secondary_alias (payload_secondary (snd lhs))
+      (payload_secondary (snd rhs)) = SecondaryCompare lhs_secondary rhs_secondary ->
+    RawPayloadCoreStep (RequestSecondary destination lhs rhs) state
+      (ReturnReply (Requests (SecondaryRequest lhs_secondary rhs_secondary)))
       (set_pending state (Some (PendingSecondary destination)))
 | AcceptLeft : forall state ordering next,
     raw_merge_accept (map_left state) ordering = Some next ->
-    RawCoreStep (AcceptItem ToLeftSort ordering) state PhaseLoop (set_left state next)
+    RawPayloadCoreStep (AcceptItem ToLeftSort ordering) state PhaseLoop (set_left state next)
 | AcceptRight : forall state ordering next,
     raw_merge_accept (map_right state) ordering = Some next ->
-    RawCoreStep (AcceptItem ToRightSort ordering) state PhaseLoop (set_right state next)
+    RawPayloadCoreStep (AcceptItem ToRightSort ordering) state PhaseLoop (set_right state next)
 | AcceptLexEqual : forall state,
-    RawCoreStep (AcceptItem ToLexicographic Eq) state PhaseLoop (advance_equal state)
+    RawPayloadCoreStep (AcceptItem ToLexicographic Eq) state PhaseLoop (advance_equal state)
 | AcceptLexDecisive : forall state ordering,
     ordering <> Eq ->
-    RawCoreStep (AcceptItem ToLexicographic ordering) state PhaseLoop (set_lead state ordering).
+    RawPayloadCoreStep (AcceptItem ToLexicographic ordering) state PhaseLoop (set_lead state ordering).
 
-Inductive RawCorePath : RawControl -> RawMapState -> RawControl -> RawMapState -> Prop :=
-| CorePathRefl : forall control state, RawCorePath control state control state
+Inductive RawPayloadCorePath : RawPayloadControl -> State -> RawPayloadControl -> State -> Prop :=
+| CorePathRefl : forall control state, RawPayloadCorePath control state control state
 | CorePathMore : forall control state middle middle_state last next,
-    RawCoreStep control state middle middle_state ->
-    RawCorePath middle middle_state last next ->
-    RawCorePath control state last next.
+    RawPayloadCoreStep control state middle middle_state ->
+    RawPayloadCorePath middle middle_state last next ->
+    RawPayloadCorePath control state last next.
 
-Definition RawResume state input reply next :=
-  RawCorePath (Ingress input) state (ReturnReply reply) next.
+Definition RawPayloadResume state input reply next :=
+  RawPayloadCorePath (Ingress input) state (ReturnReply reply) next.
+
+Theorem raw_payload_secondary_ingress_accepts_every_ordering : forall state destination ordering,
+  map_pending state = Some (PendingSecondary destination) ->
+  RawPayloadCoreStep (Ingress (Some ordering)) state (AcceptItem destination ordering)
+    (set_pending state None).
+Proof. intros. now apply IngressSecondary. Qed.
+
+Theorem primary_equal_does_not_mutate_either_sort : forall (state : State),
+  map_left (set_pending state None) = map_left state /\
+  map_right (set_pending state None) = map_right state.
+Proof. intro state. split; reflexivity. Qed.
+
+Theorem raw_payload_core_paths_compose : forall first state middle middle_state last next,
+  RawPayloadCorePath first state middle middle_state ->
+  RawPayloadCorePath middle middle_state last next -> RawPayloadCorePath first state last next.
+Proof.
+  intros first state middle middle_state last next PATH REST.
+  induction PATH; [exact REST|]. eapply CorePathMore; eauto.
+Qed.
+
+Theorem every_raw_payload_core_step_preserves_original_totals :
+  forall control state next_control next,
+  RawPayloadCoreStep control state next_control next ->
+  map_left_total next = map_left_total state /\ map_right_total next = map_right_total state.
+Proof. intros control state next_control next STEP. destruct STEP; split; reflexivity. Qed.
+
+Theorem every_raw_payload_resume_preserves_original_totals : forall state input reply next,
+  RawPayloadResume state input reply next ->
+  map_left_total next = map_left_total state /\ map_right_total next = map_right_total state.
+Proof.
+  intros state input reply next PATH. unfold RawPayloadResume in PATH.
+  induction PATH; [split; reflexivity|].
+  destruct (every_raw_payload_core_step_preserves_original_totals _ _ _ _ H) as [L R].
+  destruct IHPATH as [LN RN]. split; congruence.
+Qed.
+
+End PayloadControl.
+
+Section MapCompatibility.
+Context {Key Value : Type}.
+(** Map remains the present-secondary, unit-repetition specialization of the
+    single source relation. No second transition relation is retained. *)
+Definition RawControl := @RawPayloadControl Key Value Value.
+Variables key_alias : Key -> Key -> bool.
+Variables value_alias : Value -> Value -> bool.
+Variable maximum : nat.
+Definition RawCoreStep := @RawPayloadCoreStep Key Value Value
+  (@Some Value) (fun _ => 1) key_alias value_alias maximum.
+Definition RawCorePath := @RawPayloadCorePath Key Value Value
+  (@Some Value) (fun _ => 1) key_alias value_alias maximum.
+Definition RawResume := @RawPayloadResume Key Value Value
+  (@Some Value) (fun _ => 1) key_alias value_alias maximum.
+
+Theorem RequestAliasedSecondary : forall state destination lhs rhs,
+  value_alias (snd lhs) (snd rhs) = true ->
+  RawCoreStep (RequestSecondary destination lhs rhs) state (AcceptItem destination Eq) state.
+Proof. intros. apply RequestSelectedSecondary. now apply secondary_original_alias_accepts_equal. Qed.
+Theorem RequestFreshSecondary : forall state destination lhs rhs,
+  value_alias (snd lhs) (snd rhs) = false ->
+  RawCoreStep (RequestSecondary destination lhs rhs) state
+    (ReturnReply (Requests (SecondaryRequest (snd lhs) (snd rhs))))
+    (set_pending state (Some (PendingSecondary destination))).
+Proof. intros. apply RequestComparedSecondary. now apply secondary_original_nonalias_requests_originals. Qed.
 
 Theorem raw_secondary_ingress_accepts_every_ordering : forall state destination ordering,
   map_pending state = Some (PendingSecondary destination) ->
@@ -461,36 +599,26 @@ Theorem raw_secondary_ingress_accepts_every_ordering : forall state destination 
     (set_pending state None).
 Proof. intros. now apply IngressSecondary. Qed.
 
-Theorem primary_equal_does_not_mutate_either_sort : forall state,
-  map_left (set_pending state None) = map_left state /\
-  map_right (set_pending state None) = map_right state.
-Proof. intro state. split; reflexivity. Qed.
-
 Theorem raw_core_paths_compose : forall first state middle middle_state last next,
   RawCorePath first state middle middle_state ->
   RawCorePath middle middle_state last next -> RawCorePath first state last next.
-Proof.
-  intros first state middle middle_state last next PATH REST.
-  induction PATH; [exact REST|]. eapply CorePathMore; eauto.
-Qed.
+Proof. exact (@raw_payload_core_paths_compose Key Value Value
+  (@Some Value) (fun _ => 1) key_alias value_alias maximum). Qed.
 
 Theorem every_raw_core_step_preserves_original_totals :
   forall control state next_control next,
   RawCoreStep control state next_control next ->
   map_left_total next = map_left_total state /\ map_right_total next = map_right_total state.
-Proof. intros control state next_control next STEP. destruct STEP; split; reflexivity. Qed.
+Proof. exact (@every_raw_payload_core_step_preserves_original_totals Key Value Value
+  (@Some Value) (fun _ => 1) key_alias value_alias maximum). Qed.
 
 Theorem every_raw_resume_preserves_original_totals : forall state input reply next,
   RawResume state input reply next ->
   map_left_total next = map_left_total state /\ map_right_total next = map_right_total state.
-Proof.
-  intros state input reply next PATH. unfold RawResume in PATH.
-  induction PATH; [split; reflexivity|].
-  destruct (every_raw_core_step_preserves_original_totals _ _ _ _ H) as [L R].
-  destruct IHPATH as [LN RN]. split; congruence.
-Qed.
+Proof. exact (@every_raw_payload_resume_preserves_original_totals Key Value Value
+  (@Some Value) (fun _ => 1) key_alias value_alias maximum). Qed.
 
-Theorem unit_equal_advance_updates_both_original_indices : forall state,
+Theorem unit_equal_advance_updates_both_original_indices : forall (state : @RawMapState Key Value),
   map_left_remaining state = 1 -> map_right_remaining state = 1 ->
   map_left_index (advance_equal state) = S (map_left_index state) /\
   map_right_index (advance_equal state) = S (map_right_index state) /\
@@ -500,7 +628,7 @@ Proof.
   intros state L R. unfold advance_equal. rewrite L, R.
   repeat split; reflexivity.
 Qed.
-End MapControl.
+End MapCompatibility.
 
 (** Raw answer blocks forget the comparison-result equations in the existing
     PairProtocol, but retain its exact native aliases, order and early exit.
@@ -1576,3 +1704,16 @@ Print Assumptions GeneratedMapCoreSource.counted_both_restoration_is_original.
 Print Assumptions GeneratedMapCoreSource.counted_left_restoration_exposes_the_original_counter.
 Print Assumptions GeneratedMapCoreSource.counted_both_restoration_exposes_the_original_counters.
 Print Assumptions GeneratedMapCoreSource.raw_equal_advance_reuses_existing_count_operation.
+Print Assumptions GeneratedMapCoreSource.map_initialization_is_the_unit_specialization.
+Print Assumptions GeneratedMapCoreSource.secondary_absence_accepts_equal.
+Print Assumptions GeneratedMapCoreSource.secondary_absence_precedes_presence.
+Print Assumptions GeneratedMapCoreSource.secondary_presence_follows_absence.
+Print Assumptions GeneratedMapCoreSource.secondary_original_alias_accepts_equal.
+Print Assumptions GeneratedMapCoreSource.secondary_original_nonalias_requests_originals.
+Print Assumptions GeneratedMapCoreSource.present_secondary_selection_is_the_original_map_branch.
+Print Assumptions GeneratedMapCoreSource.raw_payload_secondary_ingress_accepts_every_ordering.
+Print Assumptions GeneratedMapCoreSource.raw_payload_core_paths_compose.
+Print Assumptions GeneratedMapCoreSource.every_raw_payload_core_step_preserves_original_totals.
+Print Assumptions GeneratedMapCoreSource.every_raw_payload_resume_preserves_original_totals.
+Print Assumptions GeneratedMapCoreSource.RequestAliasedSecondary.
+Print Assumptions GeneratedMapCoreSource.RequestFreshSecondary.

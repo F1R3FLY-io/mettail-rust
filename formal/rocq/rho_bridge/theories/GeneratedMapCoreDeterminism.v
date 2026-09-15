@@ -118,7 +118,8 @@ Proof.
     split; congruence.
   - inversion SECOND; subst.
     + exfalso. eapply returned_reply_has_no_internal_successor; exact STEP.
-    + match goal with NEXT : Step control state ?other_control ?other_state |- _ =>
+    + match goal with
+      NEXT : RawPayloadCoreStep _ _ _ _ _ control state ?other_control ?other_state |- _ =>
         destruct (original_map_control_has_one_next_control_and_payload
           control state middle middle_state STEP other_control other_state NEXT)
           as [CONTROL STATE]; subst other_control other_state
