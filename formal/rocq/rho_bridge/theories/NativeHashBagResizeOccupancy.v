@@ -116,6 +116,64 @@ Proof.
   unfold tagged_destinations in ORDER. rewrite length_map in ORDER. lia.
 Qed.
 
+(** The source relocation block has two set_ctrl writes, two bucket_ptr
+    projections and one copy_nonoverlapping of the complete tuple size.
+    Count both tag writes even when their addresses coincide. The pending
+    record's entire copy block is covered before its bytes are initialized;
+    this is an upper allowance, not a claim those operations already ran.
+
+    These counts cover only those flat transfer blocks. Hash bodies, probe
+    bodies, old-table iteration, setup/control initialization, pointer and
+    layout validity, final swap/free, and destructor authority retain their
+    separate source obligations. No native items counter is used here. *)
+Theorem relocation_frontiers_partition_original_record_counts :
+  forall original bucket_count full copied pending unread,
+  relocation_prefix original bucket_count full copied pending unread ->
+  length copied + length (pending_pairs pending) + length unread = length original.
+Proof.
+  intros original bucket_count full copied pending unread [ORIGINAL _].
+  rewrite ORIGINAL, length_app, length_map, length_app. reflexivity.
+Qed.
+
+Theorem every_relocation_frontier_covers_its_flat_transfer_blocks :
+  forall original bucket_count full copied pending unread tuple_bytes,
+  relocation_prefix original bucket_count full copied pending unread ->
+  2 * length (tagged_destinations copied pending) <= 2 * length original /\
+  tuple_bytes * length copied <=
+    tuple_bytes * length (tagged_destinations copied pending) /\
+  tuple_bytes * length (tagged_destinations copied pending) <=
+    tuple_bytes * length original.
+Proof.
+  intros original bucket_count full copied pending unread tuple_bytes PREFIX.
+  pose proof (relocation_frontiers_partition_original_record_counts
+    _ _ _ _ _ _ PREFIX) as PARTITION.
+  unfold tagged_destinations. rewrite length_map, length_app.
+  repeat split; nia.
+Qed.
+
+Theorem pending_transfer_reservation_is_unchanged_when_copy_finishes :
+  forall copied source destination,
+  length (tagged_destinations copied (Some (source, destination))) =
+    length (tagged_destinations (copied ++ [(source, destination)]) None).
+Proof.
+  intros. unfold tagged_destinations, pending_pairs. now rewrite app_nil_r.
+Qed.
+
+Theorem completed_relocation_has_exact_record_and_byte_volume :
+  forall original bucket_count full copied tuple_bytes,
+  relocation_prefix original bucket_count full copied None [] ->
+  length copied = length original /\
+  2 * length (tagged_destinations copied None) = 2 * length original /\
+  tuple_bytes * length copied = tuple_bytes * length original.
+Proof.
+  intros original bucket_count full copied tuple_bytes PREFIX.
+  pose proof (relocation_frontiers_partition_original_record_counts
+    _ _ _ _ _ _ PREFIX) as PARTITION.
+  cbn [pending_pairs length] in PARTITION.
+  unfold tagged_destinations, pending_pairs. rewrite app_nil_r, length_map.
+  repeat split; nia.
+Qed.
+
 (** No native item-counter hypothesis appears here. Even the pending FULL
     tag is included although its destination bytes are not initialized yet. *)
 Theorem each_resize_prefix_has_a_nonfull_original_destination :
@@ -203,6 +261,10 @@ Print Assumptions NativeHashBagResizeOccupancy.setting_an_empty_destination_reco
 Print Assumptions NativeHashBagResizeOccupancy.copying_the_pending_bytes_preserves_the_tagged_frontier.
 Print Assumptions NativeHashBagResizeOccupancy.tagged_destinations_are_exactly_the_original_full_slots.
 Print Assumptions NativeHashBagResizeOccupancy.each_prefix_tags_no_more_than_the_original_roster.
+Print Assumptions NativeHashBagResizeOccupancy.relocation_frontiers_partition_original_record_counts.
+Print Assumptions NativeHashBagResizeOccupancy.every_relocation_frontier_covers_its_flat_transfer_blocks.
+Print Assumptions NativeHashBagResizeOccupancy.pending_transfer_reservation_is_unchanged_when_copy_finishes.
+Print Assumptions NativeHashBagResizeOccupancy.completed_relocation_has_exact_record_and_byte_volume.
 Print Assumptions NativeHashBagResizeOccupancy.each_resize_prefix_has_a_nonfull_original_destination.
 Print Assumptions NativeHashBagResizeOccupancy.the_source_resize_policy_supplies_prefix_room.
 Print Assumptions NativeHashBagResizeOccupancy.finishing_the_roster_justifies_the_delayed_item_count.

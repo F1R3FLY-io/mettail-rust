@@ -344,10 +344,19 @@ be filled before its EMPTY test, without assuming that the cache was already
 populated. This does not assert that a cached small-table index needs no repair.
 
 These results use the specified SSE2 mask and least-set-bit instruction
-contracts; they do not verify compiler lowering. The numeric clear-lowest-bit
-iteration, reached loop prefixes, callback work, and insertion repair remain
-distinct obligations. Accepted layout geometry covers the candidate-index
-addition, but does not itself establish the source loop's position invariant.
+contracts; they do not verify compiler lowering. The
+[mask-iteration refinement](../../formal/rocq/rho_bridge/theories/NativeHashBagMaskIteration.v)
+proves that the native operation `word & (word - 1)` removes exactly the least
+set bit. Subtraction occurs only after a successful lowest-bit result, which
+proves the word is nonzero. Every successful-return prefix preserves the
+original ordered suffix, repeats no lane, and returns at most sixteen lanes.
+A consumer stopping at its first `None` has returned every original matching
+lane exactly once. Repeated calls after `None` are not counted as successful
+returns or bounded by this theorem. These are mask-iterator facts, not a bound
+on arbitrary callback bodies or the number of groups reached by a lookup.
+Reached group prefixes, callback work, and insertion repair remain distinct
+obligations. Accepted layout geometry covers the candidate-index addition,
+but does not itself establish the source loop's position invariant.
 
 The integer result alone does not prove native lookup termination or bound
 its equality callbacks. Those still require connecting the derived window
@@ -521,6 +530,18 @@ The resize guard then frees the old allocation without rescanning or dropping
 the relocated keys. These are allocator invocations, not constant-time or
 physical-memory claims. Panic-path admission is separate from these normal
 completion laws.
+
+The same occupancy ledger bounds the flat relocation blocks. Let $`n`$ be
+the original stored-entry count, $`c`$ the completed-copy count, $`p`$ the
+pending-tag count (zero or one), $`u`$ the unread count, and $`s`$ the tuple
+size in bytes. Its original-roster equation gives $`c+p+u=n`$. The transfer
+allowance assigns each tagged record two control writes and two bucket-pointer projections, even
+when the two control addresses coincide. Reserving $`s(c+p)`$ copy bytes
+covers the pending record before its copy finishes and is bounded by $`sn`$.
+At completion there are exactly $`n`$ copied records and $`sn`$ copied bytes.
+These are transfer counts, not a claim that a Hash callback, placement probe,
+or allocator body costs one unit. Control initialization, iteration, those
+variable-cost bodies, and finalization remain separate from this allowance.
 
 The [native resize regression](../../runtime/src/hashbag_history_tests.rs)
 checks growth across small and larger tables using colliding keys. It records
