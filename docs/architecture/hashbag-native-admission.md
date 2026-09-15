@@ -238,6 +238,22 @@ key rehashing, or pay for the new table's lookup and storage work.
 
 ## Exact allocation geometry
 
+`HashBagRetainedEntries::checked_bucket_count` recovers the actual current
+bucket count from a reconstruction accumulator's public capacity. The view's
+private construction boundary guarantees a fresh, insert-only table observed between
+completed native operations. The growth model proves that these tables have
+no tombstones and that their public capacity equals full capacity. This is
+not an inverse for arbitrary bags after deletion.
+
+The inverse returns one for capacity zero (the unallocated singleton), four
+for capacity three, and eight for capacity seven. For larger capacities it
+requires divisibility by seven, multiplies the quotient by eight with checked
+arithmetic, and requires a power-of-two result. The model proves exact recovery
+and that native representable buckets satisfy those arithmetic guards.
+The query checks the audited profile first and performs no allocation, key
+hashing, or equality. Its caller must prepay the inspection. The singleton
+must remain separate from allocated-table layout calculations below.
+
 `HashBagRetainedEntries::checked_table_layout` computes the chosen table's
 layout without allocating it. It reuses `Layout::array::<(T, usize)>` for the
 entries and extends that layout with the native control-byte region. It does

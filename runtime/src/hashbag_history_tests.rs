@@ -213,6 +213,96 @@ fn pinned_binding_resize_rehashes_originals_once_without_cloning_or_dropping_the
 }
 
 #[test]
+fn clean_bucket_recovery_checks_shapes_and_machine_word_boundaries() {
+    // Independent forward capacity formula from pinned bucket_mask_to_capacity.
+    let capacities: Vec<_> = std::iter::once((0usize, 1usize))
+        .chain((2..usize::BITS).map(|exponent| {
+            let buckets = 1usize << exponent;
+            let capacity = if buckets <= 8 {
+                buckets - 1
+            } else {
+                (buckets / 8) * 7
+            };
+            (capacity, buckets)
+        }))
+        .collect();
+    let expected = |capacity| {
+        capacities
+            .iter()
+            .find_map(|(native, buckets)| (*native == capacity).then_some(*buckets))
+    };
+    for capacity in (0..4096)
+        .chain(
+            capacities
+                .iter()
+                .flat_map(|(capacity, _)| [capacity.saturating_sub(1), *capacity, capacity + 1]),
+        )
+        .chain([usize::MAX - 7, usize::MAX - 1, usize::MAX])
+    {
+        assert_eq!(checked_clean_table_buckets(capacity), expected(capacity), "{capacity}");
+    }
+}
+
+#[test]
+fn retained_bucket_query_tracks_actual_reconstruction_boundaries() {
+    let source = HashBag::<CollisionKey>::new();
+    // Binding keeps zero-count entries and replaces equal-key counts; Clone
+    // discards zero counts and accumulates duplicates. Both remain clean.
+    let entries: Vec<_> = std::iter::once((CollisionKey(1000), 0))
+        .chain((0..65).flat_map(|key| [(CollisionKey(key), 1), (CollisionKey(key), 0)]))
+        .collect();
+    for mode in [HashBagRebuildMode::CloneEntries, HashBagRebuildMode::BindingEntries] {
+        let mut capacities = std::collections::BTreeSet::new();
+        let mut inspections = 0;
+        let result = source
+            .try_rebuild_entries_with(entries.clone(), mode, |step| {
+                let retained = match step {
+                    HashBagRebuildStep::Start { .. } => return Ok(()),
+                    HashBagRebuildStep::Insert { retained, .. }
+                    | HashBagRebuildStep::FinalBindingSummary { retained } => retained,
+                };
+                inspections += 1;
+                capacities.insert(retained.capacity());
+                match retained.checked_bucket_count() {
+                    Some(buckets) => {
+                        assert!(crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE);
+                        let capacity = match buckets {
+                            1 => 0,
+                            4 | 8 => buckets - 1,
+                            _ => (buckets / 8) * 7,
+                        };
+                        assert_eq!(capacity, retained.capacity());
+                        assert!(retained.distinct_len() <= capacity);
+                        assert_eq!(retained.checked_table_layout(buckets).is_some(), buckets != 1);
+                    },
+                    None => assert!(!crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE),
+                }
+                Ok::<_, crate::BindingFailure<()>>(())
+            })
+            .expect("the geometry inspection does not refuse reconstruction");
+        assert_eq!(
+            inspections,
+            entries.len() + usize::from(mode == HashBagRebuildMode::BindingEntries)
+        );
+        if crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            assert_eq!(capacities.into_iter().collect::<Vec<_>>(), [0, 3, 7, 14, 28, 56, 112]);
+        }
+        assert_eq!(
+            result.distinct_len(),
+            if mode == HashBagRebuildMode::CloneEntries {
+                65
+            } else {
+                66
+            }
+        );
+    }
+    eprintln!(
+        "retained bucket query: audited_profile={}",
+        crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE
+    );
+}
+
+#[test]
 fn retained_layout_query_matches_native_geometry_through_overflow_boundaries() {
     #[repr(align(64))]
     struct CacheAligned;

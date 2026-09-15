@@ -206,6 +206,83 @@ Proof.
   eapply finish_preserves_cleanliness; [exact FINISH|exact PREPARED].
 Qed.
 
+(** The retained reconstruction view is created only for a fresh insert-only
+    result, after each complete native operation. No deletion or reservation
+    internals are exposed. Therefore public capacity equals full capacity.
+    This recovery must not be applied to an arbitrary tombstone-bearing bag.
+    Rust additionally checks the audited profile, native power-of-two shape,
+    and every arithmetic operation before using the recovered bucket count. *)
+Definition recovered_clean_buckets capacity :=
+  if capacity =? 0 then 1 else if capacity =? 3 then 4 else
+  if capacity =? 7 then 8 else 8 * (capacity / 7).
+
+Lemma native_capacity_has_one_of_the_exact_recovery_shapes : forall bucket_count,
+  NativeBuckets bucket_count ->
+  (full_capacity bucket_count = 0 /\ bucket_count = 1) \/
+  (full_capacity bucket_count = 3 /\ bucket_count = 4) \/
+  (full_capacity bucket_count = 7 /\ bucket_count = 8) \/
+  (exists units, 2 <= units /\ full_capacity bucket_count = 7 * units /\
+    bucket_count = 8 * units).
+Proof.
+  intros bucket_count NATIVE. destruct NATIVE as [|exponent].
+  - left. split; reflexivity.
+  - destruct exponent as [|[|exponent]].
+    + right. left. split; reflexivity.
+    + right. right. left. split; reflexivity.
+    + right. right. right. exists (2 * 2 ^ exponent).
+      assert (POWER : 2 ^ (S (S exponent) + 2) = 16 * 2 ^ exponent).
+      { replace (S (S exponent) + 2) with (exponent + 4) by lia.
+        rewrite Nat.pow_add_r. cbn [Nat.pow]. lia. }
+      assert (POSITIVE : 0 < 2 ^ exponent).
+      { pose proof (Nat.pow_nonzero 2 exponent ltac:(lia)). lia. }
+      rewrite POWER, large_native_capacity_counts_seven_eighths by exact POSITIVE.
+      repeat split; lia.
+Qed.
+
+Theorem clean_completed_tables_expose_the_full_capacity : forall state,
+  valid_counters state -> deleted state = 0 ->
+  observed_capacity state = full_capacity (buckets state).
+Proof. intros state [_ BALANCE] CLEAN. unfold observed_capacity. lia. Qed.
+
+Theorem clean_public_capacity_recovers_the_original_bucket_count : forall state,
+  valid_counters state -> deleted state = 0 ->
+  recovered_clean_buckets (observed_capacity state) = buckets state.
+Proof.
+  intros state VALID CLEAN.
+  rewrite clean_completed_tables_expose_the_full_capacity by assumption.
+  destruct (native_capacity_has_one_of_the_exact_recovery_shapes
+    (buckets state) (proj1 VALID)) as [[CAPACITY BUCKETS]|[[CAPACITY BUCKETS]|
+      [[CAPACITY BUCKETS]|[units [MINIMUM [CAPACITY BUCKETS]]]]]].
+  - rewrite CAPACITY, BUCKETS. reflexivity.
+  - rewrite CAPACITY, BUCKETS. reflexivity.
+  - rewrite CAPACITY, BUCKETS. reflexivity.
+  - rewrite CAPACITY, BUCKETS. unfold recovered_clean_buckets.
+    assert (NONZERO : (7 * units =? 0) = false) by (apply Nat.eqb_neq; lia).
+    assert (NOT_SMALL : (7 * units =? 3) = false) by (apply Nat.eqb_neq; lia).
+    assert (NOT_EIGHT : (7 * units =? 7) = false) by (apply Nat.eqb_neq; lia).
+    rewrite NONZERO, NOT_SMALL, NOT_EIGHT.
+    assert (QUOTIENT : 7 * units / 7 = units).
+    { rewrite Nat.mul_comm. apply Nat.div_mul. lia. }
+    now rewrite QUOTIENT.
+Qed.
+
+Theorem clean_large_capacity_passes_recovery_arithmetic_guards : forall state word_limit,
+  valid_counters state -> deleted state = 0 ->
+  14 <= observed_capacity state -> buckets state <= word_limit ->
+  observed_capacity state mod 7 = 0 /\
+    8 * (observed_capacity state / 7) <= word_limit.
+Proof.
+  intros state word_limit VALID CLEAN LARGE WORD.
+  rewrite clean_completed_tables_expose_the_full_capacity in * by assumption.
+  destruct (native_capacity_has_one_of_the_exact_recovery_shapes
+    (buckets state) (proj1 VALID)) as [[CAPACITY BUCKETS]|[[CAPACITY BUCKETS]|
+      [[CAPACITY BUCKETS]|[units [MINIMUM [CAPACITY BUCKETS]]]]]]; try lia.
+  rewrite CAPACITY. rewrite BUCKETS in WORD.
+  assert (QUOTIENT : 7 * units / 7 = units).
+  { rewrite Nat.mul_comm. apply Nat.div_mul. lia. }
+  split; [rewrite Nat.mul_comm; apply Nat.mod_mul; lia|now rewrite QUOTIENT].
+Qed.
+
 End NativeHashBagGrowth.
 
 Print Assumptions NativeHashBagGrowth.valid_counters_fix_the_resize_request.
@@ -220,3 +297,7 @@ Print Assumptions NativeHashBagGrowth.source_reserve_is_prebounded.
 Print Assumptions NativeHashBagGrowth.completed_source_insert_retains_the_prospective_bounds.
 Print Assumptions NativeHashBagGrowth.a_clean_exhausted_table_selects_resize_not_rehash.
 Print Assumptions NativeHashBagGrowth.completed_source_insert_preserves_cleanliness.
+Print Assumptions NativeHashBagGrowth.native_capacity_has_one_of_the_exact_recovery_shapes.
+Print Assumptions NativeHashBagGrowth.clean_completed_tables_expose_the_full_capacity.
+Print Assumptions NativeHashBagGrowth.clean_public_capacity_recovers_the_original_bucket_count.
+Print Assumptions NativeHashBagGrowth.clean_large_capacity_passes_recovery_arithmetic_guards.

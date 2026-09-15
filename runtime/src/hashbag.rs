@@ -133,6 +133,22 @@ pub struct HashBagRetainedEntries<'a, T> {
     counts: &'a HashMap<T, usize, BuildHasherDefault<FxHasher>>,
 }
 
+// Invert full capacity only for a completed, tombstone-free native table.
+// Keep this private: arbitrary HashMap::capacity() values do not carry that
+// invariant. The retained reconstruction view establishes it at its boundary.
+fn checked_clean_table_buckets(capacity: usize) -> Option<usize> {
+    match capacity {
+        0 => Some(1),
+        3 => Some(4),
+        7 => Some(8),
+        capacity if capacity >= 14 && capacity % 7 == 0 => {
+            let buckets = (capacity / 7).checked_mul(8)?;
+            buckets.is_power_of_two().then_some(buckets)
+        },
+        _ => None,
+    }
+}
+
 impl<T> HashBagRetainedEntries<'_, T> {
     pub fn distinct_len(&self) -> usize {
         self.counts.len()
@@ -141,6 +157,23 @@ impl<T> HashBagRetainedEntries<'_, T> {
     /// The native map capacity, not a logical entry count or a byte bound.
     pub fn capacity(&self) -> usize {
         self.counts.capacity()
+    }
+
+    /// Recover this retained table's actual bucket count without allocating.
+    ///
+    /// This view is constructed only for a fresh reconstruction accumulator,
+    /// between complete insertions. It cannot contain tombstones, so public
+    /// capacity equals full capacity. `NativeHashBagGrowth` proves the inverse
+    /// used here. The empty singleton has one bucket but no allocation.
+    ///
+    /// Returns `None` for an unaudited profile or invalid/overflowing geometry.
+    /// Callers must distinguish profile refusal and pay for this inspection
+    /// before using it. This query does not admit insertion or cleanup.
+    pub fn checked_bucket_count(&self) -> Option<usize> {
+        if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return None;
+        }
+        checked_clean_table_buckets(self.counts.capacity())
     }
 
     /// Compute an allocated counts table's layout without allocating it.
