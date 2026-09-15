@@ -143,6 +143,30 @@ impl<T> HashBagRetainedEntries<'_, T> {
         self.counts.capacity()
     }
 
+    /// Compute an allocated counts table's layout without allocating it.
+    ///
+    /// The bucket count must come from the native sizing policy, not an entry
+    /// count or historical upper bound. Returns `None` for an unaudited profile,
+    /// a non-native allocated bucket count, or an unrepresentable layout.
+    /// Callers distinguish profile refusal before using this geometry query.
+    ///
+    /// `NativeHashBagLayout` proves that the existing standard layout operations
+    /// have the pinned native offset, size, alignment, and overflow ceiling.
+    /// Do not pad the returned layout: native control storage is unpadded.
+    /// This query neither reserves resources nor admits insertion or cleanup;
+    /// its caller must cover the query's work before calling it.
+    pub fn checked_table_layout(&self, buckets: usize) -> Option<(std::alloc::Layout, usize)> {
+        if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE
+            || buckets < 4
+            || !buckets.is_power_of_two()
+        {
+            return None;
+        }
+        let entries = std::alloc::Layout::array::<(T, usize)>(buckets).ok()?;
+        let controls = std::alloc::Layout::from_size_align(buckets.checked_add(16)?, 16).ok()?;
+        entries.extend(controls).ok()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&T, usize)> {
         self.counts.iter().map(|(key, count)| (key, *count))
     }

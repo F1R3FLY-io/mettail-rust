@@ -236,6 +236,47 @@ arithmetic and table-layout limits before the original insertion. Checking
 the bucket bound alone does not establish those guards, account for retained
 key rehashing, or pay for the new table's lookup and storage work.
 
+## Exact allocation geometry
+
+`HashBagRetainedEntries::checked_table_layout` computes the chosen table's
+layout without allocating it. It reuses `Layout::array::<(T, usize)>` for the
+entries and extends that layout with the native control-byte region. It does
+not call `pad_to_align`: the native allocation's final size is unpadded.
+The query rejects an unaudited profile, invalid allocated bucket count, or
+unrepresentable layout. Its caller must check the profile and admit this
+inspection before using it; the query is not itself resource admission.
+
+Here $`B`$ denotes the actual chosen allocated bucket count, not the historical
+extent allowance. Let $`s`$ be the tuple's byte size, $`a`$ its alignment,
+$`A`$ the native control alignment, $`d`$ the data-region size, and $`\ell`$
+the full requested allocation size. On the audited profile:
+
+```math
+A=\max(a,16),\qquad d=sB,\qquad \ell=d+B+16.
+```
+
+The [layout model](../../formal/rocq/rho_bridge/theories/NativeHashBagLayout.v)
+proves that the tuple and bucket geometry make $`d`$ divisible by both $`A`$
+and sixteen. Thus the standard extension and native rounding have exactly
+the same offset, size, and alignment. Writing $`M`$ for `isize::MAX`, the
+native size ceiling and the standard layout ceiling coincide:
+
+```math
+\ell+(A-1)\leq M.
+```
+
+Accepted native geometry also validates both intermediate standard layouts,
+so composing those APIs adds no spurious layout rejection. The proof bounds
+the native multiplication/addition intermediates and the local probe additions
+when the source's position and stride guards hold. It does not prove that a
+whole lookup reaches those guards, account for allocator work, or turn a
+historical bucket upper bound into the actual selected allocation.
+
+The [allocation-free layout regression](../../runtime/src/hashbag_history_tests.rs)
+compares the query with the pinned native arithmetic across every machine-word
+bucket power, including overflowing layouts, ordinary tuples and over-aligned
+keys. Large boundary cases compute layout values only; they allocate no table.
+
 ## Lookup probe sequence
 
 Native lookup and insertion use a triangular group probe, not the sequential

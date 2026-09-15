@@ -112,6 +112,68 @@ fn pinned_insert_only_growth_matches_small_and_large_source_sizing() {
 }
 
 #[test]
+fn retained_layout_query_matches_native_geometry_through_overflow_boundaries() {
+    #[repr(align(64))]
+    struct CacheAligned;
+    #[repr(align(4096))]
+    struct PageAligned;
+
+    // Independent projection of pinned raw.rs::calculate_layout_for. This
+    // computes geometry only: even the largest probes allocate no table.
+    fn native_geometry<T>(buckets: usize) -> Option<(usize, usize, usize)> {
+        let size = std::mem::size_of::<(T, usize)>();
+        let align = std::mem::align_of::<(T, usize)>().max(16);
+        let offset = size.checked_mul(buckets)?.checked_add(align - 1)? & !(align - 1);
+        let bytes = offset.checked_add(buckets.checked_add(16)?)?;
+        (bytes <= (isize::MAX as usize).checked_sub(align - 1)?).then_some((bytes, align, offset))
+    }
+
+    fn check<T>() {
+        let counts = HashMap::<T, usize, BuildHasherDefault<FxHasher>>::default();
+        let retained = HashBagRetainedEntries { counts: &counts };
+        for buckets in [0, 1, 2, 3, 5, usize::MAX] {
+            assert!(retained.checked_table_layout(buckets).is_none());
+        }
+        let mut accepted = 0;
+        let mut refused = 0;
+        for exponent in 2..usize::BITS {
+            let buckets = 1usize << exponent;
+            let actual = retained
+                .checked_table_layout(buckets)
+                .map(|(layout, offset)| (layout.size(), layout.align(), offset));
+            if crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+                assert_eq!(actual, native_geometry::<T>(buckets), "buckets={buckets}");
+                match actual {
+                    Some((bytes, _, offset)) => {
+                        accepted += 1;
+                        assert_eq!(bytes, offset + buckets + 16);
+                        assert_eq!(offset, std::mem::size_of::<(T, usize)>() * buckets);
+                    },
+                    None => refused += 1,
+                }
+            } else {
+                assert!(actual.is_none());
+            }
+        }
+        if crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            assert!(accepted > 0 && refused > 0, "exercise both sides of the size ceiling");
+        }
+        eprintln!(
+            "counts layout {}: audited_profile={}, accepted={accepted}, refused={refused}",
+            std::any::type_name::<T>(),
+            crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE,
+        );
+    }
+
+    check::<()>();
+    check::<u8>();
+    check::<[u8; 19]>();
+    check::<[u8; 257]>();
+    check::<CacheAligned>();
+    check::<PageAligned>();
+}
+
+#[test]
 fn collisions_and_tombstones_do_not_erase_history_or_clone_allocation() {
     let mut bag = HashBag::new();
     let mut expected = 0;
