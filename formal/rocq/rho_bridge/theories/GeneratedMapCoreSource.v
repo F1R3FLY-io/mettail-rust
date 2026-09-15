@@ -278,14 +278,49 @@ Definition set_lex state li ri lr rr :=
   map_state (map_left state) (map_right state) (map_phase state) (map_pending state) (map_lead state)
     (map_left_total state) (map_right_total state) li ri lr rr.
 
-Definition initialize_left_remaining state :=
+(** current_left/right restore the fetched original repetition count only
+    when its remaining counter is zero. The existing Map entrypoints remain
+    unit-count wrappers; neither this helper nor its caller invents a count. *)
+Definition initialize_left_remaining_with count state :=
   set_lex state (map_left_index state) (map_right_index state)
-    (if map_left_remaining state =? 0 then 1 else map_left_remaining state)
+    (if map_left_remaining state =? 0 then count else map_left_remaining state)
     (map_right_remaining state).
-Definition initialize_both_remaining state :=
+Definition initialize_both_remaining_with left_count right_count state :=
   set_lex state (map_left_index state) (map_right_index state)
-    (if map_left_remaining state =? 0 then 1 else map_left_remaining state)
-    (if map_right_remaining state =? 0 then 1 else map_right_remaining state).
+    (if map_left_remaining state =? 0 then left_count else map_left_remaining state)
+    (if map_right_remaining state =? 0 then right_count else map_right_remaining state).
+Definition initialize_left_remaining state := initialize_left_remaining_with 1 state.
+Definition initialize_both_remaining state := initialize_both_remaining_with 1 1 state.
+
+Theorem counted_left_restoration_is_original : forall state,
+  initialize_left_remaining state =
+    set_lex state (map_left_index state) (map_right_index state)
+      (if map_left_remaining state =? 0 then 1 else map_left_remaining state)
+      (map_right_remaining state).
+Proof. reflexivity. Qed.
+
+Theorem counted_both_restoration_is_original : forall state,
+  initialize_both_remaining state =
+    set_lex state (map_left_index state) (map_right_index state)
+      (if map_left_remaining state =? 0 then 1 else map_left_remaining state)
+      (if map_right_remaining state =? 0 then 1 else map_right_remaining state).
+Proof. reflexivity. Qed.
+
+Theorem counted_left_restoration_exposes_the_original_counter : forall count state,
+  map_left_remaining (initialize_left_remaining_with count state) =
+    (if map_left_remaining state =? 0 then count else map_left_remaining state) /\
+  map_right_remaining (initialize_left_remaining_with count state) =
+    map_right_remaining state.
+Proof. intros. split; reflexivity. Qed.
+
+Theorem counted_both_restoration_exposes_the_original_counters :
+  forall left_count right_count state,
+  map_left_remaining (initialize_both_remaining_with left_count right_count state) =
+    (if map_left_remaining state =? 0 then left_count else map_left_remaining state) /\
+  map_right_remaining (initialize_both_remaining_with left_count right_count state) =
+    (if map_right_remaining state =? 0 then right_count else map_right_remaining state).
+Proof. intros. split; reflexivity. Qed.
+
 Definition advance_equal state :=
   let consumed := Nat.min (map_left_remaining state) (map_right_remaining state) in
   let lr := map_left_remaining state - consumed in
@@ -293,6 +328,21 @@ Definition advance_equal state :=
   set_lex state
     (if lr =? 0 then S (map_left_index state) else map_left_index state)
     (if rr =? 0 then S (map_right_index state) else map_right_index state) lr rr.
+
+(** This projection connects the existing raw-state update to the shared
+    min/subtract/zero-test operation without introducing a second algorithm. *)
+Definition raw_lex_cursor state :
+    CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.UnitLexCursor :=
+  {| CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.lex_left_index := map_left_index state;
+     CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.lex_right_index := map_right_index state;
+     CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.lex_left_remaining := map_left_remaining state;
+     CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.lex_right_remaining := map_right_remaining state |}.
+
+Theorem raw_equal_advance_reuses_existing_count_operation : forall state,
+  raw_lex_cursor (advance_equal state) =
+    CollectionPairAndUnitLexResults.CollectionPairAndUnitLexResults.advance_equal_counts
+      (raw_lex_cursor state).
+Proof. reflexivity. Qed.
 
 Inductive RawRequest := PrimaryRequest (lhs rhs : Key) | SecondaryRequest (lhs rhs : Value).
 Inductive RawReply := Requests (request : RawRequest) | Completes (ordering : comparison).
@@ -1521,3 +1571,8 @@ Print Assumptions GeneratedMapCoreSource.native_event_blocks_retain_exactly_the_
 Print Assumptions GeneratedMapCoreSource.sequenced_map_events_construct_the_complete_raw_dialogue.
 Print Assumptions GeneratedMapCoreSource.native_initial_outer_events_preserve_the_original_unit_total.
 Print Assumptions GeneratedMapCoreSource.bounded_native_map_events_construct_the_complete_raw_dialogue.
+Print Assumptions GeneratedMapCoreSource.counted_left_restoration_is_original.
+Print Assumptions GeneratedMapCoreSource.counted_both_restoration_is_original.
+Print Assumptions GeneratedMapCoreSource.counted_left_restoration_exposes_the_original_counter.
+Print Assumptions GeneratedMapCoreSource.counted_both_restoration_exposes_the_original_counters.
+Print Assumptions GeneratedMapCoreSource.raw_equal_advance_reuses_existing_count_operation.

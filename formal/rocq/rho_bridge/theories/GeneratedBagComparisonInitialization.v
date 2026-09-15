@@ -6,9 +6,11 @@
     Source totals used as the comparison lead are separate from these sums.
 
     Source bindings: HashBag::try_comparison_roster uses the paid next-based
-    native scan. Ordinary map/collect and its possible native fold specialization
-    enumerate the same ordered FULL positions; only the checked next path has
-    the borrowed-scan cost proof. Both convert each original borrowed key/count
+    native scan. Ordinary map/collect takes Vec's default next-based producer:
+    the pinned standard HashMap iterator is not TrustedLen. The same native
+    scan proof is reusable for its iterator portion; vector producer handling
+    and repetition-sum work still require separate native cost coverage.
+    Both convert each original borrowed key/count
     into CollectionCmpItem with absent secondary and unchanged repetitions. *)
 From Stdlib Require Import Lists.List Arith.PeanoNat Lia.
 From RhoBridge Require Import AdmittedCollectionComparisonOwnership.
@@ -94,7 +96,7 @@ Qed.
     target None, width one, start/left/output zero, waiting false, done from
     source length; reset_run sets middle=min(1,length), end=min(2,length), and
     right=middle. No field depends on successful policy unit values.
-    Subsequent request preservation uses the existing shared-source policy
+    Subsequent request preservation requires the generalized shared-source policy
     erasure theorem with actual source events and identical typed answers;
     neither a new Bag canonical result nor Map-only factorization is proved. *)
 Theorem successful_repeated_rosters_supply_identical_constructor_arguments :

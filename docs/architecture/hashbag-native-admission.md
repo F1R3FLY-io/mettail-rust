@@ -556,11 +556,22 @@ even when the two stored totals differ. Root-alias equality may retain its
 existing shortcut; malformed-input tests must not confuse that shortcut with
 an executed collection factory.
 
-Ordinary `map`/`collect` may use the native specialized `fold`, whereas the
-checked adapter uses explicit `next`. Both visit increasing control groups and
-the lowest remaining occupied position within each group, giving the same
-ordered values. Their terminal mask-probe counts differ. This value-order
-correspondence does not extend the borrowed `next` cost proof to `fold`.
+On the pinned profile, the original standard `HashMap` iterator implements
+`ExactSizeIterator` but not `TrustedLen`. Ordinary `map`/`collect` therefore
+takes `Vec`'s default, `next`-based collection path, not the specialized
+hashbrown `fold`. The borrowed scan proof is reusable for that iterator
+portion. Native vector first-element handling, allocation, size hints,
+writes, length updates, and the repetition-sum loop still need their own
+source-work coverage; value-order correspondence does not supply those charges.
+
+The [existing raw comparison model](../../formal/rocq/rho_bridge/theories/GeneratedMapCoreSource.v)
+now exposes count-parameterized remaining-counter restoration. Its Map
+entrypoints remain unit-count wrappers, definitionally equal to their original
+operations. A direct projection also equates its four-counter advancement
+with the existing shared minimum/subtraction operation. These are reuse
+prerequisites: a Bag caller must still supply each fetched original count,
+and the optional-secondary routing and full source-policy correspondence
+must be generalized before this constitutes a complete Bag execution proof.
 
 The constructor census keeps operational support separate from eligibility
 for its existing formal row vocabulary. That vocabulary has paired maps but
