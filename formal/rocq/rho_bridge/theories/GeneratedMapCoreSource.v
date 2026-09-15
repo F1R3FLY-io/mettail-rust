@@ -767,6 +767,29 @@ End PairRefinement.
     comparison function. In particular this definition neither predicts nor
     checks a response. A native witness is related to it only by the lifting
     lemmas below. *)
+Section PayloadDialogues.
+Context {Key Value Secondary : Type}.
+Variable payload_secondary : Value -> option Secondary.
+Variable payload_repetitions : Value -> nat.
+Variable key_alias : Key -> Key -> bool.
+Variable secondary_alias : Secondary -> Secondary -> bool.
+Variable maximum : nat.
+Local Notation Path := (@RawPayloadCorePath Key Value Secondary
+  payload_secondary payload_repetitions key_alias secondary_alias maximum).
+Local Notation Exchange := ((@RawRequest Key Secondary) * comparison)%type.
+
+Inductive RawPayloadDialogue :
+    @RawPayloadControl Key Value Secondary -> @RawMapState Key Value -> list Exchange ->
+    @RawPayloadControl Key Value Secondary -> @RawMapState Key Value -> Prop :=
+| DialogueQuiet : forall control state last next,
+    Path control state last next ->
+    RawPayloadDialogue control state [] last next
+| DialogueAnswer : forall control state request parked ordering answers last next,
+    Path control state (ReturnReply (Requests request)) parked ->
+    RawPayloadDialogue (Ingress (Some ordering)) parked answers last next ->
+    RawPayloadDialogue control state ((request, ordering) :: answers) last next.
+End PayloadDialogues.
+
 Section RawDialogues.
 Context {Key Value : Type}.
 Variable key_alias : Key -> Key -> bool.
@@ -776,16 +799,8 @@ Local Notation Path := (@RawCorePath Key Value key_alias value_alias maximum).
 Local Notation Step := (@RawCoreStep Key Value key_alias value_alias maximum).
 Local Notation Exchange := ((@RawRequest Key Value) * comparison)%type.
 
-Inductive RawDialogue :
-    @RawControl Key Value -> @RawMapState Key Value -> list Exchange ->
-    @RawControl Key Value -> @RawMapState Key Value -> Prop :=
-| DialogueQuiet : forall control state last next,
-    Path control state last next ->
-    RawDialogue control state [] last next
-| DialogueAnswer : forall control state request parked ordering answers last next,
-    Path control state (ReturnReply (Requests request)) parked ->
-    RawDialogue (Ingress (Some ordering)) parked answers last next ->
-    RawDialogue control state ((request, ordering) :: answers) last next.
+Definition RawDialogue := @RawPayloadDialogue Key Value Value
+  (@Some Value) (fun _ => 1) key_alias value_alias maximum.
 
 Lemma raw_dialogue_prepend_path : forall first state middle parked answers last next,
   Path first state middle parked ->

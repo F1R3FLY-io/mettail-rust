@@ -602,11 +602,22 @@ shared minimum/subtraction operation. Successful repeated-item construction
 must still establish positive counts; arbitrary model projections do not
 grant permission to construct a zero-count native item.
 
+The [shared erasure model](../../formal/rocq/rho_bridge/theories/GeneratedMapCoreErasure.v)
+transports this same control relation, including its suspended requests and
+resumptions, between payload representations. Repetition counts must remain
+equal, optional-secondary projection must commute with payload erasure, and
+the original primary and secondary alias predicates must commute with their
+operand maps. Supplied comparison answers, cursor positions, pending
+destinations, totals, and remaining counts are unchanged. Existing Map
+theorems specialize the shared proof to present secondary values and unit
+counts; there is no second dialogue or comparison engine.
+
 These are source-model reuse prerequisites, not complete Bag execution
-coverage. The existing Map erasure theorems remain specialized to Map.
-Generalized source-policy erasure and the actual typed Bag callback and
-event-cost correspondence still have to connect the generic relation to
-the admitted native execution.
+coverage. Erasure neither supplies a comparison-result oracle nor proves
+termination or resource bounds. The actual typed Bag callback and event-cost
+correspondence must still connect this relation to admitted native execution;
+successful native repeated-item construction must separately justify its
+positive-count precondition.
 
 The constructor census keeps operational support separate from eligibility
 for its existing formal row vocabulary. That vocabulary has paired maps but
