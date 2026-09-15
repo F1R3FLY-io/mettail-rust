@@ -80,6 +80,7 @@ theories/NativeHashBagProbeSequence.v
 theories/NativeHashBagBorrowedScan.v
 theories/NativeHashBagScanBound.v
 theories/NativeHashBagProbeWindows.v
+theories/NativeHashBagProbeCoverage.v
 theories/NativeHashBagResizeScan.v
 theories/NativeHashBagResizeOccupancy.v
 theories/NativeHashBagOwnedScan.v
@@ -109,6 +110,7 @@ theories/AdmittedNativeComparisonFactors.v
 theories/GeneratedConstructorComparisonClasses.v
 theories/GeneratedConstructorSourceProjection.v
 theories/CollectionPairAndUnitLexResults.v
+theories/CollectionWeightedLexResults.v
 theories/NativeSortedComparisonClasses.v
 theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v

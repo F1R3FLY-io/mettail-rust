@@ -303,13 +303,23 @@ windows read shifted circular originals; four- and eight-bucket windows read
 an original suffix, padding, then a mirrored prefix. Each individual window
 visits its original buckets without duplicates. With FULL and DELETED counts
 associated with the same valid native controls, it also derives a positive
-number of EMPTY originals. These local facts do not yet establish coverage
-across the complete triangular probe cycle.
+number of EMPTY originals.
+
+The [full-cycle composition](../../formal/rocq/rho_bridge/theories/NativeHashBagProbeCoverage.v)
+then derives that all original buckets occur exactly once across the first
+$`q`$ shifted windows. It explicitly proves the integer-to-natural conversion,
+translated group permutation, and flattening into the circular bucket range;
+coverage is not an input assumption. An original EMPTY witness therefore
+appears in a physical lane of that mathematical cycle, provided the actual
+control bytes have the stated original/mirror/padding association. This
+witness interface does not require completed native counters, so the resize
+occupancy ledger can supply it too. Small tables obtain an EMPTY padding
+lane in their first window; the static singleton is handled separately.
 
 The integer result alone does not prove native lookup termination or bound
-its equality callbacks. Those require the control-window and mirrored-byte
-interpretation, coherent occupied/deleted counts, an empty control entry, and
-the actual loop's candidate-before-empty-test order. Four- and eight-bucket
+its equality callbacks. Those still require connecting the derived window
+coverage and EMPTY witnesses to the actual loop's candidate-before-empty-test
+order. Four- and eight-bucket
 tables have empty padding and a separate small-window interpretation; the
 singleton uses static empty controls. A possible small-table insertion-index
 repair is a separate load. Native `ProbeSeq::move_next` uses ordinary machine
@@ -494,6 +504,30 @@ also checks the `PPar` and `BagLit` factories and original typed callbacks.
 These checks do not establish complete Rholang scope-opening/reconstruction
 or public-node behavior; those source contexts remain separate acceptance
 obligations.
+
+## Weighted-run comparison results
+
+The [weighted result model](../../formal/rocq/rho_bridge/theories/CollectionWeightedLexResults.v)
+interprets each borrowed key/count pair as a repeated sequence only inside
+the proof. The runtime keeps its existing compact rosters and remaining-count
+cursors; it never allocates that expanded sequence. Its length is the
+original repetition sum, not necessarily the bag's transported stored total.
+
+Restoring a current entry's count leaves its remaining sequence unchanged.
+When two positive current runs compare equal, the existing min/subtract
+operation consumes the same number of repetitions from both sides. Removing
+those equal-comparing prefixes preserves the lexicographic result even when
+the original terms are distinct objects. A non-equal head decides the result
+immediately. At exhaustion, the original repetition totals give the same
+terminal ordering if both sides have consumed a common prefix length; the
+whole-execution proof must derive that invariant from the transition laws.
+
+Stored-total ordering remains a separate leading component. These result
+laws do not change the requirement to construct both checked rosters before
+testing that lead. They also do not supply sorting, absent-secondary request
+protocols, owner scheduling, or whole-category source correspondence by
+assumption. Those integrations reuse the existing comparison machinery and
+retain their separate proof obligations.
 
 ## Normal owned cleanup boundaries
 
