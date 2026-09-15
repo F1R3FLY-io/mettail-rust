@@ -112,6 +112,107 @@ fn pinned_insert_only_growth_matches_small_and_large_source_sizing() {
 }
 
 #[test]
+fn pinned_binding_resize_rehashes_originals_once_without_cloning_or_dropping_them() {
+    if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+        return;
+    }
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Effect {
+        Hash(usize, bool),
+        Equal(usize, bool, usize, bool),
+        Clone,
+        Drop(usize, bool),
+    }
+    struct Key {
+        id: usize,
+        incoming: bool,
+        effects: std::rc::Rc<std::cell::RefCell<Vec<Effect>>>,
+    }
+    impl Clone for Key {
+        fn clone(&self) -> Self {
+            self.effects.borrow_mut().push(Effect::Clone);
+            Self {
+                id: self.id,
+                incoming: self.incoming,
+                effects: self.effects.clone(),
+            }
+        }
+    }
+    impl Hash for Key {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.effects
+                .borrow_mut()
+                .push(Effect::Hash(self.id, self.incoming));
+            0usize.hash(state);
+        }
+    }
+    impl PartialEq for Key {
+        fn eq(&self, other: &Self) -> bool {
+            self.effects.borrow_mut().push(Effect::Equal(
+                self.id,
+                self.incoming,
+                other.id,
+                other.incoming,
+            ));
+            self.id == other.id
+        }
+    }
+    impl Eq for Key {}
+    impl Drop for Key {
+        fn drop(&mut self) {
+            self.effects
+                .borrow_mut()
+                .push(Effect::Drop(self.id, self.incoming));
+        }
+    }
+    for capacity in [3usize, 7, 14, 28, 56] {
+        let effects = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let key = |id, incoming| Key { id, incoming, effects: effects.clone() };
+        let mut bag = HashBag::new();
+        for id in 0..capacity {
+            bag.insert_binding_entry(key(id, false), 1);
+        }
+        assert_eq!(bag.counts.capacity(), capacity);
+        let original_order: Vec<_> = bag.counts.keys().map(|key| key.id).collect();
+        effects.borrow_mut().clear();
+        // Ordinary insert reserves before finding this existing key. No summary
+        // recomputation occurs until the binding reconstruction is finished.
+        bag.insert_binding_entry(key(0, true), 9);
+        let observed = effects.borrow().clone();
+        let expected_hashes: Vec<_> = std::iter::once(Effect::Hash(0, true))
+            .chain(original_order.iter().map(|id| Effect::Hash(*id, false)))
+            .collect();
+        assert_eq!(&observed[..expected_hashes.len()], expected_hashes.as_slice());
+        let comparisons = &observed[expected_hashes.len()..observed.len() - 1];
+        assert!(!comparisons.is_empty());
+        let mut compared = std::collections::BTreeSet::new();
+        for effect in comparisons {
+            let Effect::Equal(0, true, retained, false) = effect else {
+                panic!("resize must not compare, clone, or drop retained keys: {effect:?}");
+            };
+            assert!(compared.insert(*retained), "no repeated retained candidate");
+        }
+        assert_eq!(comparisons.last(), Some(&Effect::Equal(0, true, 0, false)));
+        assert_eq!(observed.last(), Some(&Effect::Drop(0, true)));
+        assert_eq!(bag.distinct_len(), capacity);
+        assert!(bag.counts.capacity() > capacity);
+        assert!(bag.counts.keys().all(|key| !key.incoming));
+        effects.borrow_mut().clear();
+        drop(bag);
+        let mut dropped: Vec<_> = effects
+            .borrow()
+            .iter()
+            .map(|effect| match effect {
+                Effect::Drop(id, false) => *id,
+                other => panic!("final cleanup only drops retained originals: {other:?}"),
+            })
+            .collect();
+        dropped.sort_unstable();
+        assert_eq!(dropped, (0..capacity).collect::<Vec<_>>());
+    }
+}
+
+#[test]
 fn retained_layout_query_matches_native_geometry_through_overflow_boundaries() {
     #[repr(align(64))]
     struct CacheAligned;

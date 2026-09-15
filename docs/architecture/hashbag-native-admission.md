@@ -297,7 +297,16 @@ assumption. It also proves the incremented-stride recurrence and the exact
 formula retaining the initial offset modulo sixteen. These are shifted,
 possibly unaligned windows, not the aligned groups of the iterator model.
 
-This integer result alone does not prove native lookup termination or bound
+The [control-window model](../../formal/rocq/rho_bridge/theories/NativeHashBagProbeWindows.v)
+identifies each loaded lane with its original bucket or EMPTY padding. Large
+windows read shifted circular originals; four- and eight-bucket windows read
+an original suffix, padding, then a mirrored prefix. Each individual window
+visits its original buckets without duplicates. With FULL and DELETED counts
+associated with the same valid native controls, it also derives a positive
+number of EMPTY originals. These local facts do not yet establish coverage
+across the complete triangular probe cycle.
+
+The integer result alone does not prove native lookup termination or bound
 its equality callbacks. Those require the control-window and mirrored-byte
 interpretation, coherent occupied/deleted counts, an empty control entry, and
 the actual loop's candidate-before-empty-test order. Four- and eight-bucket
@@ -381,6 +390,56 @@ count-sum overflow refusals, and transported-total distinctions. This adapter
 does not itself pay for sorting or key comparisons, or admit consuming
 reconstruction. Generated comparison adds the existing owned comparison
 machine and its typed child callbacks as described below.
+
+## Native resize correspondence
+
+Resizing uses `FullBucketsIndices`, not the borrowed `RawIter` wrapper. The
+[resize-scan projection](../../formal/rocq/rho_bridge/theories/NativeHashBagResizeScan.v)
+maps its local control-mask bits and aligned group offset into the existing
+scan cursor. It preserves the original occupied-slot order and remaining-item
+guard: construction loads the first group, but exhaustion does not scan the
+empty suffix. The source association must identify the same immutable old
+controls, native item count, and local masks. Hashing, placement, copying, and
+allocation release are not scan events.
+
+The new table's intermediate controls cannot be interpreted through its
+native `items` counter. That counter remains zero until relocation finishes;
+`growth_left` likewise retains the initial full capacity. The
+[occupancy model](../../formal/rocq/rho_bridge/theories/NativeHashBagResizeOccupancy.v)
+instead associates actual FULL controls with a finite ledger of completed
+source/destination pairs and at most one pending pair:
+
+| Native point | FULL destinations | Initialized destination records |
+|---|---|---|
+| Before the next placement | Completed pairs | Completed pairs |
+| After setting its tag | Completed pairs plus pending pair | Completed pairs |
+| After copying its bytes | Newly completed pairs | Newly completed pairs |
+
+The ledger preserves the original scan prefix and counts the pending tag
+even before its bytes are initialized. Distinct, in-range destinations give
+the exact number of FULL originals. The existing growth theorem supplies
+capacity for every original record and an additional insertion, so a
+non-FULL original remains available throughout relocation. Fresh target
+controls contain only EMPTY or FULL, never DELETED; under that source
+association, non-FULL means EMPTY. Lookup termination and the actual choice
+of a destination remain obligations of the probe model.
+
+Each old record is hashed once and placed into the new table without key
+equality, cloning, or destruction. A byte copy does not transfer destructor
+ownership at that point: the old table retains that authority throughout the
+loop. Only successful final counter assignments and `mem::swap` transfer it.
+The resize guard then frees the old allocation without rescanning or dropping
+the relocated keys. These are allocator invocations, not constant-time or
+physical-memory claims. Panic-path admission is separate from these normal
+completion laws.
+
+The [native resize regression](../../runtime/src/hashbag_history_tests.rs)
+checks growth across small and larger tables using colliding keys. It records
+the incoming hash, one rehash per old key in original scan order, subsequent
+incoming-to-retained equality calls, and destruction of the duplicate incoming
+key while retaining the first key object. The retained originals are neither
+cloned nor dropped during resize and are each dropped exactly once at final
+container destruction.
 
 ## Generated comparison initialization
 
