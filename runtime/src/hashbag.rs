@@ -103,6 +103,16 @@ fn borrowed_scan_work_allowance<E>(
 ) -> Result<usize, crate::BindingFailure<E>> {
     use crate::BindingFailure::SizeOverflow;
     let buckets = high_water.checked_mul(2).ok_or(SizeOverflow)?.max(1);
+    borrowed_scan_work_for_buckets(width, buckets)
+}
+
+// The exact-bucket version is also used by stable, clean retained views.
+// NativeHashBagEntryVisit derives it without manufacturing a history witness.
+fn borrowed_scan_work_for_buckets<E>(
+    width: usize,
+    buckets: usize,
+) -> Result<usize, crate::BindingFailure<E>> {
+    use crate::BindingFailure::SizeOverflow;
     let groups = buckets
         .checked_sub(1)
         .ok_or(SizeOverflow)?
@@ -113,6 +123,30 @@ fn borrowed_scan_work_allowance<E>(
     let entry_work = width.checked_mul(4).ok_or(SizeOverflow)?;
     let group_work = groups.checked_mul(19).ok_or(SizeOverflow)?;
     entry_work.checked_add(group_work).ok_or(SizeOverflow)
+}
+
+// Callers compute the allowance after paid metadata inspection. Comparison
+// keeps its roster allocation before this common path. NativeHashBagEntryVisit
+// projects the scan to original pairs, including a visitor attempt that fails.
+fn try_visit_counts_entries<'a, T, E, F, R>(
+    counts: &'a HashMap<T, usize, BuildHasherDefault<FxHasher>>,
+    work: usize,
+    reserve: &mut R,
+    mut visit: impl FnMut(&'a T, usize, &mut R) -> Result<(), F>,
+    map_admission: fn(crate::BindingFailure<E>) -> F,
+) -> Result<(), F>
+where
+    R: FnMut(usize, usize) -> Result<(), E>,
+{
+    crate::reserve_binding_parts(work, 0, 0, reserve).map_err(map_admission)?;
+    let mut entries = counts.iter().map(|(key, &count)| (key, count));
+    loop {
+        crate::reserve_binding_parts(1, 0, 0, reserve).map_err(map_admission)?;
+        let Some((key, count)) = entries.next() else {
+            return Ok(());
+        };
+        visit(key, count, reserve)?;
+    }
 }
 
 /// The existing generated-container reconstruction policy.
@@ -136,16 +170,22 @@ pub struct HashBagRetainedEntries<'a, T> {
 // Invert full capacity only for a completed, tombstone-free native table.
 // Keep this private: arbitrary HashMap::capacity() values do not carry that
 // invariant. The retained reconstruction view establishes it at its boundary.
-fn checked_clean_table_buckets(capacity: usize) -> Option<usize> {
+fn checked_clean_table_buckets<E>(capacity: usize) -> Result<usize, crate::BindingFailure<E>> {
+    use crate::BindingFailure::{InvalidCollectionInput, SizeOverflow};
+    let invalid = || InvalidCollectionInput("retained counts table has invalid native geometry");
     match capacity {
-        0 => Some(1),
-        3 => Some(4),
-        7 => Some(8),
+        0 => Ok(1),
+        3 => Ok(4),
+        7 => Ok(8),
         capacity if capacity >= 14 && capacity % 7 == 0 => {
-            let buckets = (capacity / 7).checked_mul(8)?;
-            buckets.is_power_of_two().then_some(buckets)
+            let buckets = (capacity / 7).checked_mul(8).ok_or(SizeOverflow)?;
+            if buckets.is_power_of_two() {
+                Ok(buckets)
+            } else {
+                Err(invalid())
+            }
         },
-        _ => None,
+        _ => Err(invalid()),
     }
 }
 
@@ -173,7 +213,33 @@ impl<T> HashBagRetainedEntries<'_, T> {
         if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
             return None;
         }
-        checked_clean_table_buckets(self.counts.capacity())
+        checked_clean_table_buckets::<std::convert::Infallible>(self.counts.capacity()).ok()
+    }
+
+    /// Visit retained original entries with the same paid scanner as `HashBag`.
+    ///
+    /// The private construction boundary permits exact bucket recovery from
+    /// clean capacity. No capacity history or valid hash summary is needed.
+    /// Profile refusal precedes metadata inspection; invalid native geometry,
+    /// checked-arithmetic overflow, and admission refusal stay distinct.
+    /// Zero counts are visited unchanged. The visitor shares the reservation
+    /// callback and must admit its own work before performing it, as described
+    /// by [`HashBag::try_for_each_entry`]. No intermediate roster is allocated.
+    pub fn try_for_each_entry<'a, E, R>(
+        &'a self,
+        reserve: &mut R,
+        visit: impl FnMut(&'a T, usize, &mut R) -> Result<(), crate::BindingFailure<E>>,
+    ) -> Result<(), crate::BindingFailure<E>>
+    where
+        R: FnMut(usize, usize) -> Result<(), E>,
+    {
+        if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(crate::BindingFailure::UnsupportedProfile);
+        }
+        crate::reserve_binding_parts(1, 0, 0, reserve)?;
+        let buckets = checked_clean_table_buckets(self.counts.capacity())?;
+        let work = borrowed_scan_work_for_buckets(self.counts.len(), buckets)?;
+        try_visit_counts_entries(self.counts, work, reserve, visit, std::convert::identity)
     }
 
     /// Compute an allocated counts table's layout without allocating it.
@@ -544,32 +610,6 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         self.capacity_high_water
     }
 
-    // Both callers compute this allowance after paid metadata inspection.
-    // Comparison allocates its roster before entering here, retaining its
-    // original refusal order. Binding needs no intermediate pointer roster.
-    // NativeHashBagEntryVisit projects the existing scan to arbitrary original
-    // key/count pairs; a yielded pair is a visitor attempt, even on refusal.
-    fn try_visit_entries_with<'a, E, F, R>(
-        &'a self,
-        work: usize,
-        reserve: &mut R,
-        mut visit: impl FnMut(&'a T, usize, &mut R) -> Result<(), F>,
-        map_admission: fn(crate::BindingFailure<E>) -> F,
-    ) -> Result<(), F>
-    where
-        R: FnMut(usize, usize) -> Result<(), E>,
-    {
-        crate::reserve_binding_parts(work, 0, 0, reserve).map_err(map_admission)?;
-        let mut entries = self.iter();
-        loop {
-            crate::reserve_binding_parts(1, 0, 0, reserve).map_err(map_admission)?;
-            let Some((key, count)) = entries.next() else {
-                return Ok(());
-            };
-            visit(key, count, reserve)?;
-        }
-    }
-
     /// Visit each original stored key/count pair through the paid native scan.
     ///
     /// Unlike comparison-roster construction, this preserves zero counts and
@@ -597,7 +637,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         }
         crate::reserve_binding_parts(1, 0, 0, reserve)?;
         let work = borrowed_scan_work_allowance(self.counts.len(), self.capacity_high_water)?;
-        self.try_visit_entries_with(work, reserve, visit, std::convert::identity)
+        try_visit_counts_entries(&self.counts, work, reserve, visit, std::convert::identity)
     }
 
     /// Build a paid repeated-item roster in the original native entry order.
@@ -625,7 +665,8 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         let work = borrowed_scan_work_allowance(width, self.capacity_high_water)
             .map_err(NativeComparisonFailure::Admission)?;
         let mut roster = CheckedCmpRoster::try_with_capacity(width, reserve)?;
-        self.try_visit_entries_with(
+        try_visit_counts_entries(
+            &self.counts,
             work,
             reserve,
             |key, count, reserve| roster.try_push_repeated(key, count, reserve),

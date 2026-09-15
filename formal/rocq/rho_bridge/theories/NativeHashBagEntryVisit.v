@@ -21,6 +21,26 @@ Import NativeHashBagHistory.NativeHashBagHistory.
 Import NativeHashBagBorrowedScan.NativeHashBagBorrowedScan.
 Import NativeHashBagScanBound.NativeHashBagScanBound.
 
+(** A known bucket extent needs no history witness. This factors the same
+    componentwise argument used by the historical bound, retaining actual
+    native ScanPrefix events rather than imposing a scan length premise. *)
+Theorem each_native_scan_prefix_is_covered_by_a_source_group_bound :
+  forall first rest trace output state groups,
+  ScanPrefix first rest trace output state -> length (first :: rest) <= groups ->
+  forall event, event_count event trace <=
+    scan_allowance event (length (first ++ concat rest)) groups.
+Proof.
+  intros first rest trace output state groups PREFIX GROUPS event.
+  pose proof (every_actual_prefix_conserves_source_slots_and_events
+    _ _ _ _ _ PREFIX) as FACTS.
+  unfold prefix_facts in FACTS.
+  destruct FACTS as [VALID [ORDER [CTOR [LOAD [PROBE [CLEAR
+    [REMAIN [NEXT [FUTURE YIELDS]]]]]]]]].
+  assert (NEXT_BOUND : outstanding_next state <= 1).
+  { unfold outstanding_next. destruct (phase state); lia. }
+  cbn [length] in GROUPS. destruct event; cbn [scan_allowance]; lia.
+Qed.
+
 Section OriginalEntries.
 Context {Key : Type}.
 Variable entry : nat -> Key * nat.
@@ -82,6 +102,31 @@ Proof.
   - eapply native_item_count_admits_each_borrowed_scan_prefix; eassumption.
 Qed.
 
+Theorem exact_bucket_geometry_admits_each_original_entry_scan_prefix :
+  forall bucket_count full first rest trace output state width,
+  source_groups bucket_count full = first :: rest ->
+  length (concat (source_groups bucket_count full)) = width ->
+  ScanPrefix first rest trace output state ->
+  length (map entry output) <= width /\
+  weighted_counts borrowed_scan_weight (fun event => event_count event trace) <=
+    borrowed_scan_work width (group_count bucket_count).
+Proof.
+  intros bucket_count full first rest trace output state width GROUPS COHERENCE PREFIX.
+  assert (WIDTH : length (first ++ concat rest) = width).
+  { rewrite GROUPS in COHERENCE. exact COHERENCE. }
+  split.
+  - pose proof (every_actual_prefix_conserves_source_slots_and_events
+      _ _ _ _ _ PREFIX) as [_ [ORDER _]].
+    rewrite ORDER, length_app in WIDTH. rewrite length_map. lia.
+  - rewrite <- declared_borrowed_scan_work_is_the_weighted_allowance
+      by (unfold group_count; lia).
+    apply componentwise_scan_coverage_preserves_declared_weights. intro event.
+    rewrite <- WIDTH.
+    eapply each_native_scan_prefix_is_covered_by_a_source_group_bound;
+      [exact PREFIX|].
+    rewrite <- GROUPS, native_source_groups_have_the_exact_group_count. lia.
+Qed.
+
 End OriginalEntries.
 End NativeHashBagEntryVisit.
 
@@ -89,3 +134,5 @@ Print Assumptions NativeHashBagEntryVisit.each_native_step_preserves_exact_origi
 Print Assumptions NativeHashBagEntryVisit.every_native_prefix_preserves_exact_original_pairs.
 Print Assumptions NativeHashBagEntryVisit.a_stopped_native_scan_visits_all_original_pairs.
 Print Assumptions NativeHashBagEntryVisit.original_pair_projection_keeps_the_existing_native_scan_allowance.
+Print Assumptions NativeHashBagEntryVisit.each_native_scan_prefix_is_covered_by_a_source_group_bound.
+Print Assumptions NativeHashBagEntryVisit.exact_bucket_geometry_admits_each_original_entry_scan_prefix.

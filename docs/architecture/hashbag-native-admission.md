@@ -462,6 +462,24 @@ check unchanged comparison reservation traces, original borrows in sparse
 tables, zero counts and overflowing count sums, every scan/visitor refusal,
 and zero, exact, and one-under work limits.
 
+`HashBagRetainedEntries::try_for_each_entry` reuses that same scanner during
+reconstruction, when the binding hash summary is not yet valid. Its private
+construction boundary permits recovery of the exact current bucket count.
+The entry-projection model derives the scan bound directly from that table's
+group count; it does not invent a capacity history or substitute completed
+counters for an in-progress resize table. With exact $`B`$, the group allowance
+is $`Q=1+\lfloor(B-1)/16\rfloor`$, including the singleton's initial load.
+
+The retained visitor pays metadata inspection before recovering geometry and
+pays the full native scan before creating the iterator. Its typed inverse
+distinguishes malformed capacity shapes from arithmetic overflow; the separate
+public `checked_bucket_count` query keeps its original optional-result API.
+Visitors still pay their own effects, and zero counts pass through unchanged.
+The retained-entry regression checks original pointer/count order and every
+reservation cut at real Clone and binding reconstruction stages, across
+empty, growing, duplicate, and zero-count cases. Neither visitor constructs
+a second roster or performs key hashing, equality, or cloning itself.
+
 ## Native resize correspondence
 
 Resizing uses `FullBucketsIndices`, not the borrowed `RawIter` wrapper. The

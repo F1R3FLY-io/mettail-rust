@@ -239,8 +239,24 @@ fn clean_bucket_recovery_checks_shapes_and_machine_word_boundaries() {
         )
         .chain([usize::MAX - 7, usize::MAX - 1, usize::MAX])
     {
-        assert_eq!(checked_clean_table_buckets(capacity), expected(capacity), "{capacity}");
+        assert_eq!(
+            checked_clean_table_buckets::<()>(capacity).ok(),
+            expected(capacity),
+            "{capacity}"
+        );
     }
+    for capacity in [1, 2, 4, 8, 13, 15, 21] {
+        assert!(matches!(
+            checked_clean_table_buckets::<()>(capacity),
+            Err(crate::BindingFailure::InvalidCollectionInput(_))
+        ));
+    }
+    let overflowing_units = usize::MAX / 8 + 1;
+    let overflowing_capacity = overflowing_units * 7;
+    assert_eq!(
+        checked_clean_table_buckets::<()>(overflowing_capacity),
+        Err(crate::BindingFailure::SizeOverflow)
+    );
 }
 
 #[test]

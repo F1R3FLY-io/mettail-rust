@@ -408,3 +408,114 @@ fn entry_visitor_shares_admission_and_stops_at_every_scan_or_visitor_refusal() {
         assert_eq!(bag.distinct_len(), width);
     }
 }
+
+#[test]
+fn retained_entry_visitor_uses_exact_geometry_at_real_rebuild_boundaries() {
+    let source = HashBag::<usize>::new();
+    let entries: Vec<_> = std::iter::once((1000, 0))
+        .chain((0..65).map(|key| (key, 1)))
+        .chain([(0, 0)])
+        .collect();
+    for mode in [HashBagRebuildMode::CloneEntries, HashBagRebuildMode::BindingEntries] {
+        let mut stages = 0;
+        source
+            .try_rebuild_entries_with(entries.clone(), mode, |step| {
+                let retained = match step {
+                    HashBagRebuildStep::Start { .. } => return Ok(()),
+                    HashBagRebuildStep::Insert { retained, .. }
+                    | HashBagRebuildStep::FinalBindingSummary { retained } => retained,
+                };
+                stages += 1;
+                let original: Vec<_> = retained
+                    .iter()
+                    .map(|(key, count)| (key as *const _, count))
+                    .collect();
+                let mut visited = Vec::with_capacity(retained.distinct_len());
+                let mut requests = Vec::new();
+                let result = retained.try_for_each_entry(
+                    &mut |work, units| {
+                        requests.push((work, units));
+                        Ok::<_, &'static str>(())
+                    },
+                    |key, count, reserve| {
+                        crate::reserve_binding_parts(2, 0, 0, reserve)?;
+                        visited.push((key as *const _, count));
+                        Ok(())
+                    },
+                );
+                if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+                    assert_eq!(result, Err(BindingFailure::UnsupportedProfile));
+                    assert!(requests.is_empty() && visited.is_empty());
+                    return Ok(());
+                }
+                result.expect("retained entry scan");
+                assert_eq!(visited, original);
+                let buckets = retained.checked_bucket_count().expect("native geometry");
+                let groups = 1 + (buckets - 1) / 16;
+                let mut expected = vec![(1, 0), (4 * original.len() + 19 * groups, 0)];
+                for _ in &original {
+                    expected.extend([(1, 0), (2, 0)]);
+                }
+                expected.push((1, 0));
+                assert_eq!(requests, expected);
+                // Cut every stage's scan and visitor allowance. Earlier visitor
+                // success is retained; the failed visitor's entry is only attempted.
+                for stop in 0..requests.len() {
+                    let mut seen = Vec::new();
+                    let mut successful = 0;
+                    let result = retained.try_for_each_entry(
+                        &mut |work, units| {
+                            seen.push((work, units));
+                            if seen.len() == stop + 1 {
+                                Err("cut")
+                            } else {
+                                Ok(())
+                            }
+                        },
+                        |_, _, reserve| {
+                            crate::reserve_binding_parts(2, 0, 0, reserve)?;
+                            successful += 1;
+                            Ok(())
+                        },
+                    );
+                    assert_eq!(result, Err(BindingFailure::Reservation("cut")));
+                    assert_eq!(seen, requests[..=stop]);
+                    assert_eq!(
+                        successful,
+                        requests[..stop]
+                            .iter()
+                            .filter(|(work, _)| *work == 2)
+                            .count()
+                    );
+                }
+                let exact: usize = requests.iter().map(|(work, _)| work).sum();
+                for limit in [0, exact - 1, exact] {
+                    let mut remaining = limit;
+                    let result = retained.try_for_each_entry(
+                        &mut |work, units| {
+                            assert_eq!(units, 0);
+                            remaining = remaining.checked_sub(work).ok_or("limit")?;
+                            Ok(())
+                        },
+                        |_, _, reserve| crate::reserve_binding_parts(2, 0, 0, reserve),
+                    );
+                    if limit == exact {
+                        result.expect("exact retained allowance");
+                        assert_eq!(remaining, 0);
+                    } else {
+                        assert_eq!(result, Err(BindingFailure::Reservation("limit")));
+                    }
+                }
+                assert_eq!(
+                    retained
+                        .iter()
+                        .map(|(key, count)| (key as *const _, count))
+                        .collect::<Vec<_>>(),
+                    original
+                );
+                Ok::<_, BindingFailure<()>>(())
+            })
+            .expect("geometry visitor leaves ordinary rebuild policy unchanged");
+        assert_eq!(stages, entries.len() + usize::from(mode == HashBagRebuildMode::BindingEntries));
+    }
+}
