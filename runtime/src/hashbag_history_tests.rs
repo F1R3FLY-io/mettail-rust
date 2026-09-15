@@ -112,6 +112,87 @@ fn pinned_insert_only_growth_matches_small_and_large_source_sizing() {
 }
 
 #[test]
+fn pinned_small_table_padding_preserves_candidate_order_and_repairs_insertion() {
+    if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+        return;
+    }
+    #[derive(Clone)]
+    struct Key {
+        id: usize,
+        hash_word: usize,
+        comparisons: std::rc::Rc<std::cell::RefCell<Vec<(usize, usize)>>>,
+    }
+    impl Hash for Key {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.hash_word.hash(state);
+        }
+    }
+    impl PartialEq for Key {
+        fn eq(&self, other: &Self) -> bool {
+            self.comparisons.borrow_mut().push((self.id, other.id));
+            self.id == other.id && self.hash_word == other.hash_word
+        }
+    }
+    impl Eq for Key {}
+
+    // Establish the actual Fx digest, not an assumed relation between a key
+    // and its initial probe. Low bits 111 select the final original bucket
+    // for both small allocations, making the following lanes EMPTY padding.
+    let hash_word = (0usize..1024)
+        .find(|word| {
+            let mut state = FxHasher::default();
+            word.hash(&mut state);
+            state.finish() & 7 == 7
+        })
+        .expect("the pinned Fx profile supplies a final-bucket probe witness");
+    for capacity in [3usize, 7] {
+        for mode in [HashBagRebuildMode::BindingEntries, HashBagRebuildMode::CloneEntries] {
+            let comparisons = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let mut bag = HashBag::new();
+            // Use the real allocator to isolate each small-table case without
+            // a preceding resize. No raw controls or addresses are modified.
+            bag.counts.reserve(capacity);
+            bag.observe_counts_capacity();
+            assert_eq!(bag.counts.capacity(), capacity);
+            if mode == HashBagRebuildMode::BindingEntries {
+                bag.total_count = 3;
+            }
+            for id in 0..3 {
+                comparisons.borrow_mut().clear();
+                let key = Key {
+                    id,
+                    hash_word,
+                    comparisons: comparisons.clone(),
+                };
+                match mode {
+                    HashBagRebuildMode::BindingEntries => bag.insert_binding_entry(key, 1),
+                    HashBagRebuildMode::CloneEntries => bag.insert_n(key, 1),
+                }
+            }
+            // On the third insertion the group contains key 0, EMPTY padding,
+            // then mirrored key 1. Both equality candidates precede the EMPTY
+            // decision. Binding and entry lookup retain opposite Eq directions.
+            let expected = match mode {
+                HashBagRebuildMode::BindingEntries => [(2, 0), (2, 1)],
+                HashBagRebuildMode::CloneEntries => [(0, 2), (1, 2)],
+            };
+            assert_eq!(comparisons.borrow().as_slice(), expected.as_slice());
+            // The first special lane masks onto occupied bucket 0. The pinned
+            // repair scans from zero and selects bucket 1, before any padding.
+            // Native iteration exposes that placement; this is not load-count
+            // instrumentation or a substitute for the source refinement proof.
+            assert_eq!(bag.counts.keys().map(|key| key.id).collect::<Vec<_>>(), [1, 2, 0]);
+            assert_eq!(bag.counts.capacity(), capacity);
+            assert!(bag.counts.values().all(|count| *count == 1));
+            if mode == HashBagRebuildMode::BindingEntries {
+                bag.rebuild_hash_summary();
+            }
+            assert_eq!(bag.len(), 3);
+        }
+    }
+}
+
+#[test]
 fn pinned_binding_resize_rehashes_originals_once_without_cloning_or_dropping_them() {
     if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
         return;

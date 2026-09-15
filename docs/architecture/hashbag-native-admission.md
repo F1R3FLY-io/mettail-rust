@@ -368,6 +368,37 @@ repair is a separate load. Native `ProbeSeq::move_next` uses ordinary machine
 addition before masking, so its reached-prefix arithmetic guards must also
 hold; modular arithmetic is not permission to assume wrapping addition.
 
+### Small-table insertion-index repair
+
+The [insertion-repair model](../../formal/rocq/rho_bridge/theories/NativeHashBagInsertRepair.v)
+retains the origin of the cached insertion index: it was selected by the
+original special-lane mask from a window of the same immutable controls.
+Filling an absent cache preserves that origin. A numeric index in range is
+not sufficient by itself to justify the native repair operation.
+
+For tables with at least sixteen buckets, the original/mirror association
+makes that selected index non-FULL, so the repair branch is unreachable.
+For four- and eight-bucket tables, an EMPTY padding lane can instead mask
+onto an occupied original bucket. The native FULL test then triggers one
+aligned control-group load at offset zero and returns its lowest special
+lane directly, without another probe or index mask.
+
+The repair's valid destination follows from an original non-FULL witness,
+not merely from trailing EMPTY padding. The aligned scan selects a special
+lane no later than that witness, hence before the end of the original table.
+The model derives a valid non-FULL destination and either zero or one extra
+aligned load. It does not count key callbacks, establish pointer provenance,
+or certify the control allocation's initialization and alignment. The static
+singleton is not an allocated insertion-repair target.
+
+The [small-table regression](../../runtime/src/hashbag_history_tests.rs) uses
+actual native allocations and an observed Fx hash to exercise both table
+sizes. It checks that equality candidates beyond EMPTY padding are still
+visited before the stop decision, that binding and entry lookup preserve
+their original operand directions, and that repair produces the expected
+native iteration order. These observable checks complement the source model;
+they do not instrument control-group loads or prove arbitrary callback costs.
+
 ## Borrowed iteration accounting
 
 The borrowed-roster path must use the original iterator through explicit

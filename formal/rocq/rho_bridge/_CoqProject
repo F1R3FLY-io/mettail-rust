@@ -84,6 +84,7 @@ theories/NativeHashBagProbeWindows.v
 theories/NativeHashBagProbeCoverage.v
 theories/NativeHashBagProbeMasks.v
 theories/NativeHashBagMaskIteration.v
+theories/NativeHashBagInsertRepair.v
 theories/NativeHashBagResizeScan.v
 theories/NativeHashBagResizeOccupancy.v
 theories/NativeHashBagOwnedScan.v
