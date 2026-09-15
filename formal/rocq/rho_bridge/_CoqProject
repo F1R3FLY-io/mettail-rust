@@ -84,6 +84,7 @@ theories/NativeHashBagProbeWindows.v
 theories/NativeHashBagProbeCoverage.v
 theories/NativeHashBagProbeMasks.v
 theories/NativeHashBagMaskIteration.v
+theories/NativeHashBagProbeControl.v
 theories/NativeHashBagInsertRepair.v
 theories/NativeHashBagResizeScan.v
 theories/NativeHashBagResizeOccupancy.v
@@ -120,6 +121,7 @@ theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v
 theories/GeneratedMapCoreDeterminism.v
 theories/GeneratedMapCoreErasure.v
+theories/GeneratedBagCoreSource.v
 theories/GeneratedAdmittedMapReference.v
 theories/GeneratedAdmittedMapDialogue.v
 theories/GeneratedSourceRowComparison.v

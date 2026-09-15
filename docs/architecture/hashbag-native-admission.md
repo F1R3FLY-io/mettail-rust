@@ -354,19 +354,32 @@ A consumer stopping at its first `None` has returned every original matching
 lane exactly once. Repeated calls after `None` are not counted as successful
 returns or bounded by this theorem. These are mask-iterator facts, not a bound
 on arbitrary callback bodies or the number of groups reached by a lookup.
-Reached group prefixes, callback work, and insertion repair remain distinct
-obligations. Accepted layout geometry covers the candidate-index addition,
-but does not itself establish the source loop's position invariant.
 
-The integer result alone does not prove native lookup termination or bound
-its equality callbacks. Those still require connecting the derived window
-coverage and EMPTY witnesses to the actual loop's candidate-before-empty-test
-order. Four- and eight-bucket
-tables have empty padding and a separate small-window interpretation; the
-singleton uses static empty controls. A possible small-table insertion-index
-repair is a separate load. Native `ProbeSeq::move_next` uses ordinary machine
-addition before masking, so its reached-prefix arithmetic guards must also
-hold; modular arithmetic is not permission to assume wrapping addition.
+The [group-control refinement](../../formal/rocq/rho_bridge/theories/NativeHashBagProbeControl.v)
+connects the mathematical cycle to the native continuation guards: lookup
+requires no EMPTY lane, combined lookup first fills its absent insertion
+cache and then tests EMPTY, and insertion-only search requires no special
+lane. Its unbounded natural-number model has no step-limit or overflow
+premise. It conservatively omits early successful equality returns, which
+can only shorten a group-search prefix; it does not omit the cache update.
+
+An original EMPTY witness supplies a barrier in the first $`q`$ windows.
+The actual guard forbids advancing from that barrier, so every modeled
+prefix visits at most $`q`$ groups and makes at most $`q-1`$ moves. The
+position recurrence and derived stride bound then let the layout theorem
+validate both ordinary machine additions before masking. Machine safety
+is a consequence of the bound, not a premise used to establish it.
+Four- and eight-bucket tables have EMPTY padding in their first group;
+the singleton has static EMPTY controls. Their group search never advances.
+
+The source interpretation must still associate those immutable controls,
+initial position, and mode with the actual native call. The group theorem
+does not prove termination or costs of equality callbacks, nor their
+candidate-before-EMPTY evaluation order. That inner-body correspondence and
+its mask-iteration accounting remain separate. Small-table insertion-index
+repair can perform an additional aligned load, excluded from the group
+bound. No modular-arithmetic identity is permission to assume wrapping
+addition in the native implementation.
 
 ### Small-table insertion-index repair
 
@@ -642,6 +655,20 @@ operand maps. Supplied comparison answers, cursor positions, pending
 destinations, totals, and remaining counts are unchanged. Existing Map
 theorems specialize the shared proof to present secondary values and unit
 counts; there is no second dialogue or comparison engine.
+
+The [Bag source instantiation](../../formal/rocq/rho_bridge/theories/GeneratedBagCoreSource.v)
+uses each original repetition count as the stored payload and an absent
+secondary operand. It connects the actual repeated-item fields and original
+ordered key/count pairs to the complete shared initial state, retaining the
+stored-total lead separately from both repetition sums. Its callback transport
+preserves the original primary pair and supplied answers through the existing
+dialogue erasure proof.
+
+An empty secondary type expresses the factory's absent field; eliminating
+that type is not evidence about arbitrary native entries. The source connection
+also uses the factory's actual `None` field, successful roster construction,
+and valid original typed borrows and pointer casts. No new comparator,
+canonicalization, callback executor, or comparison-result assumption is added.
 
 These are source-model reuse prerequisites, not complete Bag execution
 coverage. Erasure neither supplies a comparison-result oracle nor proves
