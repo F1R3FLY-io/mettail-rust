@@ -83,6 +83,7 @@ theories/NativeHashBagEntryVisit.v
 theories/NativeHashBagProbeWindows.v
 theories/NativeHashBagProbeCoverage.v
 theories/NativeHashBagProbeMasks.v
+theories/NativeHashBagCandidateCover.v
 theories/NativeHashBagMaskIteration.v
 theories/NativeHashBagProbeControl.v
 theories/NativeHashBagInsertRepair.v
