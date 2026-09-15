@@ -544,6 +544,62 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         self.capacity_high_water
     }
 
+    // Both callers compute this allowance after paid metadata inspection.
+    // Comparison allocates its roster before entering here, retaining its
+    // original refusal order. Binding needs no intermediate pointer roster.
+    // NativeHashBagEntryVisit projects the existing scan to arbitrary original
+    // key/count pairs; a yielded pair is a visitor attempt, even on refusal.
+    fn try_visit_entries_with<'a, E, F, R>(
+        &'a self,
+        work: usize,
+        reserve: &mut R,
+        mut visit: impl FnMut(&'a T, usize, &mut R) -> Result<(), F>,
+        map_admission: fn(crate::BindingFailure<E>) -> F,
+    ) -> Result<(), F>
+    where
+        R: FnMut(usize, usize) -> Result<(), E>,
+    {
+        crate::reserve_binding_parts(work, 0, 0, reserve).map_err(map_admission)?;
+        let mut entries = self.iter();
+        loop {
+            crate::reserve_binding_parts(1, 0, 0, reserve).map_err(map_admission)?;
+            let Some((key, count)) = entries.next() else {
+                return Ok(());
+            };
+            visit(key, count, reserve)?;
+        }
+    }
+
+    /// Visit each original stored key/count pair through the paid native scan.
+    ///
+    /// Unlike comparison-roster construction, this preserves zero counts and
+    /// neither sums counts nor checks the bag's transported total. The profile
+    /// is checked and metadata/sparse-table work paid before iterator construction;
+    /// every consumer advance remains a separate cancellation point.
+    ///
+    /// The visitor shares the caller's reservation callback and must pay for
+    /// its own work and storage before performing them. Generated binding can
+    /// schedule existing typed tasks here without recursing into child terms.
+    /// This method allocates no roster and performs no key Hash/Eq/Clone. On
+    /// visitor refusal, earlier visitor effects are not rolled back; any owned
+    /// output roots taken by the visitor need their existing cleanup credit.
+    /// The source remains borrowed and unchanged throughout the scan.
+    pub fn try_for_each_entry<'a, E, R>(
+        &'a self,
+        reserve: &mut R,
+        visit: impl FnMut(&'a T, usize, &mut R) -> Result<(), crate::BindingFailure<E>>,
+    ) -> Result<(), crate::BindingFailure<E>>
+    where
+        R: FnMut(usize, usize) -> Result<(), E>,
+    {
+        if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(crate::BindingFailure::UnsupportedProfile);
+        }
+        crate::reserve_binding_parts(1, 0, 0, reserve)?;
+        let work = borrowed_scan_work_allowance(self.counts.len(), self.capacity_high_water)?;
+        self.try_visit_entries_with(work, reserve, visit, std::convert::identity)
+    }
+
     /// Build a paid repeated-item roster in the original native entry order.
     ///
     /// The pinned table's stored-entry count and historical allocation extent
@@ -569,15 +625,12 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         let work = borrowed_scan_work_allowance(width, self.capacity_high_water)
             .map_err(NativeComparisonFailure::Admission)?;
         let mut roster = CheckedCmpRoster::try_with_capacity(width, reserve)?;
-        reserve_binding_parts(work, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
-        let mut entries = self.iter();
-        loop {
-            reserve_binding_parts(1, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
-            let Some((key, count)) = entries.next() else {
-                break;
-            };
-            roster.try_push_repeated(key, count, reserve)?;
-        }
+        self.try_visit_entries_with(
+            work,
+            reserve,
+            |key, count, reserve| roster.try_push_repeated(key, count, reserve),
+            NativeComparisonFailure::Admission,
+        )?;
         Ok(roster)
     }
 

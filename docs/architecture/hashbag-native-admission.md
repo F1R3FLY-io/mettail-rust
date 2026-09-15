@@ -332,6 +332,23 @@ witness interface does not require completed native counters, so the resize
 occupancy ledger can supply it too. Small tables obtain an EMPTY padding
 lane in their first window; the static singleton is handled separately.
 
+The [native mask refinement](../../formal/rocq/rho_bridge/theories/NativeHashBagProbeMasks.v)
+connects each sixteen-bit mask to its exact ordered matching lanes and proves
+the optional lowest-set-bit characterization. It retains the full seven-bit
+tag range, including collisions: a matching tag is only an equality candidate.
+The model proves that a matched lane identifies an original FULL bucket, not
+padding, and that the native bitwise mask computes its original index. The
+small mirrored windows and large circular windows are covered separately.
+An EMPTY lane also guarantees that the combined lookup's insertion cache can
+be filled before its EMPTY test, without assuming that the cache was already
+populated. This does not assert that a cached small-table index needs no repair.
+
+These results use the specified SSE2 mask and least-set-bit instruction
+contracts; they do not verify compiler lowering. The numeric clear-lowest-bit
+iteration, reached loop prefixes, callback work, and insertion repair remain
+distinct obligations. Accepted layout geometry covers the candidate-index
+addition, but does not itself establish the source loop's position invariant.
+
 The integer result alone does not prove native lookup termination or bound
 its equality callbacks. Those still require connecting the derived window
 coverage and EMPTY witnesses to the actual loop's candidate-before-empty-test
@@ -416,6 +433,34 @@ count-sum overflow refusals, and transported-total distinctions. This adapter
 does not itself pay for sorting or key comparisons, or admit consuming
 reconstruction. Generated comparison adds the existing owned comparison
 machine and its typed child callbacks as described below.
+
+`HashBag::try_for_each_entry` exposes the same paid native scanner to binding
+without allocating an intermediate pointer roster. It checks the profile,
+pays metadata inspection, computes the history-based allowance, and then pays
+the scan before iterator construction. Each consumer advance is separately
+admitted. The visitor receives the same reservation callback, so its own
+task, storage, or key-operation work can be paid before execution without
+creating a new budget. Comparison retains its original allocation and
+reservation ordering; repeated-item validation remains inside its visitor.
+
+The [entry-projection refinement](../../formal/rocq/rho_bridge/theories/NativeHashBagEntryVisit.v)
+maps the existing native scan's original slots to unchanged borrowed key/count
+pairs. Every prefix preserves their order, and stopping visits every original
+pair. There is no positivity or count-sum premise: binding must retain stored
+zero counts and must not reinterpret its transported total. A yielded pair
+counts a visitor attempt, including an attempt that returns an error, not
+necessarily a successful visitor return. Earlier visitor effects are not
+rolled back; any owned result already taken needs its existing cleanup credit.
+The scanner itself performs no key operations and grants no visitor-work,
+insertion, or reconstruction allowance.
+
+Binding errors preserve unsupported profiles, unsupported constructors, and
+invalid collection input separately from reservation and arithmetic failures.
+Conversions from native Hash and comparison failures move an existing
+admission error through unchanged. The [scan and visitor regressions](../../runtime/src/hashbag_roster_tests.rs)
+check unchanged comparison reservation traces, original borrows in sparse
+tables, zero counts and overflowing count sums, every scan/visitor refusal,
+and zero, exact, and one-under work limits.
 
 ## Native resize correspondence
 

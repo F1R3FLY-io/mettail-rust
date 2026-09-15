@@ -74,12 +74,52 @@ fn checked_scope_successor<E>(depth: u32) -> Result<u32, BindingFailure<E>> {
 /// Refusal before an unadmitted copy or an invalid binding operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BindingFailure<E> {
+    UnsupportedProfile,
+    /// This constructor has no admitted binding implementation in the profile.
+    UnsupportedConstructor {
+        category: &'static str,
+        constructor: &'static str,
+    },
+    /// Invalid collection state or continuation protocol, not budget refusal.
+    InvalidCollectionInput(&'static str),
     Reservation(E),
     SizeOverflow,
     BinderIndexOverflow,
     ScopeDepthOverflow,
-    MissingBinder { index: usize },
+    MissingBinder {
+        index: usize,
+    },
     Slot(BindingSlotError),
+}
+
+impl<E> From<crate::NativeComparisonFailure<E>> for BindingFailure<E> {
+    fn from(failure: crate::NativeComparisonFailure<E>) -> Self {
+        match failure {
+            crate::NativeComparisonFailure::UnsupportedProfile => Self::UnsupportedProfile,
+            crate::NativeComparisonFailure::UnsupportedConstructor { category, constructor } => {
+                Self::UnsupportedConstructor { category, constructor }
+            },
+            crate::NativeComparisonFailure::InvalidCollectionInput(reason) => {
+                Self::InvalidCollectionInput(reason)
+            },
+            crate::NativeComparisonFailure::Admission(failure) => failure,
+        }
+    }
+}
+
+impl<E> From<crate::KeyHashFailure<E>> for BindingFailure<E> {
+    fn from(failure: crate::KeyHashFailure<E>) -> Self {
+        match failure {
+            crate::KeyHashFailure::UnsupportedProfile => Self::UnsupportedProfile,
+            crate::KeyHashFailure::UnsupportedConstructor { category, constructor } => {
+                Self::UnsupportedConstructor { category, constructor }
+            },
+            crate::KeyHashFailure::InvalidCollectionInput(reason) => {
+                Self::InvalidCollectionInput(reason)
+            },
+            crate::KeyHashFailure::Admission(failure) => failure,
+        }
+    }
 }
 
 /// A malformed internal result-slot operation, distinct from budget refusal.
@@ -501,6 +541,56 @@ mod state_tests {
             checked_scope_successor::<()>(u32::MAX),
             Err(BindingFailure::ScopeDepthOverflow),
         );
+    }
+
+    #[test]
+    fn native_failures_keep_their_exact_kind_when_entering_binding() {
+        use crate::{BindingSlotError, KeyHashFailure, NativeComparisonFailure};
+        let cases = [
+            (NativeComparisonFailure::UnsupportedProfile, BindingFailure::UnsupportedProfile),
+            (
+                NativeComparisonFailure::UnsupportedConstructor {
+                    category: "Proc",
+                    constructor: "Unknown",
+                },
+                BindingFailure::UnsupportedConstructor { category: "Proc", constructor: "Unknown" },
+            ),
+            (
+                NativeComparisonFailure::InvalidCollectionInput("missing response"),
+                BindingFailure::InvalidCollectionInput("missing response"),
+            ),
+        ];
+        for (native, expected) in cases {
+            assert_eq!(BindingFailure::<usize>::from(native.clone()), expected);
+            assert_eq!(BindingFailure::from(KeyHashFailure::from(native)), expected);
+        }
+        for failure in [
+            BindingFailure::UnsupportedProfile,
+            BindingFailure::UnsupportedConstructor { category: "Proc", constructor: "Unknown" },
+            BindingFailure::InvalidCollectionInput("invalid input"),
+            BindingFailure::Reservation(17),
+            BindingFailure::SizeOverflow,
+            BindingFailure::BinderIndexOverflow,
+            BindingFailure::ScopeDepthOverflow,
+            BindingFailure::MissingBinder { index: 3 },
+            BindingFailure::Slot(BindingSlotError::Empty { slot: 5 }),
+        ] {
+            assert_eq!(
+                BindingFailure::from(NativeComparisonFailure::Admission(failure.clone())),
+                failure
+            );
+            assert_eq!(BindingFailure::from(KeyHashFailure::Admission(failure.clone())), failure);
+        }
+        struct Payload(u32);
+        let payload = Box::new(Payload(23));
+        let address = std::ptr::from_ref(payload.as_ref());
+        let native = NativeComparisonFailure::Admission(BindingFailure::Reservation(payload));
+        let converted = BindingFailure::from(KeyHashFailure::from(native));
+        let BindingFailure::Reservation(payload) = converted else {
+            panic!("the reservation payload must be moved intact");
+        };
+        assert_eq!(std::ptr::from_ref(payload.as_ref()), address);
+        assert_eq!(payload.0, 23);
     }
 }
 

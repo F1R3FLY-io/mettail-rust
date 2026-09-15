@@ -79,8 +79,10 @@ theories/NativeHashBagLayout.v
 theories/NativeHashBagProbeSequence.v
 theories/NativeHashBagBorrowedScan.v
 theories/NativeHashBagScanBound.v
+theories/NativeHashBagEntryVisit.v
 theories/NativeHashBagProbeWindows.v
 theories/NativeHashBagProbeCoverage.v
+theories/NativeHashBagProbeMasks.v
 theories/NativeHashBagResizeScan.v
 theories/NativeHashBagResizeOccupancy.v
 theories/NativeHashBagOwnedScan.v
