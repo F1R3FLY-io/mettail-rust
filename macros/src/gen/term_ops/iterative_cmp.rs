@@ -358,6 +358,44 @@ impl CmpEmissionNames {
         }
     }
 
+    /// A contribution to later native work, not permission to perform it.
+    /// The accumulator separately charges its checked metadata arithmetic.
+    fn inspect_contribution(&self, work: usize, records: usize) -> TokenStream {
+        if self.inspecting() {
+            quote! {
+                state.try_accumulate_parts(#work, #records, 0, reserve)
+                    .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+            }
+        } else {
+            TokenStream::new()
+        }
+    }
+
+    /// A source verdict occurrence has a lifecycle even when its value is not
+    /// needed by metadata inspection. Preserve the original emitted push for
+    /// execution, and count that occurrence without a comparison in inspection.
+    fn push_verdict(&self, order: TokenStream) -> TokenStream {
+        if self.inspecting() {
+            self.inspect_contribution(4, 1)
+        } else {
+            let task_enum = &self.task_enum;
+            self.push_task(quote! { #task_enum::Verdict(#order) })
+        }
+    }
+
+    fn length_verdict(&self, left: TokenStream, right: TokenStream) -> TokenStream {
+        if self.inspecting() {
+            // The established LengthCmp group costs two units. Its
+            // result is deferred by Ord, so it cannot prune the common prefix.
+            let comparison = self.inspect_contribution(2, 0);
+            let verdict = self.inspect_contribution(4, 1);
+            quote! {{ #comparison #verdict }}
+        } else {
+            let order = self.usize_cmp(left, right);
+            self.push_verdict(order)
+        }
+    }
+
     fn inspect_leaf_work(&self, call: TokenStream) -> TokenStream {
         quote! {{
             let __comparison_work = #call?;
@@ -403,10 +441,16 @@ impl CmpEmissionNames {
     /// an invented Equal verdict or stopping construction on an unknown reply.
     fn native_cmp_verdict(&self, left: TokenStream, right: TokenStream) -> TokenStream {
         if self.inspecting() {
-            self.inspect_leaf_work(quote! {
+            let leaf = self.inspect_leaf_work(quote! {
                 mettail_runtime::CheckedNativeOrderingLeaf::try_inspect_native_cmp_work(
                     #left, #right, reserve)
-            })
+            });
+            // GeneratedComparisonLocalControl counts every original task
+            // occurrence, including verdicts inspected without their values.
+            // Four work and one record cover its push, consultation/disposal;
+            // no invented ordering is pushed to a comparison worklist.
+            let verdict = self.inspect_contribution(4, 1);
+            quote! {{ #leaf #verdict }}
         } else {
             let task_enum = &self.task_enum;
             let order = self.native_cmp(left, right);
@@ -448,6 +492,51 @@ impl CmpEmissionNames {
             format_ident!("precharge_generated_single_pattern_order")
         };
         quote! { mettail_runtime::#function(#left, #right, reserve)?; }
+    }
+
+    fn pattern_order(&self, left: TokenStream, right: TokenStream, multi: bool) -> TokenStream {
+        if self.inspecting() {
+            let function = if multi {
+                format_ident!("inspect_generated_multi_pattern_order_work")
+            } else {
+                format_ident!("inspect_generated_single_pattern_order_work")
+            };
+            return self.inspect_leaf_work(quote! {
+                mettail_runtime::#function(#left, #right, reserve)
+            });
+        }
+        let precharge = self.pattern_order_precharge(left.clone(), right.clone(), multi);
+        if multi {
+            quote! {
+                #precharge
+                let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(p, &mut h);
+                    std::hash::Hasher::finish(&h)
+                };
+                // Length dominates, then the binder hashes element-wise — the exact
+                // judgement the pre-#162 arm made with two early returns.
+                let pat_ord = #left.len().cmp(&#right.len()).then_with(|| {
+                    #left
+                        .iter()
+                        .zip(#right.iter())
+                        .map(|(lp, rp)| hash_pat(lp).cmp(&hash_pat(rp)))
+                        .find(|o| *o != std::cmp::Ordering::Equal)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+        } else {
+            quote! {
+                #precharge
+                // Pattern comparison: hash-based ordering, same as `Scope::cmp`.
+                let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(p, &mut h);
+                    std::hash::Hasher::finish(&h)
+                };
+                let pat_ord = hash_pat(#left).cmp(&hash_pat(#right));
+            }
+        }
     }
 
     fn pair_loop(&self, iterator: &TokenStream, body: &TokenStream) -> TokenStream {
@@ -759,9 +848,8 @@ fn cmp_collection_push_stmts(
                     quote! { #push; }
                 },
             );
-            let length_order =
-                emission.usize_cmp(quote! { #left_expr.len() }, quote! { #right_expr.len() });
-            let push_length = emission.push_task(quote! { #task_enum::Verdict(#length_order) });
+            let push_length =
+                emission.length_verdict(quote! { #left_expr.len() }, quote! { #right_expr.len() });
             quote! {
                 // Pushed first ⇒ popped LAST ⇒ the length is the tiebreak, which
                 // is what lexicographic order means.
@@ -2367,9 +2455,8 @@ fn cmp_arm_stmts(
 ) -> Vec<TokenStream> {
     let task_enum = &emission.task_enum;
     let routing = emission.routing();
-    let push_less = emission.push_task(quote! { #task_enum::Verdict(std::cmp::Ordering::Less) });
-    let push_greater =
-        emission.push_task(quote! { #task_enum::Verdict(std::cmp::Ordering::Greater) });
+    let push_less = emission.push_verdict(quote! { std::cmp::Ordering::Less });
+    let push_greater = emission.push_verdict(quote! { std::cmp::Ordering::Greater });
     // Can this field's contribution be expressed as work ON THE STACK? A leaf
     // cannot because it is not a category. Boxed children, optional children,
     // and every category-bearing collection can: unordered containers use the
@@ -2568,13 +2655,13 @@ fn generate_cmp_binder_arm(
     let scope_right = &right_names[total_fields - 1];
     let body_task = format_ident!("Cmp{}", body_cat);
     let routing = emission.routing();
-    let precharge = emission.pattern_order_precharge(
+    let pattern_order = emission.pattern_order(
         quote! { &l_scope.unsafe_pattern },
         quote! { &r_scope.unsafe_pattern },
         false,
     );
     let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
-    let push_pattern = emission.push_task(quote! { #task_enum::Verdict(pat_ord) });
+    let push_pattern = emission.push_verdict(quote! { pat_ord });
 
     // Pop order within the group must be pattern-then-body, so the pushes are
     // body-then-pattern. Unchanged from the pre-#162 arm in WHAT it compares —
@@ -2585,15 +2672,7 @@ fn generate_cmp_binder_arm(
             #routing
             let l_scope = #scope_left.inner();
             let r_scope = #scope_right.inner();
-            #precharge
-            // Pattern comparison: hash-based ordering, same as `Scope::cmp`.
-            let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                std::hash::Hash::hash(p, &mut h);
-                std::hash::Hasher::finish(&h)
-            };
-            let pat_ord =
-                hash_pat(&l_scope.unsafe_pattern).cmp(&hash_pat(&r_scope.unsafe_pattern));
+            #pattern_order
             let l_body: *const #body_cat = &*l_scope.unsafe_body;
             let r_body: *const #body_cat = &*r_scope.unsafe_body;
             #push_body;
@@ -2640,9 +2719,9 @@ fn generate_cmp_multi_binder_arm(
     let scope_right = &right_names[total_fields - 1];
     let body_task = format_ident!("Cmp{}", body_cat);
     let routing = emission.routing();
-    let precharge = emission.pattern_order_precharge(quote! { l_pats }, quote! { r_pats }, true);
+    let pattern_order = emission.pattern_order(quote! { l_pats }, quote! { r_pats }, true);
     let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
-    let push_pattern = emission.push_task(quote! { #task_enum::Verdict(pat_ord) });
+    let push_pattern = emission.push_verdict(quote! { pat_ord });
 
     let scope_pushes = quote! {
         {
@@ -2651,22 +2730,7 @@ fn generate_cmp_multi_binder_arm(
             let r_scope = #scope_right.inner();
             let l_pats = &l_scope.unsafe_pattern;
             let r_pats = &r_scope.unsafe_pattern;
-            #precharge
-            let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                std::hash::Hash::hash(p, &mut h);
-                std::hash::Hasher::finish(&h)
-            };
-            // Length dominates, then the binder hashes element-wise — the exact
-            // judgement the pre-#162 arm made with two early returns.
-            let pat_ord = l_pats.len().cmp(&r_pats.len()).then_with(|| {
-                l_pats
-                    .iter()
-                    .zip(r_pats.iter())
-                    .map(|(lp, rp)| hash_pat(lp).cmp(&hash_pat(rp)))
-                    .find(|o| *o != std::cmp::Ordering::Equal)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            #pattern_order
             let l_body: *const #body_cat = &*l_scope.unsafe_body;
             let r_body: *const #body_cat = &*r_scope.unsafe_body;
             #push_body;
@@ -2827,6 +2891,10 @@ mod checked_tests;
 #[cfg(test)]
 #[path = "iterative_cmp_inspection_tests.rs"]
 mod inspection_tests;
+
+#[cfg(test)]
+#[path = "iterative_cmp_pattern_inspection_tests.rs"]
+mod pattern_inspection_tests;
 
 #[cfg(test)]
 #[path = "iterative_cmp_census_tests.rs"]

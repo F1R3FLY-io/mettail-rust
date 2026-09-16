@@ -105,6 +105,7 @@ theories/AdmittedGeneratedComparisonScheduling.v
 theories/GeneratedComparisonFieldResults.v
 theories/GeneratedComparisonInspectionCover.v
 theories/GeneratedComparisonLocalControl.v
+theories/GeneratedComparisonWorklistCover.v
 theories/AdmittedCollectionComparisonOwnership.v
 theories/SourceMapEntryVisit.v
 theories/GeneratedBagComparisonInitialization.v

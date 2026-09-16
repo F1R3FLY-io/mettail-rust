@@ -188,11 +188,30 @@ consultation laws; consulting a verdict does not repeat a comparison.
 
 These fragments are not a complete generated-category inspector. The complete
 Eq and Ord engine builders explicitly reject this partial interpretation.
-Driver, handler, child-job, collection, pattern-order and ownership costs must
+Driver, handler, child-job, collection and ownership costs must
 be connected before whole-term comparison allowance or reconstruction
 authority can be exposed. Tests cover exact ordinary/checked fragment tokens,
 metadata refusal, checked accumulation overflow and continued inspection;
 the captured fixture executes the actual emitted fragments.
+
+Scope ordering uses the same interpretation boundary around the **entire**
+pattern-order expression, not only its precharge. Inspection calls the sealed
+single- or multi-pattern metadata helper; it never creates a hasher, hashes a
+binder, or constructs `pat_ord`. Equality still uses its distinct native
+inequality metadata interface. Native execution retains its original expression.
+
+Deferred scalar results, optional-shape verdicts, vector-length verdicts, and
+scope-pattern verdicts each contribute one virtual task occurrence. Under the
+local-control bound below, that occurrence contributes four work units and one
+record without allocating a verdict or evaluating its result. Vector-length
+ordering additionally contributes the existing two-unit `LengthCmp` group.
+Its verdict does not stop inspection of the common-prefix elements.
+
+The [executable leaf/verdict fixtures](../../macros/src/gen/term_ops/iterative_cmp_inspection_tests.rs)
+and [scope-pattern fixtures](../../macros/src/gen/term_ops/iterative_cmp_pattern_inspection_tests.rs)
+exercise the actual emitted fragments. A later reservation failure retains
+earlier paid accumulation locally but returns an error, not an incomplete
+execution allowance. Work and record arithmetic remain checked independently.
 
 ### Local comparison driver accounting
 
@@ -230,6 +249,27 @@ obligations. The wrapper association does not assume that an early-exiting
 equality driver empties its stack: its original clear and prepaid disposal
 handle residual tasks. Panic unwinding is outside this normal-execution and
 explicit-refusal model.
+
+The [worklist coverage model](../../formal/rocq/rho_bridge/theories/GeneratedComparisonWorklistCover.v)
+connects local source prefixes to recursive occurrence coverage. Its jobs retain
+the original category, directed operand pair, and equality or ordering mode.
+A completed inspection expands each handler's full metadata-selected recipe.
+The proof derives a finite expansion from that completed run; it does not
+assume a bound for children or require an arbitrary depth limit.
+
+An actual handler may perform only a prefix of that recipe, and the actual
+driver may discard pending jobs on an early exit. Splitting the finite
+expansion shows that every such execution uses at most the inspected
+nonnegative contribution. Repeated and aliased children remain separate
+occurrences. Instantiating the contribution with child and virtual-verdict
+push counts supplies the local-control model's occurrence-cover premise;
+other instantiations transport native and routing costs. The ordinary
+category-handler prefix contributes at most six existing logical work groups,
+excluding the inspection-only support checks and separately counted fields.
+
+This is a model-level composition law. Concrete emitter recipes, paid metadata
+walks, field and vector contributions, and unordered collection request
+coverage must still be connected before exposing a whole-comparison receipt.
 
 ### Ordinary generated Hash wrapper
 
