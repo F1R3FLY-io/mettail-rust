@@ -21,6 +21,7 @@ pub use checked_binding::{
     CheckedIterativeBinding,
 };
 pub use checked_cmp::{
+    inspect_generated_multi_pattern_order_work, inspect_generated_single_pattern_order_work,
     precharge_generated_multi_pattern_order, precharge_generated_single_pattern_order,
     CheckedIterativeComparison, CheckedNativeEqualityLeaf, CheckedNativeOrderingLeaf,
     NativeComparisonFailure, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE,

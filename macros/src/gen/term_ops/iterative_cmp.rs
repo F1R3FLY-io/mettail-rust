@@ -52,9 +52,16 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CmpInterpretation {
+    Ordinary,
+    CheckedExecution,
+    InspectContributions,
+}
+
 /// Names shared by the comparison builders; ordinary emission is unchanged.
 struct CmpEmissionNames {
-    checked: bool,
+    interpretation: CmpInterpretation,
     task_enum: Ident,
     task_pool: Ident,
     aux_task_pool: Ident,
@@ -72,7 +79,7 @@ struct CmpEmissionNames {
 impl CmpEmissionNames {
     fn ordinary() -> Self {
         Self {
-            checked: false,
+            interpretation: CmpInterpretation::Ordinary,
             task_enum: format_ident!("CmpTask"),
             task_pool: format_ident!("CMP_TASK_POOL"),
             aux_task_pool: format_ident!("CMP_AUX_TASK_POOL"),
@@ -114,7 +121,7 @@ impl CmpEmissionNames {
 impl CmpEmissionNames {
     fn checked() -> Self {
         Self {
-            checked: true,
+            interpretation: CmpInterpretation::CheckedExecution,
             task_enum: format_ident!("CheckedCmpTask"),
             task_pool: format_ident!("CHECKED_CMP_TASK_POOL"),
             aux_task_pool: format_ident!("CHECKED_CMP_AUX_TASK_POOL"),
@@ -130,8 +137,38 @@ impl CmpEmissionNames {
         }
     }
 
+    fn admitted(&self) -> bool {
+        self.interpretation != CmpInterpretation::Ordinary
+    }
+
+    fn inspecting(&self) -> bool {
+        self.interpretation == CmpInterpretation::InspectContributions
+    }
+
+    /// Private leaf-fragment interpretation. A complete generated comparison
+    /// inspector must also cover drivers, child jobs, collections and owners.
+    /// No whole-comparison entrypoint is exposed by these fragments.
+    #[allow(dead_code)]
+    fn inspect_contributions() -> Self {
+        Self {
+            interpretation: CmpInterpretation::InspectContributions,
+            task_enum: format_ident!("InspectCmpContributionTask"),
+            task_pool: format_ident!("INSPECT_CMP_CONTRIBUTION_TASK_POOL"),
+            aux_task_pool: format_ident!("INSPECT_CMP_CONTRIBUTION_AUX_TASK_POOL"),
+            collection_resume: format_ident!("InspectCmpContributionResume"),
+            eq_driver: format_ident!("inspect_eq_contribution_worklist"),
+            cmp_driver: format_ident!("inspect_cmp_contribution_worklist"),
+            deliver: format_ident!("inspect_cmp_contribution_deliver"),
+            unordered_eq: format_ident!("inspect_eq_contribution_unordered"),
+            eq_handler_prefix: "inspect_eq_contribution_handle_",
+            cmp_handler_prefix: "inspect_cmp_contribution_handle_",
+            resume_prefix: "inspect_cmp_contribution_resume_",
+            native_resume_prefix: "inspect_cmp_contribution_native_",
+        }
+    }
+
     fn generics(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { <E> }
         } else {
             TokenStream::new()
@@ -140,7 +177,7 @@ impl CmpEmissionNames {
 
     fn task_type(&self) -> TokenStream {
         let task = &self.task_enum;
-        if self.checked {
+        if self.admitted() {
             quote! { #task<E> }
         } else {
             quote! { #task }
@@ -149,7 +186,7 @@ impl CmpEmissionNames {
 
     fn resume_type(&self) -> TokenStream {
         let resume = &self.collection_resume;
-        if self.checked {
+        if self.admitted() {
             quote! { #resume<E> }
         } else {
             quote! { #resume }
@@ -157,7 +194,7 @@ impl CmpEmissionNames {
     }
 
     fn collection_owner_type(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { mettail_runtime::CheckedCollectionCmpPda }
         } else {
             quote! { Box<mettail_runtime::CollectionCmpPda> }
@@ -165,7 +202,7 @@ impl CmpEmissionNames {
     }
 
     fn collection_owner(&self, machine: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             machine
         } else {
             quote! { Box::new(#machine) }
@@ -173,7 +210,7 @@ impl CmpEmissionNames {
     }
 
     fn collection_callback_parameters(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { , reserve: &mut dyn FnMut(usize, usize) -> Result<(), E> }
         } else {
             TokenStream::new()
@@ -181,7 +218,7 @@ impl CmpEmissionNames {
     }
 
     fn collection_callback_begin(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! {
                 reserve(1, 0).map_err(|error| mettail_runtime::NativeComparisonFailure::Admission(
                     mettail_runtime::BindingFailure::Reservation(error)))?;
@@ -194,7 +231,7 @@ impl CmpEmissionNames {
     }
 
     fn collection_step(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             let route = self.routing();
             quote! {{
                 let __collection_step = machine.try_resume(result, reserve)?;
@@ -207,7 +244,7 @@ impl CmpEmissionNames {
     }
 
     fn collection_callback_result(&self, call: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             let route = self.routing();
             quote! {{
                 let __collection_result = #call?;
@@ -221,7 +258,7 @@ impl CmpEmissionNames {
 
     // Leading commas retain ordinary signature punctuation exactly.
     fn parameters(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { , reserve: &mut impl FnMut(usize, usize) -> Result<(), E> }
         } else {
             TokenStream::new()
@@ -229,7 +266,7 @@ impl CmpEmissionNames {
     }
 
     fn arguments(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { , reserve }
         } else {
             TokenStream::new()
@@ -237,7 +274,7 @@ impl CmpEmissionNames {
     }
 
     fn result_type(&self, value: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { Result<#value, mettail_runtime::NativeComparisonFailure<E>> }
         } else {
             value
@@ -245,7 +282,7 @@ impl CmpEmissionNames {
     }
 
     fn success(&self, value: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { Ok(#value) }
         } else {
             value
@@ -258,7 +295,7 @@ impl CmpEmissionNames {
     }
 
     fn propagate(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { ? }
         } else {
             TokenStream::new()
@@ -266,7 +303,7 @@ impl CmpEmissionNames {
     }
 
     fn reserve_work(&self, work: usize) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! {
                 mettail_runtime::reserve_binding_parts(#work, 0, 0, reserve)
                     .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
@@ -282,7 +319,7 @@ impl CmpEmissionNames {
 
     // Root header/release or a borrowed task's construction/disposal.
     fn record_admission(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! {
                 mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
                     .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
@@ -293,7 +330,7 @@ impl CmpEmissionNames {
     }
 
     fn push_task(&self, task: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             let admission = self.record_admission();
             quote! {{ #admission stack.push(#task); }}
         } else {
@@ -302,7 +339,7 @@ impl CmpEmissionNames {
     }
 
     fn native_ne(&self, left: TokenStream, right: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! {
                 mettail_runtime::CheckedNativeEqualityLeaf::try_native_ne(#left, #right, reserve)?
             }
@@ -312,7 +349,7 @@ impl CmpEmissionNames {
     }
 
     fn native_cmp(&self, left: TokenStream, right: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! {
                 mettail_runtime::CheckedNativeOrderingLeaf::try_native_cmp(#left, #right, reserve)?
             }
@@ -321,8 +358,65 @@ impl CmpEmissionNames {
         }
     }
 
+    fn inspect_leaf_work(&self, call: TokenStream) -> TokenStream {
+        quote! {{
+            let __comparison_work = #call?;
+            state.try_accumulate_parts(__comparison_work, 0, 0, reserve)
+                .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+        }}
+    }
+
+    /// Interpret the WHOLE guard, not a fabricated inequality expression.
+    /// GeneratedComparisonInspectionCover proves that retaining the unknown
+    /// guard's continuation covers every actual result/refusal prefix.
+    fn native_ne_guard(&self, left: TokenStream, right: TokenStream) -> TokenStream {
+        if self.inspecting() {
+            self.inspect_leaf_work(quote! {
+                mettail_runtime::CheckedNativeEqualityLeaf::try_inspect_native_ne_work(
+                    #left, #right, reserve)
+            })
+        } else {
+            let different = self.native_ne(left, right);
+            let return_false = self.return_value(quote! { false });
+            quote! { if #different { #return_false } }
+        }
+    }
+
+    fn native_cmp_guard(&self, left: TokenStream, right: TokenStream) -> TokenStream {
+        if self.inspecting() {
+            self.inspect_leaf_work(quote! {
+                mettail_runtime::CheckedNativeOrderingLeaf::try_inspect_native_cmp_work(
+                    #left, #right, reserve)
+            })
+        } else {
+            let order = self.native_cmp(left, right);
+            let return_order = self.return_value(quote! { ord });
+            quote! {
+                let ord = #order;
+                if ord != std::cmp::Ordering::Equal { #return_order }
+            }
+        }
+    }
+
+    /// Deferred comparisons happen during source construction, not when their
+    /// result is later popped. Inspection retains that call without pushing
+    /// an invented Equal verdict or stopping construction on an unknown reply.
+    fn native_cmp_verdict(&self, left: TokenStream, right: TokenStream) -> TokenStream {
+        if self.inspecting() {
+            self.inspect_leaf_work(quote! {
+                mettail_runtime::CheckedNativeOrderingLeaf::try_inspect_native_cmp_work(
+                    #left, #right, reserve)
+            })
+        } else {
+            let task_enum = &self.task_enum;
+            let order = self.native_cmp(left, right);
+            let push = self.push_task(quote! { #task_enum::Verdict(#order) });
+            quote! { #push; }
+        }
+    }
+
     fn usize_ne(&self, left: TokenStream, right: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             let admission = self.reserve_work(2);
             quote! {{ #admission #left != #right }}
         } else {
@@ -331,7 +425,7 @@ impl CmpEmissionNames {
     }
 
     fn usize_cmp(&self, left: TokenStream, right: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             let admission = self.reserve_work(2);
             quote! {{ #admission #left.cmp(&#right) }}
         } else {
@@ -345,7 +439,7 @@ impl CmpEmissionNames {
         right: TokenStream,
         multi: bool,
     ) -> TokenStream {
-        if !self.checked {
+        if !self.admitted() {
             return TokenStream::new();
         }
         let function = if multi {
@@ -357,7 +451,7 @@ impl CmpEmissionNames {
     }
 
     fn pair_loop(&self, iterator: &TokenStream, body: &TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             let setup = self.routing();
             let advance = self.routing();
             quote! {{
@@ -382,7 +476,7 @@ impl CmpEmissionNames {
         order: WalkOrder,
         body: &dyn Fn(&TokenStream, &TokenStream) -> TokenStream,
     ) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             for_each_subterm_pair_with_loop(
                 coll_type,
                 left,
@@ -397,7 +491,7 @@ impl CmpEmissionNames {
     }
 
     fn unsupported_return(&self, category: &Ident, constructor: &Ident) -> TokenStream {
-        if !self.checked {
+        if !self.admitted() {
             return TokenStream::new();
         }
         let category = category.to_string();
@@ -414,7 +508,7 @@ impl CmpEmissionNames {
     }
 
     fn operand_support(&self, category: &Ident) -> TokenStream {
-        if !self.checked {
+        if !self.admitted() {
             return TokenStream::new();
         }
         let support = self.support_handler(category);
@@ -437,7 +531,7 @@ impl CmpEmissionNames {
     }
 
     fn pop_loop(&self, body: TokenStream) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             let routing = self.routing();
             quote! {
                 loop {
@@ -523,7 +617,7 @@ fn checked_cmp_variant_supported(
 }
 
 fn generate_cmp_support_fns(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
-    if !emission.checked {
+    if !emission.admitted() {
         return TokenStream::new();
     }
     let functions = language
@@ -630,14 +724,7 @@ fn eq_collection_stmts(
         },
         CollectionPlan::WholeValue {
             reason: WholeValueReason::ElementIsNotACategory,
-        } => {
-            let different = emission.native_ne(left_expr.clone(), right_expr.clone());
-            quote! {
-                if #different {
-                    #return_false
-                }
-            }
-        },
+        } => emission.native_ne_guard(left_expr.clone(), right_expr.clone()),
     }
 }
 
@@ -693,13 +780,7 @@ fn cmp_collection_push_stmts(
         ),
         CollectionPlan::WholeValue {
             reason: WholeValueReason::ElementIsNotACategory,
-        } => {
-            let order = emission.native_cmp(left_expr.clone(), right_expr.clone());
-            let push = emission.push_task(quote! { #task_enum::Verdict(#order) });
-            quote! {
-                #push;
-            }
-        },
+        } => emission.native_cmp_verdict(left_expr.clone(), right_expr.clone()),
     }
 }
 
@@ -729,7 +810,7 @@ fn unordered_collection_cmp_machine_expr(
     right_expr: &TokenStream,
     emission: &CmpEmissionNames,
 ) -> TokenStream {
-    if emission.checked {
+    if emission.admitted() {
         return match coll_type {
             CollectionType::HashMap => quote! {{
                 let __cmp_left = (#left_expr).try_comparison_roster(reserve)?;
@@ -951,7 +1032,7 @@ fn generate_cmp_task_enum(language: &LanguageDef, emission: &CmpEmissionNames) -
             }
         })
         .collect();
-    if emission.checked {
+    if emission.admitted() {
         return quote! {
             type #collection_resume<E> = fn(
                 &mut Vec<#task_enum<E>>,
@@ -1126,6 +1207,10 @@ fn variant_wildcard_pattern(category: &Ident, variant: &VariantKind) -> TokenStr
 /// rustc to allocate stack space for every variant's locals up front,
 /// overflowing the default 2 MB thread stack on the first call.
 fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
+    assert!(
+        !emission.inspecting(),
+        "leaf contributions do not provide a complete Eq inspector"
+    );
     let task_enum = &emission.task_enum;
     let task_type = emission.task_type();
     let aux_task_pool = &emission.aux_task_pool;
@@ -1221,7 +1306,7 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
             }
         })
         .collect();
-    let unordered_helper = if emission.checked {
+    let unordered_helper = if emission.admitted() {
         let resume_type = emission.resume_type();
         let header = emission.record_admission();
         let push = emission.push_task(quote! { #task_enum::StartCollection(machine, resume) });
@@ -1290,7 +1375,7 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
 
         }
     };
-    let collection_arms = if emission.checked {
+    let collection_arms = if emission.admitted() {
         quote! {
             #task_enum::ResumeCollection(_, _) => {
                 return Err(mettail_runtime::NativeComparisonFailure::InvalidCollectionInput(
@@ -1353,15 +1438,14 @@ fn generate_eq_variant_arm(
     language: &LanguageDef,
     emission: &CmpEmissionNames,
 ) -> TokenStream {
-    if emission.checked && !checked_cmp_variant_supported(category, variant, language) {
+    if emission.admitted() && !checked_cmp_variant_supported(category, variant, language) {
         let pattern = variant_wildcard_pattern(category, variant);
         let refusal = emission.unsupported_return(category, variant.label());
         return quote! { (#pattern, #pattern) => { #refusal } };
     }
     let unordered_eq = &emission.unordered_eq;
     let routing = emission.routing();
-    let return_false = emission.return_value(quote! { false });
-    let native_different = emission.native_ne(quote! { a }, quote! { b });
+    let native_guard = emission.native_ne_guard(quote! { a }, quote! { b });
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
@@ -1379,7 +1463,7 @@ fn generate_eq_variant_arm(
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #routing
-                    if #native_different { #return_false }
+                    #native_guard
                 }
             }
         },
@@ -1429,7 +1513,7 @@ fn generate_eq_variant_arm(
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #routing
-                    if #native_different { #return_false }
+                    #native_guard
                 }
             }
         },
@@ -1504,7 +1588,6 @@ fn eq_arm_stmts(
 ) -> Vec<TokenStream> {
     let task_enum = &emission.task_enum;
     let routing = emission.routing();
-    let return_false = emission.return_value(quote! { false });
     let false_value = emission.success(quote! { false });
     let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
 
@@ -1519,10 +1602,7 @@ fn eq_arm_stmts(
             // capture is the identical direct-Eq with no `CmpTask` descent. All
             // three are also correct under an `Option`, because `Option<T>: PartialEq`
             // whenever `T` is — which is why the carrier absorbs optionality.
-            FieldCarrier::Leaf => {
-                let different = emission.native_ne(quote! { #lname }, quote! { #rname });
-                quote! { if #different { #return_false } }
-            },
+            FieldCarrier::Leaf => emission.native_ne_guard(quote! { #lname }, quote! { #rname }),
 
             // Optional-Collection: compare the option tag, then route
             // `Some`/`Some` through the same explicit inner-container walk as a
@@ -1648,15 +1728,14 @@ fn generate_eq_binder_arm(
     // Compare scope: compare pattern directly, push body comparison task
     let body_task = format_ident!("Cmp{}", body_cat);
     let routing = emission.routing();
-    let different = emission.native_ne(quote! { l_pat }, quote! { r_pat });
-    let return_false = emission.return_value(quote! { false });
+    let native_guard = emission.native_ne_guard(quote! { l_pat }, quote! { r_pat });
     let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
     let scope_stmts = quote! {
         {
             #routing
             let l_pat = &#scope_left.inner().unsafe_pattern;
             let r_pat = &#scope_right.inner().unsafe_pattern;
-            if #different { #return_false }
+            #native_guard
             let l_body: *const #body_cat = &*#scope_left.inner().unsafe_body;
             let r_body: *const #body_cat = &*#scope_right.inner().unsafe_body;
             #push_body;
@@ -1701,15 +1780,14 @@ fn generate_eq_multi_binder_arm(
 
     let body_task = format_ident!("Cmp{}", body_cat);
     let routing = emission.routing();
-    let different = emission.native_ne(quote! { l_pat }, quote! { r_pat });
-    let return_false = emission.return_value(quote! { false });
+    let native_guard = emission.native_ne_guard(quote! { l_pat }, quote! { r_pat });
     let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
     let scope_stmts = quote! {
         {
             #routing
             let l_pat = &#scope_left.inner().unsafe_pattern;
             let r_pat = &#scope_right.inner().unsafe_pattern;
-            if #different { #return_false }
+            #native_guard
             let l_body: *const #body_cat = &*#scope_left.inner().unsafe_body;
             let r_body: *const #body_cat = &*#scope_right.inner().unsafe_body;
             #push_body;
@@ -1747,6 +1825,10 @@ fn generate_eq_multi_binder_arm(
 /// the ordering result; `Equal` means "continue draining stack", anything
 /// else means "stop and propagate".
 fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> TokenStream {
+    assert!(
+        !emission.inspecting(),
+        "leaf contributions do not provide a complete Ord inspector"
+    );
     let task_enum = &emission.task_enum;
     let task_type = emission.task_type();
     let cmp_driver = &emission.cmp_driver;
@@ -1769,7 +1851,7 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
             let cmp_variant = format_ident!("Cmp{}", cat);
             let resume_fn = emission.resume(cat);
             let owner_type = emission.collection_owner_type();
-            let owner_binding = if emission.checked {
+            let owner_binding = if emission.admitted() {
                 quote! { machine }
             } else {
                 quote! { mut machine }
@@ -1777,12 +1859,12 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
             let callback_parameters = emission.collection_callback_parameters();
             let begin = emission.collection_callback_begin();
             let step = emission.collection_step();
-            let step_type = if emission.checked {
+            let step_type = if emission.admitted() {
                 quote! { mettail_runtime::CheckedCollectionCmpStep }
             } else {
                 quote! { mettail_runtime::CollectionCmpStep }
             };
-            let owner_field = if emission.checked {
+            let owner_field = if emission.admitted() {
                 quote! { machine, }
             } else {
                 TokenStream::new()
@@ -1819,7 +1901,7 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
     let native_collection_resume_fns: Vec<TokenStream> = language
         .types
         .iter()
-        .filter(|_| !emission.checked)
+        .filter(|_| !emission.admitted())
         .flat_map(|t| {
             let category = &t.name;
             collect_category_variants(category, language)
@@ -2058,15 +2140,14 @@ fn generate_cmp_variant_arm(
     language: &LanguageDef,
     emission: &CmpEmissionNames,
 ) -> TokenStream {
-    if emission.checked && !checked_cmp_variant_supported(category, variant, language) {
+    if emission.admitted() && !checked_cmp_variant_supported(category, variant, language) {
         let pattern = variant_wildcard_pattern(category, variant);
         let refusal = emission.unsupported_return(category, variant.label());
         return quote! { (#pattern, #pattern) => { #refusal } };
     }
     let task_enum = &emission.task_enum;
     let routing = emission.routing();
-    let native_order = emission.native_cmp(quote! { a }, quote! { b });
-    let return_order = emission.return_value(quote! { ord });
+    let native_guard = emission.native_cmp_guard(quote! { a }, quote! { b });
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
@@ -2085,10 +2166,7 @@ fn generate_cmp_variant_arm(
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #routing
-                    let ord = #native_order;
-                    if ord != std::cmp::Ordering::Equal {
-                        #return_order
-                    }
+                    #native_guard
                 }
             }
         },
@@ -2135,10 +2213,7 @@ fn generate_cmp_variant_arm(
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     #routing
-                    let ord = #native_order;
-                    if ord != std::cmp::Ordering::Equal {
-                        #return_order
-                    }
+                    #native_guard
                 }
             }
         },
@@ -2260,7 +2335,6 @@ fn cmp_arm_stmts(
 ) -> Vec<TokenStream> {
     let task_enum = &emission.task_enum;
     let routing = emission.routing();
-    let return_order = emission.return_value(quote! { ord });
     let push_less = emission.push_task(quote! { #task_enum::Verdict(std::cmp::Ordering::Less) });
     let push_greater =
         emission.push_task(quote! { #task_enum::Verdict(std::cmp::Ordering::Greater) });
@@ -2307,14 +2381,11 @@ fn cmp_arm_stmts(
     for i in 0..split {
         let lname = &left_names[i];
         let rname = &right_names[i];
-        let order = emission.native_cmp(quote! { #lname }, quote! { #rname });
+        let native_guard = emission.native_cmp_guard(quote! { #lname }, quote! { #rname });
         stmts.push(quote! {
             {
                 #routing
-                let ord = #order;
-                if ord != std::cmp::Ordering::Equal {
-                    #return_order
-                }
+                #native_guard
             }
         });
     }
@@ -2337,11 +2408,7 @@ fn cmp_arm_stmts(
             // A leaf inside the pushed segment: its verdict is computed now and
             // consulted in position order. This is the case the eager prefix
             // could not express, and the reason it had to swallow collections.
-            FieldCarrier::Leaf => {
-                let order = emission.native_cmp(quote! { #lname }, quote! { #rname });
-                let push = emission.push_task(quote! { #task_enum::Verdict(#order) });
-                quote! { #push; }
-            },
+            FieldCarrier::Leaf => emission.native_cmp_verdict(quote! { #lname }, quote! { #rname }),
 
             // `Option<Container>: Ord` uses `None < Some`; `Some`/`Some` then
             // schedules the inner container without a host-stack re-entry.
@@ -2724,6 +2791,10 @@ mod ordinary_baseline_tests;
 #[cfg(test)]
 #[path = "iterative_cmp_checked_tests.rs"]
 mod checked_tests;
+
+#[cfg(test)]
+#[path = "iterative_cmp_inspection_tests.rs"]
+mod inspection_tests;
 
 #[cfg(test)]
 #[path = "iterative_cmp_census_tests.rs"]

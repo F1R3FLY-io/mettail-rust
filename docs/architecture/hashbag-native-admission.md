@@ -93,6 +93,16 @@ likewise expose `try_inspect_native_eq_work`, `try_inspect_native_ne_work`,
 and `try_inspect_native_cmp_work`. Equality, inequality and ordering retain
 their separate native operations; equality-only binders acquire no ordering.
 
+Scope patterns use the generated expression's own metadata interface:
+`inspect_generated_single_pattern_order_work` and
+`inspect_generated_multi_pattern_order_work`. These reuse the
+[identity-comparison model](../../formal/rocq/rho_bridge/theories/AdmittedIdentityComparison.v)
+and the existing precharge calculations. A single pattern contributes 71
+logical work groups; two pattern vectors of equal length $`n`$ contribute
+$`27 + 80n`$, and unequal lengths contribute five. Inspection pays its metadata
+reservation before reading lengths or doing checked arithmetic. It does not
+hash a binder, execute the expression, or construct a comparison result.
+
 Each result is a source-specific logical-work allowance, excluding inspection
 charges already spent. It is not execution permission. A caller must separately
 reserve the original operation's work on the same unchanged borrowed operands
@@ -117,6 +127,30 @@ The generated category traversal, nested collection comparison, and movement
 of retained roots during resizing must supply their own coverage before these
 allowances can be composed into a complete reconstruction provider.
 
+### Collection comparison request counts
+
+The [request-count model](../../formal/rocq/rho_bridge/theories/NativeCollectionRequestBound.v)
+instruments the existing merge-sort automaton's callback while preserving
+its operands, reply and state. A completed sort of $`n`$ original records makes
+at most $`n(n-1)`$ record-comparison requests: each pass copies exactly the
+original width, each comparison advances a copy, and the existing pass-progress
+law bounds the number of passes. This is a conservative count, not a claim
+that the sorter has quadratic typical running time.
+
+The subsequent multiplicity-aware lexicographic phase makes at most
+$`m+n`$ record-comparison requests for left and right roster widths $`m`$ and
+$`n`$. Every equal reply advances at least one original record index; counts
+are not expanded into repeated elements. This bound also covers interrupted
+lexicographic prefixes. The sort theorem covers completed executions, not
+arbitrary interrupted sorting traces. The existing pair protocol separately
+permits at most one primary and one secondary term request per record pair.
+
+These laws do not price the requested comparisons, prove a bound for Rust's
+native slice sorter, or supply complete reconstruction admission. Directed
+typed operand coverage, callback work, roster construction and cleanup must
+still be composed separately. Pointer aliases do not justify collapsing
+distinct record occurrences in that accounting.
+
 The existing `BindingCharge` supplies the checked work/record/byte algebra.
 Its `try_accumulate_parts` method pays one fixed metadata work group before
 validating the incoming parts, adding them, and checking the final work and
@@ -132,6 +166,33 @@ This method does not pay for future native execution. The caller must
 separately account for accumulator storage, justify the operation's parts
 against the original source, and reserve execution through the existing meter.
 Representable accounting data is not a certificate or execution authority.
+
+### Generated comparison leaf controls
+
+The existing comparison generator has three shared leaf-control fragments:
+an inequality guard, an eager ordering guard, and a deferred ordering verdict.
+Ordinary and checked execution retain their original native calls, evaluation
+positions and emitted tokens. The private inspection interpretation instead
+queries the corresponding sealed metadata interface and adds its unreserved
+work to the same checked `BindingCharge` accumulator. It returns no Boolean
+or ordering value and never inserts a fabricated `Equal` verdict.
+
+The [continuation-cover model](../../formal/rocq/rho_bridge/theories/GeneratedComparisonInspectionCover.v)
+retains each original directed operand pair and distinguishes native
+inequality from ordering. An unknown native reply cannot prune inspection's
+later source actions: every actual completed, early-exit or refused prefix
+is covered by the inspected sequence. Deferred comparisons are inspected at
+their original construction point, even when their results would later be
+ignored. The model reuses the existing reverse-construction and verdict
+consultation laws; consulting a verdict does not repeat a comparison.
+
+These fragments are not a complete generated-category inspector. The complete
+Eq and Ord engine builders explicitly reject this partial interpretation.
+Driver, handler, child-job, collection, pattern-order and ownership costs must
+be connected before whole-term comparison allowance or reconstruction
+authority can be exposed. Tests cover exact ordinary/checked fragment tokens,
+metadata refusal, checked accumulation overflow and continued inspection;
+the captured fixture executes the actual emitted fragments.
 
 ### Ordinary generated Hash wrapper
 
@@ -227,6 +288,38 @@ These results cover this merge component, not the complete standard-library
 sort. Comparator bodies, other sorting branches, pointer provenance,
 allocator behavior, checked receipt composition, and panic unwinding retain
 separate obligations. No new Map width restriction follows from this proof.
+
+### Native sort callback allowance for all widths
+
+The [full-width count model](../../formal/rocq/rho_bridge/theories/NativeStableSortRequestBound.v)
+composes the pinned stable sort's existing control structure into a conservative
+callback envelope. For an original roster width $`n`$, it proves:
+
+```math
+C(n) \leq 10n^2 + 32n.
+```
+
+Here $`C`$ counts comparator closure invocations, not their bodies or physical
+CPU instructions. The smaller insertion branch retains its tighter bound.
+The composition uses decreasing quicksort depth, disjoint child widths,
+bounded pivot selection, run scans and merges, and disjoint small-sort chunks.
+Its run-flag law ensures that an interval already marked sorted cannot be
+charged as another fresh quicksort input. Both eager top-level sorting and
+the eager fallback at exhausted quicksort depth are included.
+
+Associating the finite width/flag annotations and local callback counts with
+the pinned standard-library source is an explicitly reviewed dependency
+boundary, not a machine-checked Rust semantics or sorting-correctness proof.
+There is no width cap and no change to the ordinary sorter. Checked arithmetic
+and admission must precede use of the envelope.
+
+Complete comparator work still requires directed, typed pairs from the entire
+original roster, including both operand orientations. An ancestor pivot can
+lie outside a current quicksort child, and some branches reverse operands.
+Key comparison and the conditional value comparison retain their separate
+categories. Materialization, scratch storage, control work and cleanup remain
+separate from this callback count; the count alone does not authorize native
+Map hashing or bag reconstruction.
 
 ### Shared paid Map visitation
 

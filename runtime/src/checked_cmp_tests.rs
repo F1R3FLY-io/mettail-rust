@@ -154,6 +154,11 @@ fn generated_pattern_order_precharge_preserves_original_hash_expressions() {
     unnamed.0.pretty_name = None;
     for left in [&binder, &other, &renamed, &unnamed] {
         for right in [&binder, &other, &renamed, &unnamed] {
+            check_inspection(71, |reserve| {
+                inspect_generated_single_pattern_order_work(left, right, &mut |work, units| {
+                    reserve(work, units)
+                })
+            });
             let expected = original_single_pattern_order(left, right);
             let mut executions = 0;
             check_operation(expected, 71, |reserve| {
@@ -173,6 +178,11 @@ fn generated_pattern_order_precharge_preserves_original_hash_expressions() {
             5
         };
         let expected = original_multi_pattern_order(left, right);
+        check_inspection(work, |reserve| {
+            inspect_generated_multi_pattern_order_work(left, right, &mut |work, units| {
+                reserve(work, units)
+            })
+        });
         let mut executions = 0;
         check_operation(expected, work, |reserve| {
             precharge_generated_multi_pattern_order(left, right, &mut |work, units| {

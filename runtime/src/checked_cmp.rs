@@ -360,11 +360,47 @@ impl sealed::EqualityLeaf for Vec<Binder<String>> {
 }
 impl CheckedNativeEqualityLeaf for Vec<Binder<String>> {}
 
+const SINGLE_PATTERN_ORDER_WORK: usize = 71;
+
 fn multi_pattern_order_work(left: usize, right: usize) -> Option<usize> {
     match left == right {
         true => left.checked_mul(80)?.checked_add(27),
         false => Some(5),
     }
+}
+
+/// Inspect the work of the generated single-binder hash-pattern expression.
+///
+/// This exposes only the metadata stage of the existing precharge below. It
+/// does not hash a binder, compare patterns, reserve execution, or provide a
+/// reusable execution receipt. The returned work applies to these unchanged
+/// operands and the audited profile; inspection itself is charged separately.
+#[doc(hidden)]
+pub fn inspect_generated_single_pattern_order_work<E>(
+    _left: &Binder<String>,
+    _right: &Binder<String>,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<usize, NativeComparisonFailure<E>> {
+    inspect_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |_| {
+        Ok(SINGLE_PATTERN_ORDER_WORK)
+    })
+}
+
+/// Inspect the existing length-first multi-binder pattern-order allowance.
+///
+/// The same checked length calculation as the precharge below runs only after
+/// metadata admission. No binder is visited or hashed, even for equal lengths.
+/// The returned allowance excludes paid inspection and is not execution
+/// authority; source traversal and retention need separate admission.
+#[doc(hidden)]
+pub fn inspect_generated_multi_pattern_order_work<E>(
+    left: &Vec<Binder<String>>,
+    right: &Vec<Binder<String>>,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<usize, NativeComparisonFailure<E>> {
+    inspect_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |_| {
+        multi_pattern_order_work(left.len(), right.len()).ok_or(BindingFailure::SizeOverflow)
+    })
 }
 
 /// Admit the unchanged generated single-binder hash-pattern ordering expression.
@@ -380,7 +416,9 @@ pub fn precharge_generated_single_pattern_order<E>(
     _right: &Binder<String>,
     reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
 ) -> Result<(), NativeComparisonFailure<E>> {
-    admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |_| Ok(71))
+    admit_native_work(reserve, CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE, |_| {
+        Ok(SINGLE_PATTERN_ORDER_WORK)
+    })
 }
 
 /// Admit the existing length-first generated multi-binder ordering expression.

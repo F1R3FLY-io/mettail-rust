@@ -103,6 +103,7 @@ theories/AdmittedIdentityComparison.v
 theories/AdmittedFltComparison.v
 theories/AdmittedGeneratedComparisonScheduling.v
 theories/GeneratedComparisonFieldResults.v
+theories/GeneratedComparisonInspectionCover.v
 theories/AdmittedCollectionComparisonOwnership.v
 theories/SourceMapEntryVisit.v
 theories/GeneratedBagComparisonInitialization.v
@@ -122,9 +123,11 @@ theories/GeneratedConstructorComparisonClasses.v
 theories/GeneratedConstructorSourceProjection.v
 theories/CollectionPairAndUnitLexResults.v
 theories/CollectionWeightedLexResults.v
+theories/NativeCollectionRequestBound.v
 theories/NativeSortedComparisonClasses.v
 theories/NativeStableInsertionSort.v
 theories/NativeStableBidirectionalMerge.v
+theories/NativeStableSortRequestBound.v
 theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v
 theories/GeneratedMapCoreDeterminism.v
