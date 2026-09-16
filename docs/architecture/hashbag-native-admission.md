@@ -162,6 +162,31 @@ Larger-input sorting and generated child-comparison costs remain separate
 obligations. The threshold is a native dispatch condition, not a new limit
 on supported Rholang Maps.
 
+### Shared paid Map visitation
+
+`HashMapLit::try_for_each_entry` exposes the same paid IndexMap slice walk
+used by `try_comparison_roster`, without constructing a roster. Each callback
+receives the original key/value borrows together, in insertion order, and the
+caller's existing reservation callback. Setup is admitted before iterator
+creation; each advance is admitted before it runs, including the final empty
+advance. For $`n`$ entries, the walk makes $`n+2`$ one-work reservations,
+excluding the visitor's separately paid operations and retained storage.
+
+The [visitation model](../../formal/rocq/rho_bridge/theories/SourceMapEntryVisit.v)
+threads the visitor's mutable state and remaining allowance through the
+original source suffix. A failed visitor retains its prior effects and stops
+the walk; a failed setup performs no visits. Successful visitation preserves
+every original pair. Rust regressions additionally check original addresses,
+error-payload identity, every reservation cut, and the roster builder's exact
+unchanged reservation sequence.
+
+This is a metadata access boundary, not a Hash or comparison implementation.
+It calls no native key operation and performs no sorting. Additive leaf
+allowances can be inspected in this order because whole-pair permutation
+preserves their sum. Connecting that sum to native Map hashing still requires
+the native sorting inventory proof and separate traversal, sorting and
+comparison allowances; the visitor itself supplies none of those costs.
+
 ## Exact library boundary
 
 `HashBag` stores `std::collections::HashMap`, not the workspace's direct

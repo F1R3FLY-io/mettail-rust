@@ -133,6 +133,51 @@ impl<K, V> HashMapLit<K, V> {
         reserve_binding_parts(1, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
         let width = self.len();
         let mut roster = CheckedCmpRoster::try_with_capacity(width, reserve)?;
+        self.try_visit_entries(reserve, |key, value, reserve| {
+            roster.try_push_pair(key, value, reserve)
+        })?;
+        Ok(roster)
+    }
+
+    /// Visit original key/value borrows with admission before setup and each advance.
+    ///
+    /// This shares the comparison-roster producer's pinned IndexMap slice walk,
+    /// including its terminal advance, but allocates no intermediate roster and
+    /// itself performs no Hash, Eq, Ord or Clone operation. Original insertion order
+    /// and key/value association are preserved. The visitor receives the same
+    /// reservation callback and must admit its own work and retained storage.
+    ///
+    /// The traversal does not mutate the map structure. Refusal returns the
+    /// original error; earlier charges and visitor effects (including effects
+    /// through interior-mutable values) are not rolled back. The visitor
+    /// may retain source references only for this map's existing borrow lifetime.
+    /// This does not provide a native sorting, hashing or comparison allowance.
+    pub fn try_for_each_entry<'a, E, R>(
+        &'a self,
+        reserve: &mut R,
+        visit: impl FnMut(&'a K, &'a V, &mut R) -> Result<(), crate::NativeComparisonFailure<E>>,
+    ) -> Result<(), crate::NativeComparisonFailure<E>>
+    where
+        R: FnMut(usize, usize) -> Result<(), E>,
+    {
+        if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(crate::NativeComparisonFailure::UnsupportedProfile);
+        }
+        self.try_visit_entries(reserve, visit)
+    }
+
+    // SourceMapEntryVisit.v: setup is paid before iterator creation, every
+    // next (including None) is paid, and visitor failure never advances again.
+    // Both callers check the audited profile before reaching this shared body.
+    fn try_visit_entries<'a, E, R>(
+        &'a self,
+        reserve: &mut R,
+        mut visit: impl FnMut(&'a K, &'a V, &mut R) -> Result<(), crate::NativeComparisonFailure<E>>,
+    ) -> Result<(), crate::NativeComparisonFailure<E>>
+    where
+        R: FnMut(usize, usize) -> Result<(), E>,
+    {
+        use crate::{reserve_binding_parts, NativeComparisonFailure};
         reserve_binding_parts(1, 0, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
         let mut entries = self.iter();
         loop {
@@ -140,9 +185,9 @@ impl<K, V> HashMapLit<K, V> {
             let Some((key, value)) = entries.next() else {
                 break;
             };
-            roster.try_push_pair(key, value, reserve)?;
+            visit(key, value, reserve)?;
         }
-        Ok(roster)
+        Ok(())
     }
 
     /// Mutably iterate entries in insertion order.

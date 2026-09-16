@@ -636,6 +636,27 @@ fn map_producer_preserves_pairs_without_key_operations_at_every_budget_boundary(
             map.insert(Key { id, frozen: Arc::clone(&frozen) }, Value(format!("value-{id}")));
         }
         frozen.store(true, MemoryOrder::Relaxed);
+        // The same paid iterator can expose typed borrows without sorting,
+        // allocating a roster, or touching key/value native operations.
+        let mut borrowed = Vec::new();
+        let mut scan_trace = Vec::new();
+        map.try_for_each_entry(
+            &mut |w, u| {
+                scan_trace.push((w, u));
+                Ok::<_, ()>(())
+            },
+            |key, value, _| {
+                borrowed.push((key, value));
+                Ok(())
+            },
+        )
+        .expect("paid original-pair visitor");
+        assert_eq!(scan_trace, vec![(1, 0); width + 2]);
+        assert_eq!(borrowed.len(), width);
+        for ((key, value), (original_key, original_value)) in borrowed.into_iter().zip(map.iter()) {
+            assert!(std::ptr::eq(key, original_key));
+            assert!(std::ptr::eq(value, original_value));
+        }
         let mut trace = Vec::new();
         let roster = map
             .try_comparison_roster(&mut |w, u| {
@@ -654,6 +675,9 @@ fn map_producer_preserves_pairs_without_key_operations_at_every_budget_boundary(
             assert_eq!(value.0, format!("value-{}", key.id));
         }
         assert_eq!(trace.len(), 2 * width + 5);
+        let mut expected_trace = vec![(1, 0), (1, 0), (2 * (width + 1), 4 * (width + 1)), (1, 0)];
+        expected_trace.extend(std::iter::repeat_n((1, 0), 2 * width + 1));
+        assert_eq!(trace, expected_trace, "factoring visitation preserves every reservation");
         let total = trace
             .iter()
             .fold((0, 0), |(w, u), (dw, du)| (w + dw, u + du));
@@ -696,6 +720,112 @@ fn map_producer_preserves_pairs_without_key_operations_at_every_budget_boundary(
             map.iter().map(|(key, _)| key.id).collect::<Vec<_>>(),
             (0..width).rev().collect::<Vec<_>>()
         );
+    }
+}
+
+#[test]
+fn map_entry_visitation_stops_at_every_admission_and_keeps_mutable_visitor_state() {
+    for width in [0usize, 1, 7, 33, 256] {
+        let mut map = crate::HashMapLit::new();
+        for key in (0..width).rev() {
+            map.insert(key, key + 1000);
+        }
+        let expected: Vec<_> = map.iter().map(|(key, value)| (*key, *value)).collect();
+        for stop in 0..width + 2 {
+            let mut charges = 0;
+            let mut seen = Vec::new();
+            let result = map.try_for_each_entry(
+                &mut |work, units| {
+                    assert_eq!((work, units), (1, 0));
+                    let current = charges;
+                    charges += 1;
+                    if current == stop {
+                        Err(stop)
+                    } else {
+                        Ok(())
+                    }
+                },
+                |key, value, _| {
+                    seen.push((*key, *value));
+                    Ok(())
+                },
+            );
+            assert_eq!(
+                result,
+                Err(NativeComparisonFailure::Admission(BindingFailure::Reservation(stop)))
+            );
+            assert_eq!(charges, stop + 1);
+            assert_eq!(seen, expected[..stop.saturating_sub(1).min(width)]);
+        }
+        // Visitor reservations go through the original meter. A refusal keeps
+        // the effect made by the failing visitor and never reaches the suffix.
+        for stop in 0..width {
+            let mut trace = Vec::new();
+            let mut seen = Vec::new();
+            let result = map.try_for_each_entry(
+                &mut |w, u| {
+                    trace.push((w, u));
+                    Ok::<_, ()>(())
+                },
+                |key, value, reserve| {
+                    reserve(3, 0)
+                        .map_err(|e| Failure::Admission(BindingFailure::Reservation(e)))?;
+                    seen.push((*key, *value));
+                    if seen.len() == stop + 1 {
+                        Err(Failure::InvalidCollectionInput("visitor stopped"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert_eq!(result, Err(Failure::InvalidCollectionInput("visitor stopped")));
+            assert_eq!(seen, expected[..=stop]);
+            let mut expected_trace = vec![(1, 0)];
+            for _ in 0..=stop {
+                expected_trace.extend([(1, 0), (3, 0)]);
+            }
+            assert_eq!(trace, expected_trace);
+        }
+        assert_eq!(map.iter().map(|(k, v)| (*k, *v)).collect::<Vec<_>>(), expected);
+    }
+}
+
+#[test]
+fn map_entry_visitation_moves_original_reservation_payload() {
+    struct Payload(u8);
+    let mut map = crate::HashMapLit::new();
+    map.insert(1usize, 2usize);
+    // Setup, first next, and visitor-owned reservation each move the same
+    // non-Clone payload. No conversion invents another refusal kind.
+    for stop in 0..3 {
+        let mut payload = Some(Box::new(Payload(73)));
+        let original = std::ptr::from_ref(payload.as_deref().expect("initial payload"));
+        let mut calls = 0;
+        let mut visited = 0;
+        let result = map.try_for_each_entry(
+            &mut |_, _| {
+                let current = calls;
+                calls += 1;
+                if current == stop {
+                    Err(payload.take().expect("one refusal"))
+                } else {
+                    Ok(())
+                }
+            },
+            |_, _, reserve| {
+                visited += 1;
+                reserve(3, 0)
+                    .map_err(|e| NativeComparisonFailure::Admission(BindingFailure::Reservation(e)))
+            },
+        );
+        let Err(NativeComparisonFailure::Admission(BindingFailure::Reservation(error))) = result
+        else {
+            panic!("must preserve reservation failure")
+        };
+        assert_eq!(std::ptr::from_ref(error.as_ref()), original);
+        assert_eq!(error.0, 73);
+        assert_eq!(calls, stop + 1);
+        assert_eq!(visited, usize::from(stop == 2));
     }
 }
 
