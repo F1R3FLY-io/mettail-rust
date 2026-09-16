@@ -71,6 +71,23 @@ pub struct CheckedCmpRoster {
 }
 
 impl CheckedCmpRoster {
+    /// Pays for borrowing the initialized, unsorted entry slice.
+    ///
+    /// This preserves every stored occurrence, including aliases, and exposes
+    /// neither unused reserved slots nor expanded repetitions. The slice
+    /// borrows this roster, not the terms referenced by its raw pointers:
+    /// callers must still retain those terms and recover their original types.
+    /// Subsequent iteration, indexing, and child jobs need separate admission.
+    pub fn try_items<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<&[CollectionCmpItem], NativeComparisonFailure<E>> {
+        // RholangInitialGraphResources: precharged_action with work=1,
+        // units=0 and the pure entries projection. No owner mutation.
+        CheckedPolicy(reserve).work(1)?;
+        Ok(&self.items)
+    }
+
     pub fn try_with_capacity<E>(
         expected_len: usize,
         reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
@@ -150,6 +167,21 @@ pub struct CollectionCmpItem {
 }
 
 impl CollectionCmpItem {
+    /// Pays before copying this entry's original flat metadata.
+    ///
+    /// No pointer is dereferenced, compared, cast, or validated. The secondary
+    /// role and compressed repetition count are preserved exactly; this is
+    /// not the unit-pair validation performed by [`Self::try_pair_ptrs`].
+    /// The caller retains the original terms and their typed-role association.
+    pub fn try_parts<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<(*const (), Option<*const ()>, usize), NativeComparisonFailure<E>> {
+        // Same precharged pure-projection law as CheckedCmpRoster::try_items.
+        CheckedPolicy(reserve).work(1)?;
+        Ok((self.primary, self.secondary, self.repetitions))
+    }
+
     #[inline]
     pub fn unary<T>(value: &T) -> Self {
         Self::repeated(value, 1)

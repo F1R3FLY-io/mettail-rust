@@ -170,6 +170,102 @@ fn sort_item(item: &CollectionCmpItem) -> SortItem {
     (item.primary, item.secondary, item.repetitions)
 }
 
+#[test]
+fn paid_roster_projection_borrows_only_original_initialized_occurrences() {
+    // No Clone/Hash/Eq/Ord implementation can be invoked for this payload.
+    struct Opaque(u8);
+    let key = Opaque(7);
+    let value = String::from("original secondary");
+    let mut accept = |_, _| Ok::<_, ()>(());
+    for width in [0, 8] {
+        let mut roster =
+            CheckedCmpRoster::try_with_capacity(width, &mut accept).expect("paid source roster");
+        if width != 0 {
+            roster
+                .try_push_repeated(&key, 3, &mut accept)
+                .expect("compressed run");
+            roster
+                .try_push_unary(&key, &mut accept)
+                .expect("separate alias occurrence");
+            roster
+                .try_push_pair(&key, &value, &mut accept)
+                .expect("original roles");
+        }
+        let before: Vec<_> = roster.items.iter().map(sort_item).collect();
+        let allocation = roster.items.as_ptr();
+        let metadata = (roster.total, roster.reserved_width);
+        for limit in [0usize, 1] {
+            let mut trace = Vec::new();
+            let result = roster.try_items(&mut |work, units| {
+                trace.push((work, units));
+                if trace.len() > limit {
+                    Err(())
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(trace, [(1, 0)]);
+            if limit == 0 {
+                assert!(matches!(result, Err(Failure::Admission(BindingFailure::Reservation(())))));
+            } else {
+                let items = result.expect("paid immutable slice");
+                assert_eq!(items.as_ptr(), allocation, "no replacement roster");
+                assert_eq!(items.iter().map(sort_item).collect::<Vec<_>>(), before);
+                assert_eq!(items.len(), if width == 0 { 0 } else { 3 });
+                if width != 0 {
+                    assert_eq!(items[0].primary, items[1].primary);
+                    assert_eq!((items[0].repetitions, items[1].repetitions), (3, 1));
+                    assert_eq!(items[2].secondary, Some(&value as *const String as *const ()));
+                }
+            }
+            assert_eq!((roster.total, roster.reserved_width), metadata);
+            assert_eq!(roster.items.iter().map(sort_item).collect::<Vec<_>>(), before);
+        }
+    }
+    assert_eq!(key.0, 7);
+    assert_eq!(value, "original secondary");
+}
+
+#[test]
+fn paid_item_projection_preserves_roles_counts_and_nonclone_refusals() {
+    struct Refusal(Box<u8>);
+    let key = 7_i32;
+    let value = String::from("retained");
+    let mut unusual_pair = CollectionCmpItem::pair(&key, &value);
+    unusual_pair.repetitions = 3;
+    for item in [
+        CollectionCmpItem::unary(&key),
+        CollectionCmpItem::repeated(&key, usize::MAX),
+        CollectionCmpItem::pair(&key, &value),
+        unusual_pair,
+    ] {
+        let original = sort_item(&item);
+        let error = Refusal(Box::new(19));
+        let error_identity = &*error.0 as *const u8;
+        let mut pending = Some(error);
+        let mut trace = Vec::new();
+        let result = item.try_parts(&mut |work, units| {
+            trace.push((work, units));
+            Err::<(), _>(pending.take().expect("one original refusal"))
+        });
+        let Err(NativeComparisonFailure::Admission(BindingFailure::Reservation(error))) = result
+        else {
+            panic!("projection must move the original refusal")
+        };
+        assert_eq!(&*error.0 as *const u8, error_identity);
+        assert_eq!(trace, [(1, 0)]);
+        assert_eq!(sort_item(&item), original);
+        let mut trace = Vec::new();
+        let result = item.try_parts(&mut |work, units| {
+            trace.push((work, units));
+            Ok::<_, ()>(())
+        });
+        assert_eq!(result, Ok(original));
+        assert_eq!(trace, [(1, 0)]);
+        assert_eq!(sort_item(&item), original);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SortEvent {
     Reserve(usize, usize),

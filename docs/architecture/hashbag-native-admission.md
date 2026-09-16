@@ -1040,6 +1040,23 @@ Checked admission adds reservation and refusal behavior, not a different
 sorting machine. Initialization correspondence concerns those exact arguments;
 it does not assume the final comparison result or introduce another comparator.
 
+Metadata inspection can borrow that same unsorted storage through
+`CheckedCmpRoster::try_items`. It pays one logical work group before returning
+the initialized entry slice: unused reserved slots and expanded repetitions
+are not exposed. `CollectionCmpItem::try_parts` likewise pays one group before
+returning the original primary pointer, optional secondary pointer, and
+compressed repetition count. It does not impose the unit-pair validation of
+`try_pair_ptrs`, deduplicate aliases, sort, dereference, or compare anything.
+
+Both accessors instantiate the existing
+[precharged pure-projection law](../../formal/rocq/rho_bridge/theories/RholangInitialGraphResources.v):
+refusal precedes the projection, and success preserves its exact result while
+debiting one work group and no retention units. They neither mutate the roster
+nor establish a whole-comparison allowance. The slice borrow protects roster
+storage, not the externally owned terms addressed by its pointers. The caller
+must retain those terms, preserve their typed roles, and separately admit
+subsequent length inspection, iteration, indexing, and scheduled child work.
+
 The generated Bag factory computes the stored-total ordering first, then
 builds both original rosters, then initializes that shared machine. An unequal
 lead must not skip either roster: ordinary construction also builds its
