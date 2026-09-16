@@ -54,10 +54,18 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+/// Distinct interpretations of the shared source traversal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HashInterpretation {
+    Ordinary,
+    CheckedExecution,
+    InspectLeaves,
+}
+
 /// Names and admission expressions shared by the task, driver, field and trait
 /// emitters. Ordinary Hash retains its exact native stream and TLS hot path.
 struct HashEmissionNames {
-    checked: bool,
+    interpretation: HashInterpretation,
     task_enum: Ident,
     task_pool: Ident,
     opaque_constructor: Ident,
@@ -68,7 +76,7 @@ struct HashEmissionNames {
 impl HashEmissionNames {
     fn ordinary() -> Self {
         Self {
-            checked: false,
+            interpretation: HashInterpretation::Ordinary,
             task_enum: format_ident!("HashTask"),
             task_pool: format_ident!("HASH_TASK_POOL"),
             opaque_constructor: format_ident!("hash_opaque_task"),
@@ -80,7 +88,7 @@ impl HashEmissionNames {
     #[allow(dead_code)]
     fn checked() -> Self {
         Self {
-            checked: true,
+            interpretation: HashInterpretation::CheckedExecution,
             task_enum: format_ident!("CheckedHashTask"),
             task_pool: format_ident!("CHECKED_HASH_TASK_POOL"),
             opaque_constructor: format_ident!("checked_hash_opaque_task"),
@@ -89,9 +97,29 @@ impl HashEmissionNames {
         }
     }
 
+    #[allow(dead_code)]
+    fn inspect_leaves() -> Self {
+        Self {
+            interpretation: HashInterpretation::InspectLeaves,
+            task_enum: format_ident!("InspectHashLeafTask"),
+            task_pool: format_ident!("INSPECT_HASH_LEAF_TASK_POOL"),
+            opaque_constructor: format_ident!("inspect_hash_leaf_opaque_task"),
+            driver: format_ident!("inspect_hash_leaf_worklist"),
+            handler_prefix: "inspect_hash_leaf_handle_",
+        }
+    }
+
+    fn admitted(&self) -> bool {
+        self.interpretation != HashInterpretation::Ordinary
+    }
+
+    fn inspecting_leaves(&self) -> bool {
+        self.interpretation == HashInterpretation::InspectLeaves
+    }
+
     fn task_type(&self) -> TokenStream {
         let task = &self.task_enum;
-        if self.checked {
+        if self.admitted() {
             quote! { #task<E> }
         } else {
             quote! { #task }
@@ -99,7 +127,7 @@ impl HashEmissionNames {
     }
 
     fn generics(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { <E> }
         } else {
             quote! { <H: std::hash::Hasher> }
@@ -107,15 +135,17 @@ impl HashEmissionNames {
     }
 
     fn state_type(&self) -> TokenStream {
-        if self.checked {
-            quote! { mettail_runtime::CheckedFxHasher }
-        } else {
-            quote! { H }
+        match self.interpretation {
+            HashInterpretation::Ordinary => quote! { H },
+            HashInterpretation::CheckedExecution => quote! { mettail_runtime::CheckedFxHasher },
+            HashInterpretation::InspectLeaves => {
+                quote! { mettail_runtime::binding_receipt::BindingCharge }
+            },
         }
     }
 
     fn parameters(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { reserve: &mut impl FnMut(usize, usize) -> Result<(), E>, }
         } else {
             TokenStream::new()
@@ -123,7 +153,7 @@ impl HashEmissionNames {
     }
 
     fn arguments(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { , reserve }
         } else {
             TokenStream::new()
@@ -131,7 +161,7 @@ impl HashEmissionNames {
     }
 
     fn result_type(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { -> Result<(), mettail_runtime::KeyHashFailure<E>> }
         } else {
             TokenStream::new()
@@ -139,7 +169,7 @@ impl HashEmissionNames {
     }
 
     fn propagate(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { ? }
         } else {
             TokenStream::new()
@@ -147,7 +177,7 @@ impl HashEmissionNames {
     }
 
     fn success(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! { Ok(()) }
         } else {
             TokenStream::new()
@@ -155,7 +185,7 @@ impl HashEmissionNames {
     }
 
     fn routing(&self) -> TokenStream {
-        if self.checked {
+        if self.admitted() {
             quote! {
                 mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)
                     .map_err(mettail_runtime::KeyHashFailure::Admission)?;
@@ -166,10 +196,14 @@ impl HashEmissionNames {
     }
 
     fn push_task(&self, task: TokenStream) -> TokenStream {
-        if self.checked {
+        self.push_task_with_error(task, quote! { mettail_runtime::KeyHashFailure::Admission })
+    }
+
+    fn push_task_with_error(&self, task: TokenStream, failure: TokenStream) -> TokenStream {
+        if self.admitted() {
             quote! {{
                 mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
-                    .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+                    .map_err(#failure)?;
                 stack.push(#task);
             }}
         } else {
@@ -179,7 +213,7 @@ impl HashEmissionNames {
 
     fn opaque_task(&self, value: TokenStream) -> TokenStream {
         let constructor = &self.opaque_constructor;
-        if self.checked {
+        if self.admitted() {
             quote! { #constructor::<_, E>(#value) }
         } else {
             quote! { #constructor::<_, H>(#value) }
@@ -196,12 +230,22 @@ impl HashEmissionNames {
 
     /// Preserve the native call expression at its existing stream position.
     fn hash_value(&self, value: TokenStream) -> TokenStream {
-        if self.checked {
-            quote! {{
-                mettail_runtime::CheckedFxHashLeaf::try_hash_fx(#value, state, reserve)?;
-            }}
-        } else {
-            quote! { std::hash::Hash::hash(#value, state) }
+        self.leaf_action(value, quote! { reserve })
+    }
+
+    fn leaf_action(&self, value: TokenStream, reserve: TokenStream) -> TokenStream {
+        match self.interpretation {
+            HashInterpretation::Ordinary => quote! { std::hash::Hash::hash(#value, state) },
+            HashInterpretation::CheckedExecution => quote! {{
+                mettail_runtime::CheckedFxHashLeaf::try_hash_fx(#value, state, #reserve)?;
+            }},
+            HashInterpretation::InspectLeaves => quote! {{
+                let work = mettail_runtime::CheckedFxHashLeaf::try_inspect_hash_fx_work(
+                    #value, #reserve,
+                )?;
+                state.try_accumulate_parts(work, 0, 0, #reserve)
+                    .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+            }},
         }
     }
 }
@@ -223,6 +267,22 @@ pub fn generate_iterative_hash(language: &LanguageDef) -> TokenStream {
         #hash_engine
         #hash_impls
     }
+}
+
+/// The additive native-leaf component of inspection, not a complete Hash bound.
+///
+/// This private integration entrypoint deliberately does not activate a public
+/// category-admission interface. It reuses the exact field and scope builders,
+/// pays its own metadata walk, and never executes Hash, Eq, Ord or sorting.
+/// Traversal, native Map sorting and comparator allowances must be composed
+/// separately before an ordinary whole-category Hash may be admitted.
+#[allow(dead_code)]
+fn generate_hash_leaf_inspection(language: &LanguageDef) -> TokenStream {
+    let emission = HashEmissionNames::inspect_leaves();
+    let tasks = generate_hash_task_enum(language, &emission);
+    let driver = generate_hash_engine(language, &emission);
+    let interfaces = generate_hash_impls(language, &emission);
+    quote! { #tasks #driver #interfaces }
 }
 
 // =============================================================================
@@ -248,7 +308,10 @@ fn generate_hash_task_enum(language: &LanguageDef, emission: &HashEmissionNames)
         })
         .collect();
 
-    if emission.checked {
+    if emission.admitted() {
+        let state_type = emission.state_type();
+        let apply_leaf = emission
+            .leaf_action(quote! { value }, quote! { &mut |work, units| reserve(work, units) });
         return quote! {
             #[allow(dead_code)]
             enum #task_enum<E> {
@@ -259,7 +322,7 @@ fn generate_hash_task_enum(language: &LanguageDef, emission: &HashEmissionNames)
                     value: *const (),
                     hash: unsafe fn(
                         *const (),
-                        &mut mettail_runtime::CheckedFxHasher,
+                        &mut #state_type,
                         &mut dyn FnMut(usize, usize) -> Result<(), E>,
                     ) -> Result<(), mettail_runtime::KeyHashFailure<E>>,
                 },
@@ -271,13 +334,13 @@ fn generate_hash_task_enum(language: &LanguageDef, emission: &HashEmissionNames)
             ) -> #task_enum<E> {
                 unsafe fn apply<T: mettail_runtime::CheckedFxHashLeaf, E>(
                     value: *const (),
-                    state: &mut mettail_runtime::CheckedFxHasher,
+                    state: &mut #state_type,
                     reserve: &mut dyn FnMut(usize, usize) -> Result<(), E>,
                 ) -> Result<(), mettail_runtime::KeyHashFailure<E>> {
                     // The root remains immutably borrowed until the worklist
                     // returns. Scheduling this pointer never hashes its value.
                     let value = unsafe { &*value.cast::<T>() };
-                    value.try_hash_fx(state, &mut |work, units| reserve(work, units))?;
+                    #apply_leaf;
                     Ok(())
                 }
                 #task_enum::Opaque {
@@ -436,8 +499,12 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
     let absorb_u8 = emission.hash_value(quote! { &b });
     let absorb_pathmap_mode = emission.hash_value(quote! { &mode });
 
-    if emission.checked {
-        let map_helpers = generate_checked_map_hash_helpers(language, emission);
+    if emission.admitted() {
+        let map_helpers = if emission.inspecting_leaves() {
+            Vec::new()
+        } else {
+            generate_checked_map_hash_helpers(language, emission)
+        };
         return quote! {
             #(#map_helpers)*
             #(#helper_fns)*
@@ -445,7 +512,7 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
             #[allow(dead_code, unused_variables)]
             fn #driver<E>(
                 stack: &mut Vec<#task_enum<E>>,
-                state: &mut mettail_runtime::CheckedFxHasher,
+                state: &mut #state_type,
                 reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
             ) -> Result<(), mettail_runtime::KeyHashFailure<E>> {
                 loop {
@@ -528,7 +595,7 @@ fn hash_collection_stmts(
     match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
         CollectionPlan::PerElement { element_cat, coll_type } => {
             let task_variant = format_ident!("Hash{}", element_cat);
-            if emission.checked {
+            if emission.admitted() {
                 let routing = emission.routing();
                 let push_child = emission.push_task(quote! {
                     #task_enum::#task_variant(__hash_item as *const _)
@@ -694,11 +761,34 @@ fn unordered_collection_hash_stmts(
     let task_enum = &emission.task_enum;
     let opaque_constructor = &emission.opaque_constructor;
     let task_variant = format_ident!("Hash{}", element_cat);
-    if emission.checked && *coll_type == CollectionType::HashBag {
+    if emission.admitted() && *coll_type == CollectionType::HashBag {
         let push = emission.push_task(emission.opaque_task(quote! { #coll_expr }));
         return quote! { #push; };
     }
-    if emission.checked && *coll_type == CollectionType::HashMap {
+    if emission.admitted() && *coll_type == CollectionType::HashMap {
+        if emission.inspecting_leaves() {
+            let routing = emission.routing();
+            let error = quote! { mettail_runtime::NativeComparisonFailure::Admission };
+            let push_value = emission.push_task_with_error(
+                quote! { #task_enum::#task_variant(value as *const _) },
+                error.clone(),
+            );
+            let push_key = emission
+                .push_task_with_error(quote! { #task_enum::#task_variant(key as *const _) }, error);
+            let push_length = emission.push_task(quote! { #task_enum::AbsorbUsize(length) });
+            return quote! {{
+                #routing
+                let length = (#coll_expr).len();
+                (#coll_expr).try_for_each_entry(reserve, |key, value, reserve| {
+                    #push_value;
+                    #push_key;
+                    Ok(())
+                })?;
+                // This sum is permutation-invariant, unlike the Hash stream.
+                // The original pair stays together; no sort/comparison runs.
+                #push_length;
+            }};
+        }
         let helper = emission.map_scheduler(element_cat);
         return quote! { #helper(#coll_expr, stack, reserve)?; };
     }
@@ -852,7 +942,7 @@ fn generate_hash_variant_arm(
     language: &LanguageDef,
     emission: &HashEmissionNames,
 ) -> TokenStream {
-    if emission.checked && !checked_hash_variant_supported(category, variant, language) {
+    if emission.admitted() && !checked_hash_variant_supported(category, variant, language) {
         let label = variant.label();
         let category_name = category.to_string();
         let constructor = label.to_string();
@@ -1298,7 +1388,38 @@ fn generate_hash_impl(category: &Ident, emission: &HashEmissionNames) -> TokenSt
     let driver = &emission.driver;
     let hash_variant = format_ident!("Hash{}", category);
 
-    if emission.checked {
+    if emission.inspecting_leaves() {
+        let inspect =
+            format_ident!("inspect_hash_leaf_charge_{}", category.to_string().to_lowercase());
+        let push_root =
+            emission.push_task(quote! { #task_enum::#hash_variant(source as *const _) });
+        return quote! {
+            // Leaf contribution only: never use as whole-category Hash authority.
+            #[allow(dead_code)]
+            fn #inspect<E>(
+                source: &#category,
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+            ) -> Result<mettail_runtime::binding_receipt::BindingCharge, mettail_runtime::KeyHashFailure<E>> {
+                if !mettail_runtime::CHECKED_FX_PROFILE_AVAILABLE {
+                    return Err(mettail_runtime::KeyHashFailure::UnsupportedProfile);
+                }
+                // Accumulator initialization and normal disposal, separately
+                // from borrowed task-vector initialization and disposal.
+                mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
+                    .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+                let mut leaf_charge = mettail_runtime::binding_receipt::BindingCharge::ZERO;
+                mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
+                    .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+                let mut tasks = Vec::new();
+                let stack = &mut tasks;
+                #push_root;
+                #driver(stack, &mut leaf_charge, reserve)?;
+                Ok(leaf_charge)
+            }
+        };
+    }
+
+    if emission.admitted() {
         let push_root = emission.push_task(quote! { #task_enum::#hash_variant(self as *const _) });
         return quote! {
             impl mettail_runtime::CheckedIterativeHash for #category {

@@ -121,6 +121,7 @@ theories/CollectionPairAndUnitLexResults.v
 theories/CollectionWeightedLexResults.v
 theories/NativeSortedComparisonClasses.v
 theories/NativeStableInsertionSort.v
+theories/NativeStableBidirectionalMerge.v
 theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v
 theories/GeneratedMapCoreDeterminism.v

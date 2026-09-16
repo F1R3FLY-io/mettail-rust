@@ -162,6 +162,38 @@ Larger-input sorting and generated child-comparison costs remain separate
 obligations. The threshold is a native dispatch condition, not a new limit
 on supported Rholang Maps.
 
+### Native bidirectional merge
+
+The larger-input path includes `bidirectional_merge`, which copies from the
+front and back of two original half-ranges into distinct destination slots.
+The [merge model](../../formal/rocq/rho_bridge/theories/NativeStableBidirectionalMerge.v)
+tracks all four original source cursors and the actual loop index. Both
+comparisons borrow the right record before the left record; the forward and
+backward selectors use opposite answers to select a left record. Each record
+is the complete borrowed key/value pair, not reconstructed fields.
+
+Let $`n\geq 2`$ be the input length and $`h=\lfloor n/2\rfloor`$ the number
+of paired iterations. Every completed call, including a final ordering-error
+dispatch, has the following source-derived counts:
+
+```math
+C=2h,\qquad M=n,\qquad W=5h+6+2(n\bmod 2).
+```
+
+Here $`C`$ counts comparator invocations, $`M`$ counts record copies, and
+$`W`$ counts the model's named control groups, not processor instructions.
+The unpaired middle record, when present, is copied without a comparison.
+Every destination slot is written exactly once. The independent source
+cursors may temporarily overlap when comparator replies are inconsistent;
+only the actual final cursor checks establish that a successful result
+contains every original record exactly once. The model retains the native
+ordering-error outcome instead of assuming comparator consistency.
+
+These results cover this merge component, not the complete standard-library
+sort. Comparator bodies, other sorting branches, pointer provenance,
+allocator behavior, checked receipt composition, and panic unwinding retain
+separate obligations. No new Map width restriction follows from this proof.
+
 ### Shared paid Map visitation
 
 `HashMapLit::try_for_each_entry` exposes the same paid IndexMap slice walk
@@ -186,6 +218,29 @@ allowances can be inspected in this order because whole-pair permutation
 preserves their sum. Connecting that sum to native Map hashing still requires
 the native sorting inventory proof and separate traversal, sorting and
 comparison allowances; the visitor itself supplies none of those costs.
+
+### Generated native-leaf contribution
+
+The private `InspectLeaves` interpretation reuses the Hash generator's task,
+field, optional-field, vector, and binder builders. Its state is the existing
+`BindingCharge`, not a hasher. Each leaf calls its sealed metadata inspector
+and adds that native execution contribution through paid checked arithmetic.
+Inspection work is spent immediately; the returned contribution has not paid
+for future execution.
+
+Map entries use the typed visitor above without sorting. Repeated source
+occurrences contribute repeatedly, even when they share an `Arc`; no
+identity-based deduplication occurs. A Bag contributes its native cached
+summary only, because that Hash operation does not visit the keys. FLT leaves
+use their existing structural metadata inspectors. Explicit unsupported
+constructor refusals retain the current audited leaf profile.
+
+This component excludes generated traversal, wrapper lifecycle, native Map
+sorting, and comparison costs. It is therefore not exposed as a complete
+category Hash allowance or activated as a HashBag reconstruction provider.
+Its executable fixture exercises the generated component without changing
+ordinary Hash generation; provider integration must compose the remaining
+source-backed contributions before reserving native execution.
 
 ## Exact library boundary
 
