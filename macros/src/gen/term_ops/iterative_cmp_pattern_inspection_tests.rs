@@ -14,7 +14,9 @@ fn pattern_inspection_emits_only_metadata_and_checked_accumulation() {
         assert!(source.contains(&format!(
             "inspect_generated_{name}_pattern_order_work(left,right,reserve)?"
         )));
-        assert!(source.contains("state.try_accumulate_parts(__comparison_work,0,0,reserve)"));
+        assert!(source.contains(
+            "inspect_cmp_scaled_contribution(&mutstate,__comparison_work,0,0,factor,reserve,)?"
+        ));
         for forbidden in
             ["pat_ord", "hash_pat", "Hasher", "Hash::", "Ordering::", "Verdict", "return"]
         {
@@ -73,6 +75,7 @@ fn original_pattern_order_tokens_are_preserved() {
 #[test]
 fn pattern_inspection_captures_original_fragments_for_execution() {
     let emission = CmpEmissionNames::inspect_contributions();
+    let scaled_helper = CmpEmissionNames::inspect_scaled_accumulation_helper();
     let functions = [false, true].into_iter().map(|multi| {
         let name = format_ident!("check_{}", if multi { "multi" } else { "single" });
         let ty = if multi {
@@ -83,7 +86,8 @@ fn pattern_inspection_captures_original_fragments_for_execution() {
         let fragment = emission.pattern_order(quote! { left }, quote! { right }, multi);
         quote! {
             fn #name(left: &#ty, right: &#ty, expected: usize) {
-                for limit in 0usize..=2 {
+                let factor = 1usize;
+                for limit in 0usize..=3 {
                     let initial = BindingCharge::new(7, 2, 3).expect("populated fixture charge");
                     let mut state = initial;
                     let mut trace = Vec::new();
@@ -95,14 +99,14 @@ fn pattern_inspection_captures_original_fragments_for_execution() {
                         #fragment
                         Ok(())
                     })();
-                    if limit < 2 {
+                    if limit < 3 {
                         assert_eq!(result, Err(NativeComparisonFailure::Admission(
                             BindingFailure::Reservation(limit))));
                         assert_eq!(state, initial);
                         assert_eq!(trace, vec![(1, 0); limit + 1]);
                     } else {
                         assert_eq!(result, Ok(()));
-                        assert_eq!(trace, [(1, 0), (1, 0)]);
+                        assert_eq!(trace, [(1, 0); 3]);
                         assert_eq!(state.base_work(), 7 + expected);
                         assert_eq!(state.records(), 2);
                         assert_eq!(state.owned_bytes(), 3);
@@ -114,6 +118,7 @@ fn pattern_inspection_captures_original_fragments_for_execution() {
     let fixture = quote! {
         use mettail_runtime::{Binder, FreeVar, BindingFailure, NativeComparisonFailure};
         use mettail_runtime::binding_receipt::BindingCharge;
+        #scaled_helper
         #(#functions)*
         fn main() {
             let left = Binder(FreeVar::fresh_named("left".to_owned()));

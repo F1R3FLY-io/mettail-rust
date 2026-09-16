@@ -19,7 +19,9 @@ fn inspected_leaf_controls_do_not_invent_results_or_execute_comparisons() {
         assert!(
             source.contains(&format!("::try_inspect_native_{operation}_work(left,right,reserve)?"))
         );
-        assert!(source.contains("state.try_accumulate_parts(__comparison_work,0,0,reserve)"));
+        assert!(source.contains(
+            "inspect_cmp_scaled_contribution(&mutstate,__comparison_work,0,0,factor,reserve,)?"
+        ));
         for forbidden in ["try_native_", "Ordering::", "return", "Verdict", "stack.push", "if"] {
             assert!(!source.contains(forbidden), "unexpected {forbidden}: {source}");
         }
@@ -56,11 +58,12 @@ fn existing_leaf_execution_fragments_retain_exact_tokens() {
 #[test]
 fn virtual_verdicts_count_original_tasks_without_evaluating_their_results() {
     let inspection = CmpEmissionNames::inspect_contributions();
+    let scaled_helper = CmpEmissionNames::inspect_scaled_accumulation_helper();
     let cases = [
         (
             "shape",
             inspection.push_verdict(quote! { panic!("no native verdict") }),
-            1usize,
+            2usize,
             4usize,
         ),
         (
@@ -69,7 +72,7 @@ fn virtual_verdicts_count_original_tasks_without_evaluating_their_results() {
                 quote! { panic!("no left length comparison") },
                 quote! { panic!("no right length comparison") },
             ),
-            2,
+            4,
             6,
         ),
     ];
@@ -81,6 +84,7 @@ fn virtual_verdicts_count_original_tasks_without_evaluating_their_results() {
         let name = format_ident!("check_{name}");
         quote! {
             fn #name() {
+                let factor = 1usize;
                 for limit in 0usize..=#groups {
                     let initial = BindingCharge::new(7, 2, 3).expect("populated charge");
                     let mut state = initial;
@@ -97,7 +101,7 @@ fn virtual_verdicts_count_original_tasks_without_evaluating_their_results() {
                         assert_eq!(result, Err(NativeComparisonFailure::Admission(
                             BindingFailure::Reservation(limit))));
                         assert_eq!(trace, vec![(1, 0); limit + 1]);
-                        assert_eq!(state.base_work(), 7 + 2 * limit);
+                        assert_eq!(state.base_work(), 7 + 2 * (limit / 2));
                         assert_eq!(state.records(), 2);
                     } else {
                         assert_eq!(result, Ok(()));
@@ -132,6 +136,7 @@ fn virtual_verdicts_count_original_tasks_without_evaluating_their_results() {
     let fixture = quote! {
         use mettail_runtime::{BindingFailure, NativeComparisonFailure};
         use mettail_runtime::binding_receipt::BindingCharge;
+        #scaled_helper
         #(#functions)*
         fn main() {
             check_shape();
@@ -164,6 +169,7 @@ fn leaf_projection_cannot_be_exposed_as_a_complete_ord_engine() {
 #[test]
 fn leaf_inspection_captures_original_generated_fragments_for_execution() {
     let inspection = CmpEmissionNames::inspect_contributions();
+    let scaled_helper = CmpEmissionNames::inspect_scaled_accumulation_helper();
     let cases = [
         (
             "check_ne",
@@ -191,9 +197,10 @@ fn leaf_inspection_captures_original_generated_fragments_for_execution() {
         let name = format_ident!("{name}");
         quote! {
             fn #name<T: #bound>(left: &T, right: &T) {
+                let factor = 1usize;
                 let expected = left.#method(right, &mut |_, _| Ok::<_, usize>(()))
                     .expect("fixture metadata allowance");
-                let metadata_groups = 2 + usize::from(#deferred);
+                let metadata_groups = 3 + 2 * usize::from(#deferred);
                 let control_work = if #deferred { 4 } else { 0 };
                 let control_records = usize::from(#deferred);
                 for limit in 0usize..=metadata_groups {
@@ -215,7 +222,7 @@ fn leaf_inspection_captures_original_generated_fragments_for_execution() {
                             BindingFailure::Reservation(limit))));
                         // Earlier paid accumulation is retained locally, but
                         // Err never returns that incomplete execution charge.
-                        let retained = if limit == 2 {
+                        let retained = if limit >= 3 {
                             BindingCharge::new(7 + expected, 2, 3).expect("paid leaf sum")
                         } else { initial };
                         assert_eq!(state, retained);
@@ -238,7 +245,7 @@ fn leaf_inspection_captures_original_generated_fragments_for_execution() {
                 })();
                 assert_eq!(overflow, Err(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow)));
                 assert_eq!(state, initial);
-                assert_eq!(trace, [(1, 0), (1, 0)]);
+                assert_eq!(trace, [(1, 0); 3]);
 
                 if #deferred {
                     let max_records = usize::MAX / 4;
@@ -256,7 +263,7 @@ fn leaf_inspection_captures_original_generated_fragments_for_execution() {
                         BindingFailure::SizeOverflow)));
                     assert_eq!(state.base_work(), expected);
                     assert_eq!(state.records(), max_records);
-                    assert_eq!(trace, [(1, 0); 3]);
+                    assert_eq!(trace, [(1, 0); 5]);
                 }
 
                 let mut state = BindingCharge::ZERO;
@@ -277,6 +284,7 @@ fn leaf_inspection_captures_original_generated_fragments_for_execution() {
     let fixture = quote! {
         use mettail_runtime::{Binder, FreeVar, BindingFailure, NativeComparisonFailure};
         use mettail_runtime::binding_receipt::BindingCharge;
+        #scaled_helper
         #(#functions)*
         fn main() {
             check_ne(&-42i64, &19i64);

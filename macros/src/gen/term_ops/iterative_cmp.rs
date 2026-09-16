@@ -360,11 +360,41 @@ impl CmpEmissionNames {
 
     /// A contribution to later native work, not permission to perform it.
     /// The accumulator separately charges its checked metadata arithmetic.
+    fn inspect_scaled_accumulation_helper() -> TokenStream {
+        quote! {
+            fn inspect_cmp_scaled_contribution<E>(
+                state: &mut mettail_runtime::binding_receipt::BindingCharge,
+                work: usize,
+                records: usize,
+                owned_bytes: usize,
+                factor: usize,
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+            ) -> Result<(), mettail_runtime::NativeComparisonFailure<E>> {
+                // NativeInspectionAccumulation: pay before new/scale. In
+                // particular, factor zero cannot conceal invalid raw parts.
+                reserve(1, 0).map_err(|error| {
+                    mettail_runtime::NativeComparisonFailure::Admission(
+                        mettail_runtime::BindingFailure::Reservation(error))
+                })?;
+                let scaled = mettail_runtime::binding_receipt::BindingCharge::new(
+                    work, records, owned_bytes,
+                ).and_then(|charge| charge.checked_scale(factor)).map_err(|_| {
+                    mettail_runtime::NativeComparisonFailure::Admission(
+                        mettail_runtime::BindingFailure::SizeOverflow)
+                })?;
+                state.try_accumulate_parts(
+                    scaled.base_work(), scaled.records(), scaled.owned_bytes(), reserve,
+                ).map_err(mettail_runtime::NativeComparisonFailure::Admission)
+            }
+        }
+    }
+
     fn inspect_contribution(&self, work: usize, records: usize) -> TokenStream {
         if self.inspecting() {
             quote! {
-                state.try_accumulate_parts(#work, #records, 0, reserve)
-                    .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+                inspect_cmp_scaled_contribution(
+                    &mut state, #work, #records, 0, factor, reserve,
+                )?;
             }
         } else {
             TokenStream::new()
@@ -399,8 +429,9 @@ impl CmpEmissionNames {
     fn inspect_leaf_work(&self, call: TokenStream) -> TokenStream {
         quote! {{
             let __comparison_work = #call?;
-            state.try_accumulate_parts(__comparison_work, 0, 0, reserve)
-                .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+            inspect_cmp_scaled_contribution(
+                &mut state, __comparison_work, 0, 0, factor, reserve,
+            )?;
         }}
     }
 
@@ -543,11 +574,14 @@ impl CmpEmissionNames {
         if self.admitted() {
             let setup = self.routing();
             let advance = self.routing();
+            let contribution = self.inspect_contribution(1, 0);
             quote! {{
                 #setup
+                #contribution
                 let mut __cmp_walk = #iterator;
                 loop {
                     #advance
+                    #contribution
                     let Some((__walk_left, __walk_right)) = __cmp_walk.next() else { break };
                     #body
                 }
@@ -789,8 +823,10 @@ fn eq_collection_stmts(
             );
             let lengths_differ =
                 emission.usize_ne(quote! { #left_expr.len() }, quote! { #right_expr.len() });
+            let length_contribution = emission.inspect_contribution(2, 0);
             quote! {
                 // `Vec::eq` is `len` first, then element-wise — reproduced exactly.
+                #length_contribution
                 if #lengths_differ {
                     #return_false
                 }
@@ -1499,6 +1535,7 @@ fn generate_eq_category_handler(
         quote! { _ => { #return_false } }
     };
     let support = emission.operand_support(cat);
+    let handler_contribution = emission.inspect_contribution(6, 0);
     let unequal = emission.usize_ne(quote! { #index_fn(left) }, quote! { #index_fn(right) });
     quote! {
         /// Returns `false` on mismatch (caller should propagate),
@@ -1515,6 +1552,7 @@ fn generate_eq_category_handler(
             // descendants, making the common Arc-shared chain edge
             // constant-time without changing the exact fallback for
             // separately allocated values.
+            #handler_contribution
             #support
             #routing
             if std::ptr::eq(left_ptr, right_ptr) {
@@ -1550,6 +1588,8 @@ fn generate_eq_variant_arm(
     }
     let unordered_eq = &emission.unordered_eq;
     let routing = emission.routing();
+    let contribution = emission.inspect_contribution(1, 0);
+    let routing = quote! { #routing #contribution };
     let native_guard = emission.native_ne_guard(quote! { a }, quote! { b });
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
@@ -1693,6 +1733,8 @@ fn eq_arm_stmts(
 ) -> Vec<TokenStream> {
     let task_enum = &emission.task_enum;
     let routing = emission.routing();
+    let contribution = emission.inspect_contribution(1, 0);
+    let routing = quote! { #routing #contribution };
     let false_value = emission.success(quote! { false });
     let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
 
@@ -1833,6 +1875,8 @@ fn generate_eq_binder_arm(
     // Compare scope: compare pattern directly, push body comparison task
     let body_task = format_ident!("Cmp{}", body_cat);
     let routing = emission.routing();
+    let contribution = emission.inspect_contribution(1, 0);
+    let routing = quote! { #routing #contribution };
     let native_guard = emission.native_ne_guard(quote! { l_pat }, quote! { r_pat });
     let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
     let scope_stmts = quote! {
@@ -1885,6 +1929,8 @@ fn generate_eq_multi_binder_arm(
 
     let body_task = format_ident!("Cmp{}", body_cat);
     let routing = emission.routing();
+    let contribution = emission.inspect_contribution(1, 0);
+    let routing = quote! { #routing #contribution };
     let native_guard = emission.native_ne_guard(quote! { l_pat }, quote! { r_pat });
     let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
     let scope_stmts = quote! {
@@ -2212,6 +2258,7 @@ fn generate_cmp_category_handler(
         .map(|v| generate_cmp_variant_arm(cat, v, language, emission))
         .collect();
     let support = emission.operand_support(cat);
+    let handler_contribution = emission.inspect_contribution(6, 0);
     let unequal = emission.usize_ne(quote! { l_idx }, quote! { r_idx });
     let index_order = emission.usize_cmp(quote! { l_idx }, quote! { r_idx });
     let return_index = emission.return_value(index_order);
@@ -2234,6 +2281,7 @@ fn generate_cmp_category_handler(
             left_ptr: *const #cat,
             right_ptr: *const #cat #parameters,
         ) -> #result_type {
+            #handler_contribution
             #support
             let left = unsafe { &*left_ptr };
             let right = unsafe { &*right_ptr };
@@ -2267,6 +2315,8 @@ fn generate_cmp_variant_arm(
     }
     let task_enum = &emission.task_enum;
     let routing = emission.routing();
+    let contribution = emission.inspect_contribution(1, 0);
+    let routing = quote! { #routing #contribution };
     let native_guard = emission.native_cmp_guard(quote! { a }, quote! { b });
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
@@ -2455,6 +2505,8 @@ fn cmp_arm_stmts(
 ) -> Vec<TokenStream> {
     let task_enum = &emission.task_enum;
     let routing = emission.routing();
+    let contribution = emission.inspect_contribution(1, 0);
+    let routing = quote! { #routing #contribution };
     let push_less = emission.push_verdict(quote! { std::cmp::Ordering::Less });
     let push_greater = emission.push_verdict(quote! { std::cmp::Ordering::Greater });
     // Can this field's contribution be expressed as work ON THE STACK? A leaf
@@ -2655,6 +2707,8 @@ fn generate_cmp_binder_arm(
     let scope_right = &right_names[total_fields - 1];
     let body_task = format_ident!("Cmp{}", body_cat);
     let routing = emission.routing();
+    let contribution = emission.inspect_contribution(1, 0);
+    let routing = quote! { #routing #contribution };
     let pattern_order = emission.pattern_order(
         quote! { &l_scope.unsafe_pattern },
         quote! { &r_scope.unsafe_pattern },
@@ -2719,6 +2773,8 @@ fn generate_cmp_multi_binder_arm(
     let scope_right = &right_names[total_fields - 1];
     let body_task = format_ident!("Cmp{}", body_cat);
     let routing = emission.routing();
+    let contribution = emission.inspect_contribution(1, 0);
+    let routing = quote! { #routing #contribution };
     let pattern_order = emission.pattern_order(quote! { l_pats }, quote! { r_pats }, true);
     let push_body = emission.push_task(quote! { #task_enum::#body_task(l_body, r_body) });
     let push_pattern = emission.push_verdict(quote! { pat_ord });
@@ -2895,6 +2951,14 @@ mod inspection_tests;
 #[cfg(test)]
 #[path = "iterative_cmp_pattern_inspection_tests.rs"]
 mod pattern_inspection_tests;
+
+#[cfg(test)]
+#[path = "iterative_cmp_handler_inspection_tests.rs"]
+mod handler_inspection_tests;
+
+#[cfg(test)]
+#[path = "iterative_cmp_scaled_inspection_tests.rs"]
+mod scaled_inspection_tests;
 
 #[cfg(test)]
 #[path = "iterative_cmp_census_tests.rs"]

@@ -167,6 +167,25 @@ separately account for accumulator storage, justify the operation's parts
 against the original source, and reserve execution through the existing meter.
 Representable accounting data is not a certificate or execution authority.
 
+Repeated potential callback occurrences use the private generated
+`inspect_cmp_scaled_contribution` helper. Its factor is an independently
+justified occurrence bound, not a repetition count expanded into terms.
+The helper pays one metadata group, validates the original work/record/byte
+triple with `BindingCharge::new`, and scales it with `checked_scale`. Only then
+does it call the separately paid `try_accumulate_parts`. This preserves the
+existing accumulator and avoids constructing a list of repeated charges.
+
+The order matters: invalid original parts must still fail when the factor is
+zero. Multiplication and the final work/retention projections are checked;
+owned bytes contribute once to each projection. Failure in either metadata
+reservation or arithmetic stage leaves the accumulator unchanged, while
+completed metadata reservations remain spent. The accumulation model proves
+these scaling laws before the emitted helper's implementation. The
+[scaling fixture](../../macros/src/gen/term_ops/iterative_cmp_scaled_inspection_tests.rs)
+executes the emitted helper at both reservation boundaries, at exact and
+overflowing arithmetic limits, and with a non-cloneable error payload.
+These laws validate arithmetic, not the supplied native-operation bound.
+
 ### Generated comparison leaf controls
 
 The existing comparison generator has three shared leaf-control fragments:
@@ -206,6 +225,14 @@ local-control bound below, that occurrence contributes four work units and one
 record without allocating a verdict or evaluating its result. Vector-length
 ordering additionally contributes the existing two-unit `LengthCmp` group.
 Its verdict does not stop inspection of the common-prefix elements.
+
+The shared category handlers also contribute a conservative six-work group
+bound. Field and scope routing each contribute one existing source group.
+Ordered vectors contribute one iterator-setup group, one group per attempted
+advance including the final exhausted advance, and the two-work length group.
+These are additive inspection contributions, not a separate comparison
+implementation. They emit no additional tokens in ordinary or checked
+execution; the incomplete whole-handler and engine guards remain closed.
 
 The [executable leaf/verdict fixtures](../../macros/src/gen/term_ops/iterative_cmp_inspection_tests.rs)
 and [scope-pattern fixtures](../../macros/src/gen/term_ops/iterative_cmp_pattern_inspection_tests.rs)
