@@ -390,6 +390,113 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
             })
         }
 
+        fn assert_hash_pool_empty() {
+            HASH_TASK_POOL.with(|cell| {
+                let stack = cell.take();
+                assert!(stack.is_empty(), "the private pool must not retain borrowed tasks");
+                cell.set(stack);
+            });
+        }
+
+        // Source correspondence for the ordinary wrapper, not a resource
+        // bound for arbitrary user-supplied Hashers. Reentry must not consume
+        // the outer driver's pending tasks or alter either native stream.
+        #[derive(Default)]
+        struct ReentrantWrites {
+            writes: NativeWrites,
+            nested_calls: usize,
+            word_writes: usize,
+        }
+        macro_rules! forward_reentrant_writes {
+            ($($method:ident: $ty:ty),* $(,)?) => {
+                $(fn $method(&mut self, value: $ty) {
+                    self.writes.$method(value);
+                })*
+            };
+        }
+        impl Hasher for ReentrantWrites {
+            fn finish(&self) -> u64 { panic!("compare native streams, not digests") }
+            fn write(&mut self, bytes: &[u8]) { self.writes.write(bytes); }
+            fn write_usize(&mut self, value: usize) {
+                self.word_writes += 1;
+                // The first word is PPair's discriminant. On the second,
+                // its left child is active and the right child is pending.
+                if self.word_writes == 2 {
+                    self.nested_calls += 1;
+                    assert_hash_pool_empty();
+                    let nested = Proc::PUnary(Arc::new(token("nested")));
+                    let mut expected = NativeWrites::default();
+                    let mut tasks = vec![HashTask::HashProc(&nested)];
+                    hash_iterative(&mut tasks, &mut expected);
+                    assert!(tasks.is_empty());
+                    let mut actual = NativeWrites::default();
+                    nested.hash(&mut actual);
+                    assert_eq!(actual, expected, "nested wrapper preserves driver stream");
+                    assert_hash_pool_empty();
+                }
+                self.writes.write_usize(value);
+            }
+            forward_reentrant_writes! {
+                write_u8: u8, write_u16: u16, write_u32: u32, write_u64: u64,
+                write_u128: u128, write_i8: i8, write_i16: i16, write_i32: i32,
+                write_i64: i64, write_i128: i128, write_isize: isize,
+            }
+        }
+
+        static SHUTDOWN_HASH_COMPLETED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        struct HashDuringShutdown(std::cell::RefCell<Option<NativeWrites>>);
+        impl Drop for HashDuringShutdown {
+            fn drop(&mut self) {
+                assert!(HASH_TASK_POOL.try_with(|_| ()).is_err(),
+                    "exercise actual TLS unavailability, not an injected branch");
+                let expected = self.0.get_mut().take().expect("normal-thread hash stream");
+                let mut actual = NativeWrites::default();
+                Proc::PZero.hash(&mut actual);
+                assert_eq!(actual, expected, "local fallback preserves the native stream");
+                SHUTDOWN_HASH_COMPLETED.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        thread_local! {
+            static HASH_DURING_SHUTDOWN: HashDuringShutdown =
+                HashDuringShutdown(std::cell::RefCell::new(None));
+        }
+
+        fn exercise_native_hash_wrapper() {
+            let source = Proc::PPair(Arc::new(token("left")), Arc::new(token("right")));
+            let mut expected = NativeWrites::default();
+            let mut tasks = vec![HashTask::HashProc(&source)];
+            hash_iterative(&mut tasks, &mut expected);
+            assert!(tasks.is_empty());
+            let mut pooled = NativeWrites::default();
+            source.hash(&mut pooled);
+            assert_eq!(pooled, expected, "ordinary wrapper preserves the driver stream");
+            assert_hash_pool_empty();
+            let mut actual = ReentrantWrites::default();
+            source.hash(&mut actual);
+            assert_eq!(actual.nested_calls, 1);
+            assert_eq!(actual.writes, expected, "reentry must preserve outer pending tasks");
+            assert_hash_pool_empty();
+
+            std::thread::spawn(|| {
+                // Register this destructor before the pool's destructor, so
+                // it runs after the pool has become permanently unavailable.
+                HASH_DURING_SHUTDOWN.with(|_| ());
+                let source = Proc::PZero;
+                let mut expected = NativeWrites::default();
+                let mut tasks = vec![HashTask::HashProc(&source)];
+                hash_iterative(&mut tasks, &mut expected);
+                assert!(tasks.is_empty());
+                let mut pooled = NativeWrites::default();
+                source.hash(&mut pooled);
+                assert_eq!(pooled, expected, "first-use wrapper preserves the driver stream");
+                assert_hash_pool_empty();
+                HASH_DURING_SHUTDOWN.with(|probe| *probe.0.borrow_mut() = Some(expected));
+            }).join().expect("ordinary Hash TLS-fallback thread");
+            assert!(SHUTDOWN_HASH_COMPLETED.load(std::sync::atomic::Ordering::SeqCst),
+                "the destructor must actually have exercised local fallback");
+        }
+
         fn deep_small_stack() {
             std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
                 for nested_maps in [false, true] {
@@ -515,6 +622,7 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
                 relation_name: "hidden under cached summary".into(), args: Vec::new(), negated: false,
             }));
             exercise(&Proc::PBag(hidden));
+            exercise_native_hash_wrapper();
             deep_small_stack();
             println!("checked generated Hash matches native streams, including exact original Map task methods/bytes; all cutpoints, cumulative limits, unsupported arms and 20k small-stack scope/Map-value traversals verified");
         }

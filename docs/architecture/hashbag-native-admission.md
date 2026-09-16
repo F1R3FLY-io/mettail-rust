@@ -83,6 +83,36 @@ The generated category traversal, nested collection comparison, and movement
 of retained roots during resizing must supply their own coverage before these
 allowances can be composed into a complete reconstruction provider.
 
+### Ordinary generated Hash wrapper
+
+Generated `Hash` takes its borrowed-task vector from a thread-local pool,
+pushes the root, drains the existing driver, and returns the empty vector.
+If the pool is unavailable during thread teardown, it uses a local vector.
+The [shared scheduling model](../../formal/rocq/rho_bridge/theories/AdmittedGeneratedHashScheduling.v)
+tracks these original branches and normally completed nested calls. Taking
+the pool leaves an empty cell; a nested call returns another empty vector,
+so replacing that vector does not destroy borrowed child tasks. The terminal
+driver pop and existing pending-task inventory justify draining the owned
+worklist rather than assuming it as a whole-call premise.
+
+The named source groups give the following local allowances. A logical record
+has the existing four-unit accounting weight; it is not an allocator byte
+measurement.
+
+| Wrapper path | Logical work | Logical records |
+|---|---:|---:|
+| Initialized thread-local pool | 14 | 2 |
+| Unavailable pool, local fallback | 9 | 2 |
+| First use, including pool initialization | 15 | 3 |
+
+These include the root task's existing push and pending-disposal credit and
+the constructed vector headers. Driver-body work and any nested wrapper
+calls are counted separately. The model does not bound TLS implementation
+internals, allocator internals, arbitrary hashers, or native Map sorting, and
+does not claim termination or panic-unwind recovery. The generated executable
+fixture checks exact native method/byte streams during nested calls and real
+TLS teardown; those checks establish no resource bound for its test hashers.
+
 ## Exact library boundary
 
 `HashBag` stores `std::collections::HashMap`, not the workspace's direct

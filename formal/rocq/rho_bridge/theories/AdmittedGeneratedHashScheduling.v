@@ -130,6 +130,256 @@ Theorem unused_disposal_credit_is_exact : forall pending pushed popped,
 Proof. intros pending pushed popped HI. apply pending_inventory_balance in HI. lia. Qed.
 End Scheduling.
 
+(** Ordinary Hash wrapper, iterative_hash.rs1327-1357. These labels name
+    bounded logical source groups; they do not measure TLS implementation,
+    allocator internals, physical relocation, or arbitrary Hasher callbacks.
+    Cell::take constructs an empty header and exchanges it with the pool.
+    Cell::set exchanges headers and drops the replaced vector. Nested calls
+    can leave an allocated EMPTY vector there, so its release is explicit.
+
+    The driver relation below projects successful scheduling only: batches
+    are the tasks the actual handler emitted, and nested calls occur while
+    that handler owns its outer stack. It proves neither handler semantics
+    nor termination. Driver/native-action receipts remain separate. *)
+Inductive HashWrapperGroup :=
+| HashWrapperEntry | TryHashPool | InitializeHashPool | EmptyReplacementHeader | TakeHashPool
+| TestHashPoolEmpty | PushHashRoot | InvokeHashDriver | TestHashClear
+| ClearEmptyHashStack | ReplaceHashPool | ReleaseReplacedHashHeader
+| TestHashTlsResult | ReturnHashWrapper | LocalHashHeader | ReleaseLocalHashHeader.
+
+Definition pooled_prefix :=
+  [HashWrapperEntry; TryHashPool; EmptyReplacementHeader; TakeHashPool;
+   TestHashPoolEmpty; PushHashRoot; InvokeHashDriver].
+(** The thread_local initializer at line359 executes, when needed, during
+    try_with and before its closure. This one bounded source group constructs
+    Cell::new(Vec::new()); TLS implementation machinery remains excluded. *)
+Definition first_pooled_prefix :=
+  [HashWrapperEntry; TryHashPool; InitializeHashPool; EmptyReplacementHeader;
+   TakeHashPool; TestHashPoolEmpty; PushHashRoot; InvokeHashDriver].
+Definition pooled_suffix (was_empty : bool) :=
+  [TestHashClear] ++ (if was_empty then [ClearEmptyHashStack] else []) ++
+  [ReplaceHashPool; ReleaseReplacedHashHeader; TestHashTlsResult; ReturnHashWrapper].
+Definition local_prefix :=
+  [HashWrapperEntry; TryHashPool; TestHashTlsResult;
+   LocalHashHeader; PushHashRoot; InvokeHashDriver].
+Definition local_suffix := [ReleaseLocalHashHeader; ReturnHashWrapper].
+
+Definition hash_wrapper_group_counts group : D.Counts :=
+  match group with
+  | PushHashRoot => H.push_range_counts 1
+  | EmptyReplacementHeader | LocalHashHeader | InitializeHashPool =>
+      fun event => D.atom D.NativeWork event + D.atom D.NativeRecord event
+  | _ => D.atom D.NativeWork
+  end.
+Definition hash_wrapper_counts groups : D.Counts := fun event =>
+  fold_right (fun group total => hash_wrapper_group_counts group event + total) 0 groups.
+
+Section OrdinaryWrapperLifecycle.
+Context {Task : Type}.
+Definition private_pool_empty (pool : option (list Task)) :=
+  match pool with None => True | Some pending => pending = [] end.
+Definition stack_is_empty (stack : list Task) :=
+  match stack with [] => true | _ :: _ => false end.
+
+(** None denotes an unavailable TLS key, not an occupied cell. A taken
+    available cell contains Some[], including throughout a nested call.
+    NormalDriver's terminal constructor corresponds to the failed final
+    stack.pop(); hence the caller's owned vector is empty at return.
+    In particular no premise simply asserts that a successful driver drained
+    an arbitrary vector. Every finite scheduling derivation ends at[]. *)
+Inductive NormalHashCall : option (list Task) -> Task ->
+    option (list Task) -> list HashWrapperGroup -> Prop :=
+| NormalPooledHash : forall pool root returned nested,
+    NormalHashDriver (pool ++ [root]) (Some []) (Some returned) nested ->
+    NormalHashCall (Some pool) root (Some [])
+      (pooled_prefix ++ nested ++ pooled_suffix (stack_is_empty pool))
+| NormalLocalHash : forall root nested,
+    NormalHashDriver [root] None None nested ->
+    NormalHashCall None root None (local_prefix ++ nested ++ local_suffix)
+with NormalHashDriver : list Task -> option (list Task) ->
+    option (list Task) -> list HashWrapperGroup -> Prop :=
+| NormalHashDriverEmpty : forall pool,
+    NormalHashDriver [] pool pool []
+| NormalHashDriverTask : forall pending task batch pool middle final during rest,
+    NormalNestedHashCalls pool middle during ->
+    NormalHashDriver (pending ++ batch) middle final rest ->
+    NormalHashDriver (pending ++ [task]) pool final (during ++ rest)
+with NormalNestedHashCalls : option (list Task) -> option (list Task) ->
+    list HashWrapperGroup -> Prop :=
+| NormalNestedHashNil : forall pool,
+    NormalNestedHashCalls pool pool []
+| NormalNestedHashCons : forall pool middle final root first rest,
+    NormalHashCall pool root middle first ->
+    NormalNestedHashCalls middle final rest ->
+    NormalNestedHashCalls pool final (first ++ rest).
+
+Theorem every_completed_hash_returns_an_empty_private_pool :
+  forall pool root final groups,
+  NormalHashCall pool root final groups -> private_pool_empty final.
+Proof. intros pool root final groups CALL. destruct CALL; [reflexivity|exact I]. Qed.
+
+Theorem completed_nested_hashes_preserve_the_empty_pool : forall pool final groups,
+  NormalNestedHashCalls pool final groups ->
+  private_pool_empty pool -> private_pool_empty final.
+Proof.
+  intros pool final groups CALLS. induction CALLS; intro EMPTY; [exact EMPTY|].
+  apply IHCALLS. eapply every_completed_hash_returns_an_empty_private_pool; eassumption.
+Qed.
+
+Theorem successful_driver_preserves_the_empty_private_pool : forall pending pool final groups,
+  NormalHashDriver pending pool final groups ->
+  private_pool_empty pool -> private_pool_empty final.
+Proof.
+  intros pending pool final groups DRIVER. induction DRIVER; intro EMPTY; [exact EMPTY|].
+  apply IHDRIVER. eapply completed_nested_hashes_preserve_the_empty_pool; eassumption.
+Qed.
+
+Theorem initialized_private_hash_pool_is_empty : private_pool_empty (Some []).
+Proof. reflexivity. Qed.
+
+Theorem taking_the_private_pool_exposes_an_empty_cell : forall pool,
+  private_pool_empty (Some pool) -> pool = [] /\ private_pool_empty (Some []).
+Proof. intros pool EMPTY. split; [exact EMPTY|reflexivity]. Qed.
+
+Theorem pooled_completion_releases_only_an_empty_replaced_vector :
+  forall pool root returned nested,
+  NormalHashDriver (pool ++ [root]) (Some []) (Some returned) nested -> returned = [].
+Proof.
+  intros pool root returned nested DRIVER.
+  exact (successful_driver_preserves_the_empty_private_pool _ _ _ _ DRIVER eq_refl).
+Qed.
+
+Theorem empty_pool_selects_the_original_clear_branch : forall pool root final groups,
+  private_pool_empty (Some pool) -> NormalHashCall (Some pool) root final groups ->
+  exists nested, groups = pooled_prefix ++ nested ++ pooled_suffix true /\ final = Some [].
+Proof.
+  intros pool root final groups EMPTY CALL. change (pool = []) in EMPTY. subst pool.
+  inversion CALL; subst. eexists. split; reflexivity.
+Qed.
+
+(** Reuse the shared ownership inventory for the root task. Its later
+    disposal is part of push credit, not an uncharged second recursive Drop. *)
+Theorem empty_pool_root_push_uses_the_shared_inventory : forall root,
+  @PendingInventory Task [root] 1 0.
+Proof.
+  intro root. change (PendingInventory ([] ++ [root]) (0 + length [root]) 0).
+  apply PushedBatch. constructor.
+Qed.
+
+Theorem root_pending_disposal_reuses_original_push_credit : forall (root : Task) event,
+  H.pending_disposal_counts (length [root]) event <= H.push_range_counts 1 event.
+Proof.
+  intros root event. eapply pending_disposal_is_already_prepaid.
+  apply empty_pool_root_push_uses_the_shared_inventory.
+Qed.
+
+Theorem normal_driver_completes_the_shared_pending_inventory :
+  forall pending pool final groups,
+  NormalHashDriver pending pool final groups ->
+  forall pushed popped, PendingInventory pending pushed popped ->
+  exists total_pushed total_popped,
+    @PendingInventory Task [] total_pushed total_popped /\
+    total_pushed = total_popped /\ pushed <= total_pushed /\ popped <= total_popped.
+Proof.
+  intros pending pool final groups DRIVER. induction DRIVER; intros pushed popped INVENTORY.
+  - exists pushed, popped. split; [exact INVENTORY|].
+    pose proof (pending_inventory_balance _ _ _ INVENTORY) as BALANCE.
+    cbn in BALANCE. repeat split; lia.
+  - assert (POPPED : PendingInventory pending pushed (S popped))
+      by (eapply PoppedTask; exact INVENTORY).
+    assert (PUSHED : PendingInventory (pending ++ batch) (pushed + length batch) (S popped))
+      by (apply PushedBatch; exact POPPED).
+    destruct (IHDRIVER _ _ PUSHED) as [total_pushed [total_popped [FINAL [EQ [UP DOWN]]]]].
+    exists total_pushed, total_popped. split; [exact FINAL|]. repeat split; lia.
+Qed.
+End OrdinaryWrapperLifecycle.
+
+Theorem ordinary_wrapper_trace_counts_are_additive : forall first second event,
+  hash_wrapper_counts (first ++ second) event =
+    hash_wrapper_counts first event + hash_wrapper_counts second event.
+Proof.
+  induction first as [|group rest IH]; intros second event; [reflexivity|].
+  unfold hash_wrapper_counts in *. cbn [app fold_right]. rewrite IH. lia.
+Qed.
+
+(** These numerals are computed from the named source groups above. The
+    root contributes its existing 2 work / 1 record receipt; all remaining
+    groups contribute one work event each. Each constructed vector header
+    contributes a record as in the checked wrapper's header allowance.
+    Driver-body work is excluded. *)
+Theorem ordinary_pooled_wrapper_local_counts_are_exact : forall event,
+  hash_wrapper_counts (pooled_prefix ++ pooled_suffix true) event =
+    14 * D.atom D.NativeWork event + 2 * D.atom D.NativeRecord event.
+Proof. intro event. destruct event; reflexivity. Qed.
+
+Theorem ordinary_fallback_wrapper_local_counts_are_exact : forall event,
+  hash_wrapper_counts (local_prefix ++ local_suffix) event =
+    9 * D.atom D.NativeWork event + 2 * D.atom D.NativeRecord event.
+Proof. intro event. destruct event; reflexivity. Qed.
+
+Theorem first_use_pooled_wrapper_local_counts_are_exact : forall event,
+  hash_wrapper_counts (first_pooled_prefix ++ pooled_suffix true) event =
+    15 * D.atom D.NativeWork event + 3 * D.atom D.NativeRecord event.
+Proof. intro event. destruct event; reflexivity. Qed.
+
+Theorem initialized_wrapper_is_covered_by_first_use_allowance : forall event,
+  hash_wrapper_counts (pooled_prefix ++ pooled_suffix true) event <=
+    hash_wrapper_counts (first_pooled_prefix ++ pooled_suffix true) event.
+Proof.
+  intro event. rewrite ordinary_pooled_wrapper_local_counts_are_exact,
+    first_use_pooled_wrapper_local_counts_are_exact. lia.
+Qed.
+
+Theorem nested_wrapper_counts_are_counted_once : forall prefix nested suffix event,
+  hash_wrapper_counts (prefix ++ nested ++ suffix) event =
+    hash_wrapper_counts (prefix ++ suffix) event + hash_wrapper_counts nested event.
+Proof. intros. rewrite !ordinary_wrapper_trace_counts_are_additive. lia. Qed.
+
+Theorem ordinary_fallback_wrapper_is_covered_by_the_pooled_wrapper : forall event,
+  hash_wrapper_counts (local_prefix ++ local_suffix) event <=
+    hash_wrapper_counts (pooled_prefix ++ pooled_suffix true) event.
+Proof.
+  intro event. rewrite ordinary_pooled_wrapper_local_counts_are_exact,
+    ordinary_fallback_wrapper_local_counts_are_exact. lia.
+Qed.
+
+Theorem original_pooled_call_has_a_source_wrapper_cover :
+  forall Task pool root returned nested,
+  @NormalHashDriver Task (pool ++ [root]) (Some []) (Some returned) nested ->
+  private_pool_empty (Some pool) -> forall event,
+    hash_wrapper_counts
+      (pooled_prefix ++ nested ++ pooled_suffix (stack_is_empty pool)) event <=
+      hash_wrapper_counts (first_pooled_prefix ++ pooled_suffix true) event +
+      hash_wrapper_counts nested event.
+Proof.
+  intros Task pool root returned nested DRIVER EMPTY event.
+  change (pool = []) in EMPTY. subst pool.
+  cbn [stack_is_empty]. rewrite nested_wrapper_counts_are_counted_once.
+  pose proof (initialized_wrapper_is_covered_by_first_use_allowance event). lia.
+Qed.
+
+Theorem original_local_call_has_a_source_wrapper_cover :
+  forall Task root nested,
+  @NormalHashDriver Task [root] None None nested -> forall event,
+    hash_wrapper_counts (local_prefix ++ nested ++ local_suffix) event <=
+      hash_wrapper_counts (first_pooled_prefix ++ pooled_suffix true) event +
+      hash_wrapper_counts nested event.
+Proof.
+  intros Task root nested DRIVER event. rewrite nested_wrapper_counts_are_counted_once.
+  pose proof (ordinary_fallback_wrapper_is_covered_by_the_pooled_wrapper event).
+  pose proof (initialized_wrapper_is_covered_by_first_use_allowance event). lia.
+Qed.
+
+(** A supplied driver receipt covers its own scheduling/native work, excluding
+    nested wrapper groups already in this observed trace. This composition is
+    componentwise; it invents no constant bound for Map sorting or Hashers. *)
+Theorem wrapper_composes_with_a_separately_verified_driver_bound :
+  forall groups (driver_actual driver_bound : D.Counts),
+  (forall event, driver_actual event <= driver_bound event) ->
+  forall event, hash_wrapper_counts groups event + driver_actual event <=
+    hash_wrapper_counts groups event + driver_bound event.
+Proof. intros groups actual bound COVER event. specialize (COVER event). lia. Qed.
+
 Theorem raw_push_reservation_uses_four_units_per_record : forall width,
   D.weighted D.logical_work_weight (H.push_range_counts width) = 2 * width /\
   D.weighted D.logical_unit_weight (H.push_range_counts width) = 4 * width.
@@ -281,6 +531,26 @@ Print Assumptions binder_pattern_precedes_body_after_prefields.
 Print Assumptions pending_inventory_balance.
 Print Assumptions pending_disposal_is_already_prepaid.
 Print Assumptions unused_disposal_credit_is_exact.
+Print Assumptions every_completed_hash_returns_an_empty_private_pool.
+Print Assumptions completed_nested_hashes_preserve_the_empty_pool.
+Print Assumptions successful_driver_preserves_the_empty_private_pool.
+Print Assumptions initialized_private_hash_pool_is_empty.
+Print Assumptions taking_the_private_pool_exposes_an_empty_cell.
+Print Assumptions pooled_completion_releases_only_an_empty_replaced_vector.
+Print Assumptions empty_pool_selects_the_original_clear_branch.
+Print Assumptions empty_pool_root_push_uses_the_shared_inventory.
+Print Assumptions root_pending_disposal_reuses_original_push_credit.
+Print Assumptions normal_driver_completes_the_shared_pending_inventory.
+Print Assumptions ordinary_wrapper_trace_counts_are_additive.
+Print Assumptions ordinary_pooled_wrapper_local_counts_are_exact.
+Print Assumptions ordinary_fallback_wrapper_local_counts_are_exact.
+Print Assumptions first_use_pooled_wrapper_local_counts_are_exact.
+Print Assumptions initialized_wrapper_is_covered_by_first_use_allowance.
+Print Assumptions nested_wrapper_counts_are_counted_once.
+Print Assumptions ordinary_fallback_wrapper_is_covered_by_the_pooled_wrapper.
+Print Assumptions original_pooled_call_has_a_source_wrapper_cover.
+Print Assumptions original_local_call_has_a_source_wrapper_cover.
+Print Assumptions wrapper_composes_with_a_separately_verified_driver_bound.
 Print Assumptions raw_push_reservation_uses_four_units_per_record.
 Print Assumptions cached_bag_six_scalar_native_groups.
 Print Assumptions successful_terminal_pop_still_consumes_work.
