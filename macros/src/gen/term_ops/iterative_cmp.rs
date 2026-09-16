@@ -1223,11 +1223,8 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
     let arguments = emission.arguments();
     let propagate = emission.propagate();
     let result_type = emission.result_type(quote! { bool });
-    let return_true = emission.return_value(quote! { true });
     let return_false = emission.return_value(quote! { false });
     let success = emission.success(quote! { true });
-    let routing = emission.routing();
-    let indices = emission.reserve_work(2);
     // Per-cat helper functions: each handles one CmpTask::Cmp{Cat}.
     // Returns `Some(false)` to short-circuit (mismatch), `Some(true)` to
     // continue (equal so far for this pair), `None` if there's nothing to
@@ -1235,59 +1232,7 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|t| {
-            let cat = &t.name;
-            let cat_str = cat.to_string().to_lowercase();
-            let helper_fn = emission.eq_handler(cat);
-            let index_fn = format_ident!("variant_index_{}", cat_str);
-            let variants = collect_category_variants(cat, language);
-            let variant_arms: Vec<TokenStream> = variants
-                .iter()
-                .map(|v| generate_eq_variant_arm(cat, v, language, emission))
-                .collect();
-            let mismatch_arm = if variants.len() == 1 {
-                TokenStream::new()
-            } else {
-                quote! { _ => { #return_false } }
-            };
-            let support = emission.operand_support(cat);
-            let unequal =
-                emission.usize_ne(quote! { #index_fn(left) }, quote! { #index_fn(right) });
-            quote! {
-                /// Returns `false` on mismatch (caller should propagate),
-                /// `true` if matched so far (caller should continue draining stack).
-                #[inline(never)]
-                #[allow(dead_code, unused_variables, non_snake_case)]
-                fn #helper_fn #generics(
-                    stack: &mut Vec<#task_type>,
-                    left_ptr: *const #cat,
-                    right_ptr: *const #cat #parameters,
-                ) -> #result_type {
-                    // Shared immutable subterms are definitionally equal. This
-                    // check occurs before dereference and before scheduling
-                    // descendants, making the common Arc-shared chain edge
-                    // constant-time without changing the exact fallback for
-                    // separately allocated values.
-                    #support
-                    #routing
-                    if std::ptr::eq(left_ptr, right_ptr) {
-                        #return_true
-                    }
-                    let left = unsafe { &*left_ptr };
-                    let right = unsafe { &*right_ptr };
-                    #indices
-                    if #unequal {
-                        #return_false
-                    }
-                    #routing
-                    match (left, right) {
-                        #(#variant_arms)*
-                        #mismatch_arm
-                    }
-                    #success
-                }
-            }
-        })
+        .map(|t| generate_eq_category_handler(&t.name, language, emission))
         .collect();
 
     let task_arms: Vec<TokenStream> = language
@@ -1426,6 +1371,78 @@ fn generate_eq_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> To
         #[allow(dead_code, unused_variables)]
         fn #eq_driver #generics(stack: &mut Vec<#task_type> #parameters) -> #result_type {
             #driver_loop
+            #success
+        }
+    }
+}
+
+/// The one category-handler recipe used by the equality engine. Keep this
+/// separate from driver assembly so additional interpretations can reuse the
+/// original variant classification, pointer/shape gates and field builders.
+fn generate_eq_category_handler(
+    cat: &Ident,
+    language: &LanguageDef,
+    emission: &CmpEmissionNames,
+) -> TokenStream {
+    assert!(
+        !emission.inspecting(),
+        "leaf contributions do not provide a complete Eq inspector"
+    );
+    let task_type = emission.task_type();
+    let generics = emission.generics();
+    let parameters = emission.parameters();
+    let result_type = emission.result_type(quote! { bool });
+    let return_true = emission.return_value(quote! { true });
+    let return_false = emission.return_value(quote! { false });
+    let success = emission.success(quote! { true });
+    let routing = emission.routing();
+    let indices = emission.reserve_work(2);
+    let cat_str = cat.to_string().to_lowercase();
+    let helper_fn = emission.eq_handler(cat);
+    let index_fn = format_ident!("variant_index_{}", cat_str);
+    let variants = collect_category_variants(cat, language);
+    let variant_arms: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| generate_eq_variant_arm(cat, v, language, emission))
+        .collect();
+    let mismatch_arm = if variants.len() == 1 {
+        TokenStream::new()
+    } else {
+        quote! { _ => { #return_false } }
+    };
+    let support = emission.operand_support(cat);
+    let unequal = emission.usize_ne(quote! { #index_fn(left) }, quote! { #index_fn(right) });
+    quote! {
+        /// Returns `false` on mismatch (caller should propagate),
+        /// `true` if matched so far (caller should continue draining stack).
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case)]
+        fn #helper_fn #generics(
+            stack: &mut Vec<#task_type>,
+            left_ptr: *const #cat,
+            right_ptr: *const #cat #parameters,
+        ) -> #result_type {
+            // Shared immutable subterms are definitionally equal. This
+            // check occurs before dereference and before scheduling
+            // descendants, making the common Arc-shared chain edge
+            // constant-time without changing the exact fallback for
+            // separately allocated values.
+            #support
+            #routing
+            if std::ptr::eq(left_ptr, right_ptr) {
+                #return_true
+            }
+            let left = unsafe { &*left_ptr };
+            let right = unsafe { &*right_ptr };
+            #indices
+            if #unequal {
+                #return_false
+            }
+            #routing
+            match (left, right) {
+                #(#variant_arms)*
+                #mismatch_arm
+            }
             #success
         }
     }
@@ -1842,7 +1859,6 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
     let return_root = emission.return_value(quote! { root_ordering });
     let success = emission.success(quote! { std::cmp::Ordering::Equal });
     let routing = emission.routing();
-    let indices = emission.reserve_work(2);
     let collection_resume_fns: Vec<TokenStream> = language
         .types
         .iter()
@@ -1956,57 +1972,7 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|t| {
-            let cat = &t.name;
-            let cat_str = cat.to_string().to_lowercase();
-            let helper_fn = emission.cmp_handler(cat);
-            let index_fn = format_ident!("variant_index_{}", cat_str);
-            let variants = collect_category_variants(cat, language);
-            let variant_arms: Vec<TokenStream> = variants
-                .iter()
-                .map(|v| generate_cmp_variant_arm(cat, v, language, emission))
-                .collect();
-            let support = emission.operand_support(cat);
-            let unequal = emission.usize_ne(quote! { l_idx }, quote! { r_idx });
-            let index_order = emission.usize_cmp(quote! { l_idx }, quote! { r_idx });
-            let return_index = emission.return_value(index_order);
-            let mismatch_arm = if variants.len() == 1 {
-                TokenStream::new()
-            } else {
-                quote! {
-                    _ => {
-                        #return_index
-                    }
-                }
-            };
-            quote! {
-                /// Returns `Ordering::Equal` to keep draining the stack;
-                /// any other ordering means "stop and propagate up".
-                #[inline(never)]
-                #[allow(dead_code, unused_variables, non_snake_case)]
-                fn #helper_fn #generics(
-                    stack: &mut Vec<#task_type>,
-                    left_ptr: *const #cat,
-                    right_ptr: *const #cat #parameters,
-                ) -> #result_type {
-                    #support
-                    let left = unsafe { &*left_ptr };
-                    let right = unsafe { &*right_ptr };
-                    #indices
-                    let l_idx = #index_fn(left);
-                    let r_idx = #index_fn(right);
-                    if #unequal {
-                        #return_index
-                    }
-                    #routing
-                    match (left, right) {
-                        #(#variant_arms)*
-                        #mismatch_arm
-                    }
-                    #success
-                }
-            }
-        })
+        .map(|t| generate_cmp_category_handler(&t.name, language, emission))
         .collect();
 
     let task_arms: Vec<TokenStream> = language
@@ -2128,6 +2094,72 @@ fn generate_cmp_engine(language: &LanguageDef, emission: &CmpEmissionNames) -> T
         #[allow(dead_code, unused_variables)]
         fn #cmp_driver #generics(stack: &mut Vec<#task_type> #parameters) -> #result_type {
             #driver_loop
+            #success
+        }
+    }
+}
+
+fn generate_cmp_category_handler(
+    cat: &Ident,
+    language: &LanguageDef,
+    emission: &CmpEmissionNames,
+) -> TokenStream {
+    assert!(
+        !emission.inspecting(),
+        "leaf contributions do not provide a complete Ord inspector"
+    );
+    let task_type = emission.task_type();
+    let generics = emission.generics();
+    let parameters = emission.parameters();
+    let result_type = emission.result_type(quote! { std::cmp::Ordering });
+    let success = emission.success(quote! { std::cmp::Ordering::Equal });
+    let routing = emission.routing();
+    let indices = emission.reserve_work(2);
+    let cat_str = cat.to_string().to_lowercase();
+    let helper_fn = emission.cmp_handler(cat);
+    let index_fn = format_ident!("variant_index_{}", cat_str);
+    let variants = collect_category_variants(cat, language);
+    let variant_arms: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| generate_cmp_variant_arm(cat, v, language, emission))
+        .collect();
+    let support = emission.operand_support(cat);
+    let unequal = emission.usize_ne(quote! { l_idx }, quote! { r_idx });
+    let index_order = emission.usize_cmp(quote! { l_idx }, quote! { r_idx });
+    let return_index = emission.return_value(index_order);
+    let mismatch_arm = if variants.len() == 1 {
+        TokenStream::new()
+    } else {
+        quote! {
+            _ => {
+                #return_index
+            }
+        }
+    };
+    quote! {
+        /// Returns `Ordering::Equal` to keep draining the stack;
+        /// any other ordering means "stop and propagate up".
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case)]
+        fn #helper_fn #generics(
+            stack: &mut Vec<#task_type>,
+            left_ptr: *const #cat,
+            right_ptr: *const #cat #parameters,
+        ) -> #result_type {
+            #support
+            let left = unsafe { &*left_ptr };
+            let right = unsafe { &*right_ptr };
+            #indices
+            let l_idx = #index_fn(left);
+            let r_idx = #index_fn(right);
+            if #unequal {
+                #return_index
+            }
+            #routing
+            match (left, right) {
+                #(#variant_arms)*
+                #mismatch_arm
+            }
             #success
         }
     }

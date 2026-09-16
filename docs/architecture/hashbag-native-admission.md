@@ -194,6 +194,43 @@ authority can be exposed. Tests cover exact ordinary/checked fragment tokens,
 metadata refusal, checked accumulation overflow and continued inspection;
 the captured fixture executes the actual emitted fragments.
 
+### Local comparison driver accounting
+
+The [local-control model](../../formal/rocq/rho_bridge/theories/GeneratedComparisonLocalControl.v)
+covers the original comparison drivers without collection continuations.
+It keeps the actual category-pair and precomputed-verdict occurrences, their
+construction-order push batches, and the original continue, decisive or
+refused outcome. It does not infer a semantic outcome from an inspector's
+unit return.
+
+Let $`P`$ be the number of pushes after the root, $`K`$ the number of tasks
+consulted, and $`R`$ the number left when the driver stops. The occurrence
+inventory proves $`K+R=1+P`$, without deduplicating aliases. Under the existing
+logical source-group convention, driver work excluding pushes and handlers is:
+
+| Ending | Driver work |
+|---|---:|
+| Normal exhaustion | $`2K+1`$ |
+| Decisive equality | $`2K`$ |
+| Decisive ordering, including the delivery drain | $`2K+2R+2`$ |
+
+Every task push already pays for eventual disposal, including a task discarded
+without consultation. The comparison wrapper shares the existing finite
+thread-local/local wrapper recipe, whose maximum is 15 work groups and three
+records, including the root push. Thus wrapper, later pushes and local driver
+together are bounded by $`19+4P`$ work and $`3+P`$ records. Equivalently, for
+$`N=1+P`$, the bound is $`15+4N`$ work and $`2+N`$ records; this change of
+index does not remove the root or thread-local initialization record.
+
+An inspector may use this bound only after establishing that its visited child
+jobs and counted virtual verdict occurrences cover the original pushes.
+Counting a virtual verdict requires no fabricated ordering value. Native
+comparison bodies, category-handler work and collection owners remain separate
+obligations. The wrapper association does not assume that an early-exiting
+equality driver empties its stack: its original clear and prepaid disposal
+handle residual tasks. Panic unwinding is outside this normal-execution and
+explicit-refusal model.
+
 ### Ordinary generated Hash wrapper
 
 Generated `Hash` takes its borrowed-task vector from a thread-local pool,
