@@ -752,11 +752,30 @@ the control work of one completed run. The named control groups in
 W_{\mathrm{run}}\leq 7+2(l+r).
 ```
 
+The grouping theorem annotates each particular `RawMergeStep` derivation.
+Its `raw_step_word` relation is indexed by that derivation, not just its
+initial and final states. Terminal annotations retain the original guards;
+each internal annotation retains its original `RawMergeSilent` edge and
+continuation. Thus the left-copy, right-copy, and run-finish counts describe
+that execution path, rather than an independently chosen list of marks.
+
+Let $`b`$ be the number of completed runs in one invocation, and $`t`$ its
+total tail copies. The sparse markers are the invocation entry, each run
+finish, and each tail copy. Their work $`S`$ and the invocation's control
+work $`W`$ satisfy:
+
+```math
+S = 1+b+t, \qquad W \leq 7S.
+```
+
 The final pass breaks without another outer guard. Scratch-buffer allocation
 and disposal retain their separate existing allowance; requested term
-comparisons retain their own typed coverage. These checked local laws are not
-yet a factorization of every complete raw-step derivation, nor proof that a
-whole native comparison has been prepaid.
+comparisons retain their own typed coverage. This establishes grouping and
+control-work coverage for complete successful raw-step derivations. It does
+not prove that a whole native comparison has been prepaid, cover refusals,
+or bound the standard-library sort used by ordinary Map hashing. Association
+of the model's named groups with Rust policy calls remains a source-audit
+boundary, not a compiler-correctness theorem.
 
 ## Weighted-run comparison results
 

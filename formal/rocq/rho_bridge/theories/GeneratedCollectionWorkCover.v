@@ -11,7 +11,7 @@
     key-callback coverage or pre-admit an execution. Rust pointer validity and
     the association of each named group with its actual policy call remain
     explicit source boundaries. *)
-From Stdlib Require Import List Arith.PeanoNat Lia Program.Equality.
+From Stdlib Require Import List Arith.PeanoNat Lia.
 From RhoBridge Require Import GeneratedMapCoreSource MergeSortPdaCursor
   AdmittedCollectionComparisonOwnership.
 Import ListNotations.
@@ -20,6 +20,7 @@ Import MergeSortPdaCursor.MergeSortPdaCursor.
 Import AdmittedCollectionComparisonOwnership.AdmittedCollectionComparisonOwnership.
 
 Module GeneratedCollectionWorkCover.
+Scheme RawMergeStep_derivation_ind := Induction for RawMergeStep Sort Prop.
 Section SourceInvariants.
 Context {Entry : Type}.
 
@@ -138,31 +139,36 @@ Definition silent_mark (state next : @RawMergeState Entry) :=
         (negb (merge_done next))
   end.
 
-(** This proposition annotates an existing derivation. It cannot advance a
-    machine, select a callback answer or supply a replacement transition. *)
+(** The derivation index is essential: endpoints alone do not constrain the
+    intermediate states or the number of copies. Each constructor retains the
+    original guards and silent edge of this exact RawMergeStep proof. *)
 Inductive RawStepWordKind := DoneWord | RequestWord | InternalWord.
 
 Inductive raw_step_word : RawStepWordKind ->
     forall (state : @RawMergeState Entry) (reply : @RawMergeReply Entry)
-      (next : @RawMergeState Entry), list MergeMark -> Prop :=
-| raw_step_word_done : forall state,
-    raw_step_word DoneWord state MergeCompletes state []
-| raw_step_word_requests : forall state lhs rhs,
+      (next : @RawMergeState Entry),
+      RawMergeStep maximum state reply next -> list MergeMark -> Prop :=
+| raw_step_word_done : forall state WAIT DONE,
+    raw_step_word DoneWord state MergeCompletes state
+      (MergeStepDone maximum state WAIT DONE) []
+| raw_step_word_requests : forall state target lhs rhs WAIT DONE TARGET REQUEST,
     raw_step_word RequestWord state (MergeRequests lhs rhs)
-      (merge_set_waiting state true) []
-| raw_step_word_internal : forall state middle reply next kind suffix,
-    raw_step_word kind middle reply next suffix ->
+      (merge_set_waiting state true)
+      (MergeStepRequests maximum state target lhs rhs WAIT DONE TARGET REQUEST) []
+| raw_step_word_internal : forall state middle reply next kind suffix SILENT REST,
+    raw_step_word kind middle reply next REST suffix ->
     raw_step_word InternalWord state reply next
+      (MergeStepInternal maximum state middle reply next SILENT REST)
       (silent_mark state middle :: suffix).
 
 Lemma every_actual_raw_step_has_its_word : forall state reply next
     (STEP : @RawMergeStep Entry maximum state reply next),
-  exists kind word, raw_step_word kind state reply next word.
+  exists kind word, raw_step_word kind state reply next STEP word.
 Proof.
   intros state reply next STEP.
   induction STEP as
     [state WAIT DONE|state target lhs rhs WAIT DONE TARGET REQUEST|
-     state middle reply next SILENT REST IH].
+     state middle reply next SILENT REST IH] using RawMergeStep_derivation_ind.
   - exists DoneWord, []; apply raw_step_word_done.
   - exists RequestWord, []; apply raw_step_word_requests.
   - destruct IH as [kind [word WORD]]. exists InternalWord, (silent_mark state middle :: word).
@@ -210,24 +216,6 @@ Proof.
   cbn [selected_index] in GE_L, GE_R. rewrite GE_L, GE_R. reflexivity.
 Qed.
 
-Ltac rewrite_silent_mark :=
-  first [
-    match goal with
-    | TARGET : merge_target ?state = None |- context [silent_mark ?state ?next] =>
-        rewrite (silent_mark_none ?state ?next TARGET)
-    | TARGET : merge_target ?state = Some ?target,
-      LIVE : can_copy FromLeft (merge_cursor ?state),
-      EMPTY : ~ can_copy FromRight (merge_cursor ?state) |- context [silent_mark ?state ?next] =>
-        rewrite (silent_mark_left ?state ?next ?target TARGET LIVE)
-    | TARGET : merge_target ?state = Some ?target,
-      EMPTY : ~ can_copy FromLeft (merge_cursor ?state),
-      LIVE : can_copy FromRight (merge_cursor ?state) |- context [silent_mark ?state ?next] =>
-        rewrite (silent_mark_right ?state ?next ?target TARGET EMPTY LIVE)
-    | TARGET : merge_target ?state = Some ?target,
-      EMPTY_L : ~ can_copy FromLeft (merge_cursor ?state),
-      EMPTY_R : ~ can_copy FromRight (merge_cursor ?state) |- context [silent_mark ?state ?next] =>
-        rewrite (silent_mark_finish ?state ?next ?target TARGET EMPTY_L EMPTY_R)
-    end ].
 Definition first_left blocks := match blocks with [] => 0 | block :: _ => block_left block end.
 Definition first_right blocks := match blocks with [] => 0 | block :: _ => block_right block end.
 Definition grouped_word (state : @RawMergeState Entry) word (scratch : bool) blocks :=
@@ -245,13 +233,13 @@ Theorem actual_raw_step_derives_completed_run_grouping : forall state reply next
     (STEP : @RawMergeStep Entry maximum state reply next),
   exists kind word,
     exists scratch blocks,
-      raw_step_word kind state reply next word /\
+      raw_step_word kind state reply next STEP word /\
       grouped_word state word scratch blocks.
 Proof.
   intros state reply next STEP.
   induction STEP as
     [state WAIT DONE|state target lhs rhs WAIT DONE TARGET REQUEST|
-     state middle reply next SILENT REST IH].
+     state middle reply next SILENT REST IH] using RawMergeStep_derivation_ind.
   - exists DoneWord, [], false, []. split; [apply raw_step_word_done|].
     split; [reflexivity|]. split; [discriminate|].
     split; [intros _; now left|]. split; intros; reflexivity.
@@ -430,7 +418,7 @@ Qed.
 Theorem every_actual_raw_step_has_a_derived_control_cover :
   forall Entry maximum state reply next (STEP : @RawMergeStep Entry maximum state reply next),
   exists kind word scratch blocks,
-    raw_step_word kind state reply next word /\
+    raw_step_word maximum kind state reply next STEP word /\
     grouped_word state word scratch blocks /\
     groups_work (invocation_groups reply blocks) <=
       7 * sparse_work (invocation_groups reply blocks).
