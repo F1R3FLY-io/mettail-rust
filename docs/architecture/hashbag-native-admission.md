@@ -49,6 +49,40 @@ silently drop stored entries or claim that native Bag equality and ordering
 are interchangeable. This does not change the binding reconstruction policy,
 which can store zero counts and transport a differing original total.
 
+### Reconstruction-stage composition
+
+The [stage-charge model](../../formal/rocq/rho_bridge/theories/NativeHashBagStageCharge.v)
+composes the existing table bounds with complete, typed key-operation
+allowances. Let $`k`$ be the incoming key, $`S`$ the original retained entry
+occurrences, and $`g`$ be one when the upcoming native insertion may grow the
+clean table and zero otherwise. Let $`H(x)`$ cover one whole generated Hash
+operation and $`E(x,y)`$ cover the original equality operation in that operand
+order. When an operand is an occurrence $`s`$, these functions operate on its
+original retained key. The following envelopes apply separately to work,
+records and bytes:
+
+| Stage | Key-operation allowance |
+|---|---|
+| Binding insertion | $`H(k)+g\sum_{s\in S}H(s)+\sum_{s\in S}E(k,s)`$ |
+| Positive-count clone insertion | $`3H(k)+(g+4)\sum_{s\in S}H(s)+\sum_{s\in S}E(s,k)`$ |
+| Final binding summary | $`2\sum_{s\in S}H(s)`$ |
+
+Each candidate retains its original occurrence identity; aliases and
+collisions are not deduplicated by pointer or hash. The clone envelope covers
+both a vacant insertion's two summary hashes and an occupied insertion's four
+hashes of the original retained winner. Zero-count clone insertion bypasses
+this positive-count recipe and uses its already-paid incoming-root disposal.
+
+Flat table contributions remain separate: source scans, probe-group loads,
+prospective resize and layout, summary bookkeeping, and backing-table cleanup.
+They use declared logical groups and the existing scan/probe bounds, not CPU
+instruction counts. Key destructor bodies retain their independent ownership
+receipts. Inspection is paid before collecting the metadata; a checked sum
+and reservation then precede the unchanged native stage. Overflow,
+cancellation or refusal executes no native stage and refunds no earlier
+inspection work. The model does not supply the missing complete typed
+Hash/equality provider merely by parameterizing these allowances.
+
 ## Inspecting native leaf work without replay
 
 The existing sealed [hash leaf interface](../../runtime/src/checked_hash.rs)
@@ -219,10 +253,10 @@ preserves their sum. Connecting that sum to native Map hashing still requires
 the native sorting inventory proof and separate traversal, sorting and
 comparison allowances; the visitor itself supplies none of those costs.
 
-### Generated native-leaf contribution
+### Generated leaf and traversal contributions
 
-The private `InspectLeaves` interpretation reuses the Hash generator's task,
-field, optional-field, vector, and binder builders. Its state is the existing
+The private `InspectContributions` interpretation reuses the Hash generator's
+task, field, optional-field, vector, and binder builders. Its state is the existing
 `BindingCharge`, not a hasher. Each leaf calls its sealed metadata inspector
 and adds that native execution contribution through paid checked arithmetic.
 Inspection work is spent immediately; the returned contribution has not paid
@@ -235,12 +269,43 @@ summary only, because that Hash operation does not visit the keys. FLT leaves
 use their existing structural metadata inspectors. Explicit unsupported
 constructor refusals retain the current audited leaf profile.
 
-This component excludes generated traversal, wrapper lifecycle, native Map
-sorting, and comparison costs. It is therefore not exposed as a complete
-category Hash allowance or activated as a HashBag reconstruction provider.
-Its executable fixture exercises the generated component without changing
-ordinary Hash generation; provider integration must compose the remaining
-source-backed contributions before reserving native execution.
+The [driver model](../../formal/rocq/rho_bridge/theories/GeneratedHashDriverControl.v)
+also derives the wrapper and task-control contribution from the original
+task occurrences and their handler-produced push batches. Let $`N`$ be the
+number of successfully popped tasks, $`C`$ the category tasks, and $`O`$ the
+opaque leaf tasks. Its contribution is:
+
+```math
+W_{\mathrm{control}}=15+4N+5C+5O,\qquad
+R_{\mathrm{control}}=2+N.
+```
+
+Here $`W`$ counts declared logical work and $`R`$ counts logical records;
+neither is a physical instruction or allocation measurement. The initial
+allowance covers the wrapper; each successful pop adds four work and one
+record, and each category or opaque task adds five work. The root, subsequent
+pushes, terminal pop and normal return are already included by the proved
+push/pop inventory. Adding them again would double-count them. Every update
+uses the paid checked accumulator and the same reservation callback.
+
+The [handler model](../../formal/rocq/rho_bridge/theories/GeneratedHashHandlerControl.v)
+adds the original field handoff, optional match, selected child-pointer
+extraction, and scope accesses. Scope extraction is one field and two
+accesses, not two invented fields. For a category vector with $`n`$ original
+elements, length, iterator setup/termination and yielded pointer extraction
+contribute $`4+2n`$ work and one logical iterator record. The inspector adds
+four work and one record once, then two work at each existing successful
+iterator advance; there is no second traversal or unchecked width product.
+Tags, payload hashing and task scheduling are accounted for by their own
+components, not charged again by the handler.
+
+Native Map materialization, sorting and comparison contributions are not yet
+included. The component therefore remains private and is not a complete
+category Hash allowance or an activated reconstruction provider. Its executable
+fixture checks exact component totals, repeated aliased occurrences, every metadata
+refusal boundary and a deep iterative traversal. Ordinary Hash generation is
+unchanged. Provider integration must compose the remaining source-backed
+contributions before reserving native execution.
 
 ## Exact library boundary
 

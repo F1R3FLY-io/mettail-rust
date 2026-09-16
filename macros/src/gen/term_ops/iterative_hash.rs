@@ -59,7 +59,7 @@ use syn::Ident;
 enum HashInterpretation {
     Ordinary,
     CheckedExecution,
-    InspectLeaves,
+    InspectContributions,
 }
 
 /// Names and admission expressions shared by the task, driver, field and trait
@@ -98,14 +98,14 @@ impl HashEmissionNames {
     }
 
     #[allow(dead_code)]
-    fn inspect_leaves() -> Self {
+    fn inspect_contributions() -> Self {
         Self {
-            interpretation: HashInterpretation::InspectLeaves,
-            task_enum: format_ident!("InspectHashLeafTask"),
-            task_pool: format_ident!("INSPECT_HASH_LEAF_TASK_POOL"),
-            opaque_constructor: format_ident!("inspect_hash_leaf_opaque_task"),
-            driver: format_ident!("inspect_hash_leaf_worklist"),
-            handler_prefix: "inspect_hash_leaf_handle_",
+            interpretation: HashInterpretation::InspectContributions,
+            task_enum: format_ident!("InspectHashContributionTask"),
+            task_pool: format_ident!("INSPECT_HASH_CONTRIBUTION_TASK_POOL"),
+            opaque_constructor: format_ident!("inspect_hash_contribution_opaque_task"),
+            driver: format_ident!("inspect_hash_contribution_worklist"),
+            handler_prefix: "inspect_hash_contribution_handle_",
         }
     }
 
@@ -113,8 +113,21 @@ impl HashEmissionNames {
         self.interpretation != HashInterpretation::Ordinary
     }
 
-    fn inspecting_leaves(&self) -> bool {
-        self.interpretation == HashInterpretation::InspectLeaves
+    fn inspecting(&self) -> bool {
+        self.interpretation == HashInterpretation::InspectContributions
+    }
+
+    /// Add a proved component of future ordinary Hash work. The accumulator
+    /// pays for its own metadata arithmetic; this does not reserve execution.
+    fn inspect_contribution(&self, work: usize, records: usize) -> TokenStream {
+        if self.inspecting() {
+            quote! {
+                state.try_accumulate_parts(#work, #records, 0, reserve)
+                    .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+            }
+        } else {
+            TokenStream::new()
+        }
     }
 
     fn task_type(&self) -> TokenStream {
@@ -138,7 +151,7 @@ impl HashEmissionNames {
         match self.interpretation {
             HashInterpretation::Ordinary => quote! { H },
             HashInterpretation::CheckedExecution => quote! { mettail_runtime::CheckedFxHasher },
-            HashInterpretation::InspectLeaves => {
+            HashInterpretation::InspectContributions => {
                 quote! { mettail_runtime::binding_receipt::BindingCharge }
             },
         }
@@ -239,7 +252,7 @@ impl HashEmissionNames {
             HashInterpretation::CheckedExecution => quote! {{
                 mettail_runtime::CheckedFxHashLeaf::try_hash_fx(#value, state, #reserve)?;
             }},
-            HashInterpretation::InspectLeaves => quote! {{
+            HashInterpretation::InspectContributions => quote! {{
                 let work = mettail_runtime::CheckedFxHashLeaf::try_inspect_hash_fx_work(
                     #value, #reserve,
                 )?;
@@ -269,16 +282,16 @@ pub fn generate_iterative_hash(language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// The additive native-leaf component of inspection, not a complete Hash bound.
+/// Native-leaf and driver/wrapper contributions, not a complete Hash bound.
 ///
 /// This private integration entrypoint deliberately does not activate a public
 /// category-admission interface. It reuses the exact field and scope builders,
 /// pays its own metadata walk, and never executes Hash, Eq, Ord or sorting.
-/// Traversal, native Map sorting and comparator allowances must be composed
-/// separately before an ordinary whole-category Hash may be admitted.
+/// Native Map materialization, sorting and comparator allowances must still
+/// be composed before a whole-category Hash may be admitted.
 #[allow(dead_code)]
-fn generate_hash_leaf_inspection(language: &LanguageDef) -> TokenStream {
-    let emission = HashEmissionNames::inspect_leaves();
+fn generate_hash_contribution_inspection(language: &LanguageDef) -> TokenStream {
+    let emission = HashEmissionNames::inspect_contributions();
     let tasks = generate_hash_task_enum(language, &emission);
     let driver = generate_hash_engine(language, &emission);
     let interfaces = generate_hash_impls(language, &emission);
@@ -446,6 +459,7 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
     let propagate = emission.propagate();
     let success = emission.success();
     let routing = emission.routing();
+    let category_control = emission.inspect_contribution(5, 0);
     let helper_fns: Vec<TokenStream> = language
         .types
         .iter()
@@ -469,6 +483,7 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
                     #parameters
                 ) #result_type {
                     #routing
+                    #category_control
                     let val = unsafe { &*ptr };
                     #hash_discriminant;
                     match val {
@@ -500,11 +515,17 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
     let absorb_pathmap_mode = emission.hash_value(quote! { &mode });
 
     if emission.admitted() {
-        let map_helpers = if emission.inspecting_leaves() {
+        let map_helpers = if emission.inspecting() {
             Vec::new()
         } else {
             generate_checked_map_hash_helpers(language, emission)
         };
+        // GeneratedHashDriverControl derives the root wrapper/control sum:
+        // 15 + 4*N + 5*C + 5*O work, 2 + N records. A successful pop
+        // represents one original occurrence. Pushes and terminal routing
+        // are already included in this sum and must not be added again.
+        let popped_control = emission.inspect_contribution(4, 1);
+        let opaque_control = emission.inspect_contribution(5, 0);
         return quote! {
             #(#map_helpers)*
             #(#helper_fns)*
@@ -518,11 +539,13 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
                 loop {
                     #routing
                     let Some(task) = stack.pop() else { break };
+                    #popped_control
                     match task {
                         #(#task_arms)*
                         #task_enum::AbsorbUsize(n) => { #absorb_usize; },
                         #task_enum::AbsorbU8(b) => { #absorb_u8; },
                         #task_enum::Opaque { value, hash } => {
+                            #opaque_control
                             unsafe { hash(value, state, reserve) }?;
                         },
                     }
@@ -597,6 +620,11 @@ fn hash_collection_stmts(
             let task_variant = format_ident!("Hash{}", element_cat);
             if emission.admitted() {
                 let routing = emission.routing();
+                // GeneratedHashHandlerControl reuses the existing borrowed
+                // iterator boundary. Add per-yield pointer work on the same
+                // walk, without a second traversal or unchecked width math.
+                let vector_control = emission.inspect_contribution(4, 1);
+                let element_control = emission.inspect_contribution(2, 0);
                 let push_child = emission.push_task(quote! {
                     #task_enum::#task_variant(__hash_item as *const _)
                 });
@@ -605,11 +633,13 @@ fn hash_collection_stmts(
                 });
                 return quote! {{
                     #routing
+                    #vector_control
                     let __hash_length = (#coll_expr).len();
                     let mut __hash_items = (#coll_expr).iter().rev();
                     loop {
                         #routing
                         let Some(__hash_item) = __hash_items.next() else { break };
+                        #element_control
                         #push_child;
                     }
                     #push_length;
@@ -766,7 +796,7 @@ fn unordered_collection_hash_stmts(
         return quote! { #push; };
     }
     if emission.admitted() && *coll_type == CollectionType::HashMap {
-        if emission.inspecting_leaves() {
+        if emission.inspecting() {
             let routing = emission.routing();
             let error = quote! { mettail_runtime::NativeComparisonFailure::Admission };
             let push_value = emission.push_task_with_error(
@@ -955,6 +985,7 @@ fn generate_hash_variant_arm(
         };
     }
     let opaque_constructor = &emission.opaque_constructor;
+    let payload_handoff = emission.inspect_contribution(1, 0);
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
@@ -971,6 +1002,7 @@ fn generate_hash_variant_arm(
             let hash_value = emission.hash_value(quote! { v });
             quote! {
                 #category::#label(v) => {
+                    #payload_handoff
                     #hash_value;
                 }
             }
@@ -984,6 +1016,7 @@ fn generate_hash_variant_arm(
                 hash_collection_stmts(element_cat, coll_type, &quote! { v }, language, emission);
             quote! {
                 #category::#label(v) => {
+                    #payload_handoff
                     #body
                 }
             }
@@ -1014,6 +1047,7 @@ fn generate_hash_variant_arm(
             let hash_value = emission.hash_value(quote! { v });
             quote! {
                 #category::#label(v) => {
+                    #payload_handoff
                     #hash_value;
                 }
             }
@@ -1029,6 +1063,7 @@ fn generate_hash_variant_arm(
                 hash_collection_stmts(element_cat, coll_type, &quote! { coll }, language, emission);
             quote! {
                 #category::#label(coll) => {
+                    #payload_handoff
                     #body
                 }
             }
@@ -1130,6 +1165,8 @@ fn hash_field_eagerly(
     name: &Ident,
     emission: &HashEmissionNames,
 ) -> TokenStream {
+    let field_control = emission.inspect_contribution(1 + usize::from(field.is_optional), 0);
+    let child_control = emission.inspect_contribution(1, 0);
     if field.is_optional {
         let hash_none = emission.hash_value(quote! { &0u8 });
         let hash_some = emission.hash_value(quote! { &1u8 });
@@ -1138,6 +1175,7 @@ fn hash_field_eagerly(
             // then the container's whole-value `Hash`.
             let hash_value = emission.hash_value(quote! { __c });
             return quote! {
+                #field_control
                 match #name.as_ref() {
                     None => #hash_none,
                     Some(__c) => {
@@ -1153,6 +1191,7 @@ fn hash_field_eagerly(
             // sibling arm is `E0614` here).
             let hash_value = emission.hash_value(quote! { __b });
             return quote! {
+                #field_control
                 match #name.as_ref() {
                     None => #hash_none,
                     Some(__b) => {
@@ -1164,9 +1203,11 @@ fn hash_field_eagerly(
         }
         let hash_value = emission.hash_value(quote! { &**__b });
         return quote! {
+            #field_control
             match #name.as_ref() {
                 None => #hash_none,
                 Some(__b) => {
+                    #child_control
                     #hash_some;
                     #hash_value;
                 }
@@ -1177,11 +1218,14 @@ fn hash_field_eagerly(
         // Phase 3A-B4 / L9-3: predicate and token-text leaves hash inline.
         let hash_value = emission.hash_value(quote! { #name });
         return quote! {
+            #field_control
             #hash_value;
         };
     }
     let hash_value = emission.hash_value(quote! { &**#name });
     quote! {
+        #field_control
+        #child_control
         #hash_value;
     }
 }
@@ -1218,7 +1262,9 @@ fn hash_arm_stmts(
 
     for (i, field) in fields.iter().enumerate().skip(split).rev() {
         let name = &field_names[i];
-        stmts.push(match crate::gen::term_ops::collection_walk::field_carrier(field) {
+        let field_control = emission.inspect_contribution(1 + usize::from(field.is_optional), 0);
+        let child_control = emission.inspect_contribution(1, 0);
+        let body = match crate::gen::term_ops::collection_walk::field_carrier(field) {
             crate::gen::term_ops::collection_walk::FieldCarrier::Leaf if field.is_optional => {
                 let push = emission.push_task(emission.opaque_task(quote! { __leaf }));
                 quote! {
@@ -1244,6 +1290,7 @@ fn hash_arm_stmts(
                     match #name.as_ref() {
                         None => #push_none,
                         Some(__child) => {
+                            #child_control
                             #push;
                             #push_some;
                         },
@@ -1285,10 +1332,12 @@ fn hash_arm_stmts(
                     #task_enum::#task_variant(&**#name as *const _)
                 });
                 quote! {
+                    #child_control
                     #push;
                 }
             },
-        });
+        };
+        stmts.push(quote! { #field_control #body });
     }
 
     stmts
@@ -1349,8 +1398,10 @@ fn generate_hash_scoped_arm(
     let push_pattern = emission.push_task(emission.opaque_task(quote! {
         &#scope_name.inner().unsafe_pattern
     }));
+    let scope_control = emission.inspect_contribution(3, 0);
     let scope_pushes = quote! {
         {
+            #scope_control
             let body_ptr: *const #body_cat = &*#scope_name.inner().unsafe_body;
             #push_body;
             #push_pattern;
@@ -1388,13 +1439,13 @@ fn generate_hash_impl(category: &Ident, emission: &HashEmissionNames) -> TokenSt
     let driver = &emission.driver;
     let hash_variant = format_ident!("Hash{}", category);
 
-    if emission.inspecting_leaves() {
+    if emission.inspecting() {
         let inspect =
-            format_ident!("inspect_hash_leaf_charge_{}", category.to_string().to_lowercase());
+            format_ident!("inspect_hash_contribution_{}", category.to_string().to_lowercase());
         let push_root =
             emission.push_task(quote! { #task_enum::#hash_variant(source as *const _) });
         return quote! {
-            // Leaf contribution only: never use as whole-category Hash authority.
+            // Partial contribution: never use as whole-category Hash authority.
             #[allow(dead_code)]
             fn #inspect<E>(
                 source: &#category,
@@ -1407,14 +1458,16 @@ fn generate_hash_impl(category: &Ident, emission: &HashEmissionNames) -> TokenSt
                 // from borrowed task-vector initialization and disposal.
                 mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
                     .map_err(mettail_runtime::KeyHashFailure::Admission)?;
-                let mut leaf_charge = mettail_runtime::binding_receipt::BindingCharge::ZERO;
+                let mut native_charge = mettail_runtime::binding_receipt::BindingCharge::ZERO;
+                native_charge.try_accumulate_parts(15, 2, 0, reserve)
+                    .map_err(mettail_runtime::KeyHashFailure::Admission)?;
                 mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
                     .map_err(mettail_runtime::KeyHashFailure::Admission)?;
                 let mut tasks = Vec::new();
                 let stack = &mut tasks;
                 #push_root;
-                #driver(stack, &mut leaf_charge, reserve)?;
-                Ok(leaf_charge)
+                #driver(stack, &mut native_charge, reserve)?;
+                Ok(native_charge)
             }
         };
     }

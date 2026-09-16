@@ -164,10 +164,11 @@ fn checked_map_arm_uses_only_the_needed_element_category_scheduling_helper() {
 }
 
 #[test]
-fn leaf_inspection_shares_the_emitter_without_native_execution_or_sorting() {
+fn contribution_inspection_shares_the_emitter_without_native_execution_or_sorting() {
     let language = fixture_language();
-    let expansion = generate_hash_leaf_inspection(&language);
-    syn::parse2::<syn::File>(expansion.clone()).expect("private leaf inspection declarations");
+    let expansion = generate_hash_contribution_inspection(&language);
+    syn::parse2::<syn::File>(expansion.clone())
+        .expect("private contribution inspection declarations");
     let source = expansion.to_string();
     for required in [
         "try_inspect_hash_fx_work",
@@ -192,7 +193,7 @@ fn leaf_inspection_shares_the_emitter_without_native_execution_or_sorting() {
         &format_ident!("Map"),
         &variant(&language, "Map", &map_label.to_string()),
         &language,
-        &HashEmissionNames::inspect_leaves(),
+        &HashEmissionNames::inspect_contributions(),
     )
     .to_string();
     assert!(map.contains("try_for_each_entry"));
@@ -230,7 +231,7 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
     let checked_tasks = generate_hash_task_enum(&language, &emission);
     let checked_engine = generate_hash_engine(&language, &emission);
     let checked_impls = generate_hash_impls(&language, &emission);
-    let leaf_inspection = generate_hash_leaf_inspection(&language);
+    let contribution_inspection = generate_hash_contribution_inspection(&language);
     let proc_var = crate::gen::generate_var_label(&format_ident!("Proc"));
     let int_literal = literal_label(&language, "Int");
     let bool_literal = literal_label(&language, "Bool");
@@ -252,7 +253,7 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
         #(#enum_types)*
         #ordinary_clone #ordinary_cmp #ordinary_hash #ordinary_drop #checked_cmp
         #checked_tasks #checked_engine #checked_impls
-        #leaf_inspection
+        #contribution_inspection
 
         fn initial(seed: usize) -> CheckedFxHasher {
             let mut state = CheckedFxHasher::with_seed(seed);
@@ -577,19 +578,20 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
             }).expect("spawn small-stack hash worker").join().expect("small-stack hash worker");
         }
 
-        fn leaf_inspection_examples() {
+        fn contribution_inspection_examples() {
             use mettail_runtime::binding_receipt::BindingCharge;
-            let inspect = |value: &Proc, expected_work| {
+            let inspect = |value: &Proc, expected_work, expected_records| {
                 let mut trace = Vec::new();
-                let result = inspect_hash_leaf_charge_proc(value, &mut |w,u| {
+                let result = inspect_hash_contribution_proc(value, &mut |w,u| {
                     trace.push((w,u)); Ok::<_, usize>(())
-                }).expect("admitted metadata-only leaf walk");
-                assert_eq!(result, BindingCharge::new(expected_work,0,0).expect("leaf-only charge"));
+                }).expect("admitted metadata-only contribution walk");
+                assert_eq!(result, BindingCharge::new(expected_work,expected_records,0)
+                    .expect("leaf, driver/wrapper and handler contribution"));
                 // Every refusal stops at its original metadata boundary and
                 // exposes no partial additive result or hasher state.
                 for stop in 0..trace.len() {
                     let mut seen = 0;
-                    let result = inspect_hash_leaf_charge_proc(value, &mut |w,u| {
+                    let result = inspect_hash_contribution_proc(value, &mut |w,u| {
                         assert_eq!((w,u), trace[seen]);
                         let current = seen; seen += 1;
                         if current == stop { Err(stop) } else { Ok(()) }
@@ -598,53 +600,54 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
                     assert_eq!(seen, stop+1);
                 }
             };
-            inspect(&Proc::PZero, 2);
+            inspect(&Proc::PZero, 26, 3);
             let shared = Arc::new(Proc::PZero);
-            inspect(&Proc::PPair(shared.clone(), shared.clone()), 6);
+            inspect(&Proc::PPair(shared.clone(), shared.clone()), 52, 5);
             assert_eq!(Arc::strong_count(&shared), 1);
-            inspect(&Proc::POptionalVec(None), 4);
-            inspect(&Proc::POptionalVec(Some(Vec::new())), 6);
-            inspect(&Proc::POptionalVec(Some(vec![Proc::PZero])), 8);
-            inspect(&Proc::PVector(vec![Proc::PZero, Proc::PZero]), 8);
+            inspect(&Proc::POptionalVec(None), 34, 4);
+            inspect(&Proc::POptionalVec(Some(Vec::new())), 44, 6);
+            inspect(&Proc::POptionalVec(Some(vec![Proc::PZero])), 57, 7);
+            inspect(&Proc::PVector(vec![Proc::PZero, Proc::PZero]), 63, 7);
             inspect(&Proc::PSingle(Arc::new(Proc::PZero),
-                Scope::from_parts_unsafe(Binder(FreeVar::fresh_named("binder")), Arc::new(Proc::PZero))), 14);
+                Scope::from_parts_unsafe(Binder(FreeVar::fresh_named("binder")), Arc::new(Proc::PZero))), 70, 6);
             inspect(&Proc::PMulti(vec![Proc::PZero],
-                Scope::from_parts_unsafe(Vec::new(), Arc::new(Proc::PZero))), 15);
+                Scope::from_parts_unsafe(Vec::new(), Arc::new(Proc::PZero))), 80, 8);
             let guest = guest();
             let guest_work = mettail_runtime::CheckedFxHashLeaf::try_inspect_hash_fx_work(
                 &guest, &mut |_,_| Ok::<_, ()>(()),
             ).expect("existing sealed FLT leaf allowance");
             inspect(&Proc::PMixed("p".into(), Arc::new(Proc::PZero), guest, "s".into()),
-                30 + guest_work);
+                86 + guest_work, 6);
             let mut bag = mettail_runtime::HashBag::new();
             bag.insert_n(Proc::PPredicate(mettail_runtime::BehavioralPred::RelationQuery {
                 relation_name: "not visited by cached bag Hash".into(), args: Vec::new(), negated: false,
             }), 3);
-            inspect(&Proc::PBag(bag), 21);
+            inspect(&Proc::PBag(bag), 55, 4);
             for keys in [["a", "b"], ["b", "a"]] {
                 let value = map(keys.into_iter().map(|key| (token(key), Proc::PZero)));
                 let Map::#map_literal(source) = &value else { panic!("Map literal") };
                 let original: Vec<_> = source.iter().map(|(k,v)| (k as *const Proc,v as *const Proc)).collect();
-                let charge = inspect_hash_leaf_charge_map(&value, &mut |_,_| Ok::<_, ()>(()))
+                let charge = inspect_hash_contribution_map(&value, &mut |_,_| Ok::<_, ()>(()))
                     .expect("unsorted metadata-only Map walk");
-                assert_eq!(charge, BindingCharge::new(38,0,0).expect("length and both original pairs"));
+                assert_eq!(charge, BindingCharge::new(105,8,0).expect("original pair contributions"));
                 assert_eq!(source.iter().map(|(k,v)| (k as *const Proc,v as *const Proc)).collect::<Vec<_>>(), original);
-                inspect(&map_proc(value), 42);
+                inspect(&map_proc(value), 131, 10);
             }
             std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
                 let depth = 20_000;
                 let mut value = Proc::PZero;
                 for _ in 0..depth { value = Proc::PUnary(Arc::new(value)); }
-                let charge = inspect_hash_leaf_charge_proc(&value, &mut |_,_| Ok::<_, ()>(()))
+                let charge = inspect_hash_contribution_proc(&value, &mut |_,_| Ok::<_, ()>(()))
                     .expect("deep metadata traversal is iterative");
-                assert_eq!(charge.base_work(), 2 * (depth+1));
+                assert_eq!(charge, BindingCharge::new(26 + 13*depth, 3 + depth, 0)
+                    .expect("exact leaf, driver/wrapper and handler contribution"));
                 drop(value);
-            }).expect("spawn leaf inspection worker").join().expect("leaf inspection worker");
+            }).expect("spawn contribution inspection worker").join().expect("contribution inspection worker");
         }
 
         fn main() {
             assert!(mettail_runtime::CHECKED_FX_PROFILE_AVAILABLE);
-            leaf_inspection_examples();
+            contribution_inspection_examples();
             exercise(&Proc::PZero);
             exercise(&Int::#int_literal(i64::MIN));
             exercise(&Int::#int_literal(i64::MAX));

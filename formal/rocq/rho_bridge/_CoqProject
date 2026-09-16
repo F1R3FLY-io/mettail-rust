@@ -95,6 +95,9 @@ theories/AdmittedKeyHashExecution.v
 theories/AdmittedStructuralKeyHash.v
 theories/NativeInspectionAccumulation.v
 theories/AdmittedGeneratedHashScheduling.v
+theories/GeneratedHashDriverControl.v
+theories/GeneratedHashHandlerControl.v
+theories/NativeHashBagStageCharge.v
 theories/AdmittedNativeLeafComparison.v
 theories/AdmittedIdentityComparison.v
 theories/AdmittedFltComparison.v
