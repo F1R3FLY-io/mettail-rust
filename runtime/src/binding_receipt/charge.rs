@@ -99,6 +99,35 @@ impl BindingCharge {
         Self::new(work, records, bytes)
     }
 
+    /// Add future-operation parts after paying for this fixed-size inspection.
+    ///
+    /// This reserves one metadata work group, not the operation described by
+    /// the parts. It reuses [`Self::new`] and [`Self::checked_add`], including
+    /// the final work/retention projection checks; no native Hash, Eq or Ord
+    /// operation is performed. Both admission and arithmetic failure leave
+    /// this accumulator unchanged, while earlier metadata charges stay spent.
+    /// The caller must separately pay for retaining this accumulator and for
+    /// eventual execution against the same source and audited cost profile.
+    /// A representable charge is accounting data, not execution authority.
+    pub fn try_accumulate_parts<E>(
+        &mut self,
+        work: usize,
+        records: usize,
+        owned_bytes: usize,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<(), BindingFailure<E>> {
+        // NativeInspectionAccumulation.v: precharge the fixed metadata group,
+        // check every component/projection, then commit exactly once.
+        reserve(1, 0).map_err(BindingFailure::Reservation)?;
+        let more =
+            Self::new(work, records, owned_bytes).map_err(|_| BindingFailure::SizeOverflow)?;
+        let next = self
+            .checked_add(more)
+            .map_err(|_| BindingFailure::SizeOverflow)?;
+        *self = next;
+        Ok(())
+    }
+
     pub const fn checked_scale(self, factor: usize) -> Result<Self, ChargeOverflow> {
         let work = checked_charge!(scale(self.work, factor, ChargeOverflow::Work));
         let records = checked_charge!(scale(self.records, factor, ChargeOverflow::Records));
@@ -185,6 +214,108 @@ mod tests {
             Ok(receipt) => receipt.replacement_charge(),
             Err(error) => Err(DummyChargeError::Counts(error)),
         };
+
+    #[test]
+    fn paid_accumulation_reserves_metadata_not_future_execution() {
+        let mut charge = BindingCharge::new(3, 2, 5).expect("initial charge");
+        let mut inspection = Vec::new();
+        charge
+            .try_accumulate_parts(7, 4, 9, &mut |work, units| {
+                inspection.push((work, units));
+                Ok::<_, ()>(())
+            })
+            .expect("representable sum");
+        assert_eq!(charge, BindingCharge::new(10, 6, 14).expect("exact sum"));
+        assert_eq!(inspection, [(1, 0)]);
+        let unchanged = charge;
+        charge
+            .try_accumulate_parts(0, 0, 0, &mut |work, units| {
+                inspection.push((work, units));
+                Ok::<_, ()>(())
+            })
+            .expect("zero parts still pay metadata");
+        assert_eq!(charge, unchanged);
+        assert_eq!(inspection, [(1, 0), (1, 0)]);
+        let mut execution = Vec::new();
+        charge
+            .reserve(&mut |work, units| {
+                execution.push((work, units));
+                Ok::<_, ()>(())
+            })
+            .expect("future work requires a separate reservation");
+        assert_eq!(execution, [(24, 38)]);
+    }
+
+    #[test]
+    fn paid_accumulation_moves_reservation_error_and_keeps_accumulator() {
+        struct ErrorPayload(u8);
+        let payload = Box::new(ErrorPayload(41));
+        let address = std::ptr::from_ref(payload.as_ref());
+        let mut pending = Some(payload);
+        let mut calls = 0;
+        let before = BindingCharge::new(2, 3, 5).expect("initial charge");
+        let mut charge = before;
+        let result =
+            charge.try_accumulate_parts(usize::MAX, usize::MAX, usize::MAX, &mut |w, u| {
+                assert_eq!((w, u), (1, 0));
+                calls += 1;
+                Err(pending.take().expect("only one metadata reservation"))
+            });
+        let Err(BindingFailure::Reservation(error)) = result else {
+            panic!("reservation refusal must precede overflowing arithmetic")
+        };
+        assert_eq!(std::ptr::from_ref(error.as_ref()), address);
+        assert_eq!(error.0, 41);
+        assert_eq!(calls, 1);
+        assert_eq!(charge, before);
+    }
+
+    #[test]
+    fn paid_accumulation_matches_wide_arithmetic_at_projection_boundaries() {
+        let values = [0, 1, usize::MAX / 4, usize::MAX / 4 + 1, usize::MAX - 1, usize::MAX];
+        for work in values {
+            for records in values {
+                for bytes in values {
+                    let Ok(before) = BindingCharge::new(work, records, bytes) else {
+                        continue;
+                    };
+                    for more_work in values {
+                        for more_records in values {
+                            for more_bytes in values {
+                                let expected_work = work as u128 + more_work as u128;
+                                let expected_records = records as u128 + more_records as u128;
+                                let expected_bytes = bytes as u128 + more_bytes as u128;
+                                let fits = expected_work + expected_bytes <= usize::MAX as u128
+                                    && 4 * expected_records + expected_bytes <= usize::MAX as u128;
+                                let mut charge = before;
+                                let mut calls = 0;
+                                let result = charge.try_accumulate_parts(
+                                    more_work,
+                                    more_records,
+                                    more_bytes,
+                                    &mut |w, u| {
+                                        assert_eq!((w, u), (1, 0));
+                                        calls += 1;
+                                        Ok::<_, ()>(())
+                                    },
+                                );
+                                assert_eq!(calls, 1, "overflow retains the metadata charge");
+                                if fits {
+                                    assert_eq!(result, Ok(()));
+                                    assert_eq!(charge.base_work() as u128, expected_work);
+                                    assert_eq!(charge.records() as u128, expected_records);
+                                    assert_eq!(charge.owned_bytes() as u128, expected_bytes);
+                                } else {
+                                    assert_eq!(result, Err(BindingFailure::SizeOverflow));
+                                    assert_eq!(charge, before, "no partial accumulator update");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn every_event_has_the_declared_work_record_byte_projection() {

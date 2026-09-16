@@ -93,6 +93,7 @@ theories/NativeHashBagOwnedScan.v
 theories/NativeHashBagRetainedCleanup.v
 theories/AdmittedKeyHashExecution.v
 theories/AdmittedStructuralKeyHash.v
+theories/NativeInspectionAccumulation.v
 theories/AdmittedGeneratedHashScheduling.v
 theories/AdmittedNativeLeafComparison.v
 theories/AdmittedIdentityComparison.v
@@ -118,6 +119,7 @@ theories/GeneratedConstructorSourceProjection.v
 theories/CollectionPairAndUnitLexResults.v
 theories/CollectionWeightedLexResults.v
 theories/NativeSortedComparisonClasses.v
+theories/NativeStableInsertionSort.v
 theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v
 theories/GeneratedMapCoreDeterminism.v

@@ -83,6 +83,22 @@ The generated category traversal, nested collection comparison, and movement
 of retained roots during resizing must supply their own coverage before these
 allowances can be composed into a complete reconstruction provider.
 
+The existing `BindingCharge` supplies the checked work/record/byte algebra.
+Its `try_accumulate_parts` method pays one fixed metadata work group before
+validating the incoming parts, adding them, and checking the final work and
+retention projections. It commits the accumulator only after every check
+succeeds. Reservation refusal and arithmetic overflow leave it unchanged;
+overflow does not refund the metadata charge. The
+[accumulation model](../../formal/rocq/rho_bridge/theories/NativeInspectionAccumulation.v)
+proves exact successful sums, rejection of overflowing projections, and
+acceptance of every representable sum. Rust tests additionally distinguish
+reservation errors from size overflow and check the original error payload.
+
+This method does not pay for future native execution. The caller must
+separately account for accumulator storage, justify the operation's parts
+against the original source, and reserve execution through the existing meter.
+Representable accounting data is not a certificate or execution authority.
+
 ### Ordinary generated Hash wrapper
 
 Generated `Hash` takes its borrowed-task vector from a thread-local pool,
@@ -112,6 +128,39 @@ internals, allocator internals, arbitrary hashers, or native Map sorting, and
 does not claim termination or panic-unwind recovery. The generated executable
 fixture checks exact native method/byte streams during nested calls and real
 TLS teardown; those checks establish no resource bound for its test hashers.
+
+### Native Map sort: the small-slice branch
+
+Ordinary generated Map hashing sorts borrowed key/value pairs with the
+standard library's `sort_by`. Its cost cannot be inferred from the separate
+collection-comparison PDA. On the pinned, non-size-optimized 64-bit standard
+library, non-zero-sized slices of length two through twenty use
+`insertion_sort_shift_left`; zero-sized and length-zero/one inputs return
+without comparator calls or record transfers.
+
+The [native insertion model](../../formal/rocq/rho_bridge/theories/NativeStableInsertionSort.v)
+follows this source branch. A displaced tail record becomes the saved pivot;
+each shift moves its predecessor into a logical gap, and `CopyOnDrop` fills
+the final gap even on normal return. Intermediate bytes can contain duplicate
+records, so inventory includes the saved pivot and excludes the gap. Only a
+completed insertion is asserted to permute whole original records.
+
+For an input of length $`n`$, the decreasing predecessor index and advancing
+outer index derive at most $`n(n-1)/2`$ comparator calls and shift copies.
+There are at most $`n-1`$ pivot saves and final fills. At the source threshold
+of twenty, these give 190 calls, 190 shifts, nineteen saves and nineteen fills,
+or 228 record transfers in total. The separately named control groups total
+at most 885. These counts require no comparator-consistency assumption and
+do not assign a constant cost to a comparator's body.
+
+Each comparison retains its original operand orientation: pivot key against
+predecessor key, then their corresponding values only when the keys compare
+equal. The records remain whole key/value pairs through movement. This branch
+uses no heap sort buffer or 4 KiB scratch buffer; the input roster, fixed pivot
+and guard locals, callbacks, and outer library wrappers have their own costs.
+Larger-input sorting and generated child-comparison costs remain separate
+obligations. The threshold is a native dispatch condition, not a new limit
+on supported Rholang Maps.
 
 ## Exact library boundary
 
