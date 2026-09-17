@@ -3,6 +3,129 @@
 use super::*;
 
 #[test]
+fn unsupported_checked_shapes_refuse_without_ordinary_assembly() {
+    let language = super::super::iterative_hash::checked_tests::fixture_language();
+    let plan = super::super::iterative_drop::select_dummy_plan(&language);
+    let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
+        .expect("complete fixture receipt projection");
+    let checked = CloneEmissionNames::checked(&language, &receipts);
+    let ordinary = CloneEmissionNames::ordinary();
+    let mut rejected = Vec::new();
+    for ty in &language.types {
+        for variant in collect_category_variants(&ty.name, &language) {
+            let label = variant.label().to_string();
+            assert!(checked_constructor_supported(&ty.name, &variant, &ordinary));
+            if checked_constructor_supported(&ty.name, &variant, &checked) {
+                continue;
+            }
+            let arm = generate_visit_arm(&ty.name, &variant, &checked).to_string();
+            assert!(arm.contains("UnsupportedConstructor"), "{arm}");
+            assert!(arm.contains(&format!("\"{}\"", ty.name)));
+            assert!(arm.contains(&format!("\"{label}\"")));
+            for forbidden in ["clone", "stack", "results", "collect", "reserve"] {
+                assert!(!arm.contains(forbidden), "refusal entered {forbidden}: {arm}");
+            }
+            assert!(generate_assemble_task(&ty.name, &variant, &checked).is_none());
+            assert!(generate_assemble_arm(&ty.name, &variant, false, &checked).is_none());
+            assert!(generate_assemble_task(&ty.name, &variant, &ordinary).is_some());
+            assert!(!generate_visit_arm(&ty.name, &variant, &ordinary)
+                .to_string()
+                .contains("UnsupportedConstructor"));
+            rejected.push((ty.name.to_string(), label));
+        }
+    }
+    for category in ["Set", "Map", "Pathmap"] {
+        assert!(rejected.iter().any(|(name, _)| name == category));
+    }
+    assert!(rejected.iter().any(|(_, label)| label == "POptionalVec"));
+    // Exercise closed classifier branches absent from the parsed Hash fixture.
+    // These are the production descriptors, not a second eligibility model.
+    let category = format_ident!("Proc");
+    let assert_refused = |variant: &VariantKind| {
+        assert!(!checked_constructor_supported(&category, variant, &checked));
+        assert!(checked_constructor_supported(&category, variant, &ordinary));
+        let label = variant.label().to_string();
+        let arm = generate_visit_arm(&category, variant, &checked).to_string();
+        assert!(arm.contains("UnsupportedConstructor"), "{arm}");
+        assert!(arm.contains("\"Proc\""));
+        assert!(arm.contains(&format!("\"{label}\"")));
+        for forbidden in ["clone", "stack", "results", "collect", "reserve"] {
+            assert!(!arm.contains(forbidden), "refusal entered {forbidden}: {arm}");
+        }
+        assert!(generate_assemble_task(&category, variant, &checked).is_none());
+        assert!(generate_assemble_arm(&category, variant, false, &checked).is_none());
+        assert!(!generate_visit_arm(&category, variant, &ordinary)
+            .to_string()
+            .contains("UnsupportedConstructor"));
+    };
+    for coll_type in [CollectionType::HashSet, CollectionType::HashMap, CollectionType::PathMap] {
+        assert_refused(&VariantKind::Collection {
+            label: format_ident!("ExcludedDirect"),
+            element_cat: category.clone(),
+            coll_type,
+        });
+    }
+    let optional_bag = FieldInfo {
+        category: category.clone(),
+        is_collection: true,
+        coll_type: Some(CollectionType::HashBag),
+        is_predicate: false,
+        is_optional: true,
+        opaque_leaf: None,
+    };
+    assert_refused(&VariantKind::Regular {
+        label: format_ident!("ExcludedOptionalBag"),
+        fields: vec![optional_bag.clone()],
+    });
+    // A non-collection optional scope prefield is also outside the admitted
+    // scope recipe; refusal must not depend merely on collection presence.
+    let optional_scalar = FieldInfo {
+        is_collection: false,
+        coll_type: None,
+        ..optional_bag.clone()
+    };
+    for field in [optional_bag, optional_scalar] {
+        assert_refused(&VariantKind::Binder {
+            label: format_ident!("ExcludedSingle"),
+            pre_scope_fields: vec![field.clone()],
+            binder_cat: category.clone(),
+            body_cat: category.clone(),
+        });
+        assert_refused(&VariantKind::MultiBinder {
+            label: format_ident!("ExcludedMulti"),
+            pre_scope_fields: vec![field],
+            binder_cat: category.clone(),
+            body_cat: category.clone(),
+        });
+    }
+    use crate::gen::native_carrier::{NativeCarrierStorage, ZipperAccess};
+    for storage in [NativeCarrierStorage::Direct, NativeCarrierStorage::Arc] {
+        for access in [ZipperAccess::Read, ZipperAccess::Write] {
+            assert_refused(&VariantKind::RecursiveNativeLiteral {
+                label: format_ident!("ExcludedZipper"),
+                carrier: NativeRecursiveCarrier::Zipper {
+                    storage,
+                    access,
+                    key_category: category.clone(),
+                    value_category: category.clone(),
+                },
+            });
+        }
+    }
+    let refused = VariantKind::Refused {
+        label: format_ident!("BadCarrier"),
+        message: "unknown recursive carrier".into(),
+    };
+    assert!(generate_visit_arm(&format_ident!("Proc"), &refused, &checked)
+        .to_string()
+        .contains("compile_error"));
+    syn::parse2::<syn::File>(generate_task_enum(&language, &checked))
+        .expect("checked task census parses");
+    syn::parse2::<syn::File>(generate_engine(&language, &checked))
+        .expect("checked handlers contain only supported assembly shapes");
+}
+
+#[test]
 fn checked_bags_preserve_binding_order_counts_scopes_and_cleanup() {
     let language: LanguageDef = syn::parse_str(
         r#"
@@ -54,7 +177,7 @@ fn checked_bags_preserve_binding_order_counts_scopes_and_cleanup() {
     let plan = super::super::iterative_drop::select_dummy_plan(&language);
     let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
         .expect("required Bag fixture dummy receipts");
-    let checked = CloneEmissionNames::checked(&receipts);
+    let checked = CloneEmissionNames::checked(&language, &receipts);
     let ordinary = generate_iterative_clone(&language);
     let tasks = generate_task_enum(&language, &checked);
     let engine = generate_engine(&language, &checked);

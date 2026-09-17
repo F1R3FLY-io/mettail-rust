@@ -30,6 +30,74 @@ pub(super) fn generate_dummy_receipts(
     emit_table(plan, |category, variant| project_variant(language, category, variant))
 }
 
+/// Check only defaults the selected recipes actually construct. This gate
+/// adds no checked trait bound to an ordinary grammar's unknown native types.
+pub(super) fn selected_defaults_supported(language: &LanguageDef, plan: &DummyPlan) -> bool {
+    use super::checked_native::default_supported;
+    use crate::gen::types::enums::{native_variant_payload, variant_tokens_for_rule};
+    plan.selected.iter().all(|(name, variant)| {
+        let Some(category) = language
+            .types
+            .iter()
+            .find(|ty| ty.name == name.as_str())
+            .map(|ty| &ty.name)
+        else {
+            return false;
+        };
+        match variant {
+            VariantKind::Nullary { .. } | VariantKind::Var { .. } => true,
+            VariantKind::Literal { label }
+            | VariantKind::CollectionLiteral { label, .. }
+            | VariantKind::RecursiveNativeLiteral { label, .. } => {
+                native_variant_payload(category, label, language)
+                    .is_some_and(|payload| default_supported(&payload))
+            },
+            VariantKind::Collection { label, .. } | VariantKind::Regular { label, .. } => {
+                let Some(rule) = language
+                    .terms
+                    .iter()
+                    .find(|rule| rule.category == *category && rule.label == *label)
+                else {
+                    return false;
+                };
+                let Ok(emitted) =
+                    syn::parse2::<syn::Variant>(variant_tokens_for_rule(rule, language))
+                else {
+                    return false;
+                };
+                let syn::Fields::Unnamed(payloads) = emitted.fields else {
+                    return false;
+                };
+                match variant {
+                    VariantKind::Collection { .. } => {
+                        payloads.unnamed.len() == 1
+                            && payloads
+                                .unnamed
+                                .first()
+                                .is_some_and(|field| default_supported(&field.ty))
+                    },
+                    VariantKind::Regular { fields, .. } => {
+                        fields.len() == payloads.unnamed.len()
+                            && fields.iter().zip(&payloads.unnamed).all(|(field, actual)| {
+                                if field_uses_native_default(field) {
+                                    default_supported(&actual.ty)
+                                } else {
+                                    // Required category children use the selected
+                                    // dependency receipt, not native Default.
+                                    !field.is_predicate && !field.is_opaque_leaf()
+                                }
+                            })
+                    },
+                    _ => unreachable!("selected explicit recipe matched above"),
+                }
+            },
+            VariantKind::Refused { .. }
+            | VariantKind::Binder { .. }
+            | VariantKind::MultiBinder { .. } => false,
+        }
+    })
+}
+
 fn emit_table(
     plan: &DummyPlan,
     mut project: impl FnMut(&Ident, &VariantKind) -> Result<(TokenStream, Vec<Ident>), syn::Error>,
@@ -248,9 +316,7 @@ fn project_regular(
     let mut statements = Vec::with_capacity(fields.len());
     for (index, field) in fields.iter().enumerate() {
         let name = &names[index];
-        let native = field.is_optional
-            || field.is_collection
-            || matches!(field.opaque_leaf, Some(OpaqueLeafKind::TokenText));
+        let native = field_uses_native_default(field);
         let construction = if native {
             let inferred = infer_field(category, pattern.clone(), quote! { #name });
             quote! { let field = #inferred; }
@@ -302,6 +368,12 @@ fn project_regular(
         }},
         dependencies,
     ))
+}
+
+fn field_uses_native_default(field: &FieldInfo) -> bool {
+    field.is_optional
+        || field.is_collection
+        || matches!(field.opaque_leaf, Some(OpaqueLeafKind::TokenText))
 }
 
 #[cfg(test)]

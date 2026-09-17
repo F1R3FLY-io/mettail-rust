@@ -13,6 +13,7 @@
 /// (test-only; see the module docs for the ratchet protocol).
 #[cfg(test)]
 pub mod arm_integrity;
+mod checked_native;
 /// ★ The COLLECTION-ELEMENT BOUNDARY — the one place the per-`CollectionType`
 /// element walk and its order-faithfulness law are spelled (#162).
 pub mod collection_walk;

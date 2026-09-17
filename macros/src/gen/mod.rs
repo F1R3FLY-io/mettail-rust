@@ -215,7 +215,7 @@ pub fn generate_all(
     use term_gen::{generate_random_generation, generate_term_generation};
     use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
-    use term_ops::iterative_clone::generate_iterative_clone;
+    use term_ops::iterative_clone::{generate_checked_iterative_binding, generate_iterative_clone};
     use term_ops::iterative_cmp::generate_iterative_cmp;
     use term_ops::iterative_drop::generate_iterative_drop;
     use term_ops::iterative_hash::generate_iterative_hash;
@@ -378,14 +378,14 @@ pub fn generate_all(
         "match_pattern",
         generate_stage!("match_pattern", generate_match_pattern(language)),
     );
-    let iterative_clone_impl = spill_generated_concern(
+    let iterative_clone_include = spill_and_include(
         &lang_name,
         "iterative_clone",
         generate_stage!("iterative_clone", generate_iterative_clone(language)),
-        &[],
     );
     // Hashing intentionally reuses comparison's exhaustive variant-index
-    // functions. Keep both generated files in one child-module environment so
+    // functions; checked binding uses both and Clone's owned result wrapper.
+    // Keep these generated files in one child-module environment so
     // that private contract stays private and exact; widening dozens of helper
     // functions or regenerating a second index table would create a new API or
     // a second semantic authority.
@@ -405,12 +405,20 @@ pub fn generate_all(
         "iterative_hash",
         generate_stage!("iterative_hash", generate_iterative_hash(language)),
     );
+    let checked_binding_include = spill_and_include(
+        &lang_name,
+        "checked_binding",
+        generate_stage!("checked_binding", generate_checked_iterative_binding(language))
+            .map_err(|error| error.to_string())?,
+    );
     let iterative_cmp_hash_impl = spill_generated_concern(
         &lang_name,
         "iterative_cmp_hash",
         quote! {
+            #iterative_clone_include
             #iterative_cmp_include
             #iterative_hash_include
+            #checked_binding_include
         },
         &[],
     );
@@ -505,8 +513,6 @@ pub fn generate_all(
         #term_depth_impl
 
         #match_pattern_impl
-
-        #iterative_clone_impl
 
         #iterative_cmp_hash_impl
 
@@ -2490,6 +2496,8 @@ mod category_capability_tests {
             term_ops::parse_alt_filter::generate_parse_alt_filter_methods(&language),
             term_ops::depth::generate_term_depth_methods(&language),
             term_ops::iterative_clone::generate_iterative_clone(&language),
+            term_ops::iterative_clone::generate_checked_iterative_binding(&language)
+                .expect("checked binding concern fixture must generate"),
             term_ops::iterative_cmp::generate_iterative_cmp(&language),
             term_ops::iterative_drop::generate_iterative_drop(&language),
             term_ops::iterative_hash::generate_iterative_hash(&language),

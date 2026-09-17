@@ -954,21 +954,12 @@ fn checked_hash_variant_supported(
 ) -> bool {
     match variant {
         VariantKind::Refused { .. } | VariantKind::Nullary { .. } | VariantKind::Var { .. } => true,
-        VariantKind::Literal { .. } => language
-            .types
-            .iter()
-            .find(|ty| ty.name == *category)
-            .and_then(|ty| ty.native_type.as_ref())
-            .is_some_and(|ty| {
-                matches!(
-                    mettail_ast::language::NativeKind::from_syn_type(ty),
-                    mettail_ast::language::NativeKind::Int64
-                        | mettail_ast::language::NativeKind::Bool
-                        | mettail_ast::language::NativeKind::Str
-                        | mettail_ast::language::NativeKind::UInt8
-                        | mettail_ast::language::NativeKind::Usize
-                )
-            }),
+        VariantKind::Literal { label } => super::checked_native::literal_supported(
+            category,
+            label,
+            language,
+            super::checked_native::LeafCapability::Hash,
+        ),
         VariantKind::Regular { fields, .. } => checked_hash_fields_supported(fields, language),
         VariantKind::Binder { pre_scope_fields, .. }
         | VariantKind::MultiBinder { pre_scope_fields, .. } => {

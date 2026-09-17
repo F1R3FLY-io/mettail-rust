@@ -70,7 +70,7 @@ fn formal_projection_eligible(kind: &VariantKind) -> bool {
     }
 }
 
-fn actual_rholang() -> LanguageDef {
+pub(in crate::gen::term_ops) fn actual_rholang() -> LanguageDef {
     let source = syn::parse_file(include_str!("../../../../languages/src/rholang.rs"))
         .expect("actual Rholang source must parse as Rust items");
     let mut inputs = source.items.into_iter().filter_map(|item| match item {

@@ -241,6 +241,96 @@ boundaries. Normal returned-error cleanup is covered under the existing child
 receipts; allocator behavior and panic unwinding are not claimed here. This
 adapter alone does not activate the complete public frontend.
 
+### Production checked binding and capability gates
+
+The [production generation pipeline](../../macros/src/gen/mod.rs) adds
+`CheckedIterativeBinding` alongside ordinary `Clone`, comparison and `Hash`.
+Their generated definitions share one private Rust module: checked binding
+reuses the ordinary `AnyClonedTerm` result wrapper, while its key inspectors
+reuse comparison's existing variant-index functions. The receipt table,
+checked worklist, inspectors and typed Bag stage adapters are emitted once.
+No second variant-index table, ordinary interpreter or public helper API is
+introduced. Ordinary trait implementations retain their existing behavior;
+callers explicitly choose the checked interface and provide its reservation
+callback. This adds an available term-operation interface, **not** automatic
+activation of checked scope opening or the public Rholang frontend.
+
+A *dummy recipe* is the existing iterative Drop generator's selected finite
+replacement constructor. The
+[selected-default gate](../../macros/src/gen/term_ops/dummy_receipts.rs)
+checks only native defaults that these recipes actually construct. Required
+category children use their selected dependency receipts. Empty `Vec` and
+`Option` defaults do not require an element default; constructing a default
+`Arc<T>` does require the inner default, so that dependency is checked too.
+The default-receipt capability is distinct from permission to traverse an
+existing value: a runtime zipper may have an admitted empty default even
+though its checked binding constructor remains unsupported.
+
+At this generation boundary, an unprojectable selected native default selects
+a whole-language checked implementation that returns `UnsupportedProfile`
+before calling the reservation callback or constructing a worklist. That
+branch emits no checked receipt table, inspectors or stage provider and adds
+no checked native-trait requirement to the ordinary grammar. An unsupported
+native variant that is not needed by the selected dummy recipes does not by
+itself force this whole-profile refusal. Malformed recipe projections retain
+their generation diagnostics; no substitute receipt is fabricated.
+
+Within an admitted profile, one constructor-support decision governs checked
+task declarations, visit arms and assembly arms. An unsupported copy shape or
+native payload returns
+`UnsupportedConstructor { category, constructor }`; it cannot fall through to
+ordinary unmetered copying. Earlier checked work may already have been paid
+before that constructor is encountered, and normal error cleanup retains its
+existing allowances. Compile-time grammar refusals keep their diagnostics.
+
+The [native capability gate](../../macros/src/gen/term_ops/checked_native.rs)
+uses the enum emitter's **actual Rust payload type**, rather than a category
+name or declared native family. Family classification alone is insufficient:
+`foreign::i64` is not evidence of a primitive implementation, and a type name
+ending in `BigInt` is not evidence that it is the runtime's canonical integer.
+The [shared payload helper](../../macros/src/gen/types/enums.rs) reuses the
+exact auto-literal and collection emitters, including string/float
+normalization and the homogeneous PathMap payload. For an explicit literal
+rule it invokes the existing variant emitter, preserving the differences
+between legacy and term-context field selection.
+
+This helper extracts the sole field from one emitted Rust variant at macro
+expansion time. It does not parse an entire generated enum, resolve arbitrary
+Rust aliases, or reparse Rholang applications, theory declarations or foreign
+language terms at runtime. Rust still checks the concrete emitted types and
+trait implementations. Unknown aliases are not granted checked capabilities
+from their spelling.
+
+Checked native-literal capabilities are deliberately operation-specific:
+
+| Actual emitted native payload | Binding copy | Hash inspection | Equality/ordering inspection |
+| --- | --- | --- | --- |
+| `i64`, `bool`, standard `String` | Supported | Supported | Supported |
+| `u8`, `usize` | Supported | Supported | Unsupported |
+| Other fixed primitive leaves and canonical runtime numeric handles | Supported | Unsupported | Unsupported |
+| Standard `Vec<u8>` | Supported | Unsupported | Unsupported |
+| Unknown native carrier | Unsupported | Unsupported | Unsupported |
+
+Here *fixed primitive leaves* means the unit, character, remaining integer and
+floating-point types accepted by the existing
+[binding leaf implementation](../../runtime/src/checked_binding.rs).
+Canonical runtime numeric handles include the canonical float, arbitrary
+integer, rational and fixed-point carriers. The table concerns native literal
+payloads, not structural category children or separate variable and foreign
+term leaf adapters. A supported binding copy does not imply that its result
+can be used as an admitted Bag key: the native reconstruction provider also
+needs complete Hash and comparison coverage and refuses if a required
+operation is unsupported. Such refusal does not change ordinary Bag behavior
+or replace its native Hash/comparison operations.
+
+The generated interface retains the caller's single reservation callback
+through traversal, metadata inspection and final stage prepayment. It does
+not create a new budget or turn a partial inspection receipt into authority.
+Payload-correspondence tests, capability tests, generated-code execution and
+actual supported Rholang-context tests validate different parts of this seam;
+emitting the interface alone is not evidence that those gates have passed or
+that frontend integration is complete.
+
 ## Inspecting native leaf work without replay
 
 The existing sealed [hash leaf interface](../../runtime/src/checked_hash.rs)

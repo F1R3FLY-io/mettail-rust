@@ -16,7 +16,7 @@ use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use syn::Ident;
 
 use crate::gen::native_carrier::NativeRecursiveCarrier;
@@ -29,6 +29,7 @@ enum CollectionSurface {
 
 struct CheckedEmissionContext {
     dummy_indices: BTreeMap<String, usize>,
+    supported_literals: BTreeSet<(String, String)>,
 }
 
 struct CloneEmissionNames {
@@ -52,12 +53,33 @@ impl CloneEmissionNames {
         }
     }
 
-    // Gated until every field/assembly branch has checked emission. This
-    // constructor changes generation context, not parser activation.
+    // Unsupported shapes and native payloads are explicit checked refusals.
+    // This generation context does not activate a public parser entrypoint.
     #[allow(dead_code)]
-    fn checked(receipts: &super::dummy_receipts::DummyReceiptEmission) -> Self {
+    fn checked(
+        language: &LanguageDef,
+        receipts: &super::dummy_receipts::DummyReceiptEmission,
+    ) -> Self {
+        let mut supported_literals = BTreeSet::new();
+        for ty in &language.types {
+            for variant in collect_category_variants(&ty.name, language) {
+                if let VariantKind::Literal { label } = variant {
+                    if super::checked_native::literal_supported(
+                        &ty.name,
+                        &label,
+                        language,
+                        super::checked_native::LeafCapability::Binding,
+                    ) {
+                        supported_literals.insert((ty.name.to_string(), label.to_string()));
+                    }
+                }
+            }
+        }
         Self {
-            checked: Some(CheckedEmissionContext { dummy_indices: receipts.indices.clone() }),
+            checked: Some(CheckedEmissionContext {
+                dummy_indices: receipts.indices.clone(),
+                supported_literals,
+            }),
             task_enum: format_ident!("CheckedBindingTask"),
             task_pool: format_ident!("CHECKED_BINDING_TASK_POOL"),
             result_pool: format_ident!("CHECKED_BINDING_RESULT_POOL"),
@@ -197,6 +219,41 @@ pub fn generate_iterative_clone(language: &LanguageDef) -> TokenStream {
         #engine
         #impls
     }
+}
+
+/// Add the checked interpretation beside the existing private Clone/Cmp/Hash
+/// definitions. The ordinary wrapper enum and variant-index functions remain
+/// the only authorities; no ordinary operation is replaced by this interface.
+pub fn generate_checked_iterative_binding(
+    language: &LanguageDef,
+) -> Result<TokenStream, syn::Error> {
+    let plan = super::iterative_drop::select_dummy_plan(language);
+    if !super::dummy_receipts::selected_defaults_supported(language, &plan) {
+        let implementations = language.types.iter().map(|ty| {
+            let category = &ty.name;
+            quote! {
+                impl mettail_runtime::CheckedIterativeBinding for #category {
+                    fn try_copy_iterative<E>(
+                        &self,
+                        _operation: mettail_runtime::BindingOperation<'_>,
+                        _reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                    ) -> Result<Self, mettail_runtime::BindingFailure<E>> {
+                        Err(mettail_runtime::BindingFailure::UnsupportedProfile)
+                    }
+                }
+            }
+        });
+        return Ok(quote! { #(#implementations)* });
+    }
+    let receipts = super::dummy_receipts::generate_dummy_receipts(language, &plan)?;
+    let emission = CloneEmissionNames::checked(language, &receipts);
+    let tasks = generate_task_enum(language, &emission);
+    let engine = generate_engine(language, &emission);
+    let implementations = generate_impls(language, &emission);
+    let inspection = super::iterative_hash::generate_hash_contribution_inspection(language);
+    let admission = super::hashbag_rebuild_admission::generate_hashbag_rebuild_admission(language);
+    let table = receipts.tokens;
+    Ok(quote! { #table #tasks #engine #implementations #inspection #admission })
 }
 
 fn generate_value_enum(language: &LanguageDef) -> TokenStream {
@@ -343,11 +400,43 @@ fn checked_scope_fields<'a>(
     eligible.then_some((label, fields, CheckedScopeField { body_category, multiple }))
 }
 
+// One eligibility decision controls all three builders. An unimplemented
+// checked shape must never instantiate an ordinary, unmetered fallback arm.
+fn checked_constructor_supported(
+    category: &Ident,
+    variant: &VariantKind,
+    emission: &CloneEmissionNames,
+) -> bool {
+    if emission.checked.is_none() {
+        return true;
+    }
+    match variant {
+        // Preserve the existing compile-time diagnostic, not a runtime escape.
+        VariantKind::Refused { .. } | VariantKind::Nullary { .. } | VariantKind::Var { .. } => true,
+        VariantKind::Literal { label } => emission.checked.as_ref().is_some_and(|context| {
+            context
+                .supported_literals
+                .contains(&(category.to_string(), label.to_string()))
+        }),
+        VariantKind::Regular { fields, .. } => checked_scalar_fields(fields, emission),
+        VariantKind::Binder { .. } | VariantKind::MultiBinder { .. } => {
+            checked_scope_fields(variant, emission).is_some()
+        },
+        VariantKind::Collection { .. } | VariantKind::CollectionLiteral { .. } => {
+            checked_collection_payload(variant, emission).is_some()
+        },
+        VariantKind::RecursiveNativeLiteral { .. } => false,
+    }
+}
+
 fn generate_assemble_task(
     category: &Ident,
     variant: &VariantKind,
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
+    if !checked_constructor_supported(category, variant, emission) {
+        return None;
+    }
     if let Some((label, fields)) = checked_collection_payload(variant, emission) {
         let task = format_ident!("Assemble{}_{}", category, label);
         let slots = scalar_slot_fields(&fields);
@@ -544,6 +633,18 @@ fn generate_visit_arm(
     variant: &VariantKind,
     emission: &CloneEmissionNames,
 ) -> TokenStream {
+    if !checked_constructor_supported(category, variant, emission) {
+        let label = variant.label();
+        let category_name = category.to_string();
+        let constructor_name = label.to_string();
+        return quote! {
+            #category::#label(..) => {
+                return Err(mettail_runtime::BindingFailure::UnsupportedConstructor {
+                    category: #category_name, constructor: #constructor_name,
+                });
+            }
+        };
+    }
     if let Some((label, fields)) = checked_collection_payload(variant, emission) {
         return generate_scalar_visit(category, label, &fields, None, emission);
     }
@@ -1459,6 +1560,9 @@ fn generate_assemble_arm(
     destructure_is_irrefutable: bool,
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
+    if !checked_constructor_supported(category, variant, emission) {
+        return None;
+    }
     if let Some((label, fields)) = checked_collection_payload(variant, emission) {
         return Some(generate_scalar_assemble(
             category,
@@ -1978,6 +2082,10 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
 }
 
 #[cfg(test)]
+#[path = "iterative_binding_activation_tests.rs"]
+mod activation_tests;
+
+#[cfg(test)]
 #[path = "iterative_clone_bag_tests.rs"]
 mod bag_tests;
 
@@ -1999,7 +2107,7 @@ mod tests {
         let plan = super::super::iterative_drop::select_dummy_plan(&language);
         let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
             .expect("selected native receipts");
-        let emission = CloneEmissionNames::checked(&receipts);
+        let emission = CloneEmissionNames::checked(&language, &receipts);
         let enum_types: Vec<_> = language
             .types
             .iter()
@@ -2129,7 +2237,7 @@ mod tests {
         let plan = super::super::iterative_drop::select_dummy_plan(&language);
         let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
             .expect("selected nullary receipt");
-        let checked = CloneEmissionNames::checked(&receipts);
+        let checked = CloneEmissionNames::checked(&language, &receipts);
         assert_eq!(
             compact(
                 checked
@@ -2283,7 +2391,7 @@ mod tests {
         let plan = super::super::iterative_drop::select_dummy_plan(&language);
         let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
             .expect("selected scalar fixture receipts");
-        let checked = CloneEmissionNames::checked(&receipts);
+        let checked = CloneEmissionNames::checked(&language, &receipts);
         // Use the production enum layout, not an enum reconstructed from the
         // term-operation classifier. Omit unrelated derives in this focused
         // fixture; field names, order and Rust payload types remain unchanged.
