@@ -283,11 +283,12 @@ jobs and virtual verdicts retain their separate weighted accounting. Root
 borrows retain all referenced terms until the worklist is dropped; its owned
 rosters contain only flat pointer records with prepaid normal cleanup.
 
-This traversal is deliberately private. Its current body contributions and
-local driver allowance do not yet include the complete collection control,
-materialization, scratch ownership, and continuation-scheduling envelope.
-They must not authorize a native comparison or a Bag reconstruction by
-themselves. The
+This traversal is deliberately private. For supported Map and Bag recipes it
+combines body contributions with local driver, collection control,
+materialization, scratch ownership and continuation-scheduling allowances.
+The result is accounting data: inspection does not reserve that future
+execution or authorize Bag reconstruction. Native Hash and reconstruction-stage
+composition remain separate. The
 [original-layout fixture](../../macros/src/gen/term_ops/iterative_cmp_contribution_tests.rs)
 checks the actual emitted traversal, not an independently written comparator.
 
@@ -383,6 +384,52 @@ derivations constructed from the original sorts and to the actual compressed
 lexicographic request relation. Associating these annotations with the Rust
 implementation remains an explicit source-review boundary, not a claim that
 Rocq verifies the Rust compiler or arbitrary native callbacks.
+
+### Composing collection allowances
+
+For the widths $`n,m`$ and quantities $`B,L`$ defined above, let $`T`$ bound
+the number of external typed comparison requests. A Map item may request both
+key and value comparisons, so $`T=2(B+L)`$; a Bag item requests one category
+comparison, so $`T=B+L`$. Let $`S_l,S_r`$ be the existing historical-capacity
+scan allowances for the original left and right Bags. They are not derived
+from multiplicity or current entry count alone.
+
+The private `inspect_cmp_add_collection_overhead` helper adds these components:
+
+| Component | Work | Records |
+|---|---:|---:|
+| Map materialization and repetition sums | $`7L+22`$ | 0 |
+| Bag materialization and repetition sums | $`7L+20+S_l+S_r`$ | 0 |
+| Two rosters, two scratch buffers and one machine owner | $`4L+10`$ | $`2L+5`$ |
+| Collection core | $`23B+11L+28`$ | 0 |
+| Ord continuation scheduling | $`7+9T`$ | $`1+T`$ |
+| Eq auxiliary continuation scheduling | $`27+9T`$ | $`3+T`$ |
+
+Select one materialization row and one continuation row. Each component is
+multiplied once by the enclosing request coefficient. The existing Bag lead
+comparison remains a separate two-work contribution. Typed child jobs retain
+their existing four-work, one-record lifecycle contribution; the table does
+not charge it again. These records use the existing logical-slot convention,
+not physical allocation sizes or peak resident memory.
+
+The [continuation proof](../../formal/rocq/rho_bridge/theories/GeneratedCollectionContinuationCover.v)
+retains original task occurrences, answers and owner identities. Every
+nonterminal delivery round consumes an actual resume task, and every callback
+comes from an actual start or resume. This includes pending tasks discarded
+after a decisive result; an inspector's unit return is never an ordering
+answer. Eq's auxiliary wrapper accounts for its separate pool and lifecycle.
+
+The [request-cost proof](../../formal/rocq/rho_bridge/theories/GeneratedComparisonRequestCover.v)
+connects the existing request-count bounds to nonnegative costs of the original
+directed operand products. Aliases remain repeated occurrences, and both
+Map roles are retained even when a native key result may omit the value call.
+Permutation membership connects sorted rosters back to the original inputs.
+
+All arithmetic is checked after a metadata precharge. The existing scaled
+accumulator checks work and record projections before committing each
+component. Refusal or overflow returns no completed receipt; prior inspection
+charges remain spent. The original comparator and its sort are never run by
+this helper, and ordinary comparison emission is unchanged.
 
 ### Ordinary generated Hash wrapper
 

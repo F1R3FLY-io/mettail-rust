@@ -1,9 +1,9 @@
 //! Private contribution traversal using the original comparison handlers.
 use super::*;
 
-/// Assemble borrowed typed jobs, not another comparator. Collection control
-/// allowances remain separate from these body contributions; this function
-/// must not be exposed as a whole native-comparison admission interface.
+/// Assemble borrowed typed jobs and their collection-component allowances,
+/// not another comparator. This private receipt is accounting data, not
+/// authority to execute native comparisons or reconstruction.
 #[allow(dead_code)]
 pub(super) fn generate_comparison_contribution_inspection(language: &LanguageDef) -> TokenStream {
     let emission = CmpEmissionNames::inspect_contributions();
@@ -114,6 +114,72 @@ fn generate_collection_contribution_cursor() -> TokenStream {
         #[derive(Clone, Copy)]
         enum InspectCmpPairFamily { LeftSort, RightSort, CrossLex }
 
+        #[derive(Clone, Copy)]
+        enum InspectCmpCollectionSource {
+            Map,
+            Bag { left_scan: usize, right_scan: usize },
+        }
+
+        fn inspect_cmp_add_collection_overhead<E>(
+            state: &mut mettail_runtime::binding_receipt::BindingCharge,
+            n: usize, m: usize, source: InspectCmpCollectionSource,
+            mode: InspectCmpContributionMode, factor: usize,
+            reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+        ) -> Result<(), mettail_runtime::NativeComparisonFailure<E>> {
+            // Pay before this bounded metadata calculation. Named components
+            // remain separate from child bodies and their existing 4W/1R
+            // pushes; Bag's original length comparison is counted by its arm.
+            mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)
+                .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+            let overflow = || mettail_runtime::NativeComparisonFailure::Admission(
+                mettail_runtime::BindingFailure::SizeOverflow);
+            let width = n.checked_add(m).ok_or_else(overflow)?;
+            let sort_requests = n.checked_mul(n.saturating_sub(1))
+                .and_then(|left| m.checked_mul(m.saturating_sub(1))
+                    .and_then(|right| left.checked_add(right))).ok_or_else(overflow)?;
+            let requests = sort_requests.checked_add(width).ok_or_else(overflow)?;
+            let (requests, preparation) = match source {
+                InspectCmpCollectionSource::Map => (
+                    requests.checked_mul(2).ok_or_else(overflow)?,
+                    width.checked_mul(7).and_then(|work| work.checked_add(22))
+                        .ok_or_else(overflow)?,
+                ),
+                InspectCmpCollectionSource::Bag { left_scan, right_scan } => (
+                    requests,
+                    width.checked_mul(7).and_then(|work| work.checked_add(20))
+                        .and_then(|work| work.checked_add(left_scan))
+                        .and_then(|work| work.checked_add(right_scan)).ok_or_else(overflow)?,
+                ),
+            };
+            // GeneratedCollectionPreparation: actual producer and sum words.
+            // AdmittedCollectionComparisonOwnership: four flat buffers plus
+            // one Box, each with its eventual normal-disposal credit.
+            let buffer_work = width.checked_mul(4).and_then(|work| work.checked_add(10))
+                .ok_or_else(overflow)?;
+            let buffer_records = width.checked_mul(2).and_then(|count| count.checked_add(5))
+                .ok_or_else(overflow)?;
+            // NativeCollectionCoreInventory: source-derived 23B+11L+28.
+            let core = sort_requests.checked_mul(23)
+                .and_then(|work| width.checked_mul(11).and_then(|more| work.checked_add(more)))
+                .and_then(|work| work.checked_add(28)).ok_or_else(overflow)?;
+            // GeneratedCollectionContinuationCover: Ord Start overhead or
+            // Eq's auxiliary wrapper. Typed child pushes are NOT added again.
+            let (start_work, start_records) = match mode {
+                InspectCmpContributionMode::Ord => (7usize, 1usize),
+                InspectCmpContributionMode::Eq => (27usize, 3usize),
+            };
+            let continuation_work = requests.checked_mul(9)
+                .and_then(|work| work.checked_add(start_work)).ok_or_else(overflow)?;
+            let continuation_records = requests.checked_add(start_records).ok_or_else(overflow)?;
+            for (work, records) in [
+                (preparation, 0), (buffer_work, buffer_records),
+                (core, 0), (continuation_work, continuation_records),
+            ] {
+                inspect_cmp_scaled_contribution(state, work, records, 0, factor, reserve)?;
+            }
+            Ok(())
+        }
+
         struct InspectCmpPairCursor {
             left: mettail_runtime::CheckedCmpRoster,
             right: mettail_runtime::CheckedCmpRoster,
@@ -208,8 +274,10 @@ fn generate_collection_contribution_cursor() -> TokenStream {
 
         fn inspect_cmp_schedule_collection<E>(
             stack: &mut Vec<InspectCmpContributionFrame>,
+            state: &mut mettail_runtime::binding_receipt::BindingCharge,
             left: mettail_runtime::CheckedCmpRoster,
             right: mettail_runtime::CheckedCmpRoster,
+            source: InspectCmpCollectionSource,
             primary: fn(*const (), *const ()) -> InspectCmpContributionTask,
             secondary: Option<fn(*const (), *const ()) -> InspectCmpContributionTask>,
             mode: InspectCmpContributionMode,
@@ -222,6 +290,7 @@ fn generate_collection_contribution_cursor() -> TokenStream {
                 .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
             let n = left.try_items(reserve)?.len();
             let m = right.try_items(reserve)?.len();
+            inspect_cmp_add_collection_overhead(state, n, m, source, mode, factor, reserve)?;
             let overflow = || mettail_runtime::NativeComparisonFailure::Admission(
                 mettail_runtime::BindingFailure::SizeOverflow);
             let left_factor = n.checked_mul(n.saturating_sub(1))

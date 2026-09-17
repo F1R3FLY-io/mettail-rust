@@ -995,12 +995,26 @@ fn inspect_unordered_collection_stmts(
     } else {
         TokenStream::new()
     };
+    let source = if *coll_type == CollectionType::HashBag {
+        quote! {
+            InspectCmpCollectionSource::Bag {
+                left_scan: (#left_expr).try_inspect_borrowed_scan_work(reserve)
+                    .map_err(mettail_runtime::NativeComparisonFailure::Admission)?,
+                right_scan: (#right_expr).try_inspect_borrowed_scan_work(reserve)
+                    .map_err(mettail_runtime::NativeComparisonFailure::Admission)?,
+            }
+        }
+    } else {
+        quote! { InspectCmpCollectionSource::Map }
+    };
     quote! {{
         #lead
+        let __cmp_source = #source;
         let __cmp_left = (#left_expr).try_comparison_roster(reserve)?;
         let __cmp_right = (#right_expr).try_comparison_roster(reserve)?;
         inspect_cmp_schedule_collection(
-            stack, __cmp_left, __cmp_right, #constructor, #secondary, mode, factor, reserve,
+            stack, &mut state, __cmp_left, __cmp_right, __cmp_source,
+            #constructor, #secondary, mode, factor, reserve,
         )?;
     }}
 }

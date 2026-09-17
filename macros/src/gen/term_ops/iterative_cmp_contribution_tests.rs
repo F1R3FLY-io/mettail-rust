@@ -66,6 +66,68 @@ fn capture_original_layout_contribution_worklist() {
             for (term, count) in entries { values.insert_n(term, count); }
             Proc::PBag(values)
         }
+        fn exercise_collection_components() {
+            use InspectCmpContributionMode::{Eq, Ord};
+            for n in 0usize..=3 {
+                for m in 0usize..=3 {
+                    let width = n + m;
+                    let pairs = n * n.saturating_sub(1) + m * m.saturating_sub(1);
+                    for mode in [Eq, Ord] {
+                        let (extra_work, extra_records) = match mode { Eq => (20, 2), Ord => (0, 0) };
+                        for factor in [0, 1, 3] {
+                            for (source, work, records) in [
+                                (InspectCmpCollectionSource::Map,
+                                    41 * pairs + 40 * width + 67 + extra_work,
+                                    2 * pairs + 4 * width + 6 + extra_records),
+                                (InspectCmpCollectionSource::Bag { left_scan: 19, right_scan: 37 },
+                                    32 * pairs + 31 * width + 65 + 19 + 37 + extra_work,
+                                    pairs + 3 * width + 6 + extra_records),
+                            ] {
+                                for limit in 0usize..=9 {
+                                    let mut state = BindingCharge::ZERO;
+                                    let mut trace = Vec::new();
+                                    let result = inspect_cmp_add_collection_overhead(
+                                        &mut state, n, m, source, mode, factor, &mut |w, u| {
+                                            trace.push((w, u));
+                                            if trace.len() > limit { Err(limit) } else { Ok(()) }
+                                        },
+                                    );
+                                    assert_eq!(trace, vec![(1, 0); (limit + 1).min(9)]);
+                                    if limit < 9 {
+                                        assert_eq!(result, Err(NativeComparisonFailure::Admission(
+                                            BindingFailure::Reservation(limit))));
+                                    } else {
+                                        assert_eq!(result, Ok(()));
+                                        assert_eq!(state, BindingCharge::new(work * factor, records * factor, 0)
+                                            .expect("component sum fits"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for (n, m, source, factor) in [
+                (usize::MAX, 1, InspectCmpCollectionSource::Map, 0),
+                (usize::MAX, 0, InspectCmpCollectionSource::Map, 1),
+                (0, 0, InspectCmpCollectionSource::Bag { left_scan: usize::MAX, right_scan: 0 }, 0),
+                (0, 0, InspectCmpCollectionSource::Map, usize::MAX),
+            ] {
+                let mut state = BindingCharge::ZERO;
+                let result = inspect_cmp_add_collection_overhead(
+                    &mut state, n, m, source, Eq, factor, &mut |_, _| Ok::<_, ()>(()),
+                );
+                assert_eq!(result, Err(NativeComparisonFailure::Admission(BindingFailure::SizeOverflow)));
+                let mut calls = 0;
+                let result = inspect_cmp_add_collection_overhead(
+                    &mut state, n, m, source, Eq, factor, &mut |w, u| {
+                        calls += 1; assert_eq!((w, u), (1, 0)); Err::<(), _>(17u8)
+                    },
+                );
+                assert_eq!(result, Err(NativeComparisonFailure::Admission(BindingFailure::Reservation(17))));
+                assert_eq!(calls, 1, "refusal precedes even invalid arithmetic");
+            }
+        }
         fn exercise_original_pair_cursor() {
             let keys = [Proc::PZero, Proc::PUnary(Arc::new(Proc::PZero)), Proc::PVector(vec![])];
             let values = [Proc::PVector(vec![]), Proc::PZero, Proc::PUnary(Arc::new(Proc::PZero))];
@@ -87,7 +149,9 @@ fn capture_original_layout_contribution_worklist() {
                 }
                 mettail_runtime::reserve_binding_parts(2, 1, 0, &mut reserve).expect("stack header");
                 let mut stack = Vec::new();
-                inspect_cmp_schedule_collection(&mut stack, left_roster, right_roster,
+                let mut state = BindingCharge::ZERO;
+                inspect_cmp_schedule_collection(&mut stack, &mut state, left_roster, right_roster,
+                    InspectCmpCollectionSource::Map,
                     constructor, Some(constructor), InspectCmpContributionMode::Eq, 3, &mut reserve)
                     .expect("schedule original pair families");
                 assert_eq!(stack.len(), 1);
@@ -139,9 +203,20 @@ fn capture_original_layout_contribution_worklist() {
         }
         fn main() {
             use InspectCmpContributionMode::{Eq, Ord};
+            exercise_collection_components();
             exercise_original_pair_cursor();
             let zero = Proc::PZero;
             assert_eq!(inspect(&zero, &zero, Eq), BindingCharge::new(25, 3, 0).expect("root"));
+            // The fixed handler envelope includes IndexCmp on an Ord
+            // variant mismatch, even though the recipe returns no verdict.
+            let other_variant = Proc::PUnary(Arc::new(Proc::PZero));
+            for mode in [Eq, Ord] {
+                for (left, right) in [(&zero, &other_variant), (&other_variant, &zero)] {
+                    assert_eq!(inspect(left, right, mode),
+                        BindingCharge::new(25, 3, 0).expect("unequal variant envelope"));
+                    exercise_cuts(left, right, mode);
+                }
+            }
             let shared = Arc::new(Proc::PZero);
             let pair = Proc::PPair(shared.clone(), shared.clone());
             assert_eq!(inspect(&pair, &pair, Eq), BindingCharge::new(47, 5, 0).expect("two occurrences"));

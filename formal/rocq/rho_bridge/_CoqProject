@@ -112,6 +112,7 @@ theories/SourceMapEntryVisit.v
 theories/GeneratedBagComparisonInitialization.v
 theories/AdmittedGeneratedCollectionScheduling.v
 theories/GeneratedCollectionPreparation.v
+theories/GeneratedCollectionContinuationCover.v
 theories/GeneratedChildTraversal.v
 theories/MergeSortPdaCursor.v
 theories/MergeSortPdaRun.v
@@ -128,6 +129,7 @@ theories/GeneratedConstructorSourceProjection.v
 theories/CollectionPairAndUnitLexResults.v
 theories/CollectionWeightedLexResults.v
 theories/NativeCollectionRequestBound.v
+theories/GeneratedComparisonRequestCover.v
 theories/NativeSortedComparisonClasses.v
 theories/NativeMapTrustedCollect.v
 theories/NativeStableInsertionSort.v
