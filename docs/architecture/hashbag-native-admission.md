@@ -970,6 +970,14 @@ native bucket and key/count projections are grouped in `Yield`. Metadata
 inspection and the caller's loop remain separately charged. Borrowed iterator
 destruction invokes no key destructor.
 
+`HashBag::try_inspect_borrowed_scan_work` exposes this same checked allowance
+as metadata for composition. It reserves one metadata work group before
+reading the original stored-entry count and historical capacity. It does not
+construct an iterator, scan a bucket, invoke a key operation, allocate a roster,
+or reserve the future scan. Profile refusal precedes inspection; arithmetic
+overflow retains the paid metadata step. Consumers must separately admit the
+future operation through their existing budget.
+
 The adapter also relies on the native invariant that `counts.len()` and raw
 `items` equal the number of `FULL` control entries. The model's arbitrary
 Boolean control predicate is explicitly tied to that same immutable table in

@@ -249,6 +249,91 @@ fn borrowed_scan_allowance_checks_each_arithmetic_boundary() {
 }
 
 #[test]
+fn borrowed_scan_inspection_is_metadata_only_and_preserves_sparse_originals() {
+    let calls = Rc::new(Cell::new((0, 0, 0)));
+    let mut bag = HashBag::new();
+    for id in 0..128 {
+        bag.insert(CountedKey { id, calls: Rc::clone(&calls) });
+    }
+    for id in 0..120 {
+        assert!(bag.remove(&CountedKey { id, calls: Rc::clone(&calls) }));
+    }
+    let original: Vec<_> = bag
+        .iter()
+        .map(|(key, count)| (key as *const _, count))
+        .collect();
+    let metadata = (bag.len(), bag.distinct_len(), bag.historical_capacity());
+    calls.set((0, 0, 0));
+    let mut requests = Vec::new();
+    let result = bag.try_inspect_borrowed_scan_work(&mut |work, units| {
+        requests.push((work, units));
+        Ok::<_, &'static str>(())
+    });
+    if crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+        assert_eq!(result, borrowed_scan_work_allowance(metadata.1, metadata.2));
+        assert_eq!(requests, [(1, 0)], "inspection does not pay or execute the scan");
+    } else {
+        assert_eq!(result, Err(BindingFailure::UnsupportedProfile));
+        assert!(requests.is_empty());
+    }
+    assert_eq!(calls.get(), (0, 0, 0));
+    assert_eq!(metadata, (bag.len(), bag.distinct_len(), bag.historical_capacity()));
+    assert_eq!(
+        original,
+        bag.iter()
+            .map(|(key, count)| (key as *const _, count))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn borrowed_scan_inspection_ignores_multiplicity_and_covers_empty_setup() {
+    let empty = HashBag::<usize>::new();
+    let mut single = HashBag::new();
+    let mut repeated = HashBag::new();
+    single.insert_n(7usize, 1);
+    repeated.insert_n(7usize, usize::MAX);
+    assert_eq!(
+        single.try_inspect_borrowed_scan_work(&mut allow),
+        repeated.try_inspect_borrowed_scan_work(&mut allow)
+    );
+    assert_eq!(
+        empty.try_inspect_borrowed_scan_work(&mut allow),
+        if crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            Ok(19)
+        } else {
+            Err(BindingFailure::UnsupportedProfile)
+        }
+    );
+}
+
+#[test]
+fn borrowed_scan_inspection_preserves_refusal_before_overflow() {
+    // Fault injection needs no oversized allocation and must not be scanned.
+    let mut bag = HashBag::<usize>::new();
+    bag.capacity_high_water = usize::MAX;
+    let mut requests = Vec::new();
+    let refused = bag.try_inspect_borrowed_scan_work(&mut |work, units| {
+        requests.push((work, units));
+        Err("original metadata refusal")
+    });
+    if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+        assert_eq!(refused, Err(BindingFailure::UnsupportedProfile));
+        assert!(requests.is_empty());
+        return;
+    }
+    assert_eq!(refused, Err(BindingFailure::Reservation("original metadata refusal")));
+    assert_eq!(requests, [(1, 0)]);
+    requests.clear();
+    let overflow = bag.try_inspect_borrowed_scan_work(&mut |work, units| {
+        requests.push((work, units));
+        Ok::<_, &'static str>(())
+    });
+    assert_eq!(overflow, Err(BindingFailure::SizeOverflow));
+    assert_eq!(requests, [(1, 0)], "overflow retains the paid metadata step");
+}
+
+#[test]
 fn entry_visitor_preserves_sparse_original_borrows_without_key_operations() {
     let calls = Rc::new(Cell::new((0, 0, 0)));
     let mut bag = HashBag::new();

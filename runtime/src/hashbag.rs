@@ -610,6 +610,27 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
         self.capacity_high_water
     }
 
+    /// Inspect the existing native borrowed-scan work allowance without scanning.
+    ///
+    /// Only one metadata work group is reserved here. The returned allowance
+    /// uses the stored-entry count and historical capacity, not multiplicity;
+    /// it is the same checked bound used by [`Self::try_for_each_entry`].
+    /// No iterator, allocation, key operation, or execution reservation occurs.
+    /// Consumers must separately admit the future scan and their own work.
+    ///
+    /// Unsupported profiles fail before inspection. Reservation refusal keeps
+    /// its original error; arithmetic overflow retains the metadata charge.
+    pub fn try_inspect_borrowed_scan_work<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<usize, crate::BindingFailure<E>> {
+        if !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(crate::BindingFailure::UnsupportedProfile);
+        }
+        crate::reserve_binding_parts(1, 0, 0, reserve)?;
+        borrowed_scan_work_allowance(self.counts.len(), self.capacity_high_water)
+    }
+
     /// Visit each original stored key/count pair through the paid native scan.
     ///
     /// Unlike comparison-roster construction, this preserves zero counts and
