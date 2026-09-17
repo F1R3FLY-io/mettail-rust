@@ -8,10 +8,12 @@ resulting worklist entries alone does not pay for the backing table, key
 operations, or cleanup.
 
 The reconstruction interface already exists in
-[`runtime/src/hashbag.rs`](../../runtime/src/hashbag.rs). Concrete table and
-key-operation coverage is still an implementation obligation. This document
-records the audited source boundary and required refinement, not a claim that
-checked parallel-process preparation or the public application is complete.
+[`runtime/src/hashbag.rs`](../../runtime/src/hashbag.rs), and a private generated
+stage provider composes its table and key-operation allowances. The private
+checked Bag adapter connects that provider to the existing binding worklist.
+This document records the audited source boundary and required refinement,
+not a claim that checked parallel-process preparation or the public
+application is complete.
 
 ## Reuse and semantic identity
 
@@ -82,6 +84,162 @@ and reservation then precede the unchanged native stage. Overflow,
 cancellation or refusal executes no native stage and refunds no earlier
 inspection work. The model does not supply the missing complete typed
 Hash/equality provider merely by parameterizing these allowances.
+
+### Generated typed stage provider
+
+The [stage-provider emitter](../../macros/src/gen/term_ops/hashbag_rebuild_admission.rs)
+implements `generate_hashbag_rebuild_admission(language)`. It emits shared
+geometry, flat-charge and scaled-accumulation helpers once, plus
+`admit_bag_rebuild_<category>` for each language category. For example,
+`admit_bag_rebuild_proc` takes a `HashBagRebuildStep<'_, Proc>` and the caller's
+mutable reservation callback, and returns `Result<(), BindingFailure<E>>`.
+The callback type is `FnMut(usize, usize) -> Result<(), E>`: its two arguments
+are logical work and retention units, not a separate budget. The runtime calls
+the provider before executing the corresponding original reconstruction stage.
+
+The provider instantiates the stage-charge model above as follows:
+
+- `Start` reserves the model's shell, input-iterator and local cleanup charge
+  from the original distinct-entry width. It does not interpret the stored
+  total as a traversal width.
+- Nonzero clone insertion and every binding insertion compose the model's
+  flat table charge with `inspect_hash_contribution_<category>` and
+  `inspect_comparison_contributions_<category>` receipts. Equality inspection
+  uses `Eq` mode, with incoming/stored operands for binding and stored/incoming
+  operands for cloning. It neither substitutes ordering equality nor executes
+  native Hash, Eq or Ord to obtain a cost. The paid retained-entry visitor
+  preserves original key identities and occurrence multiplicities.
+- `FinalBindingSummary` adds the original summary scan and bookkeeping plus
+  two complete Hash allowances for each retained key.
+
+For `CloneEntries` with count zero, the provider instead reserves two native
+control-work groups: the reconstruction wrapper's checked-total guard, then
+the original `insert_n` zero-count test. The stage model's
+`clone_zero_flat_projection` proves this two-work, zero-retention projection.
+Geometry and structural key inspection are skipped. The original `insert_n`
+discards that incoming key without hashing or comparing it. Its destructor
+body must already be covered by the producer's independent root allowance;
+neither control group is a destructor allowance.
+
+Both native comparison and Fx hashing profile gates precede metadata access.
+Paid geometry inspection reuses `HashBagRetainedEntries::checked_bucket_count`
+and `checked_table_layout`; it does not implement another capacity inverse.
+The retained view is constructed privately between completed insertions in a
+fresh, deletion-free accumulator. Its actual bucket count is representable;
+a missing geometry result after the profile gate is therefore reported as
+`InvalidCollectionInput`. This source invariant must not be generalized to an
+arbitrary backing map or to a prospective allocation.
+
+Possible growth is detected when distinct width equals clean capacity,
+including binding insertion that may discover a duplicate only after reserve.
+The [growth model](../../formal/rocq/rho_bridge/theories/NativeHashBagGrowth.v)
+supplies the exact next bucket count: four from the empty singleton, otherwise
+twice the old count. Native sizing intermediates, doubling and the prospective
+layout are checked before insertion. The
+[layout model](../../formal/rocq/rho_bridge/theories/NativeHashBagLayout.v)
+justifies reusing the standard layout composition. Prospective size or charge
+overflow returns `SizeOverflow`, rather than permitting a predictable native
+arithmetic panic. These checks do not model allocator failure or physical RSS.
+
+Metadata inspection is paid separately from future execution. The provider
+pays its fixed stage-routing and accumulator lifetime, pays each inspection
+and checked scaling operation, and reuses the
+[paid accumulation contract](../../formal/rocq/rho_bridge/theories/NativeInspectionAccumulation.v).
+Only the final `BindingCharge::reserve` pays the composed native stage. An
+earlier refusal or arithmetic failure leaves that stage unexecuted and keeps
+previous inspection charges spent. Existing error conversions retain the
+original reservation payload without requiring `E: Clone`.
+
+The caller must supply already-transformed entries in original visitation
+order, preserve each original count, and prepay the input vector and every
+independent owned root's normal cleanup **before `Start`**, including refusal
+at `Start`. The
+[reconstruction ownership laws](../../formal/rocq/rho_bridge/theories/RequiredHashBagBindingReservation.v)
+cover ordered result-slot extraction and credit transfer between pending,
+retained and discarded roots. The provider does not manufacture those credits
+or certify an arbitrary entry producer.
+
+The provider and checked Bag adapter are private generated components.
+Original-layout fixture tests cover stage charges, native reconstruction
+parity and refusal boundaries; their presence does not establish that all
+checked-worker or public-frontend acceptance gates have passed. Required
+Rholang source contexts and supported-constructor checks remain necessary
+before public use.
+
+### Checked Bag scheduling and assembly
+
+The [binding emitter](../../macros/src/gen/term_ops/iterative_clone.rs) adapts
+required Bag fields, direct Bag payloads and Bag-literal payloads into the
+same checked slot-and-assembly path used for vectors. It does not introduce
+another term interpreter or change ordinary generated reconstruction.
+One reservation callback pays for every step, including inspection:
+
+1. **Borrow and allocate slots.** After paid metadata access, the original
+   Bag's `distinct_len()` determines the width. Each stored key receives one
+   original-index result slot, including a key with count zero. The source
+   stays borrowed and unchanged throughout traversal and reconstruction.
+2. **Schedule children.** `try_for_each_entry` performs the paid native scan.
+   Its visitor schedules one existing typed task per stored key, carrying
+   the source pointer, result-slot index and current scope state. Counts do
+   not expand into repeated tasks. The scanner pays for sparse-table work;
+   its visitor separately pays for task creation and metadata operations.
+3. **Reverse only the new task batch.** A paid two-index loop swaps complete
+   task/state records in place. Earlier pending tasks, including the parent
+   assembly task, remain untouched. The resulting last-in, first-out order
+   processes the original entry sequence without allocating a pointer roster.
+4. **Assemble owned entries.** A second paid scan of the same immutable source
+   takes each ready child from its original-index slot and pairs it with that
+   source entry's original count. Checked range arithmetic and tuple-array
+   layout validation precede allocation of the prepaid `Vec<(Category, usize)>`.
+5. **Run the existing reconstruction.** `try_rebuild_entries_with` consumes
+   those source-ordered entries. `Clone` selects `CloneEntries`; opening or
+   closing bindings selects `BindingEntries`. The typed stage provider admits
+   each native stage before it executes. Only successful assembly publishes
+   the resulting parent into its checked output slot.
+
+For a batch of width $`n`$, let $`s`$ be its completed endpoint swaps. The
+[paid reversal model](../../formal/rocq/rho_bridge/theories/PaidTaskBatchReversal.v)
+derives the reversed batch, unchanged exterior, and preservation of whole
+task occurrences from explicit paired-endpoint transitions. It proves
+$`2s\leq n\leq2s+1`$, hence $`s\leq\lfloor n/2\rfloor`$. Setup costs three
+work groups and two records; every guard, including the terminal guard,
+costs one work group; each swap block costs six work groups and one temporary
+record. The completed projection is $`4+7s`$ work and $`2+s`$ records.
+Reservation refusal precedes the next mutation: it retains the current
+partially reversed worklist, not a rollback to the original order.
+
+The [vector reservation laws](../../formal/rocq/rho_bridge/theories/RequiredVecBindingReservation.v)
+supply the conservative entry-vector allowance of $`10+4n`$ work and
+$`4+2n`$ records, including normal partial-vector cleanup. Native source scans,
+checked slot operations, task pushes and independent child-root cleanup
+credits remain separate. The reconstruction `Start` charge already includes
+the Bag's local generated cleanup; the adapter does not charge that component
+again. Earlier successful takes are not rolled back after a later refusal.
+The [Bag ownership laws](../../formal/rocq/rho_bridge/theories/RequiredHashBagBindingReservation.v)
+transfer existing credits between pending slots, owned entry-vector roots,
+retained keys and discarded keys without deduplicating aliases.
+
+Source order matters when transformed keys collide. Binding keeps the first
+equal key object and the last supplied count while retaining the original
+stored total, even when that total differs from the surviving count sum.
+Clone instead accumulates positive counts and discards zero-count incoming
+keys through the existing `insert_n` policy. Both modes still prepare every
+original stored occurrence; zero counts are not silently skipped by traversal.
+
+Bag elements are owned children and are reconstructed even during Clone.
+That does not deepen adjacent shared edges: sibling `Arc` fields and a
+scope's body remain shallow-cloned. For opening or closing bindings, scope
+prefields retain the outer state, while the body task carries the existing
+`under_scope()` state. Batch reversal moves each state together with its task.
+
+These are kernel-checked component laws plus reviewed emitter correspondence,
+not verification of all Rust execution. The reversal theorems concern completed
+model runs; they do not assert arbitrary-run existence or whole-Rust termination.
+Primitive `slice.swap`, valid source borrows, native iterator stability under
+an unchanged borrow, and emitted typed routing remain explicit source-review
+boundaries. Normal returned-error cleanup is covered under the existing child
+receipts; allocator behavior and panic unwinding are not claimed here. This
+adapter alone does not activate the complete public frontend.
 
 ## Inspecting native leaf work without replay
 

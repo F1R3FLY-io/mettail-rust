@@ -216,6 +216,20 @@ Definition insert_flat (mode : B.Mode) (growth : bool) entries old_groups new_gr
      C.records := if growth then 1 else 0;
      C.owned_bytes := if growth then allocation_bytes else 0 |}.
 
+(** A zero-count Clone still executes the reconstruction wrapper's mode and
+    checked-total guard before insert_n tests the count. Keep the existing
+    insertion-wrapper group and the zero-test group distinct. Start's fixed
+    shell charge and the provider's metadata inspection pay neither of these
+    per-insertion native groups. The incoming root's disposal is already paid
+    by its producer; no Hash, Eq, probe or growth occurs on this branch. *)
+Definition clone_zero_flat : C.Charge :=
+  {| C.base_work := 1 + 1; C.records := 0; C.owned_bytes := 0 |}.
+
+Theorem clone_zero_flat_projection :
+  C.projected_work clone_zero_flat = 2 /\
+  C.projected_units clone_zero_flat = 0.
+Proof. split; reflexivity. Qed.
+
 (** Final summary: one default/assignment group, then one fixed lane-recipe
     group and one add-to-summary group per entry; two structural Hash bodies
     per entry are supplied by final_summary_envelope instead. *)
@@ -287,6 +301,7 @@ Print Assumptions NativeHashBagStageCharge.clone_occupied_is_covered.
 Print Assumptions NativeHashBagStageCharge.final_summary_is_two_original_hashes.
 Print Assumptions NativeHashBagStageCharge.probe_flat_projection.
 Print Assumptions NativeHashBagStageCharge.retained_inspection_projection.
+Print Assumptions NativeHashBagStageCharge.clone_zero_flat_projection.
 Print Assumptions NativeHashBagStageCharge.stage_overflow_precedes_native_action.
 Print Assumptions NativeHashBagStageCharge.stage_cancellation_precedes_native_action.
 Print Assumptions NativeHashBagStageCharge.stage_budget_refusal_precedes_native_action.

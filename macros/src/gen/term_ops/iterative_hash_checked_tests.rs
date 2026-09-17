@@ -234,6 +234,8 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
     let checked_engine = generate_hash_engine(&language, &emission);
     let checked_impls = generate_hash_impls(&language, &emission);
     let contribution_inspection = generate_hash_contribution_inspection(&language);
+    let bag_admission =
+        super::super::hashbag_rebuild_admission::generate_hashbag_rebuild_admission(&language);
     let proc_var = crate::gen::generate_var_label(&format_ident!("Proc"));
     let int_literal = literal_label(&language, "Int");
     let bool_literal = literal_label(&language, "Bool");
@@ -256,6 +258,7 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
         #ordinary_clone #ordinary_cmp #ordinary_hash #ordinary_drop #checked_cmp
         #checked_tasks #checked_engine #checked_impls
         #contribution_inspection
+        #bag_admission
 
         fn initial(seed: usize) -> CheckedFxHasher {
             let mut state = CheckedFxHasher::with_seed(seed);
@@ -786,8 +789,202 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
             }).expect("spawn contribution inspection worker").join().expect("contribution inspection worker");
         }
 
+        fn bag_stage_oracle(step: &mettail_runtime::HashBagRebuildStep<'_, Proc>) -> (usize, usize) {
+            use mettail_runtime::{HashBagRebuildMode as Mode, HashBagRebuildStep as Step};
+            // Independent StageCharge algebra in wider integers. Child costs
+            // use metadata inspectors, never native Hash/Eq in this oracle.
+            let mut parts = (0u128, 0u128, 0u128);
+            let mut add = |charge: mettail_runtime::binding_receipt::BindingCharge, factor: u128| {
+                parts.0 += factor * charge.base_work() as u128;
+                parts.1 += factor * charge.records() as u128;
+                parts.2 += factor * charge.owned_bytes() as u128;
+            };
+            let hash = |key: &Proc| inspect_hash_contribution_proc(key, &mut |_,_| Ok::<_, ()>(()))
+                .expect("complete key metadata, not a native callback oracle");
+            let eq = |left: &Proc, right: &Proc|
+                inspect_comparison_contributions_proc(left, right, InspectCmpContributionMode::Eq,
+                    &mut |_,_| Ok::<_, ()>(())).expect("directed Eq metadata");
+            let groups = |buckets: usize| ((buckets as u128 + 15) / 16).max(1);
+            let scan = |entries: u128, q: u128| 4*entries + 19*q;
+            let probe = |q: u128, entries: u128| 22*q + 2*entries + 17;
+            let flat = match step {
+                Step::Start { width, .. } => (11+3*(*width as u128), 4+*width as u128, 0),
+                Step::Insert { mode: Mode::CloneEntries, count: 0, .. } => (2,0,0),
+                Step::Insert { mode, key, retained, .. } => {
+                    let r = retained.distinct_len() as u128;
+                    let old_b = retained.checked_bucket_count().expect("actual clean geometry");
+                    let growth = retained.distinct_len() == retained.capacity();
+                    let next_b = if growth { if old_b == 1 { 4 } else { 2*old_b } } else { old_b };
+                    let old_q = groups(old_b);
+                    let new_q = groups(next_b);
+                    let bytes = if growth {
+                        retained.checked_table_layout(next_b).expect("prospective native layout").0.size() as u128
+                    } else { 0 };
+                    add(hash(key), if *mode == Mode::CloneEntries { 3 } else { 1 });
+                    for (stored, _) in retained.iter() {
+                        let hash_factor = u128::from(growth) + if *mode == Mode::CloneEntries { 4 } else { 0 };
+                        if hash_factor != 0 { add(hash(stored), hash_factor); }
+                        add(if *mode == Mode::CloneEntries { eq(stored,key) } else { eq(key,stored) }, 1);
+                    }
+                    let resize = if growth {
+                        scan(r,old_q) + r*probe(new_q,0) + r + 4*r
+                            + r*std::mem::size_of::<(Proc,usize)>() as u128 + next_b as u128 + 16 + 3
+                    } else { 0 };
+                    let insertion = if *mode == Mode::CloneEntries {
+                        probe(old_q,r) + probe(new_q,0) + 4
+                    } else { probe(new_q,r) };
+                    (1+insertion+resize+6+scan(r+1,new_q)+(r+1), u128::from(growth), bytes)
+                },
+                Step::FinalBindingSummary { retained } => {
+                    let r = retained.distinct_len() as u128;
+                    let q = groups(retained.checked_bucket_count().expect("final clean geometry"));
+                    for (stored, _) in retained.iter() { add(hash(stored),2); }
+                    (scan(r,q)+1+2*r,0,0)
+                },
+            };
+            let work = parts.0 + flat.0 + parts.2 + flat.2;
+            let units = 4*(parts.1 + flat.1) + parts.2 + flat.2;
+            (usize::try_from(work).expect("fixture stage work fits"),
+                usize::try_from(units).expect("fixture stage units fit"))
+        }
+
+        fn exercise_bag_provider(
+            source: &mettail_runtime::HashBag<Proc>, entries: Vec<(Proc,usize)>,
+            mode: mettail_runtime::HashBagRebuildMode,
+        ) -> mettail_runtime::HashBag<Proc> {
+            use mettail_runtime::{HashBag, HashBagRebuildMode as Mode, HashBagRebuildStep as Step};
+            let original: Vec<_> = source.iter().map(|(key,count)| (key as *const Proc,count)).collect();
+            let total = source.len();
+            // Semantic reference is the existing native recipe, kept separate
+            // from the metadata-only accounting oracle above.
+            let expected = if mode == Mode::BindingEntries {
+                source.rebuild_binding_entries(entries.clone())
+            } else {
+                let mut bag = HashBag::new();
+                for (key,count) in entries.clone() { bag.insert_n(key,count); }
+                bag
+            };
+            let mut trace = Vec::new();
+            let mut stage_ends = Vec::new();
+            let mut kinds = Vec::new();
+            let mut growths = 0;
+            let actual = source.try_rebuild_entries_with(entries.clone(),mode,|step| {
+                match &step {
+                    Step::Start { width,source_total,.. } => {
+                        kinds.push(0); assert_eq!(*width,entries.len()); assert_eq!(*source_total,total);
+                    },
+                    Step::Insert { retained,count,.. } => {
+                        kinds.push(1);
+                        if !(*count == 0 && mode == Mode::CloneEntries)
+                            && retained.distinct_len() == retained.capacity() { growths += 1; }
+                    },
+                    Step::FinalBindingSummary { .. } => kinds.push(2),
+                }
+                let expected_stage = bag_stage_oracle(&step);
+                let before = trace.len();
+                admit_bag_rebuild_proc(step,&mut |w,u| { trace.push((w,u)); Ok::<_, usize>(()) })?;
+                assert!(trace.len() > before, "every stage prepays native work");
+                assert_eq!(trace.last().copied(),Some(expected_stage), "exact composed stage payment");
+                stage_ends.push(trace.len()-1);
+                Ok(())
+            }).expect("generated provider admits the original native rebuild");
+            assert_eq!(kinds[0],0);
+            assert_eq!(kinds.iter().filter(|&&kind| kind==1).count(),entries.len());
+            assert_eq!(kinds.iter().filter(|&&kind| kind==2).count(),usize::from(mode==Mode::BindingEntries));
+            assert_eq!(actual.len(),expected.len());
+            assert_eq!(actual.iter().count(),expected.iter().count());
+            for (key,count) in expected.iter() {
+                assert_eq!(actual.iter().find(|(candidate,_)| *candidate==key).map(|(_,n)| n),Some(count));
+            }
+            let mut expected_stream = NativeWrites::default(); expected.hash(&mut expected_stream);
+            let mut actual_stream = NativeWrites::default(); actual.hash(&mut actual_stream);
+            assert_eq!(actual_stream,expected_stream,"native cached summary is preserved");
+            if entries.len() >= 12 { assert!(growths >= 3,"exercise multiple native width growths"); }
+            let costs = trace.iter().fold((0usize,0usize),|(w,u),(x,y)| (w+x,u+y));
+            for limit in [costs,(costs.0-1,costs.1),(costs.0,costs.1-1)] {
+                let mut used = (0usize,0usize);
+                let result = source.try_rebuild_entries_with(entries.clone(),mode,|step|
+                    admit_bag_rebuild_proc(step,&mut |w,u| {
+                        if w>limit.0-used.0 || u>limit.1-used.1 { return Err("stage budget"); }
+                        used.0+=w; used.1+=u; Ok(())
+                    }));
+                if limit==costs { assert!(result.is_ok()); assert_eq!(used,costs); }
+                else { assert!(matches!(result,Err(BindingFailure::Reservation("stage budget")))); }
+            }
+            // Selected prefix boundaries include first inspection, native stage
+            // payments and finalization. No Cartesian refusal-test explosion.
+            let mut cuts = vec![0,trace.len()/2,trace.len()-1];
+            cuts.extend(stage_ends.into_iter().take(3)); cuts.sort_unstable(); cuts.dedup();
+            for stop in cuts {
+                struct Stop(Box<usize>);
+                let mut error = Some(Stop(Box::new(stop)));
+                let identity = &*error.as_ref().expect("owned refusal").0 as *const usize;
+                let mut seen = 0;
+                let result = source.try_rebuild_entries_with(entries.clone(),mode,|step|
+                    admit_bag_rebuild_proc(step,&mut |w,u| {
+                        assert_eq!((w,u),trace[seen]); let current=seen; seen+=1;
+                        if current==stop { Err(error.take().expect("refusal consumed once")) } else { Ok(()) }
+                    }));
+                match result {
+                    Err(BindingFailure::Reservation(error)) => assert_eq!(&*error.0 as *const usize,identity),
+                    _ => panic!("stage refusal must preserve its original non-Clone error"),
+                }
+                assert_eq!(seen,stop+1);
+                assert_eq!(source.len(),total);
+                assert_eq!(source.iter().map(|(k,n)| (k as *const Proc,n)).collect::<Vec<_>>(),original);
+            }
+            actual
+        }
+
+        fn generated_bag_provider_examples() {
+            use mettail_runtime::{HashBag, HashBagRebuildMode as Mode};
+            let mut source = HashBag::new();
+            source.insert_n(token("source one"),11); source.insert_n(token("source two"),13);
+            for mode in [Mode::BindingEntries,Mode::CloneEntries] {
+                let empty = exercise_bag_provider(&source,Vec::new(),mode);
+                assert_eq!(empty.len(),if mode==Mode::BindingEntries { 24 } else { 0 });
+                let first = Arc::new(Proc::PZero);
+                let later = Arc::new(Proc::PZero);
+                let result = exercise_bag_provider(&source,vec![
+                    (Proc::PUnary(first.clone()),2),(Proc::PUnary(later.clone()),5),(token("zero"),0),
+                ],mode);
+                let (Proc::PUnary(winner),count) = result.iter().find(|(key,_)|
+                    matches!(key,Proc::PUnary(_))).expect("transformed equal key") else { unreachable!() };
+                assert!(Arc::ptr_eq(winner,&first),"first equal key object survives");
+                assert!(!Arc::ptr_eq(winner,&later));
+                assert_eq!(count,if mode==Mode::BindingEntries { 5 } else { 7 });
+                assert_eq!(result.iter().count(),if mode==Mode::BindingEntries { 2 } else { 1 });
+                assert_eq!(result.len(),if mode==Mode::BindingEntries { 24 } else { 7 });
+                exercise_bag_provider(&source,(0..12).map(|i| (token(&format!("key {i}")),i+1)).collect(),mode);
+                exercise_bag_provider(&source,vec![
+                    (map_proc(map([(token("a"),Proc::PZero),(token("z"),map_proc(map([(Proc::PZero,Proc::PZero)])))])),2),
+                    (map_proc(map([(token("b"),Proc::PZero)])),3),
+                ],mode);
+            }
+            // Zero Clone must not inspect an otherwise unsupported key, hash it,
+            // compare it or allocate a native entry; its owned root still drops.
+            let unsupported = Proc::PPredicate(mettail_runtime::BehavioralPred::RelationQuery {
+                relation_name:"zero-count must not inspect me".into(),args:Vec::new(),negated:false,
+            });
+            let zero = exercise_bag_provider(&source,vec![(unsupported,0)],Mode::CloneEntries);
+            assert_eq!(zero.len(),0); assert_eq!(zero.iter().count(),0);
+            let overflow = source.try_rebuild_entries_with(
+                vec![(token("maximum count"),usize::MAX),(token("overflow count"),1)],
+                Mode::CloneEntries,|step| admit_bag_rebuild_proc(step,&mut |_,_| Ok::<_, ()>(())));
+            assert!(matches!(overflow,Err(BindingFailure::SizeOverflow)),
+                "native Clone's count guard rejects before overflowing insert_n");
+            assert_eq!(source.len(),24);
+            let mut seen = 0;
+            let overflow = admit_bag_rebuild_proc(mettail_runtime::HashBagRebuildStep::Start {
+                mode:Mode::BindingEntries,width:usize::MAX,source_total:24,
+            },&mut |_,_| { seen+=1; Ok::<_, ()>(()) });
+            assert_eq!(overflow,Err(BindingFailure::SizeOverflow));
+            assert_eq!(seen,1,"Start arithmetic follows its one paid metadata group");
+        }
+
         fn main() {
             assert!(mettail_runtime::CHECKED_FX_PROFILE_AVAILABLE);
+            generated_bag_provider_examples();
             native_map_overhead_boundaries();
             contribution_inspection_examples();
             exercise(&Proc::PZero);

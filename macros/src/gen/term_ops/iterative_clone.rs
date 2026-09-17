@@ -255,7 +255,7 @@ fn checked_scalar_fields(fields: &[FieldInfo], emission: &CloneEmissionNames) ->
     emission.checked.is_some()
         && fields
             .iter()
-            .all(|field| !field.is_collection || required_vec_field(field))
+            .all(|field| !field.is_collection || required_checked_collection_field(field))
 }
 
 fn required_vec_field(field: &FieldInfo) -> bool {
@@ -264,11 +264,22 @@ fn required_vec_field(field: &FieldInfo) -> bool {
         && matches!(field.coll_type.as_ref(), None | Some(CollectionType::Vec))
 }
 
-// Both category Vec surfaces have exactly the owned field layout and
-// mem::take/DropTask cleanup covered by RequiredVecBindingReservation. Keep
-// this adaptation local: the shared classifier and primitive literals retain
-// their existing meaning for every other generated operation.
-fn checked_vector_payload<'a>(
+fn required_bag_field(field: &FieldInfo) -> bool {
+    field.is_collection
+        && !field.is_optional
+        && matches!(field.coll_type.as_ref(), Some(CollectionType::HashBag))
+}
+
+fn required_checked_collection_field(field: &FieldInfo) -> bool {
+    required_vec_field(field) || required_bag_field(field)
+}
+
+// Direct and literal Vec/Bag payloads share the checked owned-field path.
+// RequiredVecBindingReservation covers vector shells; RequiredHashBagBindingReservation
+// supplies Bag reconstruction and ownership laws. Keep this adaptation local:
+// the shared classifier and primitive literals retain their existing meaning
+// for every other generated operation.
+fn checked_collection_payload<'a>(
     variant: &'a VariantKind,
     emission: &CloneEmissionNames,
 ) -> Option<(&'a Ident, [FieldInfo; 1])> {
@@ -277,18 +288,18 @@ fn checked_vector_payload<'a>(
         VariantKind::Collection {
             label,
             element_cat,
-            coll_type: CollectionType::Vec,
+            coll_type: coll_type @ (CollectionType::Vec | CollectionType::HashBag),
         }
         | VariantKind::CollectionLiteral {
             label,
             element_cat,
-            coll_type: CollectionType::Vec,
+            coll_type: coll_type @ (CollectionType::Vec | CollectionType::HashBag),
         } => Some((
             label,
             [FieldInfo {
                 category: element_cat.clone(),
                 is_collection: true,
-                coll_type: Some(CollectionType::Vec),
+                coll_type: Some(coll_type.clone()),
                 is_predicate: false,
                 is_optional: false,
                 opaque_leaf: None,
@@ -325,7 +336,7 @@ fn checked_scope_fields<'a>(
     // Match the existing Binder/MultiBinder Drop arms, not Regular's broader
     // field support. Collection prefields need their own checked assembly.
     let eligible = fields.iter().all(|field| {
-        required_vec_field(field)
+        required_checked_collection_field(field)
             || (!field.is_collection
                 && (field.is_predicate || (!field.is_opaque_leaf() && !field.is_optional)))
     });
@@ -337,7 +348,7 @@ fn generate_assemble_task(
     variant: &VariantKind,
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
-    if let Some((label, fields)) = checked_vector_payload(variant, emission) {
+    if let Some((label, fields)) = checked_collection_payload(variant, emission) {
         let task = format_ident!("Assemble{}_{}", category, label);
         let slots = scalar_slot_fields(&fields);
         return Some(quote! { #task { src: *const #category, slot: usize, #(#slots),* } });
@@ -407,6 +418,33 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
     let success_tail = emission.success_tail();
     let binding_arguments = emission.binding_arguments();
     let propagate = emission.propagate();
+    let batch_reversal = emission.checked.as_ref().map(|_| {
+        quote! {
+            #[allow(dead_code)]
+            fn reverse_binding_task_batch<E>(
+                stack: &mut [#task_type], start: usize,
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+            ) -> Result<(), mettail_runtime::BindingFailure<E>> {
+                // PaidTaskBatchReversal: preserve the existing prefix and move
+                // whole task/state/slot records, never their borrowed term payloads.
+                mettail_runtime::reserve_binding_parts(3, 2, 0, reserve)?;
+                let mut left = start;
+                let mut right = stack.len();
+                loop {
+                    mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
+                    let width = right.checked_sub(left).ok_or(
+                        mettail_runtime::BindingFailure::InvalidCollectionInput(
+                            "binding task batch starts beyond the worklist"))?;
+                    if width < 2 { return Ok(()) }
+                    mettail_runtime::reserve_binding_parts(6, 1, 0, reserve)?;
+                    right -= 1;
+                    stack.swap(left, right);
+                    left = left.checked_add(1)
+                        .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                }
+            }
+        }
+    });
     let handlers = language.types.iter().map(|ty| {
         let category = &ty.name;
         let handler = emission.handler(category);
@@ -486,6 +524,7 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
     };
 
     quote! {
+        #batch_reversal
         #(#handlers)*
 
         #[allow(dead_code, unused_variables, unreachable_patterns)]
@@ -505,7 +544,7 @@ fn generate_visit_arm(
     variant: &VariantKind,
     emission: &CloneEmissionNames,
 ) -> TokenStream {
-    if let Some((label, fields)) = checked_vector_payload(variant, emission) {
+    if let Some((label, fields)) = checked_collection_payload(variant, emission) {
         return generate_scalar_visit(category, label, &fields, None, emission);
     }
     if let Some((label, fields, scope)) = checked_scope_fields(variant, emission) {
@@ -632,7 +671,7 @@ fn scalar_slot_fields(fields: &[FieldInfo]) -> Vec<TokenStream> {
         .filter(|(_, field)| !inline_binding_leaf(field))
         .map(|(index, field)| {
             let slot = format_ident!("field_{}_slot", index);
-            if required_vec_field(field) {
+            if required_checked_collection_field(field) {
                 quote! { #slot: (usize, usize) }
             } else {
                 // None means absent optional child or an untraversed shallow
@@ -771,6 +810,44 @@ fn vec_child_pushes(
     }}
 }
 
+fn bag_child_pushes(
+    field: &FieldInfo,
+    source: &Ident,
+    range: &Ident,
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let visit = format_ident!("Clone{}", field.category);
+    let push = emission.push_task(
+        quote! { #task_enum::#visit { src: child as *const _, slot: child_slot } },
+        quote! { operation.state() },
+    );
+    quote! {{
+        mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)?;
+        let (start, width) = #range;
+        let end = start.checked_add(width)
+            .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+        let batch_start = stack.len();
+        let mut child_slot = start;
+        #source.try_for_each_entry(reserve, |child, _count, reserve| {
+            mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
+            if child_slot >= end {
+                return Err(mettail_runtime::BindingFailure::InvalidCollectionInput(
+                    "binding Bag scan exceeds its original slot range"));
+            }
+            #push
+            child_slot = child_slot.checked_add(1)
+                .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+            Ok(())
+        })?;
+        if child_slot != end {
+            return Err(mettail_runtime::BindingFailure::InvalidCollectionInput(
+                "binding Bag scan did not fill its original slot range"));
+        }
+        reverse_binding_task_batch(stack, batch_start, reserve)?;
+    }}
+}
+
 fn generate_scalar_visit(
     category: &Ident,
     label: &Ident,
@@ -786,8 +863,8 @@ fn generate_scalar_visit(
     let admissions = fields.iter().zip(&names).map(|(field, name)| {
         if inline_binding_leaf(field) {
             TokenStream::new()
-        } else if required_vec_field(field) {
-            TokenStream::new() // Vec constructors use the shared assembly path, even in Clone.
+        } else if required_checked_collection_field(field) {
+            TokenStream::new() // Owned collections use assembly even in Clone.
         } else {
             scalar_field_admission(field, quote! { #name.is_some() }, false, emission)
         }
@@ -833,6 +910,13 @@ fn generate_scalar_visit(
                 let #slot = (mettail_runtime::append_binding_slots(results, width, reserve)?, width);
             }
         }
+        else if required_bag_field(field) {
+            quote! {
+                mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
+                let width = #name.distinct_len();
+                let #slot = (mettail_runtime::append_binding_slots(results, width, reserve)?, width);
+            }
+        }
         else if field.is_optional {
             quote! {
                 let #slot = match (#name, cloning) {
@@ -870,6 +954,9 @@ fn generate_scalar_visit(
             }
             if required_vec_field(field) {
                 return vec_child_pushes(field, name, slot, emission);
+            }
+            if required_bag_field(field) {
+                return bag_child_pushes(field, name, slot, emission);
             }
             let visit = format_ident!("Clone{}", field.category);
             let push = emission.push_task(
@@ -918,7 +1005,7 @@ fn generate_scalar_visit(
         #scope_push
         #(#pushes)*
     };
-    let body = if fields.iter().any(required_vec_field) {
+    let body = if fields.iter().any(required_checked_collection_field) {
         schedule
     } else {
         quote! {
@@ -986,7 +1073,7 @@ fn generate_scalar_assemble(
         .map(|((field, slot), name)| {
             if inline_binding_leaf(field) {
                 TokenStream::new()
-            } else if required_vec_field(field) {
+            } else if required_checked_collection_field(field) {
                 vec_field_admission(slot)
             } else {
                 let shallow =
@@ -1010,7 +1097,8 @@ fn generate_scalar_assemble(
         .iter()
         .zip(&slots)
         .zip(&bare)
-        .map(|((field, slot), bare)| {
+        .zip(&names)
+        .map(|(((field, slot), bare), name)| {
             if inline_binding_leaf(field) {
                 return TokenStream::new();
             }
@@ -1035,6 +1123,43 @@ fn generate_scalar_assemble(
                         copied
                     };
                 }
+            } else if required_bag_field(field) {
+                let category = &field.category;
+                let admit = format_ident!("admit_bag_rebuild_{}", category.to_string().to_lowercase());
+                quote! {
+                    let #bare = {
+                        // RequiredVec's total prepays this owned entry vector
+                        // and all partial cleanup. Bag cleanup is in Start.
+                        mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)?;
+                        let (start, width) = #slot;
+                        let end = start.checked_add(width)
+                            .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                        std::alloc::Layout::array::<(#category, usize)>(width)
+                            .map_err(|_| mettail_runtime::BindingFailure::SizeOverflow)?;
+                        let mut copied = Vec::with_capacity(width);
+                        let mut child_slot = start;
+                        // The immutable source keeps the same native entry
+                        // order and original counts as the scheduling scan.
+                        #name.try_for_each_entry(reserve, |_original, count, reserve| {
+                            mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
+                            if child_slot >= end {
+                                return Err(mettail_runtime::BindingFailure::InvalidCollectionInput(
+                                    "binding Bag assembly exceeds its original slot range"));
+                            }
+                            copied.push((#take, count));
+                            child_slot = child_slot.checked_add(1)
+                                .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                            Ok(())
+                        })?;
+                        if child_slot != end {
+                            return Err(mettail_runtime::BindingFailure::InvalidCollectionInput(
+                                "binding Bag assembly did not fill its original slot range"));
+                        }
+                        let mode = if cloning { mettail_runtime::HashBagRebuildMode::CloneEntries }
+                            else { mettail_runtime::HashBagRebuildMode::BindingEntries };
+                        #name.try_rebuild_entries_with(copied, mode, |step| #admit(step, reserve))?
+                    };
+                }
             } else if field.is_optional {
                 quote! {
                     let #bare = match #slot {
@@ -1055,7 +1180,7 @@ fn generate_scalar_assemble(
         .iter()
         .zip(&bare).zip(&names)
         .map(|((field, bare), name)| {
-            if inline_binding_leaf(field) || required_vec_field(field) {
+            if inline_binding_leaf(field) || required_checked_collection_field(field) {
                 quote! { #bare }
             } else if field.is_optional {
                 quote! { if cloning { #name.clone() } else { #bare.map(std::sync::Arc::new) } }
@@ -1334,7 +1459,7 @@ fn generate_assemble_arm(
     destructure_is_irrefutable: bool,
     emission: &CloneEmissionNames,
 ) -> Option<TokenStream> {
-    if let Some((label, fields)) = checked_vector_payload(variant, emission) {
+    if let Some((label, fields)) = checked_collection_payload(variant, emission) {
         return Some(generate_scalar_assemble(
             category,
             label,
@@ -1851,6 +1976,10 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
     });
     quote! { #(#impls)* }
 }
+
+#[cfg(test)]
+#[path = "iterative_clone_bag_tests.rs"]
+mod bag_tests;
 
 #[cfg(test)]
 mod tests {

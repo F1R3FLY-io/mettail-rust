@@ -19,6 +19,7 @@ pub mod collection_walk;
 pub mod depth;
 mod dummy_receipts;
 pub mod ground;
+mod hashbag_rebuild_admission;
 pub mod iterative_clone;
 pub mod iterative_cmp;
 pub mod iterative_drop;

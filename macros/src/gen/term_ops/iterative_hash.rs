@@ -293,7 +293,7 @@ pub fn generate_iterative_hash(language: &LanguageDef) -> TokenStream {
 /// The result remains accounting data: an execution provider must reserve it
 /// against the same retained source and pinned native profile before use.
 #[allow(dead_code)]
-fn generate_hash_contribution_inspection(language: &LanguageDef) -> TokenStream {
+pub(super) fn generate_hash_contribution_inspection(language: &LanguageDef) -> TokenStream {
     let emission = HashEmissionNames::inspect_contributions();
     let tasks = generate_hash_task_enum(language, &emission);
     let driver = generate_hash_engine(language, &emission);
