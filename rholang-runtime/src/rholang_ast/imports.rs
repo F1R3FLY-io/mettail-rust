@@ -92,6 +92,32 @@ impl CheckedCallerImports {
         self.entries.iter().map(|(key, _)| key.clone()).collect()
     }
 
+    pub(super) fn keys_with_reservation(
+        &self,
+        reserve: &mut StorageReservation<'_>,
+    ) -> Result<Vec<String>, RholangAstLowerError> {
+        use mettail_runtime::{BindingOperation, CheckedBindingLeaf};
+        let slots = self
+            .entries
+            .len()
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        preparation_scope::reserve_parts(3, slots, 0, reserve)?;
+        let mut keys = Vec::with_capacity(self.entries.len());
+        let mut entries = self.entries.iter();
+        loop {
+            preparation_scope::reserve_parts(2, 0, 0, reserve)?;
+            let Some((key, _)) = entries.next() else {
+                break;
+            };
+            keys.push(
+                key.try_copy_binding(BindingOperation::Clone, &mut |w, u| reserve(w, u))
+                    .map_err(preparation_scope::binding_failure)?,
+            );
+        }
+        Ok(keys)
+    }
+
     pub(super) fn values(&self) -> Vec<Par> {
         self.entries
             .iter()

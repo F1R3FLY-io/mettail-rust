@@ -530,6 +530,7 @@ fn empty_context_is_paid_once_and_cached_only_after_success() {
                 stacks,
                 pattern_states: Vec::new(),
                 empty_env: None,
+                source_preparation: SourcePreparation::Original,
             };
             cancelled.set(true);
             assert_eq!(

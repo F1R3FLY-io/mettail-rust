@@ -57,7 +57,7 @@ impl SessionGuard {
                 .charge(work, bytes)
                 .map_err(RholangAstLowerError::Preparation)
         };
-        drive_machine_with_reservation(seed, context, &mut reserve)
+        drive_machine_preparing(seed, context, &mut reserve, SourcePreparation::Checked)
     }
 }
 

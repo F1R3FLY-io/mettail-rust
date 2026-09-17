@@ -89,7 +89,11 @@ pub struct CheckedFreshDescriptor {
 }
 
 fn strictly_ordered(values: &[String]) -> bool {
-    values.windows(2).all(|pair| pair[0] < pair[1])
+    // Use the same Ord operation inspected by paid preparation. String's
+    // byte-vector total order makes this exactly the existing strict order.
+    values
+        .windows(2)
+        .all(|pair| pair[0].cmp(&pair[1]) == std::cmp::Ordering::Less)
 }
 
 /// Body plus all injection children. The machine-sized arity is not an i32

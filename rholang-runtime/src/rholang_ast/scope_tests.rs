@@ -291,6 +291,7 @@ fn public_fresh_pattern_environment_does_not_reenable_harness() {
             .expect("scope fixture storage"),
         pattern_states: Vec::new(),
         empty_env: None,
+        source_preparation: SourcePreparation::Original,
     };
     let id = driver.empty_env().expect("fresh environment");
     same_context(driver.env(id), &root);

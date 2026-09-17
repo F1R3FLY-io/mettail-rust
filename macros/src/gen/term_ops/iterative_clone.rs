@@ -153,7 +153,7 @@ impl CloneEmissionNames {
 
     fn function_generics(&self) -> TokenStream {
         if self.checked.is_some() {
-            quote! { <E> }
+            quote! { <E, F: FnMut(usize, usize) -> Result<(), E>> }
         } else {
             TokenStream::new()
         }
@@ -164,7 +164,7 @@ impl CloneEmissionNames {
         if self.checked.is_some() {
             quote! {
                 operation: mettail_runtime::BindingOperation<'_>,
-                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                reserve: &mut F,
                 dummy_charges: &[mettail_runtime::binding_receipt::BindingCharge],
             }
         } else {
@@ -520,6 +520,104 @@ pub(crate) fn paid_task_batch_reversal_body() -> TokenStream {
     }
 }
 
+// Constructor bodies have disjoint native frames, just as in checked_source.
+// No helper traverses a child by calling this selector: children remain tasks
+// on the one existing worklist. CheckedBindingTaskDispatch applies to both
+// selector levels; native frame bounds additionally require compiled evidence.
+fn generate_checked_category_handler(
+    category: &Ident,
+    language: &LanguageDef,
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    let handler = emission.handler(category);
+    let task_type = emission.task_type();
+    let generics = emission.function_generics();
+    let parameters = emission.binding_parameters();
+    let result_type = emission.result_type();
+    let variants = collect_category_variants(category, language);
+    let mut selections = Vec::with_capacity(variants.len());
+    let mut helpers = Vec::with_capacity(variants.len());
+    for variant in variants {
+        let label = variant.label();
+        let helper = format_ident!("{}_{}", handler, label);
+        let pattern = match variant {
+            VariantKind::Nullary { .. } => quote! { #category::#label },
+            _ => quote! { #category::#label(..) },
+        };
+        selections.push(quote! { #pattern => #helper::<E, F>, });
+        let arm = generate_visit_arm(category, &variant, emission);
+        // An unsupported arm already returns its exact refusal. Do not emit
+        // an unreachable success expression after that diverging match.
+        let success =
+            checked_constructor_supported(category, &variant, emission).then(|| quote! { Ok(()) });
+        helpers.push(quote! {
+            #[inline(never)]
+            #[allow(dead_code, unused_variables, non_snake_case, unreachable_patterns)]
+            fn #helper #generics(
+                stack: &mut Vec<#task_type>, results: &mut Vec<Option<AnyClonedTerm>>,
+                src: *const #category, slot: usize, #parameters
+            ) #result_type {
+                let source = unsafe { &*src };
+                match source {
+                    #arm
+                    _ => unreachable!("checked binding constructor selector/payload mismatch"),
+                }
+                #success
+            }
+        });
+    }
+    quote! {
+        #(#helpers)*
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case)]
+        fn #handler #generics(
+            stack: &mut Vec<#task_type>, results: &mut Vec<Option<AnyClonedTerm>>,
+            src: *const #category, slot: usize, #parameters
+        ) #result_type {
+            let source = unsafe { &*src };
+            // Selection/retention, call, and the helper's payload match.
+            mettail_runtime::reserve_binding_parts(3, 1, 0, reserve)?;
+            let visit: for<'operation> fn(
+                &mut Vec<#task_type>, &mut Vec<Option<AnyClonedTerm>>,
+                *const #category, usize, mettail_runtime::BindingOperation<'operation>,
+                &mut F, &[mettail_runtime::binding_receipt::BindingCharge],
+            ) -> Result<(), mettail_runtime::BindingFailure<E>> = match source {
+                #(#selections)*
+            };
+            visit(stack, results, src, slot, operation, reserve, dummy_charges)
+        }
+    }
+}
+
+fn generate_checked_task_handler(
+    task: &Ident,
+    arm: TokenStream,
+    emission: &CloneEmissionNames,
+) -> (TokenStream, TokenStream) {
+    let task_enum = &emission.task_enum;
+    let task_type = emission.task_type();
+    let generics = emission.function_generics();
+    let parameters = emission.binding_parameters();
+    let result_type = emission.result_type();
+    let helper = format_ident!("binding_task_{}", task);
+    let selection = quote! { #task_enum::#task { .. } => #helper::<E, F>, };
+    let definition = quote! {
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case, unreachable_patterns)]
+        fn #helper #generics(
+            stack: &mut Vec<#task_type>, results: &mut Vec<Option<AnyClonedTerm>>,
+            task: #task_enum, #parameters
+        ) #result_type {
+            match task {
+                #arm
+                _ => unreachable!("checked binding task selector/payload mismatch"),
+            }
+            Ok(())
+        }
+    };
+    (selection, definition)
+}
+
 fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> TokenStream {
     let task_enum = &emission.task_enum;
     let driver = &emission.driver;
@@ -544,6 +642,9 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
     });
     let handlers = language.types.iter().map(|ty| {
         let category = &ty.name;
+        if emission.checked.is_some() {
+            return generate_checked_category_handler(category, language, emission);
+        }
         let handler = emission.handler(category);
         let arms: Vec<_> = collect_category_variants(category, language)
             .iter()
@@ -568,6 +669,7 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
         }
     });
 
+    let mut task_helpers = Vec::new();
     let visits: Vec<_> = language
         .types
         .iter()
@@ -575,9 +677,16 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
             let category = &ty.name;
             let visit = format_ident!("Clone{}", category);
             let handler = emission.handler(category);
-            quote! {
+            let arm = quote! {
                 #task_enum::#visit { src, slot } =>
                     #handler(stack, results, src, slot #binding_arguments) #propagate,
+            };
+            if emission.checked.is_some() {
+                let (selection, helper) = generate_checked_task_handler(&visit, arm, emission);
+                task_helpers.push(helper);
+                selection
+            } else {
+                arm
             }
         })
         .collect();
@@ -591,7 +700,14 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
             if let Some(arm) =
                 generate_assemble_arm(category, &variant, destructure_is_irrefutable, emission)
             {
-                assemblies.push(arm);
+                if emission.checked.is_some() {
+                    let task = format_ident!("Assemble{}_{}", category, variant.label());
+                    let (selection, helper) = generate_checked_task_handler(&task, arm, emission);
+                    task_helpers.push(helper);
+                    assemblies.push(selection);
+                } else {
+                    assemblies.push(arm);
+                }
             }
         }
     }
@@ -603,10 +719,18 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
                 let (task, state) = stack.pop()
                     .expect("nonempty checked binding worklist");
                 let operation = operation.with_state(state);
-                match task {
+                // A discriminant-only selector and one common call avoid
+                // retaining all arm-local Result temporaries in this frame.
+                mettail_runtime::reserve_binding_parts(3, 1, 0, reserve)?;
+                let execute: for<'operation> fn(
+                    &mut Vec<#task_type>, &mut Vec<Option<AnyClonedTerm>>, #task_enum,
+                    mettail_runtime::BindingOperation<'operation>, &mut F,
+                    &[mettail_runtime::binding_receipt::BindingCharge],
+                ) -> Result<(), mettail_runtime::BindingFailure<E>> = match &task {
                     #(#visits)*
                     #(#assemblies)*
-                }
+                };
+                execute(stack, results, task, operation, reserve, dummy_charges)?;
             }
         }
     } else {
@@ -623,6 +747,7 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
     quote! {
         #batch_reversal
         #(#handlers)*
+        #(#task_helpers)*
 
         #[allow(dead_code, unused_variables, unreachable_patterns)]
         fn #driver #generics(
@@ -2094,6 +2219,10 @@ fn generate_impls(language: &LanguageDef, emission: &CloneEmissionNames) -> Toke
 mod activation_tests;
 
 #[cfg(test)]
+#[path = "iterative_binding_dispatch_tests.rs"]
+mod dispatch_tests;
+
+#[cfg(test)]
 #[path = "iterative_clone_bag_tests.rs"]
 mod bag_tests;
 
@@ -2194,26 +2323,26 @@ mod tests {
                 result
             }
             fn main() {
-                let integer = exercise(&Int::#int_literal(37), BindingOperation::Clone, (12,28));
+                let integer = exercise(&Int::#int_literal(37), BindingOperation::Clone, (18,36));
                 assert!(matches!(integer, Int::#int_literal(37)));
-                let text = exercise(&Text::#text_literal("λ".into()), BindingOperation::Clone, (15,30));
+                let text = exercise(&Text::#text_literal("λ".into()), BindingOperation::Clone, (21,38));
                 assert!(matches!(&text, Text::#text_literal(s) if s == "λ"));
                 let name: FreeVar<String> = FreeVar::fresh_named("λ");
                 let mut selected = name.clone(); selected.pretty_name = Some("selected".into());
                 let roster = [Binder(selected.clone())];
                 let original = Proc::#proc_var(OrdVar(Var::Free(name.clone())));
-                let clone = exercise(&original, BindingOperation::Clone, (16,30));
+                let clone = exercise(&original, BindingOperation::Clone, (22,38));
                 assert!(matches!(&clone, Proc::#proc_var(OrdVar(Var::Free(v)))
                     if v.unique_id == name.unique_id && v.pretty_name == name.pretty_name));
                 let closed = exercise(&original, BindingOperation::Close {
                     state: moniker::ScopeState::new(), binders: &roster,
-                }, (17,30));
+                }, (23,38));
                 assert!(matches!(&closed, Proc::#proc_var(OrdVar(Var::Bound(v)))
                     if v.scope == moniker::ScopeOffset(0) && v.binder == moniker::BinderIndex(0)
                     && v.pretty_name.as_deref() == Some("λ")));
                 let opened = exercise(&closed, BindingOperation::Open {
                     state: moniker::ScopeState::new(), binders: &roster,
-                }, (22,36));
+                }, (28,44));
                 assert!(matches!(&opened, Proc::#proc_var(OrdVar(Var::Free(v)))
                     if v.unique_id == selected.unique_id && v.pretty_name == selected.pretty_name));
                 assert!(matches!(&original, Proc::#proc_var(OrdVar(Var::Free(v)))
@@ -2279,7 +2408,9 @@ mod tests {
                 #ordinary #tasks #engine #impls #drop #table
                 pub fn verify() {
                     let source = Atom::Unit;
-                    let expected = [(0, 8), (1, 4), (1, 4), (1, 0), (6, 8), (1, 0), (1, 0)];
+                    // Each selector pays selection/retention, call and payload match.
+                    let expected = [(0, 8), (1, 4), (1, 4), (1, 0),
+                        (3, 4), (3, 4), (6, 8), (1, 0), (1, 0)];
                     let mut calls = Vec::new();
                     let copied = source.try_copy_iterative(BindingOperation::Clone,
                         &mut |work, units| {
@@ -2481,8 +2612,10 @@ mod tests {
             fn main() {
                 let close = BindingOperation::Close { state: moniker::ScopeState::new(), binders: &[] };
                 let unary = Proc::PUnary(Arc::new(Proc::PZero));
-                assert_eq!(exercise(&unary, BindingOperation::Clone).1, (23,40));
-                assert_eq!(exercise(&unary, close).1, (37,64));
+                // Shallow Clone visits only the unary node (+6W/8units).
+                // Close visits both nodes and assembles the unary (+15W/20units).
+                assert_eq!(exercise(&unary, BindingOperation::Clone).1, (29,48));
+                assert_eq!(exercise(&unary, close).1, (52,84));
                 for present in [false,true] {
                     let maybe = Proc::PMaybe(present.then(|| Arc::new(Proc::PZero)));
                     for operation in [BindingOperation::Clone, close] {

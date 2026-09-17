@@ -73,6 +73,7 @@ pub(crate) mod imports;
 pub(crate) mod session;
 
 mod preparation_env;
+mod preparation_scope;
 use preparation_env::EnvironmentDerivation;
 
 #[cfg(test)]
@@ -344,6 +345,7 @@ pub enum RholangAstLowerError {
         >,
     ),
     PreparationSizeOverflow,
+    Binding(mettail_runtime::BindingFailure<std::convert::Infallible>),
     Storage(mettail_runtime::worklist::WorklistError),
     ReentrantLoweringSession,
     FoldSiteIndexOverflow {
@@ -1856,6 +1858,15 @@ impl<'a> Stacks<'a> {
     }
 }
 
+/// Scope preparation is selected at the entrypoint, never after a refusal.
+/// Public budgeted preparation selects Checked only after source admission;
+/// existing unmetered and storage-only internal callers retain Original.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourcePreparation {
+    Original,
+    Checked,
+}
+
 /// Everything one drive owns.
 struct Drive<'a> {
     /// Nodes the drive MATERIALISES and must keep alive: a desugared send head, a fold operand,
@@ -1875,6 +1886,7 @@ struct Drive<'a> {
     /// keeps the recursive oracle's `BoundEnv::new()` convention. Neither case
     /// inherits lexical bindings from the enclosing receive continuation.
     empty_env: Option<EnvId>,
+    source_preparation: SourcePreparation,
 }
 
 impl<'a> Drive<'a> {
@@ -1952,6 +1964,15 @@ fn drive_machine_with_reservation(
     root_env: &BoundEnv,
     reservation: &mut StorageReservation<'_>,
 ) -> Result<Par, RholangAstLowerError> {
+    drive_machine_preparing(seed, root_env, reservation, SourcePreparation::Original)
+}
+
+fn drive_machine_preparing(
+    seed: Seed<'_>,
+    root_env: &BoundEnv,
+    reservation: &mut StorageReservation<'_>,
+    source_preparation: SourcePreparation,
+) -> Result<Par, RholangAstLowerError> {
     let arena: Arena<Arc<Proc>> = Arena::new();
     let seed_job = match seed {
         Seed::Proc(proc) => Job::Proc(proc, ROOT_ENV),
@@ -1965,6 +1986,7 @@ fn drive_machine_with_reservation(
         stacks: Stacks::new(seed_job, reservation)?,
         pattern_states: Vec::new(),
         empty_env: None,
+        source_preparation,
     };
 
     loop {
@@ -2093,37 +2115,61 @@ impl<'a> Drive<'a> {
                 [Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)],
             )?,
             Proc::PNew(scope) => {
-                let (binders, body) = scope.clone().unbind::<String>();
-                let descriptor = CheckedFreshDescriptor::new(
-                    FreshShape::Plain { binder_count: binders.len() },
-                    self.env(env).caller_imports.keys(),
-                )
-                .map_err(RholangAstLowerError::FreshConstruction)?;
+                let (binders, body) = match self.source_preparation {
+                    SourcePreparation::Original => scope.clone().unbind::<String>(),
+                    SourcePreparation::Checked => {
+                        preparation_scope::open(scope, self.stacks.reservation)?
+                    },
+                };
+                let shape = FreshShape::Plain { binder_count: binders.len() };
+                let descriptor = match self.source_preparation {
+                    SourcePreparation::Original => Box::new(
+                        CheckedFreshDescriptor::new(shape, self.env(env).caller_imports.keys())
+                            .map_err(RholangAstLowerError::FreshConstruction)?,
+                    ),
+                    SourcePreparation::Checked => preparation_scope::descriptor(
+                        shape,
+                        &self.envs.get(env).caller_imports,
+                        self.stacks.reservation,
+                    )?,
+                };
                 let extended =
                     self.derive_environment(env, EnvironmentDerivation::Binders(&binders))?;
+                if self.source_preparation == SourcePreparation::Checked {
+                    preparation_scope::reserve_parts(3, 1, 0, self.stacks.reservation)?;
+                }
                 let body = self.keep(body);
-                self.push_children(
-                    Kont::New { descriptor: Box::new(descriptor), env },
-                    [Job::Body(body, extended)],
-                )?;
+                self.push_children(Kont::New { descriptor, env }, [Job::Body(body, extended)])?;
             },
             Proc::PNewUris(uris, scope) => {
-                let (ordered_binders, body, ordered_uris) = unbind_uri_scope(uris, scope)?;
-                let descriptor = CheckedFreshDescriptor::new(
-                    FreshShape::Uri {
-                        binder_count: ordered_binders.len(),
-                        uris: ordered_uris,
+                let (ordered_binders, body, ordered_uris) = match self.source_preparation {
+                    SourcePreparation::Original => unbind_uri_scope(uris, scope)?,
+                    SourcePreparation::Checked => {
+                        preparation_scope::open_uri(uris, scope, self.stacks.reservation)?
                     },
-                    self.env(env).caller_imports.keys(),
-                )
-                .map_err(RholangAstLowerError::FreshConstruction)?;
+                };
+                let shape = FreshShape::Uri {
+                    binder_count: ordered_binders.len(),
+                    uris: ordered_uris,
+                };
+                let descriptor = match self.source_preparation {
+                    SourcePreparation::Original => Box::new(
+                        CheckedFreshDescriptor::new(shape, self.env(env).caller_imports.keys())
+                            .map_err(RholangAstLowerError::FreshConstruction)?,
+                    ),
+                    SourcePreparation::Checked => preparation_scope::descriptor(
+                        shape,
+                        &self.envs.get(env).caller_imports,
+                        self.stacks.reservation,
+                    )?,
+                };
                 let extended =
                     self.derive_environment(env, EnvironmentDerivation::Binders(&ordered_binders))?;
+                if self.source_preparation == SourcePreparation::Checked {
+                    preparation_scope::reserve_parts(3, 1, 0, self.stacks.reservation)?;
+                }
                 let body = self.keep(body);
-                self.push_children(
-                    Kont::New { descriptor: Box::new(descriptor), env },
-                    [Job::Body(body, extended)],
-                )?;
+                self.push_children(Kont::New { descriptor, env }, [Job::Body(body, extended)])?;
             },
             // ── A-S4 cast purity: casts lower STRUCTURALLY ───────────────────────────────────
             Proc::CastInt(value) => self

@@ -99,6 +99,7 @@ theories/GeneratedHashDriverControl.v
 theories/GeneratedHashHandlerControl.v
 theories/NativeHashBagStageCharge.v
 theories/PaidTaskBatchReversal.v
+theories/CheckedBindingTaskDispatch.v
 theories/AdmittedNativeLeafComparison.v
 theories/AdmittedIdentityComparison.v
 theories/AdmittedFltComparison.v

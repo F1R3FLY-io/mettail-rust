@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn descriptor_cmp_spelling_preserves_strict_string_order() {
+    let texts = ["", "a", "aa", "ab", "z", "é", "λ", "🦀"];
+    for left in texts {
+        for right in texts {
+            let pair = vec![left.to_owned(), right.to_owned()];
+            assert_eq!(strictly_ordered(&pair), left < right);
+        }
+    }
+    assert!(strictly_ordered(&[]));
+    assert!(strictly_ordered(&["one".into()]));
+}
+
+#[test]
 fn fresh_descriptors_preserve_exact_fields_and_emitted_count_boundaries() {
     for binder_count in [0, 1, 3, i32::MAX as usize] {
         let descriptor = CheckedFreshDescriptor::new(FreshShape::Plain { binder_count }, vec![])
