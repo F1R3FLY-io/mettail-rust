@@ -581,6 +581,11 @@ categories. Materialization, scratch storage, control work and cleanup remain
 separate from this callback count; the count alone does not authorize native
 Map hashing or bag reconstruction.
 
+The private Map-hash inspector uses the sharper dispatch fact that inputs
+with fewer than two entries make no comparator calls. Its callback allowance
+is therefore zero for those inputs and $`10n^2+32n`$ otherwise; it does not
+run a comparator to discover this fact.
+
 ### Native sort control and cumulative storage
 
 Callback counts alone do not bound comparator-free sort control or temporary
@@ -614,6 +619,110 @@ callback count prices an arbitrary comparison body as constant work. Native
 sorting behavior is unchanged, and these logical bounds make no allocator,
 resident-memory, panic-recovery or performance claim.
 
+### Native Map Hash contribution composition
+
+The [Map-hash contribution helper](../../macros/src/gen/term_ops/iterative_hash_map_inspection.rs)
+composes these bounds through the existing metadata-only comparison worklist.
+It leaves ordinary `iter().collect().sort_by(...)` hashing unchanged. Before
+building its inspection roster, it pays for metadata access and checks the
+layouts of both the native borrowed-pair array and the larger erased inspection
+array. The original immutable Map keeps every key/value pointer valid; the
+inspection roster neither owns nor reconstructs those terms.
+
+Let $`n`$ be the number of original Map entries, $`\delta_n`$ be zero for an
+empty Map and one otherwise, and $`K(n)`$ be the core allowance above. The
+callback allowance used by the shared pair cursor is:
+
+```math
+C(n)=\begin{cases}
+0 & n<2,\\
+10n^2+32n & n\geq 2.
+\end{cases}
+```
+
+The helper adds the following named contributions. Work and records are
+cumulative logical allowances; none of these components owns key/value bytes.
+
+| Component | Work | Records |
+|---|---:|---:|
+| Native sort core | $`K(n)`$ | $`K(n)`$ |
+| Trusted collection and reverse-consuming loop | $`19+10n+\delta_n`$ | 0 |
+| External `sort_by` and `stable_sort` dispatch | 2 | 0 |
+| Flat roster, including its header and disposal credit | $`2(n+1)`$ | $`n+1`$ |
+| Composed `IntoIter`/`Rev` iterator record | 0 | 1 |
+| Comparator adapter, excluding structural Ord bodies | $`5C(n)`$ | 0 |
+
+The shell combines the collector's $`15+7n+\delta_n`$ source word with
+$`3n+4`$ for the original reverse-consuming loop: iterator initialization,
+successful advances, terminal probe, normal release, two pointer handoffs per
+entry and the final length query. Its work already includes the iterator
+boundary; the separate iterator row adds only its record. `IntoIter` takes
+ownership of the same roster allocation, and `Rev` delegates to `next_back`.
+Neither creates another roster. Native Hash child-task pushes and pops are
+already covered by the shared Hash driver and are not added here.
+
+Only inputs above twenty add outer scratch contributions. On the pinned
+64-bit profile, a borrowed key/value pair occupies sixteen bytes. Define:
+
+```math
+q(n)=\max\bigl(n-\lfloor n/2\rfloor,\min(n,500\,000),48\bigr).
+```
+
+| Additional component, only when $`n>20`$ | Work | Records |
+|---|---:|---:|
+| Outer scratch selection and local frame | 16 | 1 |
+| Fixed 4 KiB stack buffer: 256 pair positions and header credit | 514 | 257 |
+| Heap buffer, only when $`q(n)>256`$ | $`2(q(n)+1)`$ | $`q(n)+1`$ |
+
+The outer buffer is reused by eager fallback and small sorting. There is no
+additional 48-position allocation: that constant is the minimum scratch
+extent required by the stable small-sort routine. The outer selection row
+remains separate from the core bound's routing allowance. Flat-buffer credits
+prepay construction and normal disposal; unused cleanup credit is not refunded.
+The composition deliberately retains conservative overlap with some projected
+write, header and teardown groups rather than subtracting costs without an
+event-identification proof. It is an upper allowance, not an exact execution
+cost or a physical allocation measurement.
+
+Let $`(W_0,R_0,0)`$ be the sum of these rows. For original pairs
+$`(k_i,v_i)`$, the additional comparison contribution is the componentwise sum:
+
+```math
+(W_0,R_0,0)+C(n)\sum_{i=0}^{n-1}\sum_{j=0}^{n-1}
+\bigl(A_{\mathrm{Ord}}(k_i,k_j)+A_{\mathrm{Ord}}(v_i,v_j)\bigr).
+```
+
+Here $`A_{\mathrm{Ord}}(x,y)`$ is the existing complete, directed Ord-root
+allowance, including its wrapper and all inspected descendants. The shared
+cursor retains original occurrences, diagonals, aliases and both operand
+orientations. Each key role and each value role enters that full worklist
+with factor $`C(n)`$; neither uses a nested-child-only allowance. Value roles
+remain covered even when the actual key comparison would be decisive:
+inspection does not manufacture a key result to prune them. The five adapter
+groups cover pair routing, primary handoff, `then_with` selection, the optional
+secondary handoff and the library's `Less` projection, not either Ord body.
+When $`C(n)=0`$, the cursor schedules no comparison roots.
+
+Hash traversal is separate: the existing Map visitor schedules each original
+key and value once, plus the length task. It does not multiply those Hash
+children by $`C(n)`$ or by the number of pair candidates. Metadata visitation,
+roster/cursor storage, arithmetic and accumulation spend their own admission
+budget immediately. Every future contribution is checked before accumulation;
+overflow or refusal publishes no successful authority, while earlier paid
+inspection effects and accumulated parts need not roll back.
+
+This reuses the trusted collector, weighted sort and callback-count models,
+the [flat-buffer ownership laws](../../formal/rocq/rho_bridge/theories/AdmittedCollectionComparisonOwnership.v),
+the [iterator boundary](../../formal/rocq/rho_bridge/theories/RequiredVecBindingReservation.v),
+the [original-pair request cover](../../formal/rocq/rho_bridge/theories/GeneratedComparisonRequestCover.v)
+and [checked accumulation/scaling](../../formal/rocq/rho_bridge/theories/NativeInspectionAccumulation.v).
+The cited component models are kernel-checked; their reuse does not constitute
+verification of all Rust execution. The pinned library source associations,
+original-borrow validity and emitted typed routing remain explicit review boundaries. Unsupported
+native profiles are refused before this inspection proceeds. These are private
+accounting components, not an activated whole-key reconstruction provider or
+proof that the public application is complete.
+
 ### Shared paid Map visitation
 
 `HashMapLit::try_for_each_entry` exposes the same paid IndexMap slice walk
@@ -635,9 +744,9 @@ unchanged reservation sequence.
 This is a metadata access boundary, not a Hash or comparison implementation.
 It calls no native key operation and performs no sorting. Additive leaf
 allowances can be inspected in this order because whole-pair permutation
-preserves their sum. Connecting that sum to native Map hashing still requires
-the native sorting inventory proof and separate traversal, sorting and
-comparison allowances; the visitor itself supplies none of those costs.
+preserves their sum. The Map-hash composition above supplies separate
+traversal, sorting and comparison allowances; the visitor itself supplies
+none of those costs.
 
 ### Generated leaf and traversal contributions
 
@@ -685,13 +794,14 @@ iterator advance; there is no second traversal or unchecked width product.
 Tags, payload hashing and task scheduling are accounted for by their own
 components, not charged again by the handler.
 
-Native Map materialization, sorting and comparison contributions are not yet
-included. The component therefore remains private and is not a complete
-category Hash allowance or an activated reconstruction provider. Its executable
-fixture checks exact component totals, repeated aliased occurrences, every metadata
-refusal boundary and a deep iterative traversal. Ordinary Hash generation is
-unchanged. Provider integration must compose the remaining source-backed
-contributions before reserving native execution.
+Native Map materialization, sorting and full-root comparison contributions
+are composed by the private helper above. This does not activate a public
+category-admission interface or reconstruction provider. The generated fixture
+contains checks for named component totals, original directed pair roles,
+repeated aliased occurrences, metadata refusal boundaries and deep iterative
+traversal. Ordinary Hash generation is unchanged. Provider integration still
+must connect the private contribution to complete source-backed stage
+admission before the original native execution.
 
 ## Exact library boundary
 

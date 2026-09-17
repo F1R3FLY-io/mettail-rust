@@ -55,6 +55,11 @@ use syn::Ident;
 #[path = "iterative_cmp_contribution.rs"]
 mod contribution;
 
+/// Reuse the existing metadata traversal when another operation invokes Ord.
+pub(super) fn generate_comparison_contribution_inspection(language: &LanguageDef) -> TokenStream {
+    contribution::generate_comparison_contribution_inspection(language)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CmpInterpretation {
     Ordinary,

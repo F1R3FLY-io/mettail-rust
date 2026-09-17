@@ -49,7 +49,7 @@ pub(super) fn generate_comparison_contribution_inspection(language: &LanguageDef
                 mettail_runtime::NativeComparisonFailure<E>> {
                 // These immutable roots retain every descendant pointer until
                 // the local worklist, including flat roster owners, is dropped.
-                inspect_cmp_contribution_worklist(#task_enum::#variant(left, right), mode, reserve)
+                inspect_cmp_contribution_worklist(#task_enum::#variant(left, right), mode, 1, reserve)
             }
         }
     });
@@ -72,6 +72,7 @@ pub(super) fn generate_comparison_contribution_inspection(language: &LanguageDef
 
         fn inspect_cmp_contribution_worklist<E>(
             root: #task_enum, mode: InspectCmpContributionMode,
+            initial_factor: usize,
             reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
         ) -> Result<mettail_runtime::binding_receipt::BindingCharge,
             mettail_runtime::NativeComparisonFailure<E>> {
@@ -81,11 +82,11 @@ pub(super) fn generate_comparison_contribution_inspection(language: &LanguageDef
             let mut stack = Vec::new();
             mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
                 .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
-            stack.push(InspectCmpContributionFrame { task: root, mode, factor: 1 });
+            stack.push(InspectCmpContributionFrame { task: root, mode, factor: initial_factor });
             let mut state = mettail_runtime::binding_receipt::BindingCharge::ZERO;
             // Original local wrapper/root lifecycle, not a fresh wrapper per
             // nested collection callback. Continuation costs compose separately.
-            inspect_cmp_scaled_contribution(&mut state, 19, 3, 0, 1, reserve)?;
+            inspect_cmp_scaled_contribution(&mut state, 19, 3, 0, initial_factor, reserve)?;
             loop {
                 mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)
                     .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
@@ -198,6 +199,34 @@ fn generate_collection_contribution_cursor() -> TokenStream {
         }
 
         impl InspectCmpPairCursor {
+            fn try_for_map_hash<E>(
+                original: mettail_runtime::CheckedCmpRoster,
+                primary: fn(*const (), *const ()) -> InspectCmpContributionTask,
+                secondary: fn(*const (), *const ()) -> InspectCmpContributionTask,
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+            ) -> Result<Self, mettail_runtime::NativeComparisonFailure<E>> {
+                mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)
+                    .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+                let width = original.try_items(reserve)?.len();
+                // Original stable-sort dispatch has no callback below two
+                // entries. For larger widths use its verified full-width
+                // bound, not the collection PDA's different merge bound.
+                let factor = if width < 2 { 0 } else {
+                    width.checked_mul(width).and_then(|square| square.checked_mul(10))
+                        .and_then(|work| width.checked_mul(32).and_then(|more| work.checked_add(more)))
+                        .ok_or(mettail_runtime::NativeComparisonFailure::Admission(
+                            mettail_runtime::BindingFailure::SizeOverflow))?
+                };
+                let empty = mettail_runtime::CheckedCmpRoster::try_with_capacity(0, reserve)?;
+                mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)
+                    .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+                Ok(Self {
+                    left: original, right: empty, widths: [width, 0], factors: [factor, 0, 0],
+                    family: Some(InspectCmpPairFamily::LeftSort), row: 0, col: 0,
+                    primary, secondary: Some(secondary),
+                })
+            }
+
             fn dimensions(&self, family: InspectCmpPairFamily) -> (usize, usize, usize) {
                 match family {
                     InspectCmpPairFamily::LeftSort => (self.widths[0], self.widths[0], self.factors[0]),

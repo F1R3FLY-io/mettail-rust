@@ -173,7 +173,9 @@ fn contribution_inspection_shares_the_emitter_without_native_execution_or_sortin
     for required in [
         "try_inspect_hash_fx_work",
         "try_accumulate_parts",
-        "try_for_each_entry",
+        "inspect_native_map_hash_overhead",
+        "inspect_map_hash_contributions_proc",
+        "try_comparison_roster",
         "BindingCharge",
     ] {
         assert!(source.contains(required), "missing shared inspection component: {required}");
@@ -196,9 +198,9 @@ fn contribution_inspection_shares_the_emitter_without_native_execution_or_sortin
         &HashEmissionNames::inspect_contributions(),
     )
     .to_string();
-    assert!(map.contains("try_for_each_entry"));
+    assert!(map.contains("inspect_map_hash_contributions_proc"));
     assert!(!map.contains("UnsupportedConstructor"));
-    assert!(!map.contains("try_comparison_roster"));
+    assert!(!map.contains("sort_by"));
 }
 
 #[test]
@@ -578,6 +580,110 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
             }).expect("spawn small-stack hash worker").join().expect("small-stack hash worker");
         }
 
+        fn map_overhead_oracle(n: usize, c: usize) -> mettail_runtime::binding_receipt::BindingCharge {
+            use mettail_runtime::binding_receipt::BindingCharge;
+            // Independent named source components, computed wider than the
+            // machine arithmetic under test. No task/leaf costs are re-added.
+            let n = n as u128;
+            let core = 320*n*n + 1024*n + 1133;
+            let shell = 19 + 10*n + u128::from(n != 0);
+            let mut work = core + shell + 2 + 2*(n+1) + 5*(c as u128);
+            let mut records = core + (n+1) + 1;
+            if n > 20 {
+                work += 16 + 514;
+                records += 1 + 257;
+                let q = (n - n/2).max(n.min(500_000)).max(48);
+                if q > 256 {
+                    work += 2*(q+1);
+                    records += q+1;
+                }
+            }
+            BindingCharge::new(usize::try_from(work).expect("fixture work fits"),
+                usize::try_from(records).expect("fixture records fit"), 0).expect("fixture projections fit")
+        }
+
+        fn native_map_overhead_boundaries() {
+            use mettail_runtime::binding_receipt::BindingCharge;
+            let initial = BindingCharge::new(7, 2, 3).expect("populated prefix");
+            for n in [0usize, 1, 2, 3, 20, 21, 256, 257, 512, 513, 500_000, 500_001] {
+                let c = if n < 2 { 0 } else { 10*n*n + 32*n };
+                let expected = initial.checked_add(map_overhead_oracle(n, c)).expect("composed prefix");
+                let mut state = initial;
+                let mut trace = Vec::new();
+                inspect_native_map_hash_overhead(&mut state, n, c, &mut |w,u| {
+                    trace.push((w,u)); Ok::<_, usize>(())
+                }).expect("all named native Map overhead components");
+                assert_eq!(state, expected, "width {n}");
+                assert!(!trace.is_empty());
+                for stop in 0..trace.len() {
+                    let mut partial = initial;
+                    let mut seen = 0;
+                    let result = inspect_native_map_hash_overhead(&mut partial, n, c, &mut |w,u| {
+                        assert_eq!((w,u), trace[seen]);
+                        let current = seen; seen += 1;
+                        if current == stop { Err(stop) } else { Ok(()) }
+                    });
+                    assert_eq!(result, Err(KeyHashFailure::Admission(BindingFailure::Reservation(stop))));
+                    assert_eq!(seen, stop+1);
+                }
+            }
+            for (n,c) in [(usize::MAX,0), (0,usize::MAX), (usize::MAX/2,0)] {
+                let mut state = initial;
+                let mut calls = 0;
+                let result = inspect_native_map_hash_overhead(&mut state,n,c,&mut |_,_| {
+                    calls += 1; Ok::<_, ()>(())
+                });
+                assert_eq!(result, Err(KeyHashFailure::Admission(BindingFailure::SizeOverflow)));
+                assert!(calls > 0, "arithmetic follows paid inspection");
+            }
+            struct Stop(Box<u8>);
+            let mut error = Some(Stop(Box::new(19)));
+            let identity = &*error.as_ref().expect("original error").0 as *const u8;
+            let mut state = initial;
+            let result = inspect_native_map_hash_overhead(&mut state,usize::MAX,usize::MAX,
+                &mut |_,_| Err(error.take().expect("single refusal")));
+            match result {
+                Err(KeyHashFailure::Admission(BindingFailure::Reservation(error))) =>
+                    assert_eq!(&*error.0 as *const u8, identity),
+                _ => panic!("reservation must precede arithmetic and preserve the non-Clone error"),
+            }
+            assert_eq!(state, initial);
+        }
+
+        fn original_map_contribution_oracle(value: &Map) -> mettail_runtime::binding_receipt::BindingCharge {
+            use mettail_runtime::binding_receipt::BindingCharge;
+            let Map::#map_literal(source) = value else { panic!("Map literal") };
+            let n = source.len();
+            let c = if n < 2 { 0 } else { 10*n*n + 32*n };
+            // Empty literal Map: one root category, payload handoff, and the
+            // existing AbsorbUsize task/leaf. Each child has no extra wrapper.
+            let mut expected = BindingCharge::new(33,4,0).expect("literal Map base")
+                .checked_add(map_overhead_oracle(n,c)).expect("Map overhead");
+            for (key,value) in source.iter() {
+                for child in [key,value] {
+                    let charge = inspect_hash_contribution_proc(child,&mut |_,_| Ok::<_, ()>(()))
+                        .expect("original Hash child contribution");
+                    expected = expected.checked_add(BindingCharge::new(
+                        charge.base_work()-15,charge.records()-2,charge.owned_bytes())
+                        .expect("child without duplicate root wrapper")).expect("child sum");
+                }
+            }
+            if c > 0 {
+                for (lk,lv) in source.iter() {
+                    for (rk,rv) in source.iter() {
+                        for (left,right) in [(lk,rk),(lv,rv)] {
+                            let charge = inspect_comparison_contributions_proc(left,right,
+                                InspectCmpContributionMode::Ord,&mut |_,_| Ok::<_, ()>(()))
+                                .expect("full public Ord callback contribution");
+                            expected = expected.checked_add(charge.checked_scale(c).expect("callback factor"))
+                                .expect("both directed callback roles");
+                        }
+                    }
+                }
+            }
+            expected
+        }
+
         fn contribution_inspection_examples() {
             use mettail_runtime::binding_receipt::BindingCharge;
             let inspect = |value: &Proc, expected_work, expected_records| {
@@ -629,9 +735,36 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
                 let original: Vec<_> = source.iter().map(|(k,v)| (k as *const Proc,v as *const Proc)).collect();
                 let charge = inspect_hash_contribution_map(&value, &mut |_,_| Ok::<_, ()>(()))
                     .expect("unsorted metadata-only Map walk");
-                assert_eq!(charge, BindingCharge::new(105,8,0).expect("original pair contributions"));
+                assert_eq!(charge, original_map_contribution_oracle(&value));
                 assert_eq!(source.iter().map(|(k,v)| (k as *const Proc,v as *const Proc)).collect::<Vec<_>>(), original);
-                inspect(&map_proc(value), 131, 10);
+                inspect(&map_proc(value), charge.base_work()+26, charge.records()+2);
+            }
+            for value in [map([]), map([(Proc::PZero,Proc::PZero)]),
+                map([(Proc::PZero,Proc::PZero),(token("unequal primary"),Proc::PUnary(Arc::new(Proc::PZero)))]),
+                map([(token("a"),Proc::PPair(shared.clone(),shared.clone())),
+                     (token("b"),map_proc(map([(Proc::PZero,Proc::PZero)]))),
+                     (token("c"),Proc::PZero)])] {
+                let expected = original_map_contribution_oracle(&value);
+                let actual = inspect_hash_contribution_map(&value,&mut |_,_| Ok::<_, ()>(()))
+                    .expect("original directed roles, aliases and nested Map");
+                assert_eq!(actual,expected);
+                // Native unequal primary results may skip values, but the
+                // unknown-result cost cover must still include those values.
+                let proc = map_proc(value);
+                let mut trace = Vec::new();
+                inspect_hash_contribution_proc(&proc,&mut |w,u| {
+                    trace.push((w,u)); Ok::<_, usize>(())
+                }).expect("nested original Map contribution");
+                for stop in [0,trace.len()/2,trace.len()-1] {
+                    let mut seen = 0;
+                    let result = inspect_hash_contribution_proc(&proc,&mut |w,u| {
+                        assert_eq!((w,u),trace[seen]);
+                        let current = seen; seen += 1;
+                        if current == stop { Err(stop) } else { Ok(()) }
+                    });
+                    assert_eq!(result,Err(KeyHashFailure::Admission(BindingFailure::Reservation(stop))));
+                    assert_eq!(seen,stop+1);
+                }
             }
             std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
                 let depth = 20_000;
@@ -642,11 +775,20 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
                 assert_eq!(charge, BindingCharge::new(26 + 13*depth, 3 + depth, 0)
                     .expect("exact leaf, driver/wrapper and handler contribution"));
                 drop(value);
+                let mut value = Proc::PZero;
+                for _ in 0..depth { value = map_proc(map([(Proc::PZero,value)])); }
+                let charge = inspect_hash_contribution_proc(&value,&mut |_,_| Ok::<_, ()>(()))
+                    .expect("singleton Maps have no native sort callbacks or recursive inspection");
+                let overhead = map_overhead_oracle(1,0);
+                assert_eq!(charge,BindingCharge::new(26+depth*(55+overhead.base_work()),
+                    3+depth*(5+overhead.records()),0).expect("linear singleton Map inventory"));
+                drop(value);
             }).expect("spawn contribution inspection worker").join().expect("contribution inspection worker");
         }
 
         fn main() {
             assert!(mettail_runtime::CHECKED_FX_PROFILE_AVAILABLE);
+            native_map_overhead_boundaries();
             contribution_inspection_examples();
             exercise(&Proc::PZero);
             exercise(&Int::#int_literal(i64::MIN));

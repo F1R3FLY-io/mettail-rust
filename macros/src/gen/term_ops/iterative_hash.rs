@@ -54,6 +54,9 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+#[path = "iterative_hash_map_inspection.rs"]
+mod map_inspection;
+
 /// Distinct interpretations of the shared source traversal.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HashInterpretation {
@@ -282,20 +285,22 @@ pub fn generate_iterative_hash(language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// Native-leaf and driver/wrapper contributions, not a complete Hash bound.
+/// Compose native-leaf, driver, and Map callback contributions privately.
 ///
 /// This private integration entrypoint deliberately does not activate a public
 /// category-admission interface. It reuses the exact field and scope builders,
 /// pays its own metadata walk, and never executes Hash, Eq, Ord or sorting.
-/// Native Map materialization, sorting and comparator allowances must still
-/// be composed before a whole-category Hash may be admitted.
+/// The result remains accounting data: an execution provider must reserve it
+/// against the same retained source and pinned native profile before use.
 #[allow(dead_code)]
 fn generate_hash_contribution_inspection(language: &LanguageDef) -> TokenStream {
     let emission = HashEmissionNames::inspect_contributions();
     let tasks = generate_hash_task_enum(language, &emission);
     let driver = generate_hash_engine(language, &emission);
     let interfaces = generate_hash_impls(language, &emission);
-    quote! { #tasks #driver #interfaces }
+    let comparisons = super::iterative_cmp::generate_comparison_contribution_inspection(language);
+    let maps = map_inspection::generate_map_hash_contribution_inspection(language);
+    quote! { #comparisons #maps #tasks #driver #interfaces }
 }
 
 // =============================================================================
@@ -675,14 +680,9 @@ fn hash_collection_stmts(
     }
 }
 
-/// Schedule original Map borrows using the existing admitted stable sorter.
-/// Only element categories actually needed by admitted Map arms get a helper.
-/// Sorting never receives a hasher; reverse pops schedule value then key, and
-/// the length is pushed last so the native length/key/value stream drains first.
-fn generate_checked_map_hash_helpers(
-    language: &LanguageDef,
-    emission: &HashEmissionNames,
-) -> Vec<TokenStream> {
+/// Select the original supported Map element categories for both checked
+/// execution and metadata inspection, without a second support census.
+fn required_map_hash_categories(language: &LanguageDef) -> std::collections::BTreeSet<String> {
     let mut required = std::collections::BTreeSet::new();
     for ty in &language.types {
         for variant in collect_category_variants(&ty.name, language) {
@@ -717,6 +717,17 @@ fn generate_checked_map_hash_helpers(
             }
         }
     }
+    required
+}
+
+/// Schedule original Map borrows using the existing admitted stable sorter.
+/// Sorting never receives a hasher; reverse pops schedule value then key, and
+/// the length is pushed last so the native length/key/value stream drains first.
+fn generate_checked_map_hash_helpers(
+    language: &LanguageDef,
+    emission: &HashEmissionNames,
+) -> Vec<TokenStream> {
+    let required = required_map_hash_categories(language);
     language.types.iter().filter(|ty| required.contains(&ty.name.to_string())).map(|ty| {
         let category = &ty.name;
         let helper = emission.map_scheduler(category);
@@ -798,6 +809,10 @@ fn unordered_collection_hash_stmts(
     if emission.admitted() && *coll_type == CollectionType::HashMap {
         if emission.inspecting() {
             let routing = emission.routing();
+            let inspect = format_ident!(
+                "inspect_map_hash_contributions_{}",
+                element_cat.to_string().to_lowercase()
+            );
             let error = quote! { mettail_runtime::NativeComparisonFailure::Admission };
             let push_value = emission.push_task_with_error(
                 quote! { #task_enum::#task_variant(value as *const _) },
@@ -808,6 +823,7 @@ fn unordered_collection_hash_stmts(
             let push_length = emission.push_task(quote! { #task_enum::AbsorbUsize(length) });
             return quote! {{
                 #routing
+                #inspect(#coll_expr, state, reserve)?;
                 let length = (#coll_expr).len();
                 (#coll_expr).try_for_each_entry(reserve, |key, value, reserve| {
                     #push_value;

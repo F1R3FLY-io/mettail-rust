@@ -44,6 +44,16 @@ fn capture_original_layout_contribution_worklist() {
             inspect_comparison_contributions_proc(left, right, mode, &mut |_, _| Ok::<_, ()>(()))
                 .expect("original-layout metadata inspection")
         }
+        fn exercise_scaled_root(left: &Proc, right: &Proc, mode: InspectCmpContributionMode) {
+            let once = inspect(left, right, mode);
+            for factor in [0, 1, 3] {
+                let result = inspect_cmp_contribution_worklist(
+                    InspectCmpContributionTask::CmpProc(left, right), mode, factor,
+                    &mut |_, _| Ok::<_, ()>(()),
+                ).expect("scaled root inspection");
+                assert_eq!(result, once.checked_scale(factor).expect("scaled complete allowance"));
+            }
+        }
         fn exercise_cuts(left: &Proc, right: &Proc, mode: InspectCmpContributionMode) {
             let mut trace = Vec::new();
             let expected = inspect_comparison_contributions_proc(left, right, mode, &mut |w, u| {
@@ -201,10 +211,61 @@ fn capture_original_layout_contribution_worklist() {
                 assert!(cursor.try_next(&mut reserve).expect("stable terminal cursor").is_none());
             }
         }
+        fn exercise_native_sort_cursor() {
+            let keys = [Proc::PZero, Proc::PUnary(Arc::new(Proc::PZero))];
+            let values = [Proc::PVector(vec![]), Proc::PZero, Proc::PUnary(Arc::new(Proc::PZero))];
+            let entries = [(&keys[0], &values[0]), (&keys[1], &values[2]), (&keys[0], &values[1])];
+            let constructor: fn(*const (), *const ()) -> InspectCmpContributionTask =
+                |left, right| InspectCmpContributionTask::CmpProc(left.cast(), right.cast());
+            for width in 0usize..=3 {
+                let build = |reserve: &mut dyn FnMut(usize, usize) -> Result<(), usize>| {
+                    let mut forwarded = |w, u| reserve(w, u);
+                    let mut original = mettail_runtime::CheckedCmpRoster::try_with_capacity(width, &mut forwarded)?;
+                    for &(key, value) in &entries[..width] {
+                        original.try_push_pair(key, value, &mut forwarded)?;
+                    }
+                    InspectCmpPairCursor::try_for_map_hash(original, constructor, constructor, &mut forwarded)
+                };
+                let mut trace = Vec::new();
+                let mut cursor = build(&mut |w, u| { trace.push((w, u)); Ok(()) })
+                    .expect("original native-sort roster");
+                let factor = if width < 2 { 0 } else { 10 * width * width + 32 * width };
+                assert_eq!(cursor.widths, [width, 0]);
+                assert_eq!(cursor.factors, [factor, 0, 0]);
+                let mut observed = Vec::new();
+                while let Some(pair) = cursor.try_next(&mut |_, _| Ok::<_, ()>(())).expect("original pair") {
+                    observed.push((pair.primary, pair.secondary, pair.factor));
+                }
+                let mut expected = Vec::new();
+                if width >= 2 {
+                    for &(left_key, left_value) in &entries[..width] {
+                        for &(right_key, right_value) in &entries[..width] {
+                            expected.push(((left_key as *const Proc as *const (), right_key as *const Proc as *const ()),
+                                Some((left_value as *const Proc as *const (), right_value as *const Proc as *const ())), factor));
+                        }
+                    }
+                }
+                assert_eq!(observed, expected, "only original directed LL occurrences");
+                for limit in 0..trace.len() {
+                    let mut prefix = Vec::new();
+                    let result = build(&mut |w, u| {
+                        prefix.push((w, u));
+                        if prefix.len() > limit { Err(limit) } else { Ok(()) }
+                    });
+                    match result {
+                        Err(NativeComparisonFailure::Admission(BindingFailure::Reservation(error))) =>
+                            assert_eq!(error, limit),
+                        _ => panic!("factory must stop at original reservation refusal"),
+                    }
+                    assert_eq!(prefix, trace[..=limit]);
+                }
+            }
+        }
         fn main() {
             use InspectCmpContributionMode::{Eq, Ord};
             exercise_collection_components();
             exercise_original_pair_cursor();
+            exercise_native_sort_cursor();
             let zero = Proc::PZero;
             assert_eq!(inspect(&zero, &zero, Eq), BindingCharge::new(25, 3, 0).expect("root"));
             // The fixed handler envelope includes IndexCmp on an Ord
@@ -225,6 +286,7 @@ fn capture_original_layout_contribution_worklist() {
             let right = Proc::PPair(Arc::new(Proc::PUnary(shared)), Arc::new(Proc::PVector(vec![Proc::PZero])));
             assert_eq!(inspect(&left, &right, Eq), BindingCharge::new(61, 6, 0).expect("queued sibling"));
             for mode in [Eq, Ord] { exercise_cuts(&left, &right, mode); }
+            for mode in [Eq, Ord] { exercise_scaled_root(&left, &right, mode); }
             let binder = FreeVar::fresh_named("x".to_owned());
             let single = Proc::PSingle(Arc::new(Proc::PZero),
                 Scope::from_parts_unsafe(Binder(binder.clone()), Arc::new(Proc::PZero)));
@@ -260,7 +322,10 @@ fn capture_original_layout_contribution_worklist() {
             entries.insert(Proc::PZero, Proc::PUnary(Arc::new(Proc::PZero)));
             let map = Proc::ApplyMap(Arc::new(Proc::PZero), Arc::new(Map::#map_literal(entries)));
             let nested = bag([(map, 2)]);
-            for mode in [Eq, Ord] { exercise_cuts(&nested, &nested, mode); }
+            for mode in [Eq, Ord] {
+                exercise_cuts(&nested, &nested, mode);
+                exercise_scaled_root(&nested, &nested, mode);
+            }
             std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
                 let mut value = Proc::PZero;
                 for _ in 0..20_000 { value = Proc::PUnary(Arc::new(value)); }
