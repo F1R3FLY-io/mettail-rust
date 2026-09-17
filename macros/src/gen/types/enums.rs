@@ -72,18 +72,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         let is_collection_category = lang_type.collection_kind.is_some();
         if let Some(native_type) = &lang_type.native_type {
             if !has_literal_rule && !is_collection_category {
-                let literal_label = generate_literal_label(native_type);
-                let nt = NativeType::from_syn_type(native_type);
-                // str is unsized; use String. f32/f64 use canonical wrapper for Eq/Hash/Ord.
-                let payload_type = match nt {
-                    NativeType::Str => quote! { std::string::String },
-                    NativeType::Float64 => quote! { mettail_runtime::CanonicalFloat64 },
-                    NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
-                    _ => quote! { #native_type },
-                };
-                variants.push(quote! {
-                    #literal_label(#payload_type)
-                });
+                variants.push(native_literal_variant(native_type));
             }
         }
 
@@ -93,85 +82,9 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         //   - `![T] as List`  → `T` from native_type
         //   - bare `List`     → `Vec<Proc>` (Proc is the primary category)
         //   - similarly for Bag (`HashBag<Proc>`) and Map (`HashMapLit<Proc, Proc>`)
-        {
-            use mettail_ast::language::CollectionCategory;
-            let elem_type = language
-                .types
-                .iter()
-                .find(|t| t.name.to_string() == "Proc")
-                .map(|t| &t.name)
-                .or_else(|| language.types.first().map(|t| &t.name));
-            if let Some(ref collection_kind) = lang_type.collection_kind.as_ref() {
-                let payload_opt: Option<TokenStream> = if let Some(ref native_type) = lang_type.native_type {
-                    // `![HashMap] as Map` (implicit params) parses as a bare `HashMap`;
-                    // use the runtime wrapper so derived Hash/Ord/Eq apply.
-                    let nt = NativeType::from_syn_type(native_type);
-                    if matches!(collection_kind, CollectionCategory::Map(_))
-                        && matches!(nt, NativeType::Other(ref s) if s == "HashMap")
-                    {
-                        elem_type.map(|elem_type| {
-                            quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
-                        })
-                    } else if matches!(collection_kind, CollectionCategory::Pathmap(_)) {
-                        // A pathmap is homogeneous: the whole literal is either
-                        // set-mode (`{| k |}` entries) or map-mode (`{| k:v |}`
-                        // entries). Optionality is represented once by
-                        // `PathMapLit`'s container mode, not once per entry.
-                        //
-                        // This is derived from the CONTAINER KIND, not spelled in
-                        // the DSL, because the spec already knew: the parser has
-                        // carried `kv_value_optional = matches!(coll_kind,
-                        // CollectionType::PathMap)` as a compile-time property
-                        // since 2026-06-27. The defect was that the TYPE did not
-                        // reflect it — so a bare entry had to be materialised by
-                        // fabricating a value (the key itself), destroying the
-                        // distinction before any term-op could see it.
-                        //
-                        // The declared `![PathMapLit<Proc, Proc>]` therefore
-                        // supplies only the ELEMENT type; the value type is
-                        // rebuilt around it. No DSL change, no `TypeExpr` change
-                        // (`TypeExpr::Collection` has exactly ONE element slot and
-                        // cannot express a key/value pair at all), and no `unit`
-                        // inhabitant added to any grammar.
-                        collection_value_elem(native_type)
-                            .or_else(|| elem_type.map(|e| quote! { #e }))
-                            .map(|elem| {
-                                quote! {
-                                    mettail_runtime::PathMapLit<#elem, #elem>
-                                }
-                            })
-                    } else {
-                        Some(quote! { #native_type })
-                    }
-                } else {
-                    elem_type.map(|elem_type| match collection_kind {
-                        CollectionCategory::List(_) => quote! { Vec<#elem_type> },
-                        CollectionCategory::Bag(_) => {
-                            quote! { mettail_runtime::HashBag<#elem_type> }
-                        }
-                        CollectionCategory::Map(_) => {
-                            quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
-                        }
-                        CollectionCategory::Set(_) => {
-                            quote! { mettail_runtime::HashSetLit<#elem_type> }
-                        }
-                        CollectionCategory::Pathmap(_) => {
-                            quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> }
-                        }
-                    })
-                };
-                if let (Some(payload_type), false) = (payload_opt, has_literal_rule) {
-                    let literal_label = match collection_kind {
-                        CollectionCategory::List(_) => quote::format_ident!("ListLit"),
-                        CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
-                        CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
-                        CollectionCategory::Set(_) => quote::format_ident!("SetLit"),
-                        CollectionCategory::Pathmap(_) => quote::format_ident!("PathmapLit"),
-                    };
-                    variants.push(quote! {
-                        #literal_label(#payload_type)
-                    });
-                }
+        if !has_literal_rule {
+            if let Some(variant) = collection_literal_variant(cat_name, language) {
+                variants.push(variant);
             }
         }
 
@@ -269,6 +182,123 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
 
     quote! {
         #(#enums)*
+    }
+}
+
+fn native_literal_variant(native_type: &syn::Type) -> TokenStream {
+    let literal_label = generate_literal_label(native_type);
+    let nt = NativeType::from_syn_type(native_type);
+    // str is unsized; use String. f32/f64 use canonical wrapper for Eq/Hash/Ord.
+    let payload_type = match nt {
+        NativeType::Str => quote! { std::string::String },
+        NativeType::Float64 => quote! { mettail_runtime::CanonicalFloat64 },
+        NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+        _ => quote! { #native_type },
+    };
+    quote! { #literal_label(#payload_type) }
+}
+
+fn collection_literal_variant(
+    category: &syn::Ident,
+    language: &LanguageDef,
+) -> Option<TokenStream> {
+    use mettail_ast::language::CollectionCategory;
+    let lang_type = language.get_type(category)?;
+    let collection_kind = lang_type.collection_kind.as_ref()?;
+    let elem_type = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == "Proc")
+        .map(|t| &t.name)
+        .or_else(|| language.types.first().map(|t| &t.name));
+    let payload_opt: Option<TokenStream> = if let Some(ref native_type) = lang_type.native_type {
+        // Preserve the existing map shorthand and collection payload policy.
+        let nt = NativeType::from_syn_type(native_type);
+        if matches!(collection_kind, CollectionCategory::Map(_))
+            && matches!(nt, NativeType::Other(ref s) if s == "HashMap")
+        {
+            elem_type.map(|elem_type| {
+                quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+            })
+        } else if matches!(collection_kind, CollectionCategory::Pathmap(_)) {
+            // A PathMap's mode carries set/map optionality once. Its declared
+            // element supplies both homogeneous roles, never Option<element>.
+            collection_value_elem(native_type)
+                .or_else(|| elem_type.map(|e| quote! { #e }))
+                .map(|elem| quote! { mettail_runtime::PathMapLit<#elem, #elem> })
+        } else {
+            Some(quote! { #native_type })
+        }
+    } else {
+        elem_type.map(|elem_type| match collection_kind {
+            CollectionCategory::List(_) => quote! { Vec<#elem_type> },
+            CollectionCategory::Bag(_) => quote! { mettail_runtime::HashBag<#elem_type> },
+            CollectionCategory::Map(_) => {
+                quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+            },
+            CollectionCategory::Set(_) => quote! { mettail_runtime::HashSetLit<#elem_type> },
+            CollectionCategory::Pathmap(_) => {
+                quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> }
+            },
+        })
+    };
+    let payload_type = payload_opt?;
+    let literal_label = match collection_kind {
+        CollectionCategory::List(_) => quote::format_ident!("ListLit"),
+        CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
+        CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
+        CollectionCategory::Set(_) => quote::format_ident!("SetLit"),
+        CollectionCategory::Pathmap(_) => quote::format_ident!("PathmapLit"),
+    };
+    Some(quote! { #literal_label(#payload_type) })
+}
+
+/// Return the actual emitted field type of one native or collection literal.
+///
+/// Capability gates need the Rust payload, not merely the declared native
+/// family: explicit literal rules can choose a different field type. At macro
+/// expansion time this reads exactly one variant from the existing emitter.
+/// It does not generate or parse an entire enum, inspect runtime terms, resolve
+/// Rust aliases, or assert that the returned type implements any trait.
+/// Nonliteral constructors and missing variants return `None`.
+pub(crate) fn native_variant_payload(
+    category: &syn::Ident,
+    label: &syn::Ident,
+    language: &LanguageDef,
+) -> Option<syn::Type> {
+    let lang_type = language.get_type(category)?;
+    let tokens = if let Some(rule) = language
+        .terms
+        .iter()
+        .find(|rule| rule.category == *category && rule.label == *label)
+    {
+        if !is_literal_rule(rule) {
+            return None;
+        }
+        generate_variant(rule, language)
+    } else {
+        if language
+            .terms
+            .iter()
+            .any(|rule| rule.category == *category && is_literal_rule(rule))
+        {
+            return None;
+        }
+        if lang_type.collection_kind.is_some() {
+            collection_literal_variant(category, language)?
+        } else {
+            native_literal_variant(lang_type.native_type.as_ref()?)
+        }
+    };
+    let variant = syn::parse2::<syn::Variant>(tokens).ok()?;
+    if variant.ident != *label {
+        return None;
+    }
+    match variant.fields {
+        syn::Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+            fields.unnamed.into_iter().next().map(|field| field.ty)
+        },
+        _ => None,
     }
 }
 
@@ -837,3 +867,191 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
 #[cfg(test)]
 #[path = "../../../tests/support/type_expr_emit_recursive_oracle.rs"]
 mod recursive_oracle;
+
+#[cfg(test)]
+mod native_payload_tests {
+    use super::*;
+    use quote::{format_ident, ToTokens};
+
+    fn actual_payload(
+        language: &LanguageDef,
+        category: &syn::Ident,
+        label: &syn::Ident,
+    ) -> syn::Type {
+        let file = syn::parse2::<syn::File>(generate_ast_enums(language))
+            .expect("production enum tokens parse");
+        let variant = file
+            .items
+            .into_iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(item) if item.ident == *category => item
+                    .variants
+                    .into_iter()
+                    .find(|variant| variant.ident == *label),
+                _ => None,
+            })
+            .expect("actual emitted variant");
+        let syn::Fields::Unnamed(fields) = variant.fields else {
+            panic!("one native payload");
+        };
+        assert_eq!(fields.unnamed.len(), 1);
+        fields.unnamed.into_iter().next().expect("sole field").ty
+    }
+
+    fn check(language: &LanguageDef, category: &str, label: &syn::Ident, expected: &str) {
+        let category = format_ident!("{}", category);
+        let payload = native_variant_payload(&category, label, language).expect("native metadata");
+        assert_eq!(
+            payload.to_token_stream().to_string(),
+            actual_payload(language, &category, label)
+                .to_token_stream()
+                .to_string()
+        );
+        let expected: syn::Type = syn::parse_str(expected).expect("expected Rust type");
+        assert_eq!(payload.to_token_stream().to_string(), expected.to_token_stream().to_string());
+    }
+
+    #[test]
+    fn auto_native_metadata_matches_normalized_and_qualified_payloads() {
+        for (native, expected) in [
+            ("str", "std::string::String"),
+            ("String", "std::string::String"),
+            ("f32", "mettail_runtime::CanonicalFloat32"),
+            ("f64", "mettail_runtime::CanonicalFloat64"),
+            ("foreign::i64", "foreign::i64"),
+            ("foreign::UserBigInt", "foreign::UserBigInt"),
+            ("mettail_runtime::CanonicalBigInt", "mettail_runtime::CanonicalBigInt"),
+            ("Vec<u8>", "Vec<u8>"),
+        ] {
+            let language: LanguageDef = syn::parse_str(&format!(
+                "name: PayloadFixture, types {{ ![{native}] as Atom }}, terms {{}}, equations {{}}, rewrites {{}},"
+            )).expect("native fixture");
+            let native: syn::Type = syn::parse_str(native).expect("native type");
+            let label = generate_literal_label(&native);
+            check(&language, "Atom", &label, expected);
+            // Exact pre-extraction auto-variant token recipe.
+            let payload_type = match NativeType::from_syn_type(&native) {
+                NativeType::Str => quote! { std::string::String },
+                NativeType::Float64 => quote! { mettail_runtime::CanonicalFloat64 },
+                NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+                _ => quote! { #native },
+            };
+            assert_eq!(
+                native_literal_variant(&native).to_string(),
+                quote! { #label(#payload_type) }.to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_literal_metadata_uses_actual_old_and_new_emitters() {
+        for (declaration, kind, new_expected, old_expected) in [
+            ("Atom", "Integer", "i64", "i32"),
+            ("![u32] as Atom", "Integer", "i64", "u32"),
+            ("![i64] as Atom", "Boolean", "bool", "bool"),
+            (
+                "![i64] as Atom",
+                "FloatLiteral",
+                "mettail_runtime::CanonicalFloat64",
+                "mettail_runtime::CanonicalFloat64",
+            ),
+            (
+                "![f32] as Atom",
+                "FloatLiteral",
+                "mettail_runtime::CanonicalFloat32",
+                "mettail_runtime::CanonicalFloat32",
+            ),
+            ("Atom", "StringLiteral", "std::string::String", "std::string::String"),
+        ] {
+            let mut language: LanguageDef = syn::parse_str(&format!(
+                "name: ExplicitPayload, types {{ {declaration} }}, terms {{ Lit . n:{kind} |- n : Atom; }}, equations {{}}, rewrites {{}},"
+            )).expect("explicit literal fixture");
+            assert!(is_literal_rule(&language.terms[0]));
+            let label = format_ident!("Lit");
+            check(&language, "Atom", &label, new_expected);
+            // Keep the same legacy item but select its existing old-syntax
+            // emitter: this intentionally exposes the i32/i64 distinction.
+            language.terms[0].term_context = None;
+            language.terms[0].syntax_pattern = None;
+            check(&language, "Atom", &label, old_expected);
+            if let Some(native) = &language.types[0].native_type {
+                let automatic = generate_literal_label(native);
+                if automatic != label {
+                    assert!(native_variant_payload(&format_ident!("Atom"), &automatic, &language)
+                        .is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn collection_metadata_preserves_synthesis_and_pathmap_override() {
+        let mut language = crate::gen::collection_literal_language_for_tests();
+        for (category, label) in [
+            ("List", "ListLit"),
+            ("Bag", "BagLit"),
+            ("Set", "SetLit"),
+            ("Map", "MapLit"),
+            ("Pathmap", "PathmapLit"),
+        ] {
+            let category = format_ident!("{}", category);
+            let label = format_ident!("{}", label);
+            let payload =
+                native_variant_payload(&category, &label, &language).expect("collection metadata");
+            assert_eq!(
+                payload.to_token_stream().to_string(),
+                actual_payload(&language, &category, &label)
+                    .to_token_stream()
+                    .to_string()
+            );
+        }
+        for (category, label, expected) in [
+            ("List", "ListLit", "Vec<Proc>"),
+            ("Bag", "BagLit", "mettail_runtime::HashBag<Proc>"),
+            ("Set", "SetLit", "mettail_runtime::HashSetLit<Proc>"),
+            ("Map", "MapLit", "mettail_runtime::HashMapLit<Proc,Proc>"),
+            ("Pathmap", "PathmapLit", "mettail_runtime::PathMapLit<Proc,Proc>"),
+        ] {
+            language
+                .types
+                .iter_mut()
+                .find(|ty| ty.name == category)
+                .expect("collection category")
+                .native_type = None;
+            check(&language, category, &format_ident!("{}", label), expected);
+        }
+        language
+            .types
+            .iter_mut()
+            .find(|ty| ty.name == "Pathmap")
+            .expect("Pathmap category")
+            .native_type = Some(syn::parse_quote!(foreign::Carrier<Proc, Option<Proc>>));
+        check(
+            &language,
+            "Pathmap",
+            &format_ident!("PathmapLit"),
+            "mettail_runtime::PathMapLit<Proc,Proc>",
+        );
+    }
+
+    #[test]
+    fn native_metadata_refuses_nonliteral_and_missing_variants() {
+        let language: LanguageDef = syn::parse_str(
+            "name: NonLiteral, types { Proc }, terms { Zero . |- \"zero\" : Proc; Wrap . p:Proc |- \"wrap\" p : Proc; }, equations {}, rewrites {},"
+        ).expect("nonliteral fixture");
+        for label in [
+            format_ident!("Zero"),
+            format_ident!("Wrap"),
+            generate_var_label(&format_ident!("Proc")),
+            format_ident!("Missing"),
+        ] {
+            assert!(native_variant_payload(&format_ident!("Proc"), &label, &language).is_none());
+        }
+        assert!(native_variant_payload(
+            &format_ident!("Missing"),
+            &format_ident!("Zero"),
+            &language
+        )
+        .is_none());
+    }
+}
