@@ -52,6 +52,9 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+#[path = "iterative_cmp_contribution.rs"]
+mod contribution;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CmpInterpretation {
     Ordinary,
@@ -177,7 +180,9 @@ impl CmpEmissionNames {
 
     fn task_type(&self) -> TokenStream {
         let task = &self.task_enum;
-        if self.admitted() {
+        if self.inspecting() {
+            quote! { InspectCmpContributionFrame }
+        } else if self.admitted() {
             quote! { #task<E> }
         } else {
             quote! { #task }
@@ -258,7 +263,14 @@ impl CmpEmissionNames {
 
     // Leading commas retain ordinary signature punctuation exactly.
     fn parameters(&self) -> TokenStream {
-        if self.admitted() {
+        if self.inspecting() {
+            quote! {
+                , mut state: &mut mettail_runtime::binding_receipt::BindingCharge,
+                mode: InspectCmpContributionMode,
+                factor: usize,
+                reserve: &mut impl FnMut(usize, usize) -> Result<(), E>
+            }
+        } else if self.admitted() {
             quote! { , reserve: &mut impl FnMut(usize, usize) -> Result<(), E> }
         } else {
             TokenStream::new()
@@ -266,7 +278,9 @@ impl CmpEmissionNames {
     }
 
     fn arguments(&self) -> TokenStream {
-        if self.admitted() {
+        if self.inspecting() {
+            quote! { , state, mode, factor, reserve }
+        } else if self.admitted() {
             quote! { , reserve }
         } else {
             TokenStream::new()
@@ -274,7 +288,9 @@ impl CmpEmissionNames {
     }
 
     fn result_type(&self, value: TokenStream) -> TokenStream {
-        if self.admitted() {
+        if self.inspecting() {
+            quote! { Result<(), mettail_runtime::NativeComparisonFailure<E>> }
+        } else if self.admitted() {
             quote! { Result<#value, mettail_runtime::NativeComparisonFailure<E>> }
         } else {
             value
@@ -282,7 +298,11 @@ impl CmpEmissionNames {
     }
 
     fn success(&self, value: TokenStream) -> TokenStream {
-        if self.admitted() {
+        if self.inspecting() {
+            // This ends only the current metadata recipe, not the worklist.
+            // In particular, do not evaluate an original ordering expression.
+            quote! { Ok(()) }
+        } else if self.admitted() {
             quote! { Ok(#value) }
         } else {
             value
@@ -330,7 +350,15 @@ impl CmpEmissionNames {
     }
 
     fn push_task(&self, task: TokenStream) -> TokenStream {
-        if self.admitted() {
+        if self.inspecting() {
+            let contribution = self.inspect_contribution(4, 1);
+            let admission = self.record_admission();
+            quote! {{
+                #contribution
+                #admission
+                stack.push(InspectCmpContributionFrame { task: #task, mode, factor });
+            }}
+        } else if self.admitted() {
             let admission = self.record_admission();
             quote! {{ #admission stack.push(#task); }}
         } else {
@@ -836,6 +864,15 @@ fn eq_collection_stmts(
         CollectionPlan::WholeValue {
             reason: WholeValueReason::UnorderedContainer,
         } => {
+            if emission.inspecting() {
+                return inspect_unordered_collection_stmts(
+                    element_cat,
+                    coll_type,
+                    left_expr,
+                    right_expr,
+                    emission,
+                );
+            }
             let resume_fn = emission.resume(element_cat);
             let machine =
                 unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr, emission);
@@ -915,6 +952,15 @@ fn unordered_collection_cmp_push_stmts(
     right_expr: &TokenStream,
     emission: &CmpEmissionNames,
 ) -> TokenStream {
+    if emission.inspecting() {
+        return inspect_unordered_collection_stmts(
+            element_cat,
+            coll_type,
+            left_expr,
+            right_expr,
+            emission,
+        );
+    }
     let task_enum = &emission.task_enum;
     let resume_fn = emission.resume(element_cat);
     let machine = unordered_collection_cmp_machine_expr(coll_type, left_expr, right_expr, emission);
@@ -923,6 +969,40 @@ fn unordered_collection_cmp_push_stmts(
         #task_enum::StartCollection(#owner, #resume_fn,)
     });
     quote! { #push; }
+}
+
+/// Request original directed operand families without running the collection
+/// comparator. All child requests are Ord, including an enclosing Eq recipe.
+fn inspect_unordered_collection_stmts(
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    left_expr: &TokenStream,
+    right_expr: &TokenStream,
+    emission: &CmpEmissionNames,
+) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let variant = format_ident!("Cmp{}", element_cat);
+    let constructor = quote! {
+        |left: *const (), right: *const ()| #task_enum::#variant(left.cast(), right.cast())
+    };
+    let secondary = if *coll_type == CollectionType::HashMap {
+        quote! { Some((#constructor) as fn(*const (), *const ()) -> #task_enum) }
+    } else {
+        quote! { None }
+    };
+    let lead = if *coll_type == CollectionType::HashBag {
+        emission.inspect_contribution(2, 0)
+    } else {
+        TokenStream::new()
+    };
+    quote! {{
+        #lead
+        let __cmp_left = (#left_expr).try_comparison_roster(reserve)?;
+        let __cmp_right = (#right_expr).try_comparison_roster(reserve)?;
+        inspect_cmp_schedule_collection(
+            stack, __cmp_left, __cmp_right, #constructor, #secondary, mode, factor, reserve,
+        )?;
+    }}
 }
 
 /// Build the one canonical-order comparison machine shared by `Eq` and `Ord`.
@@ -1508,10 +1588,6 @@ fn generate_eq_category_handler(
     language: &LanguageDef,
     emission: &CmpEmissionNames,
 ) -> TokenStream {
-    assert!(
-        !emission.inspecting(),
-        "leaf contributions do not provide a complete Eq inspector"
-    );
     let task_type = emission.task_type();
     let generics = emission.generics();
     let parameters = emission.parameters();
@@ -1537,9 +1613,30 @@ fn generate_eq_category_handler(
     let support = emission.operand_support(cat);
     let handler_contribution = emission.inspect_contribution(6, 0);
     let unequal = emission.usize_ne(quote! { #index_fn(left) }, quote! { #index_fn(right) });
+    let identity_exit = if emission.inspecting() {
+        // A later reconstruction can move equal keys to distinct addresses.
+        // Count their structural comparison rather than relying on this alias.
+        TokenStream::new()
+    } else {
+        quote! {
+            if std::ptr::eq(left_ptr, right_ptr) {
+                #return_true
+            }
+        }
+    };
+    let description = if emission.inspecting() {
+        quote! {
+            /// Completes this metadata recipe without deciding equality.
+            /// Previously queued child jobs remain in the caller's worklist.
+        }
+    } else {
+        quote! {
+            /// Returns `false` on mismatch (caller should propagate),
+            /// `true` if matched so far (caller should continue draining stack).
+        }
+    };
     quote! {
-        /// Returns `false` on mismatch (caller should propagate),
-        /// `true` if matched so far (caller should continue draining stack).
+        #description
         #[inline(never)]
         #[allow(dead_code, unused_variables, non_snake_case)]
         fn #helper_fn #generics(
@@ -1555,9 +1652,7 @@ fn generate_eq_category_handler(
             #handler_contribution
             #support
             #routing
-            if std::ptr::eq(left_ptr, right_ptr) {
-                #return_true
-            }
+            #identity_exit
             let left = unsafe { &*left_ptr };
             let right = unsafe { &*right_ptr };
             #indices
@@ -2238,10 +2333,6 @@ fn generate_cmp_category_handler(
     language: &LanguageDef,
     emission: &CmpEmissionNames,
 ) -> TokenStream {
-    assert!(
-        !emission.inspecting(),
-        "leaf contributions do not provide a complete Ord inspector"
-    );
     let task_type = emission.task_type();
     let generics = emission.generics();
     let parameters = emission.parameters();
@@ -2262,6 +2353,17 @@ fn generate_cmp_category_handler(
     let unequal = emission.usize_ne(quote! { l_idx }, quote! { r_idx });
     let index_order = emission.usize_cmp(quote! { l_idx }, quote! { r_idx });
     let return_index = emission.return_value(index_order);
+    let description = if emission.inspecting() {
+        quote! {
+            /// Completes this metadata recipe without deciding ordering.
+            /// Deferred verdicts do not prune its remaining contributions.
+        }
+    } else {
+        quote! {
+            /// Returns `Ordering::Equal` to keep draining the stack;
+            /// any other ordering means "stop and propagate up".
+        }
+    };
     let mismatch_arm = if variants.len() == 1 {
         TokenStream::new()
     } else {
@@ -2272,8 +2374,7 @@ fn generate_cmp_category_handler(
         }
     };
     quote! {
-        /// Returns `Ordering::Equal` to keep draining the stack;
-        /// any other ordering means "stop and propagate up".
+        #description
         #[inline(never)]
         #[allow(dead_code, unused_variables, non_snake_case)]
         fn #helper_fn #generics(
@@ -2959,6 +3060,10 @@ mod handler_inspection_tests;
 #[cfg(test)]
 #[path = "iterative_cmp_scaled_inspection_tests.rs"]
 mod scaled_inspection_tests;
+
+#[cfg(test)]
+#[path = "iterative_cmp_contribution_tests.rs"]
+mod contribution_tests;
 
 #[cfg(test)]
 #[path = "iterative_cmp_census_tests.rs"]

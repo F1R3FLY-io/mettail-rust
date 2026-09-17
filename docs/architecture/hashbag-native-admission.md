@@ -205,10 +205,10 @@ their original construction point, even when their results would later be
 ignored. The model reuses the existing reverse-construction and verdict
 consultation laws; consulting a verdict does not repeat a comparison.
 
-These fragments are not a complete generated-category inspector. The complete
+These fragments alone are not a complete generated-category inspector. The complete
 Eq and Ord engine builders explicitly reject this partial interpretation.
-Driver, handler, child-job, collection and ownership costs must
-be connected before whole-term comparison allowance or reconstruction
+All collection control and ownership costs must be composed with the private
+contribution traversal before whole-term comparison allowance or reconstruction
 authority can be exposed. Tests cover exact ordinary/checked fragment tokens,
 metadata refusal, checked accumulation overflow and continued inspection;
 the captured fixture executes the actual emitted fragments.
@@ -232,13 +232,64 @@ Ordered vectors contribute one iterator-setup group, one group per attempted
 advance including the final exhausted advance, and the two-work length group.
 These are additive inspection contributions, not a separate comparison
 implementation. They emit no additional tokens in ordinary or checked
-execution; the incomplete whole-handler and engine guards remain closed.
+execution. The private handlers finish one metadata recipe with a unit result;
+the execution-engine guards still reject this partial interpretation.
 
 The [executable leaf/verdict fixtures](../../macros/src/gen/term_ops/iterative_cmp_inspection_tests.rs)
 and [scope-pattern fixtures](../../macros/src/gen/term_ops/iterative_cmp_pattern_inspection_tests.rs)
 exercise the actual emitted fragments. A later reservation failure retains
 earlier paid accumulation locally but returns an error, not an incomplete
 execution allowance. Work and record arithmetic remain checked independently.
+
+### Typed contribution traversal
+
+The private generated worklist reuses the original equality and ordering
+category handlers, field classification, scope builders, and collection
+routing. Each job retains its comparison mode, directed operand pointers,
+and checked occurrence factor. It returns accounting contributions, never an
+equality or ordering answer. An eager, metadata-known shape mismatch finishes
+only the current handler; previously queued children remain pending. Unknown
+native answers and deferred verdicts cannot prune the traversal.
+
+For unordered collections, the existing checked producer supplies immutable
+rosters in original entry order. A flat cursor visits three families: all
+left-to-left pairs, all right-to-right pairs, and all left-to-right pairs.
+The corresponding request bounds are the two completed-sort bounds and the
+weighted lexicographic bound described above. Both directions, diagonal pairs,
+and aliased occurrences are retained. Stored Bag repetitions are not expanded
+or used to multiply the number of inspection jobs. Requested primary and
+secondary roles use ordering, even inside an equality job.
+
+The [cursor model](../../formal/rocq/rho_bridge/theories/GeneratedComparisonPairCursor.v)
+proves exact finite enumeration, valid bounded increments, and exclusion of
+empty or zero-factor families. Its Cartesian lists exist only in the proof.
+The implementation holds two paid rosters plus a family tag and row/column
+indices, and schedules at most one pair's roles per cursor step. Nested
+collections join the same heap-backed worklist.
+
+```text
+pay for the local worklist and initial borrowed job
+while a paid pop produces a job:
+    category job: run its original handler under contribution inspection
+    cursor job:
+        obtain the next paid original pair, if any
+        requeue the remaining cursor as metadata work only
+        schedule the pair's typed ordering roles with checked factors
+return contributions only if every inspection and arithmetic check succeeded
+```
+
+Requeueing an inspection cursor is not a native task occurrence. Native child
+jobs and virtual verdicts retain their separate weighted accounting. Root
+borrows retain all referenced terms until the worklist is dropped; its owned
+rosters contain only flat pointer records with prepaid normal cleanup.
+
+This traversal is deliberately private. Its current body contributions and
+local driver allowance do not yet include the complete collection control,
+materialization, scratch ownership, and continuation-scheduling envelope.
+They must not authorize a native comparison or a Bag reconstruction by
+themselves. The
+[original-layout fixture](../../macros/src/gen/term_ops/iterative_cmp_contribution_tests.rs)
+checks the actual emitted traversal, not an independently written comparator.
 
 ### Local comparison driver accounting
 
@@ -1170,6 +1221,47 @@ also checks the `PPar` and `BagLit` factories and original typed callbacks.
 These checks do not establish complete Rholang scope-opening/reconstruction
 or public-node behavior; those source contexts remain separate acceptance
 obligations.
+
+## Ordinary collection preparation
+
+The [preparation model](../../formal/rocq/rho_bridge/theories/GeneratedCollectionPreparation.v)
+covers the original iterator-to-roster construction, repetition summation,
+and equality's auxiliary comparison wrapper. It does not run a comparator.
+The outer item-mapping iterator uses the pinned standard library's generic
+vector collection path. Its exact remaining-size hint prevents growth after
+the initial allocation. The model preserves each original entry's index and
+counts the terminal iterator attempt; repetition summation uses the original
+compact counts, without expanding repeated terms.
+
+Let $`n`$ and $`m`$ be the two original rosters' distinct-entry counts and
+$`L=n+m`$. Let $`S_l`$ and $`S_r`$ be their separately established native Bag
+scan allowances. The scalar preparation contributions are:
+
+```math
+W_{\mathrm{Map}}\leq 7L+22,\qquad
+W_{\mathrm{Bag}}\leq 7L+20+S_l+S_r.
+```
+
+These bounds exclude flat storage, its eventual disposal, the machine's boxed
+owner, core execution, and requested term comparisons. Checked roster
+construction must establish positive, representable repetition totals before
+the ordinary native operation is admitted. The Bag's separate stored-total
+comparison retains its own contribution.
+
+Equality drives an unordered collection through a separate private task pool.
+Its first-use wrapper contributes at most 20 work groups and three records;
+subsequent pooled calls need 19 work groups and two records, and unavailable
+thread-local storage uses 13 work groups and two records. These wrapper counts
+include the initial task shell but exclude the boxed machine and driver work.
+Normal driver return may leave pending tasks: the existing push and owner
+credits pay their disposal. The model proves that nested normally-returning
+calls restore an empty private pool; it does not assume driver exhaustion or
+claim panic-unwinding safety.
+
+The source association, allocation success, and compiler/library behavior
+remain explicit review boundaries. These verified components still require
+composition with collection control, ownership, and generated scheduling
+before they can authorize a whole comparison.
 
 ## Collection control-work coverage
 

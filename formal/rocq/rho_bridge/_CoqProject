@@ -106,10 +106,12 @@ theories/GeneratedComparisonFieldResults.v
 theories/GeneratedComparisonInspectionCover.v
 theories/GeneratedComparisonLocalControl.v
 theories/GeneratedComparisonWorklistCover.v
+theories/GeneratedComparisonPairCursor.v
 theories/AdmittedCollectionComparisonOwnership.v
 theories/SourceMapEntryVisit.v
 theories/GeneratedBagComparisonInitialization.v
 theories/AdmittedGeneratedCollectionScheduling.v
+theories/GeneratedCollectionPreparation.v
 theories/GeneratedChildTraversal.v
 theories/MergeSortPdaCursor.v
 theories/MergeSortPdaRun.v

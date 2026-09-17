@@ -90,21 +90,52 @@ fn ordinary_and_checked_pair_loop_tokens_are_unchanged() {
 }
 
 #[test]
-#[should_panic(expected = "leaf contributions do not provide a complete Eq inspector")]
-fn incomplete_eq_category_handler_stays_closed() {
-    generate_eq_category_handler(
-        &format_ident!("Proc"),
-        &fixture_language(),
-        &CmpEmissionNames::inspect_contributions(),
-    );
+fn shared_handlers_return_only_local_recipe_completion() {
+    let emission = CmpEmissionNames::inspect_contributions();
+    let language = fixture_language();
+    for handler in [
+        generate_eq_category_handler(&format_ident!("Proc"), &language, &emission),
+        generate_cmp_category_handler(&format_ident!("Proc"), &language, &emission),
+    ] {
+        syn::parse2::<syn::ItemFn>(handler.clone()).expect("unit handler syntax");
+        let source = compact(handler);
+        assert!(source.contains("Result<(),mettail_runtime::NativeComparisonFailure<E>>"));
+        assert!(source.contains("returnOk(())"));
+        assert!(source.contains("inspect_cmp_schedule_collection("));
+        assert!(source.contains("InspectCmpContributionFrame{task:"));
+        for forbidden in [
+            "returnOk(false)",
+            "returnOk(true)",
+            "Ordering::",
+            "std::ptr::eq",
+            "try_native_",
+            "CheckedCollectionCmpPda::try_new",
+            "Verdict(",
+        ] {
+            assert!(!source.contains(forbidden), "unexpected {forbidden}: {source}");
+        }
+    }
 }
 
 #[test]
-#[should_panic(expected = "leaf contributions do not provide a complete Ord inspector")]
-fn incomplete_ord_category_handler_stays_closed() {
-    generate_cmp_category_handler(
-        &format_ident!("Proc"),
-        &fixture_language(),
-        &CmpEmissionNames::inspect_contributions(),
-    );
+fn unordered_inspection_schedules_original_rosters_not_comparator_execution() {
+    let emission = CmpEmissionNames::inspect_contributions();
+    for kind in [CollectionType::HashBag, CollectionType::HashMap] {
+        let tokens = inspect_unordered_collection_stmts(
+            &format_ident!("Proc"),
+            &kind,
+            &quote! { left },
+            &quote! { right },
+            &emission,
+        );
+        syn::parse2::<syn::Block>(tokens.clone()).expect("roster scheduling syntax");
+        let source = compact(tokens);
+        assert!(source.contains("(left).try_comparison_roster(reserve)?"));
+        assert!(source.contains("(right).try_comparison_roster(reserve)?"));
+        assert!(source.contains("::CmpProc(left.cast(),right.cast())"));
+        assert_eq!(source.contains("Some("), kind == CollectionType::HashMap);
+        for forbidden in ["Ordering::", "return", ".cmp(", "try_resume", "StartCollection"] {
+            assert!(!source.contains(forbidden), "unexpected {forbidden}: {source}");
+        }
+    }
 }
