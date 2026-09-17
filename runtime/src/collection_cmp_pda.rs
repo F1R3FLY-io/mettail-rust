@@ -306,6 +306,66 @@ impl CheckedCollectionSortPda {
     }
 }
 
+/// Sort a borrowed slice with the existing paid stable merge machine.
+///
+/// Only references enter the two sort buffers: no source payload is cloned,
+/// moved, hashed, or dropped. The comparator must reserve its own inspection
+/// and comparison work through the same callback before comparing the exact
+/// requested pair. A refusal drops only prepaid flat reference storage.
+///
+/// The driver is the same initial/resume/accept/Done protocol used by
+/// [`CheckedCollectionSortPda`]. The generic entry laws in
+/// `MergeSortPdaNativeOuter` and `AdmittedCollectionSortOwnership` apply to
+/// these shallow entries; they do not establish a cost for arbitrary `Copy`
+/// payloads. URI preparation uses this interface to retain each URI's binder
+/// association without reconstructing typed references from raw pointers.
+pub fn try_sort_borrowed_by<'a, T, E, R, F>(
+    source: &'a [T],
+    reserve: &mut R,
+    mut compare: F,
+) -> Result<Vec<&'a T>, NativeComparisonFailure<E>>
+where
+    R: FnMut(usize, usize) -> Result<(), E>,
+    F: FnMut(&T, &T, &mut R) -> Result<Ordering, NativeComparisonFailure<E>>,
+{
+    if !CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+        return Err(NativeComparisonFailure::UnsupportedProfile);
+    }
+    CheckedPolicy(reserve).flat_slots(source.len())?;
+    let mut entries = Vec::with_capacity(source.len());
+    reserve_binding_parts(1, 1, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+    let mut source = source.iter();
+    loop {
+        CheckedPolicy(reserve).work(1)?;
+        let Some(entry) = source.next() else { break };
+        CheckedPolicy(reserve).work(1)?;
+        entries.push(entry);
+    }
+    reserve_binding_parts(2, 1, 0, reserve).map_err(NativeComparisonFailure::Admission)?;
+    let mut machine = Box::new(MergeSortPda::new(entries, &mut CheckedPolicy(reserve))?);
+    let mut result = None;
+    loop {
+        let mut policy = CheckedPolicy(&mut *reserve);
+        policy.work(1)?;
+        if let Some(ordering) = result.take() {
+            machine.accept(ordering, &mut policy)?;
+        }
+        let step = machine.step(&mut policy)?;
+        policy.work(1)?;
+        match step {
+            MergeSortStep::Compare(left, right) => {
+                result = Some(compare(left, right, reserve)?);
+            },
+            MergeSortStep::Done => {
+                machine.release_scratch(&mut policy)?;
+                policy.work(1)?;
+                let MergeSortPda { source, .. } = *machine;
+                return Ok(source);
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum CollectionCmpStep {
     Compare {
@@ -728,9 +788,9 @@ enum PendingTermCmp {
 }
 
 #[derive(Debug)]
-struct MergeSortPda {
-    source: Vec<CollectionCmpItem>,
-    target: Option<Vec<CollectionCmpItem>>,
+struct MergeSortPda<Entry = CollectionCmpItem> {
+    source: Vec<Entry>,
+    target: Option<Vec<Entry>>,
     width: usize,
     start: usize,
     middle: usize,
@@ -742,11 +802,8 @@ struct MergeSortPda {
     done: bool,
 }
 
-impl MergeSortPda {
-    fn new<P: CollectionCmpPolicy>(
-        source: Vec<CollectionCmpItem>,
-        policy: &mut P,
-    ) -> Result<Self, P::Error> {
+impl<Entry: Copy> MergeSortPda<Entry> {
+    fn new<P: CollectionCmpPolicy>(source: Vec<Entry>, policy: &mut P) -> Result<Self, P::Error> {
         policy.work(1)?;
         let done = source.len() < 2;
         let mut pda = Self {
@@ -766,11 +823,14 @@ impl MergeSortPda {
         Ok(pda)
     }
 
-    fn items(&self) -> &[CollectionCmpItem] {
+    fn items(&self) -> &[Entry] {
         &self.source
     }
 
-    fn step<P: CollectionCmpPolicy>(&mut self, policy: &mut P) -> Result<MergeSortStep, P::Error> {
+    fn step<P: CollectionCmpPolicy>(
+        &mut self,
+        policy: &mut P,
+    ) -> Result<MergeSortStep<Entry>, P::Error> {
         policy.work(1)?;
         if self.waiting {
             return Err(policy.protocol("merge-sort PDA advanced before comparison result"));
@@ -873,8 +933,8 @@ impl MergeSortPda {
     }
 }
 
-enum MergeSortStep {
-    Compare(CollectionCmpItem, CollectionCmpItem),
+enum MergeSortStep<Entry = CollectionCmpItem> {
+    Compare(Entry, Entry),
     Done,
 }
 

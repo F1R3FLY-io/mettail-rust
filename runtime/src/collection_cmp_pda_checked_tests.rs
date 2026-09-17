@@ -5,6 +5,99 @@ use std::cell::RefCell;
 
 type Failure = NativeComparisonFailure<()>;
 
+#[test]
+fn borrowed_sort_retains_stable_whole_entries_without_copying_payloads() {
+    // Deliberately neither Copy nor Clone: only original references may move.
+    struct Entry {
+        key: String,
+        identity: usize,
+    }
+    let source = [
+        Entry { key: "b".into(), identity: 0 },
+        Entry { key: "a".into(), identity: 1 },
+        Entry { key: "b".into(), identity: 2 },
+        Entry { key: "a".into(), identity: 3 },
+    ];
+    let mut work = 0;
+    let sorted = try_sort_borrowed_by(
+        &source,
+        &mut |w, _| {
+            work += w;
+            Ok::<_, ()>(())
+        },
+        |left, right, reserve| {
+            crate::CheckedNativeOrderingLeaf::try_native_cmp(&left.key, &right.key, reserve)
+        },
+    )
+    .expect("paid typed stable sort");
+    assert_eq!(
+        sorted
+            .iter()
+            .map(|entry| entry.identity)
+            .collect::<Vec<_>>(),
+        [1, 3, 0, 2]
+    );
+    for entry in sorted {
+        assert!(std::ptr::eq(entry, &source[entry.identity]));
+    }
+    assert!(work > 0);
+}
+
+#[test]
+fn borrowed_sort_every_reservation_cut_preserves_input_and_error_identity() {
+    struct Stop(usize);
+    let source = [4_i32, 1, 3, 1, 2];
+    let mut baseline = Vec::new();
+    let mut reserve = |w, u| {
+        baseline.push((w, u));
+        Ok::<_, Stop>(())
+    };
+    let sorted = try_sort_borrowed_by(&source, &mut reserve, |left, right, reserve| {
+        reserve(1, 0)
+            .map_err(|e| NativeComparisonFailure::Admission(BindingFailure::Reservation(e)))?;
+        Ok(left.cmp(right))
+    });
+    let Ok(sorted) = sorted else {
+        panic!("unlimited sort must succeed")
+    };
+    assert_eq!(sorted.into_iter().copied().collect::<Vec<_>>(), [1, 1, 2, 3, 4]);
+    for cut in 0..baseline.len() {
+        let mut events = Vec::new();
+        let mut reserve = |w, u| {
+            events.push((w, u));
+            if events.len() == cut + 1 {
+                Err(Stop(cut))
+            } else {
+                Ok(())
+            }
+        };
+        let result = try_sort_borrowed_by(&source, &mut reserve, |left, right, reserve| {
+            reserve(1, 0)
+                .map_err(|e| NativeComparisonFailure::Admission(BindingFailure::Reservation(e)))?;
+            Ok(left.cmp(right))
+        });
+        assert!(matches!(result, Err(NativeComparisonFailure::Admission(
+            BindingFailure::Reservation(Stop(actual))
+        )) if actual == cut));
+        assert_eq!(events, baseline[..=cut]);
+        assert_eq!(source, [4, 1, 3, 1, 2]);
+    }
+}
+
+proptest! {
+    #[test]
+    fn borrowed_sort_matches_stable_native_order(values in prop::collection::vec(any::<i32>(), 0..100)) {
+        let source: Vec<_> = values.into_iter().enumerate().map(|(i, key)| (key, i)).collect();
+        let mut expected: Vec<_> = source.iter().collect();
+        expected.sort_by_key(|entry| entry.0);
+        let actual = try_sort_borrowed_by(&source, &mut |_, _| Ok::<_, ()>(()), |left, right, reserve| {
+            reserve(1, 0).map_err(|e| NativeComparisonFailure::Admission(BindingFailure::Reservation(e)))?;
+            Ok(left.0.cmp(&right.0))
+        }).expect("typed borrowed sorter");
+        prop_assert_eq!(actual, expected);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Event {
     Reserve(usize, usize),

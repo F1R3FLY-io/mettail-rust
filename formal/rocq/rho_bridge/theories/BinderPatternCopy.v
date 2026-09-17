@@ -51,6 +51,116 @@ Theorem pattern_copy_preserves_first_identity_lookup : forall operation pattern 
   K.roster_lookup id (pattern_copy operation pattern) = K.roster_lookup id pattern.
 Proof. intros. now rewrite pattern_copy_is_exact. Qed.
 
+(** The positional connector for moniker-0.5.0 Scope::unbind.
+
+    After cloning the source pattern, unbind visits every binder in order,
+    replaces its identity with FreeVar::fresh(old.pretty_name.clone()), then
+    clones pattern.binders() and opens the body at ScopeState::new() (zero).
+    Binder is a transparent wrapper; Vec delegates to ordered slice visits.
+
+    [identities] records the actual fresh-call results in that order. It is
+    not an allocator model: the results need not be consecutive, ordered or
+    distinct for these positional laws. Original duplicate identities are
+    still separate occurrences. Equal lengths is the concrete obligation of
+    one fresh call per binder; a short trace is not a completed freshening.
+
+    The adapter below only connects those names to the existing known-roster
+    opening theorem. It does not prove global freshness, the concrete Rust
+    worker, arbitrary BoundTerm implementations, or freshening resource costs.
+    Rust must precharge each actual copy/fresh call and preserve its private
+    partial-result cleanup. Existing inherited binding-depth and generated
+    reconstruction proofs remain the obligations for the body traversal. *)
+Definition freshened_name (identity : nat) (original : Name) : Name :=
+  {| K.name_identity := identity; K.name_pretty := K.name_pretty original |}.
+
+Definition freshened_roster (identities : list nat) (pattern : list Name) : list Name :=
+  map (fun pair => freshened_name (fst pair) (snd pair)) (combine identities pattern).
+
+Theorem source_pattern_copy_preserves_freshening : forall operation identities pattern,
+  freshened_roster identities (pattern_copy operation pattern) =
+  freshened_roster identities pattern.
+Proof. intros. now rewrite pattern_copy_is_exact. Qed.
+
+Theorem freshened_roster_preserves_ordered_projections : forall identities pattern,
+  List.length identities = List.length pattern ->
+  List.length (freshened_roster identities pattern) = List.length pattern /\
+  map K.name_identity (freshened_roster identities pattern) = identities /\
+  map K.name_pretty (freshened_roster identities pattern) = map K.name_pretty pattern.
+Proof.
+  induction identities as [|identity identities IH]; intros [|name pattern] Hlength;
+    cbn in Hlength; try discriminate.
+  - repeat split; reflexivity.
+  - injection Hlength as Hlength.
+    destruct (IH pattern Hlength) as [HL [HI HP]].
+    cbn [freshened_roster combine map freshened_name K.name_identity K.name_pretty].
+    change (
+      S (List.length (freshened_roster identities pattern)) = S (List.length pattern) /\
+      identity :: map K.name_identity (freshened_roster identities pattern) =
+        identity :: identities /\
+      K.name_pretty name :: map K.name_pretty (freshened_roster identities pattern) =
+        K.name_pretty name :: map K.name_pretty pattern).
+    now rewrite HL, HI, HP.
+Qed.
+
+Theorem freshened_roster_preserves_positional_lookup :
+  forall identities pattern index identity original,
+  nth_error identities index = Some identity ->
+  nth_error pattern index = Some original ->
+  nth_error (freshened_roster identities pattern) index =
+    Some (freshened_name identity original).
+Proof.
+  induction identities as [|head identities IH]; intros [|name pattern] index identity original HI HP;
+    destruct index as [|index]; cbn in HI, HP; try discriminate.
+  - inversion HI; inversion HP; subst. reflexivity.
+  - cbn [freshened_roster combine map nth_error].
+    now apply IH.
+Qed.
+
+(** The roster is copied from the fresh pattern, not from the original one.
+    Reuse the already exact opening leaf algebra, without a second evaluator. *)
+Theorem copied_fresh_roster_open_at_zero_is_exact :
+  forall operation maximum identities pattern variable,
+  K.checked_operation K.OpenLeaf maximum 0
+    (pattern_copy operation (freshened_roster identities pattern)) variable =
+  K.reference_open 0 (freshened_roster identities pattern) variable.
+Proof.
+  intros. rewrite pattern_copy_is_exact. apply K.checked_open_is_exact_reference.
+Qed.
+
+(** The checked adapter may borrow the returned fresh roster directly: neither
+    the original-pattern copy nor pattern.binders() changes opening semantics.
+    Eliminating those pure copies does not eliminate fresh calls or their costs. *)
+Theorem direct_fresh_roster_open_omits_only_identity_preserving_copies :
+  forall operation maximum identities pattern variable,
+  K.checked_operation K.OpenLeaf maximum 0 (freshened_roster identities pattern) variable =
+  K.checked_operation K.OpenLeaf maximum 0
+    (pattern_copy operation (freshened_roster identities (pattern_copy operation pattern)))
+    variable.
+Proof. intros. now rewrite !pattern_copy_is_exact. Qed.
+
+Theorem copied_fresh_roster_opens_selected_occurrence :
+  forall operation maximum identities pattern index identity original old_pretty,
+  nth_error identities index = Some identity ->
+  nth_error pattern index = Some original ->
+  K.checked_operation K.OpenLeaf maximum 0
+    (pattern_copy operation (freshened_roster identities pattern))
+    (K.Bound 0 index old_pretty) = Some (K.Free (freshened_name identity original)).
+Proof.
+  intros operation maximum identities pattern index identity original old_pretty HI HP.
+  rewrite pattern_copy_is_exact.
+  apply K.matching_depth_open_selects_roster_identity_and_pretty.
+  now apply freshened_roster_preserves_positional_lookup.
+Qed.
+
+(** Repeated original identities do not collapse, and the supplied fresh-call
+    sequence need not be numerically increasing. Hints stay with positions. *)
+Example repeated_original_identity_retains_both_fresh_positions :
+  let first := {| K.name_identity := 9; K.name_pretty := Some "first"%string |} in
+  let second := {| K.name_identity := 9; K.name_pretty := None |} in
+  freshened_roster [21; 7] [first; second] =
+    [freshened_name 21 first; freshened_name 7 second].
+Proof. reflexivity. Qed.
+
 (** Prefixes include all occurrences, not only distinct binder identities. *)
 Definition prefix_invariant (source done pending : list Name) :=
   done ++ pending = source.
@@ -155,6 +265,13 @@ Print Assumptions binder_copy_preserves_identity_and_hint.
 Print Assumptions pattern_copy_is_exact.
 Print Assumptions pattern_copy_preserves_positional_lookup.
 Print Assumptions pattern_copy_preserves_first_identity_lookup.
+Print Assumptions source_pattern_copy_preserves_freshening.
+Print Assumptions freshened_roster_preserves_ordered_projections.
+Print Assumptions freshened_roster_preserves_positional_lookup.
+Print Assumptions copied_fresh_roster_open_at_zero_is_exact.
+Print Assumptions direct_fresh_roster_open_omits_only_identity_preserving_copies.
+Print Assumptions copied_fresh_roster_opens_selected_occurrence.
+Print Assumptions repeated_original_identity_retains_both_fresh_positions.
 Print Assumptions initial_prefix.
 Print Assumptions paid_push_preserves_prefix.
 Print Assumptions refused_copy_retains_exact_prefix.

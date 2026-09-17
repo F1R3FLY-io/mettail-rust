@@ -391,6 +391,65 @@ impl CheckedBindingLeaf for Vec<Binder<String>> {
     }
 }
 
+impl<T: CheckedIterativeBinding> crate::Scope<Vec<Binder<String>>, T> {
+    /// Freshen the ordered binder roster and open the body at depth zero.
+    ///
+    /// This is the paid counterpart of Moniker's `clone().unbind()`, not an
+    /// already-open-body accessor. Each source occurrence calls the existing
+    /// `FreeVar::fresh` once and retains its optional diagnostic name. The
+    /// checked body worker receives those exact new identities in order.
+    ///
+    /// `BinderPatternCopy` proves that borrowing the source pattern and the
+    /// returned fresh roster removes only identity-preserving temporary
+    /// copies. Its positional/opening laws compose with the existing checked
+    /// leaf and inherited-depth traversal laws; no fresh-ID allocator or new
+    /// binding algorithm is introduced here.
+    ///
+    /// Reserve the complete roster's flat storage before allocating, then
+    /// admit each fresh-name copy and normal cleanup before constructing it.
+    /// The body owns its existing checked-copy/cleanup contract. Failure
+    /// leaves the original scope intact; already-created global fresh IDs
+    /// are not rewound, just as other failed preparations retain their work.
+    pub fn try_unbind<E>(
+        &self,
+        reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+    ) -> Result<(Vec<Binder<String>>, T), BindingFailure<E>> {
+        reserve_binding_parts(2, 0, 0, reserve)?;
+        let pattern = &self.inner().unsafe_pattern;
+        let records = pattern
+            .len()
+            .checked_add(1)
+            .ok_or(BindingFailure::SizeOverflow)?;
+        // Header construction, iterator setup, and header cleanup. Every
+        // in-place Binder/FreeVar record is paid before with_capacity.
+        reserve_binding_parts(3, records, 0, reserve)?;
+        let mut fresh = Vec::with_capacity(pattern.len());
+        let mut pattern = pattern.iter();
+        loop {
+            reserve(1, 0).map_err(BindingFailure::Reservation)?;
+            let Some(binder) = pattern.next() else { break };
+            // Fresh call, transparent wrapper, insertion and flat teardown.
+            reserve_binding_parts(4, 0, 0, reserve)?;
+            reserve_name_record(&binder.0.pretty_name, NameRecordAdmission::Prepaid, reserve)?;
+            fresh.push(Binder(FreeVar::fresh(binder.0.pretty_name.clone())));
+        }
+        // Result pair and dispatch, before a private opened result exists.
+        reserve_binding_parts(2, 1, 0, reserve)?;
+        let body = self.inner().unsafe_body.try_copy_iterative(
+            BindingOperation::Open {
+                state: ScopeState::new(),
+                binders: &fresh,
+            },
+            reserve,
+        )?;
+        Ok((fresh, body))
+    }
+}
+
+#[cfg(test)]
+#[path = "checked_scope_tests.rs"]
+mod checked_scope_tests;
+
 impl CheckedBindingLeaf for OrdVar {
     fn try_copy_binding<E>(
         &self,
