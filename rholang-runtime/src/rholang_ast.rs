@@ -336,6 +336,13 @@ pub enum RholangAstLowerError {
     ScopeArenaAllocationFailed,
     /// Logical preparation work/payload reservation failed before an operation.
     Preparation(mettail_rholang_codegen::DynamicReflectionError),
+    /// Closed-profile source admission failed before recursive preparation.
+    SourceProfile(
+        mettail_languages::rholang::SourceProfileError<
+            mettail_rholang_codegen::DynamicReflectionError,
+            mettail_languages::rholang::source_profile::SourceRole,
+        >,
+    ),
     PreparationSizeOverflow,
     Storage(mettail_runtime::worklist::WorklistError),
     ReentrantLoweringSession,

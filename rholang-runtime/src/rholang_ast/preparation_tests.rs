@@ -339,6 +339,23 @@ fn held_integer_fold() -> Proc {
     Proc::IntBinProc(Arc::new(Proc::CastInt(Arc::new(Int::NumLit(5)))), Arc::new(Int::NumLit(8)))
 }
 
+// These driver-storage tests also cover families outside the public source
+// profile. Exercise that internal boundary explicitly, not public admission.
+fn lower_storage_test_body<C: FnMut() -> bool>(
+    source: &Proc,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<session::DirectLoweringOutput, RholangAstLowerError> {
+    session::with_owned_outputs(|_| {
+        let mut context = BoundEnv::new();
+        context.admission = SourceAdmissionMode::Public;
+        drive_machine_with_reservation(Seed::Body(source), &context, &mut |work, bytes| {
+            budget
+                .charge(work, bytes)
+                .map_err(RholangAstLowerError::Preparation)
+        })
+    })
+}
+
 #[test]
 fn storage_bounded_whole_body_preserves_existing_bytes_and_owned_fold_outputs() {
     let source = held_integer_fold();
@@ -347,7 +364,7 @@ fn storage_bounded_whole_body_preserves_existing_bytes_and_owned_fold_outputs() 
     let mut work = 0;
     let mut cancel = || false;
     let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancel);
-    let bounded = session::lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget)
+    let bounded = lower_storage_test_body(&source, &mut budget)
         .expect("bounded storage uses the same body driver");
     assert_eq!(bounded.par.encode_to_vec(), reference.par.encode_to_vec());
     assert_eq!(bounded.folds.len(), 1);
@@ -364,7 +381,7 @@ fn cancellation_after_fold_recording_discards_outputs_and_releases_session() {
     let mut work = 0;
     let mut cancel = || HELD_FOLD_SITES.with(|sites| !sites.borrow().is_empty());
     let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancel);
-    let result = session::lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget);
+    let result = lower_storage_test_body(&source, &mut budget);
     assert!(matches!(
         result,
         Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
@@ -376,7 +393,7 @@ fn cancellation_after_fold_recording_discards_outputs_and_releases_session() {
     let mut never_cancel = || false;
     let mut next_budget =
         ReflectedCodecBudget::new(&mut next_work, 100_000, 1_000_000, &mut never_cancel);
-    let next = session::lower_public_body_with_budget(&source, BoundEnv::new(), &mut next_budget)
+    let next = lower_storage_test_body(&source, &mut next_budget)
         .expect("next request is admitted after cancellation");
     assert_eq!(next.folds.len(), 1);
     assert_eq!(next.folds[0].site_index, 0);
@@ -478,8 +495,7 @@ fn bounded_roster_families_preserve_existing_construction_bytes() {
         let mut work = 0;
         let mut cancel = || false;
         let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancel);
-        let bounded = session::lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget)
-            .expect("same paid family");
+        let bounded = lower_storage_test_body(&source, &mut budget).expect("same paid family");
         assert_eq!(bounded.par.encode_to_vec(), reference.par.encode_to_vec());
         assert!(bounded.folds.is_empty());
         assert_eq!(bounded.guard_report, reference.guard_report);

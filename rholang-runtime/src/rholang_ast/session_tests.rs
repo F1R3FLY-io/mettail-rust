@@ -41,6 +41,129 @@ fn seed_outputs(count: usize) {
 }
 
 #[test]
+fn bounded_source_refusal_precedes_folds_scopes_and_ddl_preparation() {
+    use mettail_languages::rholang::source_profile::SourceRole;
+    use mettail_languages::rholang::{
+        source_constructor, DdlTheoryExpr, SourceConstructor, SourceProfileError,
+    };
+    use mettail_rholang_codegen::ReflectedCodecBudget;
+
+    let sources = [
+        (fold(integer(5)), 0),
+        (
+            Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(
+                Vec::new(),
+                Arc::new(fold(integer(5))),
+            )),
+            1,
+        ),
+        (
+            Proc::DdlTheory(
+                "example".to_owned(),
+                Vec::new(),
+                Arc::new(DdlTheoryExpr::DdlTheoryDataImplicit(Arc::new(fold(integer(5))))),
+            ),
+            2,
+        ),
+    ];
+    for (source, ordinal) in sources {
+        seed_outputs(1);
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancel);
+        let error = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget);
+        assert!(matches!(error, Err(RholangAstLowerError::SourceProfile(
+            SourceProfileError::Unsupported {
+                constructor: SourceConstructor::Proc(source_constructor::Proc::IntBinProc),
+                role: SourceRole::Term,
+                ordinal: actual,
+            }
+        )) if actual == ordinal));
+        assert!(budget.work_used() > 0);
+        assert_idle();
+    }
+}
+
+#[test]
+fn source_gate_and_body_driver_share_both_existing_budget_dimensions() {
+    use mettail_languages::rholang::source_profile::{RholangSourceProfile, SourceRole};
+    use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
+    let source = Proc::PZero;
+    let mut gate_work = 0;
+    let mut gate_bytes = 0;
+    source
+        .try_check_source_profile(SourceRole::Term, &RholangSourceProfile, &mut |work, bytes| {
+            gate_work += work;
+            gate_bytes += bytes;
+            Ok::<(), ()>(())
+        })
+        .expect("measure the exact source gate only");
+
+    for work_is_exact in [true, false] {
+        let mut work = 17;
+        let mut cancel = || false;
+        let limit = if work_is_exact {
+            17 + gate_work as u64
+        } else {
+            100_000
+        };
+        let bytes = if work_is_exact { 1_000_000 } else { gate_bytes };
+        let mut budget = ReflectedCodecBudget::new(&mut work, limit, bytes, &mut cancel);
+        let result = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget);
+        let expected = if work_is_exact {
+            DynamicReflectionError::WorkLimit
+        } else {
+            DynamicReflectionError::PayloadByteLimit
+        };
+        assert!(
+            matches!(result, Err(RholangAstLowerError::Preparation(actual)) if actual == expected)
+        );
+        assert_eq!(budget.work_used(), 17 + gate_work as u64);
+        assert_eq!(budget.remaining_bytes(), bytes - gate_bytes);
+        assert_idle();
+    }
+}
+
+#[test]
+fn source_admission_cancellation_retains_the_typed_failure_and_cleans_session() {
+    use mettail_languages::rholang::SourceProfileError;
+    use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
+    seed_outputs(1);
+    let mut work = 17;
+    let mut cancel = || true;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancel);
+    let result = lower_public_body_with_budget(&Proc::PZero, BoundEnv::new(), &mut budget);
+    assert!(matches!(
+        result,
+        Err(RholangAstLowerError::SourceProfile(SourceProfileError::Reservation(
+            mettail_runtime::BindingFailure::Reservation(DynamicReflectionError::Cancelled)
+        )))
+    ));
+    assert_eq!(budget.work_used(), 17);
+    assert_eq!(budget.remaining_bytes(), 1_000_000);
+    assert_idle();
+}
+
+#[test]
+fn admitted_public_source_preserves_existing_bytes_and_owned_outputs() {
+    use mettail_rholang_codegen::ReflectedCodecBudget;
+    let sources = [Proc::PZero, integer(42), Proc::POutputNil(Arc::new(integer(7)))];
+    for source in sources {
+        let reference =
+            lower_public_body(&source, BoundEnv::new()).expect("existing public lowering");
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancel);
+        let actual = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget)
+            .expect("admitted source uses the same body driver");
+        assert_eq!(actual.par.encode_to_vec(), reference.par.encode_to_vec());
+        assert!(actual.folds.is_empty());
+        assert_eq!(actual.guard_report, reference.guard_report);
+        assert_idle();
+    }
+}
+
+#[test]
 fn public_whole_body_lifts_folds_and_returns_the_exact_direct_output() {
     let proc = fold(integer(5));
     let reference = with_owned_outputs(|owner| owner.drive(Seed::Body(&proc), &BoundEnv::new()))

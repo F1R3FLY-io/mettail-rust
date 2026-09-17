@@ -105,9 +105,9 @@ pub(crate) fn lower_public_body(
     })
 }
 
-/// Internal bounded-storage composition of the same owned driver. This is
-/// not public admission: source, constructor and side-output precharges must
-/// also be composed before the node frontend can publish a prepared artifact.
+/// Check the closed source profile before entering the same bounded-storage
+/// owned driver. Constructor and side-output precharges must still be composed
+/// before the node frontend can publish a prepared artifact.
 pub(crate) fn lower_public_body_with_budget<C: FnMut() -> bool>(
     proc: &Proc,
     mut context: BoundEnv,
@@ -115,6 +115,12 @@ pub(crate) fn lower_public_body_with_budget<C: FnMut() -> bool>(
 ) -> Result<DirectLoweringOutput, RholangAstLowerError> {
     with_owned_outputs(|owner| {
         context.admission = SourceAdmissionMode::Public;
+        proc.try_check_source_profile(
+            mettail_languages::rholang::source_profile::SourceRole::Term,
+            &mettail_languages::rholang::source_profile::RholangSourceProfile,
+            &mut |work, bytes| budget.charge(work, bytes),
+        )
+        .map_err(RholangAstLowerError::SourceProfile)?;
         owner.drive_with_budget(Seed::Body(proc), &context, budget)
     })
 }
