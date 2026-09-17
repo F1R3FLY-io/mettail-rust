@@ -169,6 +169,25 @@ fn boundary_diagnostic(error: DynamicReflectionError) -> ReplyBody {
     ReplyBody::Error(DiagnosticDomain::Boundary, code)
 }
 
+fn kernel_undetermined_diagnostic(reason: SemanticMatchUndetermined) -> ReplyBody {
+    let code = match reason {
+        SemanticMatchUndetermined::WorkBudgetExhausted => 0,
+        SemanticMatchUndetermined::Cancelled => 1,
+        SemanticMatchUndetermined::InvalidImageEvidence => 2,
+        SemanticMatchUndetermined::PremiseEvaluationUnavailable => 3,
+        SemanticMatchUndetermined::ResourceGradeUnavailable => 4,
+        SemanticMatchUndetermined::InputLimitExceeded => 5,
+        SemanticMatchUndetermined::OutputLimitExceeded => 6,
+        SemanticMatchUndetermined::EGraphNodeBudgetExhausted => 7,
+        SemanticMatchUndetermined::AllocationFailed => 8,
+        SemanticMatchUndetermined::FrontierLimitExceeded => 9,
+        SemanticMatchUndetermined::ProofLimitExceeded => 10,
+        SemanticMatchUndetermined::NormalizationStepLimitExceeded => 11,
+        SemanticMatchUndetermined::NormalizationCycleDetected => 12,
+    };
+    ReplyBody::Undetermined(DiagnosticDomain::Kernel, code)
+}
+
 fn service_diagnostic(error: InstalledSemanticError) -> ReplyBody {
     use InstalledSemanticError::*;
     let code = match error {
@@ -202,23 +221,31 @@ fn service_diagnostic(error: InstalledSemanticError) -> ReplyBody {
             };
             return ReplyBody::Refuted(DiagnosticDomain::Kernel, code);
         },
-        Undetermined(reason) => {
-            let code = match reason {
-                SemanticMatchUndetermined::WorkBudgetExhausted => 0,
-                SemanticMatchUndetermined::Cancelled => 1,
-                SemanticMatchUndetermined::InvalidImageEvidence => 2,
-                SemanticMatchUndetermined::PremiseEvaluationUnavailable => 3,
-                SemanticMatchUndetermined::ResourceGradeUnavailable => 4,
-                SemanticMatchUndetermined::InputLimitExceeded => 5,
-                SemanticMatchUndetermined::OutputLimitExceeded => 6,
-                SemanticMatchUndetermined::EGraphNodeBudgetExhausted => 7,
-                SemanticMatchUndetermined::AllocationFailed => 8,
-                SemanticMatchUndetermined::FrontierLimitExceeded => 9,
-                SemanticMatchUndetermined::ProofLimitExceeded => 10,
-                SemanticMatchUndetermined::NormalizationStepLimitExceeded => 11,
-                SemanticMatchUndetermined::NormalizationCycleDetected => 12,
-            };
-            return ReplyBody::Undetermined(DiagnosticDomain::Kernel, code);
+        Undetermined(reason) => return kernel_undetermined_diagnostic(reason),
+        PredicateRole(error) => {
+            use mettail_dovetail_runtime::TheoryImageCompileError;
+            match error {
+                TheoryImageCompileError::PredicateRole { reason, .. } => {
+                    return kernel_undetermined_diagnostic(reason)
+                },
+                TheoryImageCompileError::Allocation => {
+                    return kernel_undetermined_diagnostic(
+                        SemanticMatchUndetermined::AllocationFailed,
+                    )
+                },
+                TheoryImageCompileError::LengthOverflow => {
+                    return kernel_undetermined_diagnostic(
+                        SemanticMatchUndetermined::InputLimitExceeded,
+                    )
+                },
+                TheoryImageCompileError::Image(_)
+                | TheoryImageCompileError::Automaton(_)
+                | TheoryImageCompileError::NonProgressing { .. }
+                | TheoryImageCompileError::UnknownReference { .. }
+                | TheoryImageCompileError::AmbiguousGrammarConstructor { .. }
+                | TheoryImageCompileError::EmptyActionTransition { .. }
+                | TheoryImageCompileError::InvalidAutomatonVariable { .. } => 7,
+            }
         },
         Resource(error) => return boundary_diagnostic(error),
         Restore(error) => {

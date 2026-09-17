@@ -188,6 +188,8 @@ the **existing observation declaration** with an optional checked predicate
 role: input constructor, closed accepting result term, and closed rejecting
 result term. Reuse the existing flat typed term representation. Do not add a
 second action registry, pattern language, or regex method to the host.
+The [canonical predicate-role contract](observation-predicate-roles.md) specifies
+the record, shared term-construction boundary, and versioned compatibility.
 
 For `FullMatch`, that role binds `CallFullMatch` to the observation's existing
 action, accepting `DoneBool(BTrue)` and rejecting `DoneBool(BFalse)`. `Nullable`

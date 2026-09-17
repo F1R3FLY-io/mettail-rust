@@ -487,7 +487,8 @@ struct TermConstructionLimits {
 
 struct TermInstantiation<'image, 'rule, 'substitution> {
     image: &'image TheorySemanticImageV1,
-    rule: &'rule mettail_grammar_core::TheoryRuleProgramV1,
+    terms: &'rule [mettail_grammar_core::TheoryImageTermNodeV1],
+    variables: &'rule [mettail_grammar_core::TheoryImageVariableV1],
     substitution: &'substitution ActionSubstitution,
     root: mettail_grammar_core::TheoryTermId,
     limits: TermConstructionLimits,
@@ -2206,7 +2207,8 @@ impl SemanticTransitionMatcher {
                         let output = match instantiate_rule_term(
                             TermInstantiation {
                                 image,
-                                rule,
+                                terms: &rule.terms,
+                                variables: &rule.variables,
                                 substitution: &frame.substitution,
                                 root: rule.right,
                                 limits: TermConstructionLimits {
@@ -2614,7 +2616,8 @@ impl SemanticTransitionMatcher {
                                         let argument = match instantiate_rule_term(
                                             TermInstantiation {
                                                 image,
-                                                rule,
+                                                terms: &rule.terms,
+                                                variables: &rule.variables,
                                                 substitution: &frame.substitution,
                                                 root: *term,
                                                 limits: TermConstructionLimits {
@@ -7510,7 +7513,7 @@ fn absorb_reported_work(
     Ok(())
 }
 
-fn charge_work_units<C>(
+pub(crate) fn charge_work_units<C>(
     work: &mut u64,
     limit: u64,
     units: usize,
@@ -8405,6 +8408,48 @@ fn collection_construction_operator(
     ))
 }
 
+/// Construct a closed observation constant with exactly the same worker used
+/// for rule outputs, then obtain the exact native ground key used by Eq.
+/// No rewrite search, action execution, guards, or authority is involved.
+pub(crate) fn closed_predicate_term_key<C: FnMut() -> bool>(
+    image: &TheorySemanticImageV1,
+    term: &crate::theory_image_compiler::CompiledClosedTheoryTerm,
+    limits: SemanticInputLimits,
+    work: &mut u64,
+    is_cancelled: &mut C,
+) -> Result<ContentKey, SemanticMatchUndetermined> {
+    let mut egraph = EGraph::with_config(EGraphConfig { max_nodes: limits.nodes });
+    let root = instantiate_rule_term(
+        TermInstantiation {
+            image,
+            terms: &term.terms,
+            variables: &term.variables,
+            substitution: &Vec::new(),
+            root: term.root,
+            limits: TermConstructionLimits {
+                work: limits.work,
+                nodes: limits.nodes,
+                bytes: limits.bytes,
+            },
+        },
+        &mut egraph,
+        work,
+        is_cancelled,
+    )?;
+    exact_ground_key(
+        &egraph,
+        root,
+        work,
+        GroundKeyLimits {
+            work: limits.work,
+            nodes: limits.nodes,
+            bytes: limits.bytes,
+            limit_reason: SemanticMatchUndetermined::OutputLimitExceeded,
+        },
+        is_cancelled,
+    )
+}
+
 fn instantiate_rule_term<C>(
     request: TermInstantiation<'_, '_, '_>,
     egraph: &mut EGraph<FramedSemanticOperator>,
@@ -8414,7 +8459,14 @@ fn instantiate_rule_term<C>(
 where
     C: FnMut() -> bool,
 {
-    let TermInstantiation { image, rule, substitution, root, limits } = request;
+    let TermInstantiation {
+        image,
+        terms,
+        variables,
+        substitution,
+        root,
+        limits,
+    } = request;
     let mut tasks = Vec::new();
     tasks
         .try_reserve_exact(1)
@@ -8427,8 +8479,7 @@ where
         charge_work(work, limits.work, is_cancelled)?;
         match task {
             TermConstructionTask::Evaluate { term, environment } => {
-                let node = rule
-                    .terms
+                let node = terms
                     .get(term.0 as usize)
                     .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
                 match &node.form {
@@ -8547,8 +8598,7 @@ where
                 }
                 for (argument, value) in arguments.iter().zip(argument_values) {
                     charge_work(work, limits.work, is_cancelled)?;
-                    let argument_node = rule
-                        .terms
+                    let argument_node = terms
                         .get(argument.0 as usize)
                         .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
                     let splice = matches!(operator, TheoryImageOperatorV1::Collection { .. })
@@ -8613,8 +8663,7 @@ where
                     .try_reserve_exact(parameters.len())
                     .map_err(|_| SemanticMatchUndetermined::OutputLimitExceeded)?;
                 for parameter in &parameters {
-                    let declaration = rule
-                        .variables
+                    let declaration = variables
                         .get(parameter.0 as usize)
                         .filter(|candidate| candidate.id == *parameter)
                         .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
@@ -8629,8 +8678,7 @@ where
                     .try_reserve_exact(sources.len())
                     .map_err(|_| SemanticMatchUndetermined::OutputLimitExceeded)?;
                 for (source, value) in sources.iter().zip(source_values) {
-                    let source_sort = rule
-                        .terms
+                    let source_sort = terms
                         .get(source.0 as usize)
                         .map(|node| node.sort)
                         .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
@@ -11174,7 +11222,8 @@ mod tests {
             instantiate_rule_term(
                 TermInstantiation {
                     image: &image,
-                    rule,
+                    terms: &rule.terms,
+                    variables: &rule.variables,
                     substitution: &vec![(TheoryVariableId(0), left), (TheoryVariableId(1), right),],
                     root: mettail_grammar_core::TheoryTermId(6),
                     limits: TermConstructionLimits {
@@ -11218,7 +11267,8 @@ mod tests {
                 let output = instantiate_rule_term(
                     TermInstantiation {
                         image: &image,
-                        rule,
+                        terms: &rule.terms,
+                        variables: &rule.variables,
                         substitution: &vec![(TheoryVariableId(1), source)],
                         root: mettail_grammar_core::TheoryTermId(9),
                         limits: TermConstructionLimits {

@@ -472,6 +472,24 @@ impl LanguageInstallService {
                         },
                     })
                 })?;
+            // A verified cache bypasses the compiler callback. Validate native
+            // predicate constants on both paths before publishing any handle.
+            mettail_dovetail_runtime::validate_observation_predicate_roles(
+                &installed.language,
+                &installed.semantic_image,
+                mettail_dovetail_runtime::SemanticInputLimits {
+                    work: self.policy.semantic_service.execution.work,
+                    nodes: self.policy.semantic_service.execution.output_nodes,
+                    bytes: self.policy.semantic_service.execution.output_bytes,
+                },
+                || false,
+            )
+            .0
+            .map_err(|error| {
+                InstallServiceError::Canonical(InstallExecutableRegistryError::CompileSemantic(
+                    error,
+                ))
+            })?;
             let granted_rights = self.policy.host_grants.attenuate(&requested_rights);
             let fingerprint = installed
                 .language
@@ -3679,6 +3697,7 @@ fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    mod predicate_roles;
     mod regex_gslt;
     mod regex_quantifiers;
 

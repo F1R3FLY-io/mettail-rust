@@ -1467,7 +1467,7 @@ debug formatting. The version-one assignments are:
 | --- | --- | --- |
 | 0: wire | Shape, IntegerRange, NonCanonicalInteger | Error |
 | 1: access | WrongRegistry, UnknownLanguage, StaleHandle, Revoked, MissingRight, AmplifiedHandle, EpochExhausted, Poisoned | Error |
-| 2: service | InvalidHandleShape, UnknownHandle, MissingSemanticImage, UnknownAction, UnknownObservation, InvalidSelection, InvalidEvidence | Error |
+| 2: service | InvalidHandleShape, UnknownHandle, MissingSemanticImage, UnknownAction, UnknownObservation, InvalidSelection, InvalidEvidence, InvalidPredicateRole | Error |
 | 3: kernel refutation | RequestRejected, NoTransition, PremiseRefuted, StuckNonterminal, NormalizationDeterminismClaimViolated | Refuted |
 | 3: kernel uncertainty | WorkBudgetExhausted, Cancelled, InvalidImageEvidence, PremiseEvaluationUnavailable, ResourceGradeUnavailable, InputLimitExceeded, OutputLimitExceeded, EGraphNodeBudgetExhausted, AllocationFailed, FrontierLimitExceeded, ProofLimitExceeded, NormalizationStepLimitExceeded, NormalizationCycleDetected | Undetermined |
 | 4: boundary | UnknownConstructor, ConflictingConstructorLabel, UnknownHole, InvalidHoleId, HoleCategoryConflict, MissingHole, InvalidMapEntry, WorkLimit, PayloadByteLimit, Cancelled, AllocationFailed, InvalidFingerprint | Codes 7–10: Undetermined; others: Error |

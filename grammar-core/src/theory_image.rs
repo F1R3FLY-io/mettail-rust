@@ -792,6 +792,42 @@ impl TheoryImageAdmissionLimits {
                 account_source_judgment_rule(rule, self, &mut totals)?;
             }
         }
+        for observation in &language.theory.observations {
+            let Some(role) = &observation.predicate_role else {
+                continue;
+            };
+            totals.names = checked_total(
+                totals.names,
+                observation
+                    .name
+                    .len()
+                    .checked_add(role.input_constructor.len())
+                    .ok_or(TheoryImageError::LengthOverflow)?,
+                self.max_total_name_bytes,
+                "name bytes",
+            )?;
+            for term in [&role.accepting, &role.rejecting] {
+                totals.variables = checked_total(
+                    totals.variables,
+                    term.variables.len(),
+                    self.max_total_rule_variables,
+                    "rule variables",
+                )?;
+                totals.terms = checked_total(
+                    totals.terms,
+                    term.terms.len(),
+                    self.max_total_term_nodes,
+                    "term nodes",
+                )?;
+                let (_, edges) = account_source_term_edges(&term.terms, 1, self, &mut totals)?;
+                totals.term_references = checked_total(
+                    totals.term_references,
+                    edges,
+                    self.max_total_term_references,
+                    "term references",
+                )?;
+            }
+        }
         for action in &language.theory.actions {
             totals.action_arguments = checked_total(
                 totals.action_arguments,
@@ -905,39 +941,8 @@ fn account_source_arena(
         "name bytes",
     )?;
 
-    let mut slot_occurrences = 0usize;
-    let mut child_edges = 0usize;
-    for term in &arena.terms {
-        let (children, slots) = match &term.form {
-            TheoryTermFormV1::Variable(_) => (0, 0),
-            TheoryTermFormV1::Constructor { arguments, .. } => (arguments.len(), 0),
-            TheoryTermFormV1::Abstraction { .. } => (1, 1),
-            TheoryTermFormV1::Substitution { .. } => (2, 0),
-            TheoryTermFormV1::Collection { elements, remainder, .. } => {
-                (elements.len(), usize::from(remainder.is_some()))
-            },
-            TheoryTermFormV1::Map { sources, parameters, .. } => {
-                (sources.len().saturating_add(1), parameters.len())
-            },
-            TheoryTermFormV1::Product { factors } => (factors.len(), 0),
-            TheoryTermFormV1::Literal(value) => {
-                totals.literals = checked_total(
-                    totals.literals,
-                    scaled(literal_bytes(value))?,
-                    limits.max_total_literal_bytes,
-                    "literal bytes",
-                )?;
-                (0, 0)
-            },
-        };
-        child_edges = child_edges
-            .checked_add(children)
-            .and_then(|total| total.checked_add(slots))
-            .ok_or(TheoryImageError::LengthOverflow)?;
-        slot_occurrences = slot_occurrences
-            .checked_add(slots)
-            .ok_or(TheoryImageError::LengthOverflow)?;
-    }
+    let (slot_occurrences, child_edges) =
+        account_source_term_edges(&arena.terms, orientations, limits, totals)?;
     totals.automaton_states = checked_total(
         totals.automaton_states,
         scaled(
@@ -1006,6 +1011,52 @@ fn account_source_arena(
         "term references",
     )?;
     Ok(())
+}
+
+/// Shared flat-node footprint. Predicate constants have no pattern automaton,
+/// but their term references and literal payloads use the same source limits.
+fn account_source_term_edges(
+    terms: &[crate::TheoryTermNodeV1],
+    orientations: usize,
+    limits: TheoryImageAdmissionLimits,
+    totals: &mut SourceImageTotals,
+) -> Result<(usize, usize), TheoryImageError> {
+    let mut slot_occurrences = 0usize;
+    let mut child_edges = 0usize;
+    for term in terms {
+        let (children, slots) = match &term.form {
+            TheoryTermFormV1::Variable(_) => (0, 0),
+            TheoryTermFormV1::Constructor { arguments, .. } => (arguments.len(), 0),
+            TheoryTermFormV1::Abstraction { .. } => (1, 1),
+            TheoryTermFormV1::Substitution { .. } => (2, 0),
+            TheoryTermFormV1::Collection { elements, remainder, .. } => {
+                (elements.len(), usize::from(remainder.is_some()))
+            },
+            TheoryTermFormV1::Map { sources, parameters, .. } => {
+                (sources.len().saturating_add(1), parameters.len())
+            },
+            TheoryTermFormV1::Product { factors } => (factors.len(), 0),
+            TheoryTermFormV1::Literal(value) => {
+                totals.literals = checked_total(
+                    totals.literals,
+                    literal_bytes(value)
+                        .checked_mul(orientations)
+                        .ok_or(TheoryImageError::LengthOverflow)?,
+                    limits.max_total_literal_bytes,
+                    "literal bytes",
+                )?;
+                (0, 0)
+            },
+        };
+        child_edges = child_edges
+            .checked_add(children)
+            .and_then(|total| total.checked_add(slots))
+            .ok_or(TheoryImageError::LengthOverflow)?;
+        slot_occurrences = slot_occurrences
+            .checked_add(slots)
+            .ok_or(TheoryImageError::LengthOverflow)?;
+    }
+    Ok((slot_occurrences, child_edges))
 }
 
 fn account_source_judgment_rule(

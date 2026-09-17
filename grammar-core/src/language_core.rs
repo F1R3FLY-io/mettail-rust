@@ -21,11 +21,13 @@ pub const LANGUAGE_CORE_ABI_V1: u16 = 1;
 pub const LANGUAGE_CORE_ABI_V2: u16 = 2;
 pub const LANGUAGE_CORE_ABI_V3: u16 = 3;
 pub const LANGUAGE_CORE_ABI_V4: u16 = 4;
-pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V4;
+pub const LANGUAGE_CORE_ABI_V5: u16 = 5;
+pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V5;
 pub const THEORY_CORE_ABI_V1: u16 = 1;
 pub const THEORY_CORE_ABI_V2: u16 = 2;
 pub const THEORY_CORE_ABI_V3: u16 = 3;
-pub const THEORY_CORE_ABI_CURRENT: u16 = THEORY_CORE_ABI_V3;
+pub const THEORY_CORE_ABI_V4: u16 = 4;
+pub const THEORY_CORE_ABI_CURRENT: u16 = THEORY_CORE_ABI_V4;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LanguageCoreV1 {
@@ -55,7 +57,7 @@ impl LanguageCoreV1 {
         let grammar = self.grammar_fingerprint()?;
         let theory = self.theory_fingerprint()?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-language-core/4\0");
+        hasher.update(b"mettail-language-core/5\0");
         hasher.update(&self.abi.to_be_bytes());
         hasher.update(&grammar);
         hasher.update(&theory);
@@ -139,7 +141,7 @@ impl TheoryCoreV1 {
     pub fn fingerprint(&self) -> Result<[u8; 32], postcard::Error> {
         let bytes = postcard::to_allocvec(self)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-theory-core/3\0");
+        hasher.update(b"mettail-theory-core/4\0");
         hasher.update(&bytes);
         Ok(*hasher.finalize().as_bytes())
     }
@@ -339,6 +341,7 @@ impl TheoryCoreV1 {
                 );
             }
         }
+        let mut predicate_inputs = BTreeSet::new();
         for observation in &self.observations {
             if !actions.contains(observation.action.as_str()) {
                 errors.push(TheoryValidationError::UnknownReference {
@@ -347,6 +350,15 @@ impl TheoryCoreV1 {
                 });
             }
             require_sort(&observation.result, &sorts, &mut errors);
+            if let Some(role) = &observation.predicate_role {
+                if !predicate_inputs.insert(role.input_constructor.as_str()) {
+                    errors.push(TheoryValidationError::DuplicateName {
+                        kind: "observation predicate input constructor",
+                        name: role.input_constructor.clone(),
+                    });
+                }
+                validate_observation_predicate(observation, role, self, &mut errors);
+            }
         }
         if let Some(interactive) = &self.interactive {
             require_sorts(
@@ -508,6 +520,128 @@ pub struct ObservationDeclV1 {
     pub name: String,
     pub action: String,
     pub result: String,
+    /// Explicit interpretation of this observation as a predicate. Omission
+    /// supplies no truthiness, authority, or inferred operation selection.
+    pub predicate_role: Option<ObservationPredicateRoleV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationPredicateRoleV1 {
+    pub input_constructor: String,
+    pub accepting: ClosedTheoryTermV1,
+    pub rejecting: ClosedTheoryTermV1,
+}
+
+/// A root in the existing flat theory term language, with no external slot
+/// dependencies. Local comprehension parameters retain their usual scope.
+/// These are construction expressions, not equations or rewrite rules.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClosedTheoryTermV1 {
+    pub variables: Vec<TheoryVariableV1>,
+    pub terms: Vec<TheoryTermNodeV1>,
+    pub root: TheoryTermId,
+}
+
+impl ClosedTheoryTermV1 {
+    pub fn validation_errors(
+        &self,
+        owner: &str,
+        expected_sort: &str,
+        theory: &TheoryCoreV1,
+    ) -> Vec<TheoryValidationError> {
+        let mut errors = Vec::new();
+        let sorts = theory
+            .sorts
+            .iter()
+            .map(|sort| (sort.name.as_str(), sort))
+            .collect();
+        let constructors = theory
+            .constructors
+            .iter()
+            .map(|constructor| (constructor.name.as_str(), constructor))
+            .collect();
+        validate_variables(owner, &self.variables, &sorts, theory.limits, &mut errors);
+        validate_term_arena(
+            owner,
+            &self.variables,
+            &self.terms,
+            &sorts,
+            &constructors,
+            theory.limits,
+            &mut errors,
+        );
+        if let Some(root) = term_node(owner, &self.terms, self.root, &mut errors) {
+            require_equal_sort(owner, expected_sort, &root.sort, &mut errors);
+        }
+        validate_comprehension_placement(owner, &self.terms, &[self.root], &mut errors);
+        let bound = validate_comprehension_scope(
+            owner,
+            &self.variables,
+            &self.terms,
+            &[self.root],
+            theory.limits,
+            &mut errors,
+        );
+        if !variable_occurrences(self.root, &self.terms, &bound).is_empty() {
+            errors.push(TheoryValidationError::InvalidPredicateRole {
+                observation: owner.to_owned(),
+                reason: "predicate result has external variable, binder or remainder dependencies",
+            });
+        }
+        errors
+    }
+}
+
+fn validate_observation_predicate(
+    observation: &ObservationDeclV1,
+    role: &ObservationPredicateRoleV1,
+    theory: &TheoryCoreV1,
+    errors: &mut Vec<TheoryValidationError>,
+) {
+    let invalid = |reason| TheoryValidationError::InvalidPredicateRole {
+        observation: observation.name.clone(),
+        reason,
+    };
+    let constructor = theory
+        .constructors
+        .iter()
+        .find(|c| c.name == role.input_constructor);
+    let action = theory.actions.iter().find(|a| a.id == observation.action);
+    match (constructor, action) {
+        (Some(constructor), Some(action)) => {
+            if !matches!(action.domain.as_slice(), [input] if input == &constructor.codomain)
+                || action.codomain != observation.result
+            {
+                errors.push(invalid(
+                    "predicate constructor/action domain or observation result mismatch",
+                ));
+            }
+            let pure_effect = theory.effects.iter().any(|effect| {
+                effect.name == action.effect
+                    && effect.class == SemanticEffectClassV1::Pure
+                    && effect.emits.is_empty()
+            });
+            if action.effect_class != SemanticEffectClassV1::Pure || !pure_effect {
+                errors.push(invalid("predicate action must name a pure effect with no emissions"));
+            }
+            if matches!(action.transition, TheoryRuleReferenceV1::Handler(_)) {
+                errors
+                    .push(invalid("predicate action must execute an existing checked theory rule"));
+            }
+        },
+        (None, _) => errors.push(invalid("predicate input constructor does not exist")),
+        (_, None) => {}, // The ordinary observation/action validator reports this.
+    }
+    errors.extend(
+        role.accepting
+            .validation_errors(&observation.name, &observation.result, theory),
+    );
+    errors.extend(
+        role.rejecting
+            .validation_errors(&observation.name, &observation.result, theory),
+    );
+    // Native construction and exact key inequality are checked at runtime
+    // image admission. Arena equality is not native structural equality.
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -633,6 +767,10 @@ pub enum LanguageCoreValidationError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TheoryValidationError {
+    InvalidPredicateRole {
+        observation: String,
+        reason: &'static str,
+    },
     UnsupportedTheoryAbi(u16),
     ZeroLimit,
     TermLimitExceeded {

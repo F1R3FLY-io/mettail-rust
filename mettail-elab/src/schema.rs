@@ -51,6 +51,7 @@ pub(crate) struct LanguageSchema {
     context: Option<String>,
     documentation: Option<String>,
     theory: core::TheoryCoreV1,
+    observation_predicates: Vec<Option<RhoValue>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -336,6 +337,13 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
     } else {
         core::TheoryCoreV1::structural()
     };
+    // Preserve already parsed role values until the complete constructor/sort
+    // signature is available. This is structural lowering, never source parsing.
+    let observation_predicates = if notation == "language/3" {
+        pending_observation_predicates(spec.get("oslf"))?
+    } else {
+        Vec::new()
+    };
     for key in ["extends", "includes", "mixins"] {
         validate_name_list(spec.get(key), &format!("$.{key}"))?;
     }
@@ -369,6 +377,7 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
         context,
         documentation,
         theory,
+        observation_predicates,
     })
 }
 
@@ -1998,12 +2007,63 @@ fn decode_observation(
     path: &str,
 ) -> Result<core::ObservationDeclV1, ValueDecodeError> {
     let values = expect_map(value, path)?;
-    reject_unknown_keys(values, &["name", "action", "result"], path)?;
+    reject_unknown_keys(values, &["name", "action", "result", "predicate_role"], path)?;
     Ok(core::ObservationDeclV1 {
         name: required_nonempty_string(values, "name", path)?,
         action: required_nonempty_string(values, "action", path)?,
         result: required_nonempty_string(values, "result", path)?,
+        predicate_role: None,
     })
+}
+
+fn pending_observation_predicates(
+    value: Option<&RhoValue>,
+) -> Result<Vec<Option<RhoValue>>, ValueDecodeError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let values = expect_map(value, "$.oslf")?;
+    let Some(observations) = values.get("observations") else {
+        return Ok(Vec::new());
+    };
+    expect_list(observations, "$.oslf.observations")?
+        .iter()
+        .enumerate()
+        .map(|(index, observation)| {
+            let path = format!("$.oslf.observations[{index}]");
+            let fields = expect_map(observation, &path)?;
+            Ok(fields.get("predicate_role").cloned())
+        })
+        .collect()
+}
+
+fn compile_observation_predicates(
+    values: &[Option<RhoValue>],
+    theory: &mut core::TheoryCoreV1,
+) -> Result<(), ValueDecodeError> {
+    if values.len() != theory.observations.len() {
+        return error("$.oslf.observations", "predicate role roster does not match observations");
+    }
+    for (index, value) in values.iter().enumerate() {
+        let Some(value) = value else { continue };
+        let path = format!("$.oslf.observations[{index}].predicate_role");
+        let fields = expect_map(value, &path)?;
+        reject_unknown_keys(fields, &["input_constructor", "accepting", "rejecting"], &path)?;
+        let input_constructor = required_nonempty_string(fields, "input_constructor", &path)?;
+        let result = &theory.observations[index].result;
+        let compile = |field: &str| {
+            let field_path = format!("{path}.{field}");
+            let value = fields.get(field).ok_or_else(|| {
+                ValueDecodeError::new(&field_path, "missing predicate result term")
+            })?;
+            crate::theory_compile::compile_closed_term(value, result, theory, &field_path)
+        };
+        let accepting = compile("accepting")?;
+        let rejecting = compile("rejecting")?;
+        theory.observations[index].predicate_role =
+            Some(core::ObservationPredicateRoleV1 { input_constructor, accepting, rejecting });
+    }
+    Ok(())
 }
 
 fn decode_morphism(
@@ -4777,6 +4837,7 @@ impl LanguageSchema {
                 &mut theory,
             )?;
             crate::theory_compile::infer_judgment_types(&mut theory)?;
+            compile_observation_predicates(&self.observation_predicates, &mut theory)?;
         }
         let language = core::LanguageCoreV1 {
             abi: core::LANGUAGE_CORE_ABI_CURRENT,

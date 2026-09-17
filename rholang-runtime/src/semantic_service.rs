@@ -122,6 +122,7 @@ pub enum InstalledSemanticError {
     Undetermined(SemanticMatchUndetermined),
     Resource(DynamicReflectionError),
     Restore(TheoryPatternRestoreError),
+    PredicateRole(mettail_dovetail_runtime::TheoryImageCompileError),
 }
 
 impl From<DynamicReflectionError> for InstalledSemanticError {
@@ -693,6 +694,24 @@ impl<'a> InstalledSemanticBundle<'a> {
         let image = installed
             .semantic_image()
             .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+        // Direct low-level table installation does not invoke the upper
+        // runtime's native checker. Keep the operation-local factory closed
+        // over the authoritative owner and absorb all actual checker work.
+        let bytes = budget.remaining_bytes();
+        budget
+            .run_accounted_stage(|work, cancelled| {
+                mettail_dovetail_runtime::validate_observation_predicate_roles(
+                    installed.language_core(),
+                    image,
+                    SemanticInputLimits {
+                        work,
+                        nodes: installed.language_core().theory.limits.max_output_nodes as usize,
+                        bytes,
+                    },
+                    cancelled,
+                )
+            })?
+            .map_err(InstalledSemanticError::PredicateRole)?;
         charge_matcher_setup(image, budget)?;
         let matcher =
             SemanticTransitionMatcher::restore(image).map_err(InstalledSemanticError::Restore)?;
@@ -1032,7 +1051,15 @@ pub(crate) mod tests {
         );
         assert_eq!(
             report.outcome.unwrap_err(),
-            InstalledSemanticError::Resource(DynamicReflectionError::WorkLimit)
+            // The paid observation-roster visit now precedes matcher setup.
+            // A selection-only ceiling refuses there without spending a new
+            // unit or losing the already retained publication context.
+            InstalledSemanticError::PredicateRole(
+                mettail_dovetail_runtime::TheoryImageCompileError::PredicateRole {
+                    observation: String::new(),
+                    reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                }
+            )
         );
         let retained = report
             .publication

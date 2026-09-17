@@ -5,6 +5,9 @@
 //! flat, and positional left-hand sides enter Dovetail through its flat pattern
 //! DAG API, so compilation is independent of the native call stack.
 
+use crate::semantic_transition_kernel::{
+    charge_work_units, closed_predicate_term_key, SemanticInputLimits, SemanticMatchUndetermined,
+};
 use dovetail::set_automaton::{
     AutomatonNode, FlatPattern, FlatPatternNode, FlatSetAutomatonError, PatternId, SetAutomaton,
 };
@@ -34,13 +37,28 @@ use std::fmt;
 pub enum TheoryImageCompileError {
     Image(TheoryImageError),
     Automaton(FlatSetAutomatonError),
-    NonProgressing { rule: String },
-    UnknownReference { kind: &'static str, name: String },
-    AmbiguousGrammarConstructor { name: String },
-    EmptyActionTransition { action: String },
-    InvalidAutomatonVariable { name: String },
+    NonProgressing {
+        rule: String,
+    },
+    UnknownReference {
+        kind: &'static str,
+        name: String,
+    },
+    AmbiguousGrammarConstructor {
+        name: String,
+    },
+    EmptyActionTransition {
+        action: String,
+    },
+    InvalidAutomatonVariable {
+        name: String,
+    },
     LengthOverflow,
     Allocation,
+    PredicateRole {
+        observation: String,
+        reason: SemanticMatchUndetermined,
+    },
 }
 
 impl fmt::Display for TheoryImageCompileError {
@@ -66,6 +84,10 @@ impl fmt::Display for TheoryImageCompileError {
             },
             Self::LengthOverflow => formatter.write_str("semantic image length overflow"),
             Self::Allocation => formatter.write_str("semantic image allocation failed"),
+            Self::PredicateRole { observation, reason } => write!(
+                formatter,
+                "invalid predicate role for observation `{observation}`: {reason:?}"
+            ),
         }
     }
 }
@@ -130,7 +152,160 @@ pub fn compile_theory_semantic_image(
         actions,
     };
     image.validate(language, limits)?;
+    validate_observation_predicate_roles(
+        language,
+        &image,
+        SemanticInputLimits {
+            work: u64::from(language.theory.limits.max_steps)
+                .min(u64::try_from(limits.max_total_term_references).unwrap_or(u64::MAX)),
+            nodes: (language.theory.limits.max_output_nodes as usize)
+                .min(limits.max_total_term_nodes),
+            bytes: (language.theory.limits.max_output_bytes as usize).min(limits.max_encoded_bytes),
+        },
+        || false,
+    )
+    .0?;
     Ok(image)
+}
+
+pub(crate) struct CompiledClosedTheoryTerm {
+    pub variables: Vec<TheoryImageVariableV1>,
+    pub terms: Vec<TheoryImageTermNodeV1>,
+    pub root: TheoryTermId,
+}
+
+/// Validate the native meaning of predicate constants after ordinary source
+/// and image admission. Callers must supply the already source-checked image;
+/// this check grants no capability and never replaces image admission.
+///
+/// Fresh compilation, cached public installation, and the installed service
+/// factory share this check. Work is cumulative across all roles and is
+/// returned on every outcome for the existing accounted-stage interface.
+pub fn validate_observation_predicate_roles<C: FnMut() -> bool>(
+    language: &LanguageCoreV1,
+    image: &TheorySemanticImageV1,
+    limits: SemanticInputLimits,
+    mut is_cancelled: C,
+) -> (Result<(), TheoryImageCompileError>, u64) {
+    let mut work = 0u64;
+    let result = (|| {
+        let limits = SemanticInputLimits {
+            work: limits.work.min(u64::from(language.theory.limits.max_steps)),
+            nodes: limits
+                .nodes
+                .min(language.theory.limits.max_output_nodes as usize),
+            bytes: limits
+                .bytes
+                .min(language.theory.limits.max_output_bytes as usize),
+        };
+        let charge = |work: &mut u64,
+                      amount: usize,
+                      cancel: &mut C|
+         -> Result<(), TheoryImageCompileError> {
+            charge_work_units(work, limits.work, amount, cancel).map_err(|reason| {
+                TheoryImageCompileError::PredicateRole { observation: String::new(), reason }
+            })
+        };
+        let mut context = None;
+        for (index, observation) in language.theory.observations.iter().enumerate() {
+            // Pay before inspecting even an omitted role. Failed charges and
+            // cancellation retain the exact already-consumed roster prefix.
+            charge(&mut work, 1, &mut is_cancelled)?;
+            let Some(role) = &observation.predicate_role else {
+                continue;
+            };
+            if context.is_none() {
+                // CompileContext borrows names; build its dense maps once,
+                // only when a paid role visit actually requires them.
+                for name in language
+                    .theory
+                    .sorts
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .chain(language.theory.constructors.iter().map(|c| c.name.as_str()))
+                    .chain(language.theory.judgments.iter().map(|j| j.name.as_str()))
+                    .chain(language.theory.effects.iter().map(|e| e.name.as_str()))
+                {
+                    charge(
+                        &mut work,
+                        name.len()
+                            .checked_add(1)
+                            .ok_or(TheoryImageCompileError::LengthOverflow)?,
+                        &mut is_cancelled,
+                    )?;
+                }
+                context = Some(CompileContext::new(language)?);
+            }
+            let context = context.as_ref().expect("initialized for the first role");
+            let mut keys = Vec::new();
+            keys.try_reserve_exact(2)
+                .map_err(|_| TheoryImageCompileError::Allocation)?;
+            for source in [&role.accepting, &role.rejecting] {
+                charge(&mut work, source.variables.len(), &mut is_cancelled)?;
+                for node in &source.terms {
+                    let children = match &node.form {
+                        TheoryTermFormV1::Variable(_) => 0,
+                        TheoryTermFormV1::Constructor { arguments, .. } => arguments.len(),
+                        TheoryTermFormV1::Abstraction { .. } => 2,
+                        TheoryTermFormV1::Substitution { .. } => 2,
+                        TheoryTermFormV1::Collection { elements, .. } => elements.len(),
+                        TheoryTermFormV1::Product { factors } => factors.len(),
+                        TheoryTermFormV1::Map { sources, parameters, .. } => sources
+                            .len()
+                            .checked_add(parameters.len())
+                            .and_then(|n| n.checked_add(1))
+                            .ok_or(TheoryImageCompileError::LengthOverflow)?,
+                        TheoryTermFormV1::Literal(value) => match value {
+                            mettail_grammar_core::TheoryLiteralV1::String(s) => s.len(),
+                            mettail_grammar_core::TheoryLiteralV1::Bytes(b) => b.len(),
+                            _ => 16,
+                        },
+                    };
+                    charge(
+                        &mut work,
+                        children
+                            .checked_add(1)
+                            .ok_or(TheoryImageCompileError::LengthOverflow)?,
+                        &mut is_cancelled,
+                    )?;
+                }
+                let compiled = CompiledClosedTheoryTerm {
+                    variables: compile_variables(&source.variables, context)?,
+                    terms: compile_term_nodes(&source.terms, &source.variables, context)?,
+                    root: source.root,
+                };
+                let key = closed_predicate_term_key(
+                    image,
+                    &compiled,
+                    limits,
+                    &mut work,
+                    &mut is_cancelled,
+                )
+                .map_err(|reason| TheoryImageCompileError::PredicateRole {
+                    observation: observation.name.clone(),
+                    reason,
+                })?;
+                keys.push(key);
+            }
+            charge(
+                &mut work,
+                keys[0]
+                    .len()
+                    .checked_add(keys[1].len())
+                    .ok_or(TheoryImageCompileError::LengthOverflow)?,
+                &mut is_cancelled,
+            )?;
+            if keys[0].as_bytes() == keys[1].as_bytes() {
+                return Err(TheoryImageError::SourceMismatch {
+                    kind: "equal observation predicate results",
+                    index: checked_u32(index)?,
+                }
+                .into());
+            }
+        }
+        Ok(())
+    })();
+    (result, work)
 }
 
 fn compile_sorts(
@@ -2028,6 +2203,285 @@ mod tests {
         first
             .validate(&language, limits)
             .expect("independent image validation");
+    }
+
+    fn predicate_fixture() -> LanguageCoreV1 {
+        use mettail_grammar_core::{
+            ClosedTheoryTermV1, ObservationDeclV1, ObservationPredicateRoleV1,
+        };
+        let mut language = fixture();
+        let accepting = ClosedTheoryTermV1 {
+            variables: Vec::new(),
+            terms: vec![term_constructor("Zero", Vec::new())],
+            root: TheoryTermId(0),
+        };
+        let rejecting = ClosedTheoryTermV1 {
+            variables: Vec::new(),
+            terms: vec![
+                term_constructor("Zero", Vec::new()),
+                term_constructor("Wrap", vec![TheoryTermId(0)]),
+            ],
+            root: TheoryTermId(1),
+        };
+        language.theory.observations.push(ObservationDeclV1 {
+            name: "is-zero".into(),
+            action: "reduce-add-zero".into(),
+            result: "Expr".into(),
+            predicate_role: Some(ObservationPredicateRoleV1 {
+                input_constructor: "Add".into(),
+                accepting,
+                rejecting,
+            }),
+        });
+        language
+    }
+
+    #[test]
+    fn predicate_roles_commit_without_changing_parser_identity() {
+        let language = predicate_fixture();
+        language.validate().expect("typed, closed predicate role");
+        let mut omitted = language.clone();
+        omitted.theory.observations[0].predicate_role = None;
+        let limits = TheoryImageAdmissionLimits::default();
+        let old = compile_theory_semantic_image(&omitted, limits).expect("ordinary observation");
+        let image = compile_theory_semantic_image(&language, limits).expect("native distinct role");
+        assert_eq!(language.grammar_fingerprint(), omitted.grammar_fingerprint());
+        assert_ne!(language.theory_fingerprint(), omitted.theory_fingerprint());
+        assert_ne!(language.fingerprint(), omitted.fingerprint());
+        assert!(old.validate(&language, limits).is_err(), "no stale role-less image replay");
+        let encoded = image.encode(&language, limits).expect("image encoding");
+        let decoded = TheorySemanticImageV1::decode(&encoded, &language, limits)
+            .expect("role-bound image decode");
+        assert_eq!(image, decoded);
+    }
+
+    #[test]
+    fn predicate_roles_reject_wrong_binding_effect_sort_and_open_terms() {
+        let baseline = predicate_fixture();
+        let mut bad = baseline.clone();
+        let mut duplicate = bad.theory.observations[0].clone();
+        duplicate.name = "duplicate-input".into();
+        bad.theory.observations.push(duplicate);
+        assert!(bad.validate().is_err());
+        let mut bad = baseline.clone();
+        bad.theory.observations[0].action = "missing".into();
+        assert!(bad.validate().is_err());
+        let mut bad = baseline.clone();
+        bad.theory.observations[0]
+            .predicate_role
+            .as_mut()
+            .expect("role")
+            .input_constructor = "missing".into();
+        assert!(bad.validate().is_err());
+        let mut bad = baseline.clone();
+        bad.theory.effects[0].emits.push("host-effect".into());
+        assert!(bad.validate().is_err());
+        let mut bad = baseline.clone();
+        bad.theory.actions[0].transition = TheoryRuleReferenceV1::Handler("ambient".into());
+        assert!(bad.validate().is_err());
+        let mut bad = baseline.clone();
+        bad.theory.observations[0].result = "missing-sort".into();
+        assert!(bad.validate().is_err());
+        let mut bad = baseline;
+        let role = bad.theory.observations[0]
+            .predicate_role
+            .as_mut()
+            .expect("role");
+        role.accepting.variables = vec![variable(0, "external")];
+        role.accepting.terms = vec![term_variable(0)];
+        assert!(bad.validate().is_err(), "an input slot is not a closed constant");
+    }
+
+    #[test]
+    fn predicate_roles_compare_native_roots_not_arena_coordinates() {
+        let mut language = predicate_fixture();
+        let role = language.theory.observations[0]
+            .predicate_role
+            .as_mut()
+            .expect("role");
+        role.accepting.terms = vec![
+            term_constructor("Zero", Vec::new()),
+            term_constructor("Add", vec![TheoryTermId(0), TheoryTermId(0)]),
+        ];
+        role.accepting.root = TheoryTermId(1);
+        role.rejecting.terms = vec![
+            term_constructor("Zero", Vec::new()),
+            term_constructor("Zero", Vec::new()),
+            term_constructor("Add", vec![TheoryTermId(0), TheoryTermId(1)]),
+        ];
+        role.rejecting.root = TheoryTermId(2);
+        language
+            .validate()
+            .expect("shape validation is not native inequality");
+        assert!(matches!(
+            compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default()),
+            Err(TheoryImageCompileError::Image(TheoryImageError::SourceMismatch {
+                kind: "equal observation predicate results",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn predicate_roles_use_existing_native_unordered_collection_equality() {
+        let mut language = predicate_fixture();
+        language.theory.sorts.push(TheorySortV1 {
+            name: "SetExpr".into(),
+            kind: TheorySortKindV1::Collection {
+                kind: CollectionKind::Set,
+                key: None,
+                element: "Expr".into(),
+            },
+        });
+        language.theory.constructors.push(TheoryConstructorV1 {
+            name: "BoxSet".into(),
+            domain: vec!["SetExpr".into()],
+            codomain: "Expr".into(),
+        });
+        let (production, reduction) = production(
+            3,
+            "BoxSet",
+            vec![SyntaxItem::Collection {
+                element: CategoryId(0),
+                key: None,
+                slot: "items".into(),
+                separator: ",".into(),
+                kind: CollectionKind::Set,
+                key_value_separator: None,
+            }],
+            vec![FieldSource::Input(0)],
+        );
+        language.grammar.productions.push(production);
+        language.grammar.reductions.push(reduction);
+        let constant = |elements: Vec<TheoryTermId>| mettail_grammar_core::ClosedTheoryTermV1 {
+            variables: Vec::new(),
+            terms: vec![
+                term_constructor("Zero", Vec::new()),
+                term_constructor("Wrap", vec![TheoryTermId(0)]),
+                TheoryTermNodeV1 {
+                    sort: "SetExpr".into(),
+                    form: TheoryTermFormV1::Collection {
+                        elements,
+                        remainder: None,
+                        pathmap_mode: None,
+                    },
+                },
+                term_constructor("BoxSet", vec![TheoryTermId(2)]),
+            ],
+            root: TheoryTermId(3),
+        };
+        let role = language.theory.observations[0]
+            .predicate_role
+            .as_mut()
+            .expect("role");
+        role.accepting = constant(vec![TheoryTermId(0), TheoryTermId(1)]);
+        role.rejecting = constant(vec![TheoryTermId(1), TheoryTermId(0), TheoryTermId(0)]);
+        language.validate().expect("closed typed sets");
+        assert!(matches!(
+            compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default()),
+            Err(TheoryImageCompileError::Image(TheoryImageError::SourceMismatch {
+                kind: "equal observation predicate results",
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn predicate_roles_keep_exact_work_limits_and_cancellation() {
+        let language = predicate_fixture();
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("valid image");
+        let limits = SemanticInputLimits {
+            work: 100_000,
+            nodes: 1_000,
+            bytes: 1_000_000,
+        };
+        let (result, used) =
+            validate_observation_predicate_roles(&language, &image, limits, || false);
+        result.expect("bounded native check");
+        assert!(used > 0);
+        assert!(validate_observation_predicate_roles(
+            &language,
+            &image,
+            SemanticInputLimits { work: used, ..limits },
+            || false
+        )
+        .0
+        .is_ok());
+        let (under, consumed) = validate_observation_predicate_roles(
+            &language,
+            &image,
+            SemanticInputLimits { work: used - 1, ..limits },
+            || false,
+        );
+        assert!(under.is_err());
+        assert!(consumed < used);
+        let (cancelled, consumed) =
+            validate_observation_predicate_roles(&language, &image, limits, || true);
+        assert!(matches!(
+            cancelled,
+            Err(TheoryImageCompileError::PredicateRole {
+                reason: SemanticMatchUndetermined::Cancelled,
+                ..
+            })
+        ));
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn predicate_roles_pay_for_omitted_roles_before_inspection() {
+        let mut language = predicate_fixture();
+        language.theory.observations[0].predicate_role = None;
+        let omitted = language.theory.observations[0].clone();
+        for name in ["second", "third"] {
+            language
+                .theory
+                .observations
+                .push(mettail_grammar_core::ObservationDeclV1 {
+                    name: name.into(),
+                    ..omitted.clone()
+                });
+        }
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("ordinary observations require no native constants");
+        for ceiling in 0..=3 {
+            let (result, consumed) = validate_observation_predicate_roles(
+                &language,
+                &image,
+                SemanticInputLimits { work: ceiling, nodes: 0, bytes: 0 },
+                || false,
+            );
+            assert_eq!(consumed, ceiling);
+            if ceiling == 3 {
+                result.expect("exactly one paid visit per omitted role");
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(TheoryImageCompileError::PredicateRole {
+                        reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                        ..
+                    })
+                ));
+            }
+        }
+        let mut visits = 0;
+        let (result, consumed) = validate_observation_predicate_roles(
+            &language,
+            &image,
+            SemanticInputLimits { work: 3, nodes: 0, bytes: 0 },
+            || {
+                visits += 1;
+                visits == 2
+            },
+        );
+        assert_eq!(consumed, 1, "cancelled visit retains its paid prefix");
+        assert!(matches!(
+            result,
+            Err(TheoryImageCompileError::PredicateRole {
+                reason: SemanticMatchUndetermined::Cancelled,
+                ..
+            })
+        ));
     }
 
     #[test]

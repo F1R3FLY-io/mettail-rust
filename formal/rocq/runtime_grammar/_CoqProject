@@ -44,6 +44,7 @@ theories/HostCapabilityManifest.v
 theories/ModuleProgramStaging.v
 theories/SelfHostingFixedPoint.v
 theories/LanguageCoreProjection.v
+theories/ObservationPredicateRole.v
 theories/CanonicalLanguageCoreCodec.v
 theories/CollectionProjection.v
 theories/CompletedCoreEmbedding.v

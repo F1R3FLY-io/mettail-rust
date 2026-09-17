@@ -447,6 +447,32 @@ fn compile_rewrite(
     })
 }
 
+/// Compile a closed result with the existing structural rule-term compiler.
+/// A fresh right-hand-side environment rejects external variables and binder
+/// slots, while the existing comprehension worker supplies local parameters.
+pub(crate) fn compile_closed_term(
+    value: &RhoValue,
+    expected_sort: &str,
+    theory: &core::TheoryCoreV1,
+    path: &str,
+) -> Result<core::ClosedTheoryTermV1, ValueDecodeError> {
+    let signature = Signature::from_theory(theory);
+    let mut compiler = RuleCompiler::new(&signature, theory.limits, path);
+    let root =
+        compiler.compile_pattern(value, Some(expected_sort.to_owned()), Side::Right, path)?;
+    let arena = compiler.finish()?;
+    let term = core::ClosedTheoryTermV1 {
+        variables: arena.variables,
+        terms: arena.terms,
+        root,
+    };
+    let errors = term.validation_errors(path, expected_sort, theory);
+    if !errors.is_empty() {
+        return error(path, format!("invalid closed predicate result: {errors:?}"));
+    }
+    Ok(term)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Side {
     Left,

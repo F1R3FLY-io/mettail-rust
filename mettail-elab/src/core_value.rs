@@ -15,7 +15,8 @@ use std::collections::BTreeMap;
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V1: &str = "mettail-language-core-value/1";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V2: &str = "mettail-language-core-value/2";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V3: &str = "mettail-language-core-value/3";
-pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V3;
+pub const LANGUAGE_CORE_VALUE_SCHEMA_V4: &str = "mettail-language-core-value/4";
+pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V4;
 
 /// Serde's tagged structural encoding introduces a small fixed amount of
 /// framing around each semantic node. Four times the admitted DDL depth is a
@@ -665,7 +666,11 @@ mod tests {
 
     #[test]
     fn structural_arm_rejects_every_stale_identity_before_reinterpretation() {
-        for schema in [LANGUAGE_CORE_VALUE_SCHEMA_V1, LANGUAGE_CORE_VALUE_SCHEMA_V2] {
+        for schema in [
+            LANGUAGE_CORE_VALUE_SCHEMA_V1,
+            LANGUAGE_CORE_VALUE_SCHEMA_V2,
+            LANGUAGE_CORE_VALUE_SCHEMA_V3,
+        ] {
             let mut old_schema = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_schema else {
                 unreachable!()
@@ -679,6 +684,7 @@ mod tests {
             core::LANGUAGE_CORE_ABI_V1,
             core::LANGUAGE_CORE_ABI_V2,
             core::LANGUAGE_CORE_ABI_V3,
+            core::LANGUAGE_CORE_ABI_V4,
         ] {
             let mut old_language = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_language else {
@@ -706,7 +712,7 @@ mod tests {
         let error = decode_language_core_value(&old_grammar).unwrap_err();
         assert!(error.message.contains("UnsupportedAbi"));
 
-        for abi in [core::THEORY_CORE_ABI_V1, core::THEORY_CORE_ABI_V2] {
+        for abi in [core::THEORY_CORE_ABI_V1, core::THEORY_CORE_ABI_V2, core::THEORY_CORE_ABI_V3] {
             let mut old_theory = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_theory else {
                 unreachable!()

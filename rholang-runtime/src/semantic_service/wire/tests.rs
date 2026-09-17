@@ -1,4 +1,35 @@
 use super::*;
+
+#[test]
+fn predicate_roles_keep_kernel_diagnostics_and_never_become_false_results() {
+    use mettail_dovetail_runtime::TheoryImageCompileError;
+    for reason in [
+        SemanticMatchUndetermined::WorkBudgetExhausted,
+        SemanticMatchUndetermined::Cancelled,
+        SemanticMatchUndetermined::InvalidImageEvidence,
+        SemanticMatchUndetermined::OutputLimitExceeded,
+    ] {
+        let expected = kernel_undetermined_diagnostic(reason);
+        let actual = service_diagnostic(InstalledSemanticError::PredicateRole(
+            TheoryImageCompileError::PredicateRole { observation: "predicate".into(), reason },
+        ));
+        assert!(matches!((actual, expected),
+            (ReplyBody::Undetermined(DiagnosticDomain::Kernel, actual_code),
+             ReplyBody::Undetermined(DiagnosticDomain::Kernel, expected_code))
+             if actual_code == expected_code));
+    }
+    let invalid = service_diagnostic(InstalledSemanticError::PredicateRole(
+        TheoryImageCompileError::UnknownReference {
+            kind: "constructor",
+            name: "missing".into(),
+        },
+    ));
+    assert!(matches!(invalid, ReplyBody::Error(DiagnosticDomain::Service, 7)));
+    let allocation = service_diagnostic(InstalledSemanticError::PredicateRole(
+        TheoryImageCompileError::Allocation,
+    ));
+    assert!(matches!(allocation, ReplyBody::Undetermined(DiagnosticDomain::Kernel, 8)));
+}
 use crate::language_install::{exact_list, wire_list};
 use crate::semantic_wire::{decode_receipt_v1, decode_u64, decode_usage_v1, encode_limits_v1};
 use mettail_grammar_core::RuntimeTemplatePiece;
