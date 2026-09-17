@@ -29,4 +29,6 @@ pub mod match_pattern;
 pub mod normalize;
 pub mod parse_alt_filter;
 pub mod semantic_hash;
+#[cfg(test)]
+mod source_profile;
 pub mod subst;
