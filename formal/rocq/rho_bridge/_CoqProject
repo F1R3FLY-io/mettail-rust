@@ -135,6 +135,7 @@ theories/NativeMapTrustedCollect.v
 theories/NativeStableInsertionSort.v
 theories/NativeStableBidirectionalMerge.v
 theories/NativeStableSortRequestBound.v
+theories/NativeStableSortWorkBound.v
 theories/NativeMapRunSuspension.v
 theories/GeneratedMapCoreSource.v
 theories/GeneratedMapCoreDeterminism.v

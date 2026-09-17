@@ -581,6 +581,39 @@ categories. Materialization, scratch storage, control work and cleanup remain
 separate from this callback count; the count alone does not authorize native
 Map hashing or bag reconstruction.
 
+### Native sort control and cumulative storage
+
+Callback counts alone do not bound comparator-free sort control or temporary
+storage. The
+[weighted native-sort model](../../formal/rocq/rho_bridge/theories/NativeStableSortWorkBound.v)
+adds source-associated work and record profiles to the **same** width, depth
+and run-flag derivations used by the callback-count model. It retains positive
+run and chunk widths and the actual quicksort size guard; these prevent
+arbitrarily many zero-width nodes from hiding fixed control costs.
+
+For width $`n`$, the resulting conservative core allowance is:
+
+```math
+W_{\mathrm{sort}} \leq K(n)=320n^2+1024n+1133,
+\qquad R_{\mathrm{sort}} \leq K(n).
+```
+
+Here $`R_{\mathrm{sort}}`$ counts cumulative logical local and transfer
+positions, not peak memory. An eager fallback pays its local arrays again.
+Small insertion paths also pay for their saved-pivot guard and local frame,
+in addition to record transfers. The source-profile review covers run scans,
+reversal, merges, small-sort prefixes and tails, partitioning, pivot selection,
+and the outer run stack. The kernel verifies their guarded additive
+composition; the pinned library source association remains an explicit
+reviewed dependency boundary.
+
+This is not a whole Map-hash allowance. Original-roster materialization,
+outer scratch selection and storage, the callback adapter, and each typed
+structural Ord body remain separate. In particular, neither $`K(n)`$ nor the
+callback count prices an arbitrary comparison body as constant work. Native
+sorting behavior is unchanged, and these logical bounds make no allocator,
+resident-memory, panic-recovery or performance claim.
+
 ### Shared paid Map visitation
 
 `HashMapLit::try_for_each_entry` exposes the same paid IndexMap slice walk
