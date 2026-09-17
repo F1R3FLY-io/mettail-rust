@@ -129,6 +129,7 @@ theories/CollectionPairAndUnitLexResults.v
 theories/CollectionWeightedLexResults.v
 theories/NativeCollectionRequestBound.v
 theories/NativeSortedComparisonClasses.v
+theories/NativeMapTrustedCollect.v
 theories/NativeStableInsertionSort.v
 theories/NativeStableBidirectionalMerge.v
 theories/NativeStableSortRequestBound.v
@@ -138,6 +139,7 @@ theories/GeneratedMapCoreDeterminism.v
 theories/GeneratedMapCoreErasure.v
 theories/GeneratedBagCoreSource.v
 theories/GeneratedCollectionWorkCover.v
+theories/NativeCollectionCoreInventory.v
 theories/GeneratedAdmittedMapReference.v
 theories/GeneratedAdmittedMapDialogue.v
 theories/GeneratedSourceRowComparison.v

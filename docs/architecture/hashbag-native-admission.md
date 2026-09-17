@@ -349,6 +349,41 @@ This is a model-level composition law. Concrete emitter recipes, paid metadata
 walks, field and vector contributions, and unordered collection request
 coverage must still be connected before exposing a whole-comparison receipt.
 
+### Collection core control
+
+The [core inventory model](../../formal/rocq/rho_bridge/theories/NativeCollectionCoreInventory.v)
+derives a control allowance from the existing collection-comparison PDA's
+actual merge runs, passes, copy operations and comparison handshakes. It does
+not implement another sorter or assume an upper bound on the execution trace.
+
+Let $`n`$ and $`m`$ be the original stored-entry widths of the two rosters,
+$`B=n(n-1)+m(m-1)`$, and $`L=n+m`$. Multiplicities remain compressed; these
+widths do not count repeated occurrences of a Bag element. The derived bound is:
+
+```math
+W_{\mathrm{core}} \leq 23B+11L+28.
+```
+
+For each sort, the original execution determines the number of accepted
+comparisons, tail copies and completed runs. Their source-group inventory
+gives at most $`23n(n-1)+8`$ work for the left phase and the corresponding
+bound for the right phase. Weighted lexicographic traversal contributes at
+most $`11L+5`$; the original initialization contributes seven groups.
+A decisive initial Bag-length comparison does not require these later
+phases, so the same conservative allowance covers that shorter path.
+
+An item handshake retains its original primary and optional secondary
+operands and replies. Its control bound does **not** assign a constant cost
+to those structural comparisons: their generated bodies need separate
+allowances. Materialization, flat-buffer construction and cleanup, and
+generated continuation scheduling are also separate components.
+
+The theorem connects source-word annotations to the same handshake
+derivations constructed from the original sorts and to the actual compressed
+lexicographic request relation. Associating these annotations with the Rust
+implementation remains an explicit source-review boundary, not a claim that
+Rocq verifies the Rust compiler or arbitrary native callbacks.
+
 ### Ordinary generated Hash wrapper
 
 Generated `Hash` takes its borrowed-task vector from a thread-local pool,
@@ -378,6 +413,29 @@ internals, allocator internals, arbitrary hashers, or native Map sorting, and
 does not claim termination or panic-unwind recovery. The generated executable
 fixture checks exact native method/byte streams during nested calls and real
 TLS teardown; those checks establish no resource bound for its test hashers.
+
+### Native Map Hash roster collection
+
+The native Hash handler's direct `map.iter().collect()` differs from the
+collection-comparison handler's mapped `CollectionCmpItem` producer. On the
+pinned IndexMap and Rust versions, IndexMap's `collect` override delegates to
+a trusted-length slice adapter. The
+[trusted collection model](../../formal/rocq/rho_bridge/theories/NativeMapTrustedCollect.v)
+follows that actual dispatch, indexed fold, pair writes and final length-guard
+commit; it does not substitute a generic iterator loop.
+
+For original width $`n`$, the model proves that the result contains the same
+whole key/value borrows, each destination position is written once, and the
+buffer and reserve requests both retain width $`n`$. Its projected source
+word has $`15+7n+\delta_n`$ events, where $`\delta_n=0`$ for an empty roster
+and $`\delta_n=1`$ otherwise. Empty collection still commits a zero initialized
+length. These events are named logical groups, not processor instructions.
+
+Requested capacity is not a claim about allocator work or physical memory.
+Checked layout, flat-buffer storage and disposal, sorting, and structural
+key/value operations must be composed separately. The proof covers normal
+completed collection, with the pinned dependency dispatch verified by source
+review; it does not establish panic recovery or complete Map Hash admission.
 
 ### Native Map sort: the small-slice branch
 
