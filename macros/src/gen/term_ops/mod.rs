@@ -14,6 +14,7 @@
 #[cfg(test)]
 pub mod arm_integrity;
 mod checked_native;
+pub mod checked_source;
 /// ★ The COLLECTION-ELEMENT BOUNDARY — the one place the per-`CollectionType`
 /// element walk and its order-faithfulness law are spelled (#162).
 pub mod collection_walk;

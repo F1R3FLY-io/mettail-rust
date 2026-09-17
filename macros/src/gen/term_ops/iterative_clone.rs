@@ -497,6 +497,29 @@ fn generate_assemble_task(
     })
 }
 
+/// Shared paid endpoint-reversal body. Both binding and source observation
+/// preserve the original worklist prefix and move only whole newly appended
+/// task records. The source groups match PaidTaskBatchReversal exactly.
+pub(crate) fn paid_task_batch_reversal_body() -> TokenStream {
+    quote! {
+        mettail_runtime::reserve_binding_parts(3, 2, 0, reserve)?;
+        let mut left = start;
+        let mut right = stack.len();
+        loop {
+            mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
+            let width = right.checked_sub(left).ok_or(
+                mettail_runtime::BindingFailure::InvalidCollectionInput(
+                    "binding task batch starts beyond the worklist"))?;
+            if width < 2 { return Ok(()) }
+            mettail_runtime::reserve_binding_parts(6, 1, 0, reserve)?;
+            right -= 1;
+            stack.swap(left, right);
+            left = left.checked_add(1)
+                .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+        }
+    }
+}
+
 fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> TokenStream {
     let task_enum = &emission.task_enum;
     let driver = &emission.driver;
@@ -508,29 +531,14 @@ fn generate_engine(language: &LanguageDef, emission: &CloneEmissionNames) -> Tok
     let binding_arguments = emission.binding_arguments();
     let propagate = emission.propagate();
     let batch_reversal = emission.checked.as_ref().map(|_| {
+        let body = paid_task_batch_reversal_body();
         quote! {
             #[allow(dead_code)]
             fn reverse_binding_task_batch<E>(
                 stack: &mut [#task_type], start: usize,
                 reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
             ) -> Result<(), mettail_runtime::BindingFailure<E>> {
-                // PaidTaskBatchReversal: preserve the existing prefix and move
-                // whole task/state/slot records, never their borrowed term payloads.
-                mettail_runtime::reserve_binding_parts(3, 2, 0, reserve)?;
-                let mut left = start;
-                let mut right = stack.len();
-                loop {
-                    mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
-                    let width = right.checked_sub(left).ok_or(
-                        mettail_runtime::BindingFailure::InvalidCollectionInput(
-                            "binding task batch starts beyond the worklist"))?;
-                    if width < 2 { return Ok(()) }
-                    mettail_runtime::reserve_binding_parts(6, 1, 0, reserve)?;
-                    right -= 1;
-                    stack.swap(left, right);
-                    left = left.checked_add(1)
-                        .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
-                }
+                #body
             }
         }
     });

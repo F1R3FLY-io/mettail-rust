@@ -1,29 +1,40 @@
-use super::PROFILE_ROWS;
+use super::policy::rholang_source_profile_rows;
 use crate::gen::term_ops::collection_walk::{field_carrier, FieldCarrier};
 use crate::gen::term_ops::iterative_cmp::census_tests::actual_rholang;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::types::CollectionType;
 use std::collections::{BTreeMap, BTreeSet};
 
-type Profile = BTreeMap<(&'static str, &'static str), Vec<&'static str>>;
+type Profile = BTreeMap<(&'static str, &'static str), Vec<String>>;
+
+macro_rules! profile_slot {
+    ($field:ty => Opaque) => {
+        stringify!($field).chars().filter(|c| !c.is_whitespace()).collect::<String>()
+    };
+    ($field:ty => $role:ident) => {
+        format!("{}@{}", profile_slot!($field => Opaque), stringify!($role))
+    };
+}
+
+macro_rules! profile_rows {
+    ($( $category:ident :: $constructor:ident => [$( $field:ty => $role:ident ),*]; )*) => {{
+        let mut result = BTreeMap::new();
+        $(
+            assert!(
+                result.insert(
+                    (stringify!($category), stringify!($constructor)),
+                    vec![$(profile_slot!($field => $role)),*],
+                ).is_none(),
+                "duplicate explicit profile row {}::{}",
+                stringify!($category), stringify!($constructor),
+            );
+        )*
+        result
+    }};
+}
 
 fn profile() -> Profile {
-    let mut result = BTreeMap::new();
-    for line in PROFILE_ROWS.lines().filter(|line| !line.trim().is_empty()) {
-        let mut columns = line.split_whitespace();
-        let category = columns.next().expect("profile category");
-        let constructors = columns.next().expect("profile constructors");
-        let fields: Vec<_> = columns.collect();
-        for constructor in constructors.split('|') {
-            assert!(
-                result
-                    .insert((category, constructor), fields.clone())
-                    .is_none(),
-                "duplicate explicit profile row {category}::{constructor}"
-            );
-        }
-    }
-    result
+    rholang_source_profile_rows!(profile_rows)
 }
 
 // Namespace normalization checks the carrier, not arbitrary Rust alias equality.

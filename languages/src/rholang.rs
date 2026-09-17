@@ -39,6 +39,8 @@ pub mod receive;
 pub(crate) mod runtime;
 #[path = "rholang/type_inference.rs"]
 mod type_inference;
+#[path = "rholang/source_profile.rs"]
+pub mod source_profile;
 #[path = "rholang/zipper.rs"]
 pub(crate) mod zipper;
 

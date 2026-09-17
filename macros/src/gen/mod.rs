@@ -213,6 +213,7 @@ pub fn generate_all(
     use syntax::display::generate_display;
     use syntax::var_inference::generate_var_category_inference;
     use term_gen::{generate_random_generation, generate_term_generation};
+    use term_ops::checked_source::generate_checked_source;
     use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
     use term_ops::iterative_clone::{generate_checked_iterative_binding, generate_iterative_clone};
@@ -373,6 +374,12 @@ pub fn generate_all(
         generate_stage!("term_depth", generate_term_depth_methods(language)),
         &[],
     );
+    let checked_source_impl = spill_generated_concern(
+        &lang_name,
+        "checked_source",
+        generate_stage!("checked_source", generate_checked_source(language)),
+        &["source_constructor", "SourceConstructor", "SourceProfile", "SourceProfileError"],
+    );
     let match_pattern_impl = spill_and_include(
         &lang_name,
         "match_pattern",
@@ -511,6 +518,8 @@ pub fn generate_all(
         #parse_alt_filter_impl
 
         #term_depth_impl
+
+        #checked_source_impl
 
         #match_pattern_impl
 
