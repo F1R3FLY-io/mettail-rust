@@ -364,6 +364,68 @@ Module SharedTypedAssemblyKernel.
 
   End Kernel.
 
+  (** The shared layout gives every semantic category a dense ordinal, including
+      categories whose values are all leaves.  Leaves are produced by visit
+      tasks, so their assembly programs are empty, but normalization still
+      emits a typed assembly wrapper for their category.  Symbol availability
+      must therefore follow the layout census, independently of program size.
+      A program lists the constructor tags accepted by its assembly kernel;
+      [None] is exact rejection, not a synthesized category value. *)
+  Definition constructor_program := list nat.
+
+  Definition dispatch_program (program : constructor_program)
+      (constructor : nat) : option nat :=
+    find (Nat.eqb constructor) program.
+
+  Definition emit_category_kernels (layout : list constructor_program)
+      : list (nat -> option nat) :=
+    map dispatch_program layout.
+
+  Theorem every_layout_category_has_its_exact_kernel :
+    forall layout category program,
+      nth_error layout category = Some program ->
+      nth_error (emit_category_kernels layout) category =
+        Some (dispatch_program program).
+  Proof.
+    intros layout category program Hcategory.
+    unfold emit_category_kernels. rewrite nth_error_map, Hcategory.
+    reflexivity.
+  Qed.
+
+  (** This applies to every finite sequence of typed category references,
+      irrespective of whether the originating edge is a child, scope body,
+      optional field, collection, map pair, or zipper continuation.  Validation
+      supplies the category bounds; total emission preserves them for every
+      reference without independently filtering the shared census. *)
+  Theorem all_validated_category_references_resolve :
+    forall layout references,
+      Forall (fun category => category < length layout) references ->
+      Forall (fun category => exists kernel,
+        nth_error (emit_category_kernels layout) category = Some kernel)
+        references.
+  Proof.
+    intros layout references Hreferences.
+    induction Hreferences as [|category rest Hbound Hrest IH].
+    - constructor.
+    - constructor; [|exact IH].
+      destruct (nth_error layout category) as [program|] eqn:Hcategory.
+      + exists (dispatch_program program).
+        now apply every_layout_category_has_its_exact_kernel.
+      + apply nth_error_None in Hcategory. lia.
+  Qed.
+
+  Theorem leaf_category_kernel_exists_and_rejects_assembly :
+    forall layout category,
+      nth_error layout category = Some [] ->
+      exists kernel,
+        nth_error (emit_category_kernels layout) category = Some kernel /\
+        forall constructor, kernel constructor = None.
+  Proof.
+    intros layout category Hleaf. exists (dispatch_program []). split.
+    - now apply every_layout_category_has_its_exact_kernel.
+    - reflexivity.
+  Qed.
+
   Record BinderImage : Type := binder_image {
     binder_name : nat;
     binder_body : nat
@@ -390,6 +452,9 @@ Module SharedTypedAssemblyKernel.
   Print Assumptions fused_normalization_producer_preserves_kernel_result.
   Print Assumptions typed_result_output_factorization.
   Print Assumptions shared_result_buffer_fusion.
+  Print Assumptions every_layout_category_has_its_exact_kernel.
+  Print Assumptions all_validated_category_references_resolve.
+  Print Assumptions leaf_category_kernel_exists_and_rejects_assembly.
   Print Assumptions exact_frame_view_has_declared_count.
   Print Assumptions exact_frame_view_recombines_buffer.
   Print Assumptions out_of_bounds_frame_fails_closed.

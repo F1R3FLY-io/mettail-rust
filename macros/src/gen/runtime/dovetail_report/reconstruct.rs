@@ -1588,7 +1588,12 @@ fn reconstruction_pda_support_mode(
                 _ => {},
             }
         }
-        if !category_arms.is_empty() {
+        // Normalization emits an assembly wrapper for every category in this
+        // shared census, including leaf-only categories. Their empty program
+        // still needs a typed kernel: all constructor tags correctly reject.
+        // Filtering empty programs here leaves those wrappers with unresolved
+        // calls (SharedTypedAssemblyKernel.all_validated_category_references_resolve).
+        {
             let category_tag = rebuild_category_tag_const(category);
             let assemble_fn = rebuild_assemble_fn_name(category);
             let construct_fn = rebuild_construct_fn_name(category);
@@ -3268,6 +3273,98 @@ mod factored_assembly_tests {
         let typed = typed_assembly_support(language, layout);
         let rebuild = reconstruction_pda_support(language, layout);
         quote! { #typed #rebuild }
+    }
+
+    fn assert_constructor_references_resolve(language: &LanguageDef) {
+        let layout = SemanticAdapterLayout::derive(language).expect("semantic layout");
+        let generated =
+            crate::gen::term_ops::normalize::generate_normalize_functions(language, &[]);
+        let syntax: syn::File = syn::parse2(generated.clone()).expect("normalization syntax");
+        let definitions: Vec<_> = syntax
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Fn(function) => Some(function.sig.ident.to_string()),
+                _ => None,
+            })
+            .collect();
+        for category in layout.categories() {
+            let constructor = rebuild_construct_fn_name(category.category()).to_string();
+            assert_eq!(
+                definitions.iter().filter(|name| **name == constructor).count(),
+                1,
+                "expected exactly one definition of {constructor}",
+            );
+        }
+
+        // Inspect all nested token groups, so references in every typed task
+        // and helper body are checked, independently of the layout assertion.
+        let mut pending = vec![generated];
+        while let Some(tokens) = pending.pop() {
+            for token in tokens {
+                match token {
+                    proc_macro2::TokenTree::Group(group) => pending.push(group.stream()),
+                    proc_macro2::TokenTree::Ident(ident) => {
+                        let name = ident.to_string();
+                        if name.starts_with("__mettail_dovetail_rebuild_construct_") {
+                            assert!(definitions.contains(&name), "unresolved {name}");
+                        }
+                    },
+                    _ => {},
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn leaf_category_kernels_close_all_normalization_references() {
+        let language = syn::parse_str(
+            r#"
+                name: LeafCategoryClosure,
+                types { Proc Name ![bool] as Bool ![str] as Str ![u32] as UInt32 },
+                terms {
+                    PZero . |- "0" : Proc;
+                    Na . |- "na" : Name;
+                    POpen . name:Name, body:Proc |- "open" name body : Proc;
+                    PNative . flag:Bool, text:Str, number:UInt32
+                        |- "native" flag text number : Proc;
+                    PMaybe . *opt(name:Name) |- "maybe" *opt(name) : Proc;
+                    PSeq . names:Vec(Name) |- "[" names.*sep(",") "]" : Proc;
+                    PBind . ^x.body:[Name -> Proc] |- "bind" x "." body : Proc;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("leaf-category regression fixture");
+        assert_constructor_references_resolve(&language);
+        assert_constructor_references_resolve(&fixture());
+        assert_constructor_references_resolve(&crate::gen::collection_literal_language_for_tests());
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+        #[test]
+        fn category_kernel_census_is_independent_of_leaf_positions(
+            compound in proptest::collection::vec(proptest::bool::ANY, 1..7),
+        ) {
+            let mut types = String::new();
+            let mut terms = String::new();
+            for (index, is_compound) in compound.iter().enumerate() {
+                types.push_str(&format!(" Cat{index}"));
+                terms.push_str(&format!(" Leaf{index} . |- \"leaf{index}\" : Cat{index};"));
+                if *is_compound {
+                    let next = (index + 1) % compound.len();
+                    terms.push_str(&format!(
+                        " Link{index} . child:Cat{next} |- \"link{index}\" child : Cat{index};"
+                    ));
+                }
+            }
+            let language = syn::parse_str(&format!(
+                "name: CategoryCensus, types {{{types}}}, terms {{{terms}}}, equations {{}}, rewrites {{}},"
+            )).expect("category census fixture");
+            assert_constructor_references_resolve(&language);
+        }
     }
 
     #[test]
