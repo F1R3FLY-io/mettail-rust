@@ -478,6 +478,22 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
                 .iter()
                 .map(|v| generate_hash_variant_arm(cat, v, language, emission))
                 .collect();
+            let dispatch = if emission.inspecting() {
+                generate_inspection_variant_dispatch(
+                    cat,
+                    language,
+                    &helper_fn,
+                    &variants,
+                    &variant_arms,
+                )
+            } else {
+                quote! {
+                    match val {
+                        #(#variant_arms)*
+                    }
+                    #success
+                }
+            };
             quote! {
                 #[inline(never)]
                 #[allow(dead_code, unused_variables, non_snake_case)]
@@ -491,10 +507,7 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
                     #category_control
                     let val = unsafe { &*ptr };
                     #hash_discriminant;
-                    match val {
-                        #(#variant_arms)*
-                    }
-                    #success
+                    #dispatch
                 }
             }
         })
@@ -595,6 +608,68 @@ fn generate_hash_engine(language: &LanguageDef, emission: &HashEmissionNames) ->
                 }
             }
         }
+    }
+}
+
+/// Factor only metadata inspection: the ordinary hash receipt and both hash
+/// execution interpretations retain their original arms and control costs.
+/// CheckedBindingTaskDispatch applies to this unary constructor selection;
+/// the new charge pays actual inspection, not the future hash receipt.
+fn generate_inspection_variant_dispatch(
+    cat: &Ident,
+    language: &LanguageDef,
+    category_helper: &Ident,
+    variants: &[VariantKind],
+    arms: &[TokenStream],
+) -> TokenStream {
+    let helpers = variants.iter().zip(arms).map(|(variant, arm)| {
+        let helper = format_ident!("{}_{}", category_helper, variant.label());
+        let mismatch = (variants.len() > 1).then(|| {
+            quote! {
+                _ => unreachable!("hash inspection selector and constructor handler disagree"),
+            }
+        });
+        let success =
+            checked_hash_variant_supported(cat, variant, language).then(|| quote! { Ok(()) });
+        quote! {
+            #[inline(never)]
+            #[allow(unused_variables, non_snake_case)]
+            fn #helper<E, F: FnMut(usize, usize) -> Result<(), E>>(
+                stack: &mut Vec<InspectHashContributionTask<E>>,
+                state: &mut mettail_runtime::binding_receipt::BindingCharge,
+                val: &#cat,
+                reserve: &mut F,
+            ) -> Result<(), mettail_runtime::KeyHashFailure<E>> {
+                match val {
+                    #arm
+                    #mismatch
+                }
+                #success
+            }
+        }
+    });
+    let selectors = variants.iter().map(|variant| {
+        let helper = format_ident!("{}_{}", category_helper, variant.label());
+        let label = variant.label();
+        let pattern = match variant {
+            VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
+            VariantKind::Nullary { .. } => quote! { #cat::#label },
+            _ => quote! { #cat::#label(..) },
+        };
+        quote! { #pattern => #helper::<E, _>, }
+    });
+    quote! {
+        #(#helpers)*
+        mettail_runtime::reserve_binding_parts(3, 1, 0, reserve)
+            .map_err(mettail_runtime::KeyHashFailure::Admission)?;
+        let execute: fn(
+            &mut Vec<InspectHashContributionTask<E>>,
+            &mut mettail_runtime::binding_receipt::BindingCharge,
+            &#cat, &mut _,
+        ) -> Result<(), mettail_runtime::KeyHashFailure<E>> = match val {
+            #(#selectors)*
+        };
+        execute(stack, state, val, reserve)
     }
 }
 
@@ -1540,6 +1615,10 @@ fn generate_hash_impl(category: &Ident, emission: &HashEmissionNames) -> TokenSt
 #[cfg(test)]
 #[path = "iterative_hash_checked_tests.rs"]
 pub(super) mod checked_tests;
+
+#[cfg(test)]
+#[path = "iterative_hash_dispatch_tests.rs"]
+mod dispatch_tests;
 
 #[cfg(test)]
 mod tests {

@@ -139,3 +139,184 @@ fn unordered_inspection_schedules_original_rosters_not_comparator_execution() {
         }
     }
 }
+
+#[test]
+fn inspection_dispatch_has_constant_shape_as_constructor_width_grows() {
+    for width in [1, 64, 256] {
+        let constructors = (0..width)
+            .map(|index| format!("C{index} . child:Proc |- \"c{index}\" child : Proc;"))
+            .collect::<String>();
+        let language: LanguageDef = syn::parse_str(&format!(
+            "name: InspectionWidth, types {{ Proc }}, terms {{ \
+             Zero . |- \"zero\" : Proc; {constructors} }}, equations {{}}, rewrites {{}},"
+        ))
+        .expect("real growing constructor inventory");
+        let emission = CmpEmissionNames::inspect_contributions();
+        for tokens in [
+            generate_eq_category_handler(&format_ident!("Proc"), &language, &emission),
+            generate_cmp_category_handler(&format_ident!("Proc"), &language, &emission),
+        ] {
+            let function = syn::parse2::<syn::ItemFn>(tokens.clone()).expect("category syntax");
+            let helpers = function
+                .block
+                .stmts
+                .iter()
+                .filter_map(|statement| match statement {
+                    syn::Stmt::Item(syn::Item::Fn(helper)) => Some(helper),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                helpers.len(),
+                width + 2,
+                "one helper per constructor and implicit variable"
+            );
+            let selector = function
+                .block
+                .stmts
+                .iter()
+                .find_map(|statement| {
+                    let syn::Stmt::Local(local) = statement else {
+                        return None;
+                    };
+                    let syn::Pat::Type(pattern) = &local.pat else {
+                        return None;
+                    };
+                    let syn::Pat::Ident(binding) = pattern.pat.as_ref() else {
+                        return None;
+                    };
+                    if binding.ident != "execute" {
+                        return None;
+                    }
+                    let syn::Expr::Match(selector) = local.init.as_ref()?.expr.as_ref() else {
+                        return None;
+                    };
+                    Some(selector)
+                })
+                .expect("one typed function-pointer selector");
+            assert_eq!(selector.arms.len(), width + 3, "constructor selectors plus old mismatch");
+            for arm in &selector.arms[..width + 2] {
+                let syn::Expr::Path(path) = arm.body.as_ref() else {
+                    panic!("selector cannot perform payload work or invoke a helper")
+                };
+                let name = &path.path.segments.last().expect("helper path").ident;
+                let helper = helpers
+                    .iter()
+                    .find(|helper| helper.sig.ident == *name)
+                    .expect("co-generated selected helper");
+                assert!(helper.attrs.iter().any(|attribute| match &attribute.meta {
+                    syn::Meta::List(list) =>
+                        list.path.is_ident("inline") && list.tokens.to_string() == "never",
+                    _ => false,
+                }));
+            }
+            let text = compact(tokens);
+            assert_eq!(
+                text.matches("execute(stack,left,right,state,mode,factor,reserve)")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                text.matches("reserve_binding_parts(3,1,0,reserve)").count(),
+                1,
+                "one unscaled inspection reservation, outside arm receipt accounting"
+            );
+        }
+        for emission in [CmpEmissionNames::ordinary(), CmpEmissionNames::checked()] {
+            for tokens in [
+                generate_eq_category_handler(&format_ident!("Proc"), &language, &emission),
+                generate_cmp_category_handler(&format_ident!("Proc"), &language, &emission),
+            ] {
+                assert!(
+                    !compact(tokens).contains("letexecute:"),
+                    "native comparator emission is unchanged"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn inspection_selectors_preserve_exact_original_constructor_arms() {
+    let partial: LanguageDef = syn::parse_str(
+        "name: PartialInspection, types { ![foreign::Opaque] as Proc }, \
+         terms { Zero . |- \"zero\" : Proc; }, equations {}, rewrites {},",
+    )
+    .expect("explicit unsupported native fixture");
+    for language in [fixture_language(), partial] {
+        let emission = CmpEmissionNames::inspect_contributions();
+        for ty in &language.types {
+            let cat = &ty.name;
+            for equality in [true, false] {
+                let (helper_name, tokens) = if equality {
+                    (
+                        emission.eq_handler(cat),
+                        generate_eq_category_handler(cat, &language, &emission),
+                    )
+                } else {
+                    (
+                        emission.cmp_handler(cat),
+                        generate_cmp_category_handler(cat, &language, &emission),
+                    )
+                };
+                let function = syn::parse2::<syn::ItemFn>(tokens).expect("category helper");
+                let selector = function
+                    .block
+                    .stmts
+                    .iter()
+                    .find_map(|statement| {
+                        let syn::Stmt::Local(local) = statement else {
+                            return None;
+                        };
+                        let syn::Expr::Match(selector) = local.init.as_ref()?.expr.as_ref() else {
+                            return None;
+                        };
+                        Some(selector)
+                    })
+                    .expect("selector match");
+                for variant in collect_category_variants(cat, &language) {
+                    let name = format_ident!("{}_{}", helper_name, variant.label());
+                    let helper = function
+                        .block
+                        .stmts
+                        .iter()
+                        .find_map(|statement| match statement {
+                            syn::Stmt::Item(syn::Item::Fn(helper)) if helper.sig.ident == name => {
+                                Some(helper)
+                            },
+                            _ => None,
+                        })
+                        .expect("matching constructor helper");
+                    let selected = selector
+                        .arms
+                        .iter()
+                        .find(|arm| match arm.body.as_ref() {
+                            syn::Expr::Path(path) => {
+                                path.path.segments.last().expect("path").ident == name
+                            },
+                            _ => false,
+                        })
+                        .expect("matching selector arm");
+                    let pattern = variant_wildcard_pattern(cat, &variant);
+                    let actual_pattern = &selected.pat;
+                    assert_eq!(
+                        compact(quote! { #actual_pattern }),
+                        compact(quote! { (#pattern, #pattern) })
+                    );
+                    let syn::Stmt::Expr(syn::Expr::Match(body), _) = &helper.block.stmts[0] else {
+                        panic!("constructor wrapper must start with the paired payload match")
+                    };
+                    let original = if equality {
+                        generate_eq_variant_arm(cat, &variant, &language, &emission)
+                    } else {
+                        generate_cmp_variant_arm(cat, &variant, &language, &emission)
+                    };
+                    let original =
+                        syn::parse2::<syn::Arm>(original).expect("original constructor arm");
+                    let actual = &body.arms[0];
+                    assert_eq!(compact(quote! { #actual }), compact(quote! { #original }));
+                }
+            }
+        }
+    }
+}

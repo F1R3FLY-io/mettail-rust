@@ -1647,6 +1647,24 @@ fn generate_eq_category_handler(
             /// `true` if matched so far (caller should continue draining stack).
         }
     };
+    let dispatch = if emission.inspecting() {
+        generate_inspection_variant_dispatch(
+            cat,
+            language,
+            &helper_fn,
+            &variants,
+            &variant_arms,
+            &mismatch_arm,
+        )
+    } else {
+        quote! {
+            match (left, right) {
+                #(#variant_arms)*
+                #mismatch_arm
+            }
+            #success
+        }
+    };
     quote! {
         #description
         #[inline(never)]
@@ -1672,12 +1690,72 @@ fn generate_eq_category_handler(
                 #return_false
             }
             #routing
-            match (left, right) {
-                #(#variant_arms)*
-                #mismatch_arm
-            }
-            #success
+            #dispatch
         }
+    }
+}
+
+/// Keep contribution inspection on its existing worklist while isolating each
+/// constructor's temporaries from the category selector's native stack frame.
+/// The same paired-pattern inventory generates both selector and wrapper;
+/// unchanged arm tokens retain receipt arithmetic, child order, and refusals.
+/// Administrative inspection work is charged once, not scaled into the receipt
+/// describing the later, unchanged native comparison.
+fn generate_inspection_variant_dispatch(
+    cat: &Ident,
+    language: &LanguageDef,
+    category_helper: &Ident,
+    variants: &[VariantKind],
+    arms: &[TokenStream],
+    mismatch: &TokenStream,
+) -> TokenStream {
+    let helpers = variants.iter().zip(arms).map(|(variant, arm)| {
+        let helper = format_ident!("{}_{}", category_helper, variant.label());
+        let mismatch = (variants.len() > 1).then(|| {
+            quote! {
+                _ => unreachable!("inspection selector and constructor handler disagree"),
+            }
+        });
+        let success =
+            checked_cmp_variant_supported(cat, variant, language).then(|| quote! { Ok(()) });
+        quote! {
+            #[inline(never)]
+            #[allow(unused_variables, unused_mut, non_snake_case)]
+            fn #helper<E, F: FnMut(usize, usize) -> Result<(), E>>(
+                stack: &mut Vec<InspectCmpContributionFrame>,
+                left: &#cat,
+                right: &#cat,
+                mut state: &mut mettail_runtime::binding_receipt::BindingCharge,
+                mode: InspectCmpContributionMode,
+                factor: usize,
+                reserve: &mut F,
+            ) -> Result<(), mettail_runtime::NativeComparisonFailure<E>> {
+                match (left, right) {
+                    #arm
+                    #mismatch
+                }
+                #success
+            }
+        }
+    });
+    let selectors = variants.iter().map(|variant| {
+        let helper = format_ident!("{}_{}", category_helper, variant.label());
+        let pattern = variant_wildcard_pattern(cat, variant);
+        quote! { (#pattern, #pattern) => #helper::<E, _>, }
+    });
+    quote! {
+        #(#helpers)*
+        mettail_runtime::reserve_binding_parts(3, 1, 0, reserve)
+            .map_err(mettail_runtime::NativeComparisonFailure::Admission)?;
+        let execute: fn(
+            &mut Vec<InspectCmpContributionFrame>, &#cat, &#cat,
+            &mut mettail_runtime::binding_receipt::BindingCharge,
+            InspectCmpContributionMode, usize, &mut _,
+        ) -> Result<(), mettail_runtime::NativeComparisonFailure<E>> = match (left, right) {
+            #(#selectors)*
+            #mismatch
+        };
+        execute(stack, left, right, state, mode, factor, reserve)
     }
 }
 
@@ -2385,6 +2463,24 @@ fn generate_cmp_category_handler(
             }
         }
     };
+    let dispatch = if emission.inspecting() {
+        generate_inspection_variant_dispatch(
+            cat,
+            language,
+            &helper_fn,
+            &variants,
+            &variant_arms,
+            &mismatch_arm,
+        )
+    } else {
+        quote! {
+            match (left, right) {
+                #(#variant_arms)*
+                #mismatch_arm
+            }
+            #success
+        }
+    };
     quote! {
         #description
         #[inline(never)]
@@ -2405,11 +2501,7 @@ fn generate_cmp_category_handler(
                 #return_index
             }
             #routing
-            match (left, right) {
-                #(#variant_arms)*
-                #mismatch_arm
-            }
-            #success
+            #dispatch
         }
     }
 }

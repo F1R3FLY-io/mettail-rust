@@ -74,6 +74,7 @@ pub(crate) mod session;
 
 mod preparation_env;
 mod preparation_scope;
+mod preparation_source;
 use preparation_env::EnvironmentDerivation;
 
 #[cfg(test)]
@@ -1858,7 +1859,7 @@ impl<'a> Stacks<'a> {
     }
 }
 
-/// Scope preparation is selected at the entrypoint, never after a refusal.
+/// Source preparation is selected at the entrypoint, never after a refusal.
 /// Public budgeted preparation selects Checked only after source admission;
 /// existing unmetered and storage-only internal callers retain Original.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1897,6 +1898,21 @@ impl<'a> Drive<'a> {
     /// clone.
     fn keep(&self, node: Arc<Proc>) -> &'a Proc {
         self.arena.alloc(node)
+    }
+
+    fn desugar_head(&mut self, mut source: &'a Proc) -> Result<&'a Proc, RholangAstLowerError> {
+        while let Some(desugared) = desugar_surface_sugar_node_preparing(
+            source,
+            self.source_preparation,
+            self.stacks.reservation,
+        )? {
+            if self.source_preparation == SourcePreparation::Checked {
+                // New Arc, arena record, and their normal release precede retention.
+                preparation_scope::reserve_parts(4, 2, 0, self.stacks.reservation)?;
+            }
+            source = self.keep(Arc::new(desugared));
+        }
+        Ok(source)
     }
 
     fn env(&self, id: EnvId) -> &BoundEnv {
@@ -2035,10 +2051,7 @@ impl<'a> Drive<'a> {
         // itself desugarable (its outputs are `POutput`/`PPersistOutput`/`PPar`/`PNew`, none of
         // which it matches), so the recursion was one deep — but writing it as a loop means the
         // machine does not have to KNOW that, and a new sugar rule cannot reintroduce a frame.
-        let mut proc = proc;
-        while let Some(desugared) = desugar_surface_sugar_node(proc) {
-            proc = self.keep(Arc::new(desugared));
-        }
+        let proc = self.desugar_head(proc)?;
 
         match proc {
             Proc::PZero => self.stacks.value(lower_arm_p_zero()?)?,
@@ -2407,10 +2420,7 @@ impl<'a> Drive<'a> {
         if matches!(operand, Proc::PForUser(..)) {
             return Err(RholangAstLowerError::LookaheadOperandNotASend("a receive"));
         }
-        let mut operand = operand;
-        while let Some(desugared) = desugar_surface_sugar_node(operand) {
-            operand = self.keep(Arc::new(desugared));
-        }
+        let operand = self.desugar_head(operand)?;
         match operand {
             Proc::POutput(channel, payload) => {
                 Ok((Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)))
@@ -5245,41 +5255,50 @@ fn lookahead_bound(bound: &Proc) -> Result<i64, RholangAstLowerError> {
 /// rather than beside it. There is no second implementation: this arm calls the very function
 /// the comparison path calls.
 fn desugar_surface_sugar_node(proc: &Proc) -> Option<Proc> {
-    let quote = |p: &Arc<Proc>| Arc::new(Name::NQuote(p.clone()));
-    let quote_nil = || Arc::new(Name::NQuote(Arc::new(Proc::PZero)));
-    let quote_name =
-        |n: &Arc<Name>| Arc::new(Name::NQuote(Arc::new(name_pattern_to_proc(n.as_ref()))));
-    let list1 = |a: &Arc<Proc>, bs: &[Proc]| {
-        let mut items = Vec::with_capacity(1 + bs.len());
-        items.push(a.as_ref().clone());
-        items.extend(bs.iter().cloned());
-        Arc::new(mk_proc_list(items))
-    };
-    let empty = || Arc::new(mk_proc_list(Vec::new()));
-    Some(match proc {
+    desugar_surface_sugar_node_preparing(proc, SourcePreparation::Original, &mut |_, _| Ok(()))
+        .expect("original sugar construction has no reservation refusal")
+}
+
+fn desugar_surface_sugar_node_preparing(
+    proc: &Proc,
+    policy: SourcePreparation,
+    reserve: &mut StorageReservation<'_>,
+) -> Result<Option<Proc>, RholangAstLowerError> {
+    let mut build = preparation_source::SourceBuilder::new(policy, reserve);
+    // Admit the head inspection and its possible owned result before dispatch.
+    build.reserve(2, 1)?;
+    Ok(Some(match proc {
         // Empty sends: `x!()` / `x!!()` — payload is the empty canonical arity list.
-        Proc::POutputEmpty(n) => Proc::POutput(n.clone(), empty()),
-        Proc::PPersistOutputEmpty(n) => Proc::PPersistOutput(n.clone(), empty()),
+        Proc::POutputEmpty(n) => Proc::POutput(build.share(n)?, build.empty()?),
+        Proc::PPersistOutputEmpty(n) => Proc::PPersistOutput(build.share(n)?, build.empty()?),
         // Polyadic sends: `x!(a, b…)` — payload is the canonical arity list.
-        Proc::POutput2Plus(n, a, bs) => Proc::POutput(n.clone(), list1(a, bs)),
-        Proc::PPersistOutput2Plus(n, a, bs) => Proc::PPersistOutput(n.clone(), list1(a, bs)),
+        Proc::POutput2Plus(n, a, bs) => Proc::POutput(build.share(n)?, build.list1(a, bs)?),
+        Proc::PPersistOutput2Plus(n, a, bs) => {
+            Proc::PPersistOutput(build.share(n)?, build.list1(a, bs)?)
+        },
         // `@Nil` sends: channel is the quote of `Nil`.
-        Proc::POutputNil(q) => Proc::POutput(quote_nil(), q.clone()),
-        Proc::PPersistOutputNil(q) => Proc::PPersistOutput(quote_nil(), q.clone()),
-        Proc::POutputNilEmpty => Proc::POutput(quote_nil(), empty()),
-        Proc::PPersistOutputNilEmpty => Proc::PPersistOutput(quote_nil(), empty()),
-        Proc::POutputNil2Plus(a, bs) => Proc::POutput(quote_nil(), list1(a, bs)),
-        Proc::PPersistOutputNil2Plus(a, bs) => Proc::PPersistOutput(quote_nil(), list1(a, bs)),
+        Proc::POutputNil(q) => Proc::POutput(build.quote_nil()?, build.share(q)?),
+        Proc::PPersistOutputNil(q) => Proc::PPersistOutput(build.quote_nil()?, build.share(q)?),
+        Proc::POutputNilEmpty => Proc::POutput(build.quote_nil()?, build.empty()?),
+        Proc::PPersistOutputNilEmpty => Proc::PPersistOutput(build.quote_nil()?, build.empty()?),
+        Proc::POutputNil2Plus(a, bs) => Proc::POutput(build.quote_nil()?, build.list1(a, bs)?),
+        Proc::PPersistOutputNil2Plus(a, bs) => {
+            Proc::PPersistOutput(build.quote_nil()?, build.list1(a, bs)?)
+        },
         // `@n` (Name-shaped) sends: channel is the quote of the name's process image.
-        Proc::POutputQuoted(n, q) => Proc::POutput(quote_name(n), q.clone()),
-        Proc::POutputQuotedEmpty(n) => Proc::POutput(quote_name(n), empty()),
-        Proc::POutputQuoted2Plus(n, a, bs) => Proc::POutput(quote_name(n), list1(a, bs)),
+        Proc::POutputQuoted(n, q) => Proc::POutput(build.quote_name(n)?, build.share(q)?),
+        Proc::POutputQuotedEmpty(n) => Proc::POutput(build.quote_name(n)?, build.empty()?),
+        Proc::POutputQuoted2Plus(n, a, bs) => {
+            Proc::POutput(build.quote_name(n)?, build.list1(a, bs)?)
+        },
         // `@P` (Proc-shaped) empty/polyadic sends: channel is the quote of `P`. (The scalar
         // `POutputShort`/`PPersistOutputShort` are lowered directly by their own arms.)
-        Proc::POutputShortEmpty(p) => Proc::POutput(quote(p), empty()),
-        Proc::PPersistOutputShortEmpty(p) => Proc::PPersistOutput(quote(p), empty()),
-        Proc::POutputShort2Plus(p, a, bs) => Proc::POutput(quote(p), list1(a, bs)),
-        Proc::PPersistOutputShort2Plus(p, a, bs) => Proc::PPersistOutput(quote(p), list1(a, bs)),
+        Proc::POutputShortEmpty(p) => Proc::POutput(build.quote(p)?, build.empty()?),
+        Proc::PPersistOutputShortEmpty(p) => Proc::PPersistOutput(build.quote(p)?, build.empty()?),
+        Proc::POutputShort2Plus(p, a, bs) => Proc::POutput(build.quote(p)?, build.list1(a, bs)?),
+        Proc::PPersistOutputShort2Plus(p, a, bs) => {
+            Proc::PPersistOutput(build.quote(p)?, build.list1(a, bs)?)
+        },
         // `!?` query binds: `for(p <- x!?(a, b)){B}` denotes
         // `new r in { x!(*r, a, b) | for(p <- r){B} }` — one fresh private return channel per
         // query bind, all of a `for`'s rows expanded together under one `new`.
@@ -5289,11 +5308,13 @@ fn desugar_surface_sugar_node(proc: &Proc) -> Option<Proc> {
         // `desugar_for_rows` expands EVERY bind `pfor_user_still_has_query_rows` reports —
         // both are `receive::as_query_bind` over the same rows, which is why the classifier
         // exists.
-        Proc::PForUser(rows, body) if pfor_user_still_has_query_rows(rows) => {
+        Proc::PForUser(rows, body)
+            if policy == SourcePreparation::Original && pfor_user_still_has_query_rows(rows) =>
+        {
             desugar_for_rows(rows.clone(), body.as_ref())
         },
-        _ => return None,
-    })
+        _ => return Ok(None),
+    }))
 }
 
 /// Map a name PATTERN to the `Proc` whose `PVar` leaves mark the bound positions.
