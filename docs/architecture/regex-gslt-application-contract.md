@@ -139,6 +139,16 @@ and structural fill admission. A raw host string is not already a reflected
 guest Text. Quoted text literals, when offered by the guest grammar, use the
 existing literal decoder. They do not open an additional text parser.
 
+Receive holes capture guest subterms, including native-carrier leaves. Thus
+`found` in `doneMatch(found(2,6,${found:Text}))` and `output` in
+`doneText(${output:Text})` are reflected guest `Text` values, not host String
+expressions. The application forwards those structural values unchanged; they
+can fill another qualified `Text` hole under the same installed language.
+Search and replacement assertions compare their exact payload and language
+identity. They must not erase the FLT owner or reinterpret its private tag as
+authority. Converting a guest value into a host scalar is a separate explicit
+projection, not an implicit effect of pattern matching.
+
 ## Search and replacement observations
 
 Full match consumes the entire logical text. Search selects the least starting
