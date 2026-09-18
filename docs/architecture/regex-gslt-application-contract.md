@@ -79,6 +79,12 @@ lookaround, flags, lazy/possessive operators, or PCRE replacement-string parsing
 These are not silently recognized with different meanings. Unsupported syntax
 must be rejected, not routed to a native regex engine.
 
+The guest grammar declares no whitespace trivia. Write computation syntax
+without formatting spaces, for example `fullMatch(p,t)`, not `fullMatch(p, t)`.
+Rholang whitespace outside the backticks follows the host grammar. Inside them,
+guest text is preserved exactly; native `Text` and `Scalar` hole values retain
+their whitespace as data and are never lexed as guest source.
+
 The required equations include alternative failure/idempotence, concatenation
 failure/identity, and star of failure/epsilon. Plus, optionality, grouping and
 bounded repetition elaborate through the existing reference expansions. The
@@ -175,9 +181,9 @@ span trace remain private until the complete bounded computation succeeds.
 ## Direct FLT predicates in `where`
 
 The required expression is an explicitly qualified `Computation` FLT whose
-guest body is `fullMatch(a(b|c)+, ${text:Text})`, in the existing receive's
+guest body is `fullMatch(a(b|c)+,${text:Text})`, in the existing receive's
 `where` position. The selector is the lexical installed handle `h`; the complete
-FLT spelling is ``h:Computation`fullMatch(a(b|c)+, ${text:Text})` ``. A receive
+FLT spelling is ``h:Computation`fullMatch(a(b|c)+,${text:Text})` ``. A receive
 binds `text`, and its guarded continuation uses that received value only after
 the predicate succeeds. This is the target surface, not a claim that the
 current lowering already accepts an installed selector in that position.

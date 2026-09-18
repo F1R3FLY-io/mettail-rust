@@ -57,6 +57,51 @@ fn text_computation(
         .expect("declared application computation with structural Text holes")
 }
 
+#[test]
+fn practical_regex_guest_text_is_exact_and_native_text_holes_preserve_whitespace() {
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(SOURCE))
+        .expect("the application's unchanged inline grammar installs");
+    let token = &batch.exports[0].handle;
+    let holes = [NamedRuntimeTemplateHole {
+        id: 0,
+        name: "text".into(),
+        category: Some("Text".into()),
+    }];
+    let text = " \tλ\n${not_a_hole:Text}` ";
+    let fills = BTreeMap::from([(
+        "text".into(),
+        new_gstring_par(text.into(), Vec::new(), false),
+    )]);
+    for prefix in ["fullMatch(a(b|c)+,", "search(λ+,"] {
+        let pieces = [
+            RuntimeTemplatePiece::Text(prefix.into()),
+            RuntimeTemplatePiece::Hole(0),
+            RuntimeTemplatePiece::Text(")".into()),
+        ];
+        let actual = runtime
+            .construct_template(token, &pieces, &holes, Some("Computation"), &fills)
+            .expect("declared guest syntax accepts structural native Text fills");
+        let expected = text_computation(&runtime, token, &[prefix, ")"], &[text]);
+        assert_eq!(actual.cmp(&expected), std::cmp::Ordering::Equal);
+        let spaced = [
+            RuntimeTemplatePiece::Text(format!("{prefix} ")),
+            RuntimeTemplatePiece::Hole(0),
+            RuntimeTemplatePiece::Text(")".into()),
+        ];
+        assert!(matches!(
+            runtime.construct_template(token, &spaced, &holes, Some("Computation"), &fills),
+            Err(LanguageFltConstructionError::Runtime(LanguageRuntimeError::Parse(
+                InstalledParseError::Parse(mettail_grammar_core::RuntimeError::Lex { byte })
+            ))) if byte == prefix.len()
+        ));
+    }
+}
+
 fn assert_regex_observation(
     runtime: &RholangLanguageRuntime,
     token: &Par,

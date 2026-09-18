@@ -432,19 +432,19 @@ Module RegexGSLT {
         values!(["abcb", "éλλx", "aaba", "x"]) |
         for(@[matchText, searchText, replaceText, replacement] <- values) {
           observe!([1, *language, "FullMatch",
-            language:Computation`fullMatch(a(b|c)+, ${matchText:Text})`,
+            language:Computation`fullMatch(a(b|c)+,${matchText:Text})`,
             [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
             *matched]) |
           observe!([1, *language, "Search",
-            language:Computation`search(λ+, ${searchText:Text})`,
+            language:Computation`search(λ+,${searchText:Text})`,
             [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
             *searched]) |
           observe!([1, *language, "ReplaceFirst",
-            language:Computation`replaceFirst(a+, literal(${replacement:Text}), ${replaceText:Text})`,
+            language:Computation`replaceFirst(a+,literal(${replacement:Text}),${replaceText:Text})`,
             [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
             *firstReplaced]) |
           observe!([1, *language, "ReplaceAll",
-            language:Computation`replaceAll(a+, literal(${replacement:Text}), ${replaceText:Text})`,
+            language:Computation`replaceAll(a+,literal(${replacement:Text}),${replaceText:Text})`,
             [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
             *replaced])
         } |
@@ -504,7 +504,7 @@ Module RegexGSLT {
           }
         } |
         for(@text <- @"regex.guard.input"
-            where language:Computation`fullMatch(a(b|c)+, ${text:Text})`) {
+            where language:Computation`fullMatch(a(b|c)+,${text:Text})`) {
           stdout!(["guard", text]) |
           @"regex.guard"!(text)
         } |
