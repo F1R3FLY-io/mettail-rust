@@ -89,7 +89,9 @@ use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::rspace::RSpace;
-use rspace_plus_plus::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
+use rspace_plus_plus::rspace::rspace_interface::{
+    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::{Consume, Produce};
@@ -102,6 +104,170 @@ use mettail_rholang_runtime::speculation::{
 };
 
 type Space = RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+
+mod guarded_publication {
+    use super::*;
+
+    struct Guard<'a> {
+        invoke: bool,
+        approve: bool,
+        ledger: &'a Mutex<Vec<CommName>>,
+    }
+
+    impl ProduceCommitGuard for Guard<'_> {
+        fn with_commit(&self, commit: Box<dyn FnOnce() + '_>) -> Result<(), RSpaceError> {
+            let ledger = self
+                .ledger
+                .try_lock()
+                .expect("guard can reenter the recording ledger");
+            if self.invoke {
+                commit();
+            }
+            assert!(ledger.is_empty(), "recording must follow guard release");
+            if self.approve {
+                Ok(())
+            } else {
+                Err(RSpaceError::ProduceCommitDenied)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn recording_forwards_guards_and_records_only_success_after_guard_release() {
+        for persistent in [false, true] {
+            for (invoke, approve) in [(false, false), (false, true), (true, false), (true, true)] {
+                let mut manager = InMemoryStoreManager::new();
+                let stores = manager.r_space_stores().await.expect("publication stores");
+                let space = RecordingSpace::new(
+                    Space::create(stores, Arc::new(Box::new(SubstrateGuardMatcher::new())))
+                        .expect("publication space"),
+                );
+                let channel = chan("guarded-recording");
+                let data = ListParWithRandom {
+                    pars: vec![new_gint_par(42, Vec::new(), false)],
+                    random_state: vec![7; 32],
+                };
+                let patterns = vec![BindPattern {
+                    patterns: vec![new_freevar_par(0, Vec::new())],
+                    remainder: None,
+                    free_count: 1,
+                }];
+                let continuation = TaggedContinuation::default();
+                let expected = CommName {
+                    consume: Consume::create(
+                        &vec![channel.clone()],
+                        &patterns,
+                        &continuation,
+                        false,
+                    )
+                    .hash,
+                    data: vec![Produce::create(&channel, &data, persistent).hash],
+                };
+                assert!(space
+                    .consume(
+                        vec![channel.clone()],
+                        patterns,
+                        continuation,
+                        false,
+                        std::collections::BTreeSet::new(),
+                    )
+                    .await
+                    .expect("install receiver")
+                    .is_none());
+                let before = space.create_soft_checkpoint().await;
+                // Checkpoint creation drains the log and produce counters.
+                space
+                    .revert_to_soft_checkpoint(before.clone())
+                    .await
+                    .expect("restore checkpoint observation");
+                let result = space
+                    .produce_guarded(
+                        channel.clone(),
+                        data.clone(),
+                        persistent,
+                        &Guard { invoke, approve, ledger: &space.fired },
+                    )
+                    .await;
+                match (invoke, approve) {
+                    (true, true) => assert!(result.expect("allowed COMM").is_some()),
+                    (false, false) => assert_eq!(
+                        result.expect_err("refused COMM"),
+                        RSpaceError::ProduceCommitDenied
+                    ),
+                    _ => assert_eq!(
+                        result.expect_err("malformed guard"),
+                        RSpaceError::ProduceCommitProtocolViolation
+                    ),
+                }
+                if !invoke {
+                    let after = space.create_soft_checkpoint().await;
+                    assert_eq!(before.cache_snapshot.data, after.cache_snapshot.data);
+                    assert_eq!(
+                        before.cache_snapshot.continuations,
+                        after.cache_snapshot.continuations
+                    );
+                    assert_eq!(
+                        before.cache_snapshot.installed_continuations,
+                        after.cache_snapshot.installed_continuations
+                    );
+                    assert_eq!(before.cache_snapshot.joins, after.cache_snapshot.joins);
+                    assert_eq!(
+                        before.cache_snapshot.installed_joins,
+                        after.cache_snapshot.installed_joins
+                    );
+                    assert_eq!(before.log, after.log);
+                    assert_eq!(before.produce_counter, after.produce_counter);
+                    space
+                        .revert_to_soft_checkpoint(after)
+                        .await
+                        .expect("retain verified state");
+                }
+                assert_eq!(
+                    space.get_waiting_continuations(vec![channel]).await.len(),
+                    usize::from(!invoke)
+                );
+                let ledger = space.fired.lock().expect("recorded COMMs");
+                assert_eq!(ledger.len(), usize::from(invoke && approve));
+                if let Some(comm) = ledger.first() {
+                    assert_eq!(comm, &expected);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn recording_does_not_invent_a_comm_when_guarded_produce_only_stores() {
+        let mut manager = InMemoryStoreManager::new();
+        let stores = manager.r_space_stores().await.expect("publication stores");
+        let space = RecordingSpace::new(
+            Space::create(stores, Arc::new(Box::new(SubstrateGuardMatcher::new())))
+                .expect("publication space"),
+        );
+        let channel = chan("guarded-no-match");
+        let data = ListParWithRandom {
+            pars: vec![new_gint_par(42, Vec::new(), false)],
+            random_state: vec![7; 32],
+        };
+        assert!(space
+            .produce_guarded(
+                channel.clone(),
+                data.clone(),
+                false,
+                &Guard {
+                    invoke: true,
+                    approve: true,
+                    ledger: &space.fired
+                },
+            )
+            .await
+            .expect("allowed storage")
+            .is_none());
+        assert!(space.fired.lock().expect("recorded COMMs").is_empty());
+        let stored = space.get_data(&channel).await;
+        assert_eq!(stored.len(), 1);
+        assert_eq!(*stored[0].a, data);
+    }
+}
 
 /// The one seed BOTH arms of every comparison use.
 ///
@@ -403,6 +569,26 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Recordi
         RSpaceError,
     > {
         let result = self.inner.produce(channel, data, persist).await?;
+        if let Some((continuation, results, _)) = &result {
+            self.record(&Some((continuation.clone(), results.clone())));
+        }
+        Ok(result)
+    }
+
+    async fn produce_guarded(
+        &self,
+        channel: Par,
+        data: ListParWithRandom,
+        persist: bool,
+        guard: &dyn ProduceCommitGuard,
+    ) -> Result<
+        MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        RSpaceError,
+    > {
+        let result = self
+            .inner
+            .produce_guarded(channel, data, persist, guard)
+            .await?;
         if let Some((continuation, results, _)) = &result {
             self.record(&Some((continuation.clone(), results.clone())));
         }
