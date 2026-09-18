@@ -35,6 +35,188 @@ impl<'a, 'r> SourceBuilder<'a, 'r> {
         }
     }
 
+    pub(super) fn worklist<T>(&mut self) -> Result<Vec<T>, RholangAstLowerError> {
+        self.reserve(1, 1)?;
+        Ok(Vec::new())
+    }
+
+    pub(super) fn push<T>(
+        &mut self,
+        work: &mut Vec<T>,
+        task: impl FnOnce() -> T,
+    ) -> Result<(), RholangAstLowerError> {
+        self.reserve(3, 1)?;
+        work.len()
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        work.push(task());
+        Ok(())
+    }
+
+    pub(super) fn pop<T>(&mut self, work: &mut Vec<T>) -> Result<Option<T>, RholangAstLowerError> {
+        // The terminal pop is a paid cancellation point too.
+        self.reserve(2, 0)?;
+        Ok(work.pop())
+    }
+
+    pub(super) fn reverse_batch<T>(
+        &mut self,
+        work: &mut [T],
+        start: usize,
+    ) -> Result<(), RholangAstLowerError> {
+        match self.policy {
+            SourcePreparation::Original => {
+                work[start..].reverse();
+                Ok(())
+            },
+            SourcePreparation::Checked => {
+                mettail_runtime::try_reverse_task_batch(work, start, &mut |w, u| {
+                    (self.reservation)(w, u)
+                })
+                .map_err(preparation_scope::binding_failure)
+            },
+        }
+    }
+
+    pub(super) fn push_slice_reversed<'s, T>(
+        &mut self,
+        work: &mut Vec<T>,
+        items: &'s [Proc],
+        mut task: impl FnMut(&'s Proc) -> T,
+    ) -> Result<(), RholangAstLowerError> {
+        self.reserve(2, 1)?;
+        let mut items = items.iter().rev();
+        loop {
+            self.reserve(2, 0)?;
+            let Some(item) = items.next() else { break };
+            self.push(work, || task(item))?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn push_bag_reversed<'s, T>(
+        &mut self,
+        work: &mut Vec<T>,
+        items: &'s mettail_runtime::HashBag<Proc>,
+        mut task: impl FnMut(&'s Proc) -> T,
+    ) -> Result<(), RholangAstLowerError> {
+        self.reserve(1, 1)?;
+        let start = work.len();
+        match self.policy {
+            SourcePreparation::Original => work.extend(items.iter_elements().map(task)),
+            SourcePreparation::Checked => items
+                .try_for_each_entry(&mut |w, u| (self.reservation)(w, u), |item, count, reserve| {
+                    let mut build = SourceBuilder::new(SourcePreparation::Checked, reserve);
+                    // Expand occurrences, not distinct keys. A stored zero count
+                    // schedules nothing, just as the original iter_elements does.
+                    build
+                        .reserve(1, 1)
+                        .map_err(mettail_runtime::BindingFailure::Reservation)?;
+                    let mut occurrences = 0..count;
+                    loop {
+                        build
+                            .reserve(2, 0)
+                            .map_err(mettail_runtime::BindingFailure::Reservation)?;
+                        let Some(_) = occurrences.next() else { break };
+                        build
+                            .push(work, || task(item))
+                            .map_err(mettail_runtime::BindingFailure::Reservation)?;
+                    }
+                    Ok(())
+                })
+                .map_err(preparation_scope::binding_failure)?,
+        }
+        self.reverse_batch(work, start)
+    }
+
+    pub(super) fn push_map_reversed<'s, T>(
+        &mut self,
+        work: &mut Vec<T>,
+        entries: &'s mettail_runtime::HashMapLit<Proc, Proc>,
+        mut task: impl FnMut(&'s Proc) -> T,
+    ) -> Result<(), RholangAstLowerError> {
+        self.reserve(1, 1)?;
+        let start = work.len();
+        match self.policy {
+            SourcePreparation::Original => {
+                for (key, value) in entries.iter() {
+                    work.push(task(key));
+                    work.push(task(value));
+                }
+            },
+            SourcePreparation::Checked => entries
+                .try_for_each_entry(&mut |w, u| (self.reservation)(w, u), |key, value, reserve| {
+                    let mut build = SourceBuilder::new(SourcePreparation::Checked, reserve);
+                    build.push(work, || task(key)).map_err(|error| {
+                        mettail_runtime::NativeComparisonFailure::Admission(
+                            mettail_runtime::BindingFailure::Reservation(error),
+                        )
+                    })?;
+                    build.push(work, || task(value)).map_err(|error| {
+                        mettail_runtime::NativeComparisonFailure::Admission(
+                            mettail_runtime::BindingFailure::Reservation(error),
+                        )
+                    })?;
+                    Ok(())
+                })
+                .map_err(|error| preparation_scope::binding_failure(error.into()))?,
+        }
+        self.reverse_batch(work, start)
+    }
+
+    pub(super) fn desugar(&mut self, proc: &Proc) -> Result<Option<Proc>, RholangAstLowerError> {
+        desugar_surface_sugar_node_preparing(proc, self.policy, self.reservation)
+    }
+
+    pub(super) fn keep<'s>(
+        &mut self,
+        arena: &'s Arena<Proc>,
+        node: Proc,
+    ) -> Result<&'s Proc, RholangAstLowerError> {
+        self.reserve(3, 1)?;
+        Ok(arena.alloc(node))
+    }
+
+    pub(super) fn original_only(
+        &mut self,
+        constructor: &'static str,
+    ) -> Result<(), RholangAstLowerError> {
+        match self.policy {
+            SourcePreparation::Original => Ok(()),
+            SourcePreparation::Checked => Err(preparation_scope::binding_failure(
+                mettail_runtime::BindingFailure::UnsupportedConstructor {
+                    category: "Proc",
+                    constructor,
+                },
+            )),
+        }
+    }
+
+    pub(super) fn selector_level(
+        &mut self,
+        node: &FltNode,
+        env: &BoundEnv,
+    ) -> Result<Option<usize>, RholangAstLowerError> {
+        if self.policy == SourcePreparation::Original {
+            return Ok(flt_selector_level(node, env));
+        }
+        self.reserve(1, 0)?;
+        let Var::Free(selector) = &node.selector.0 else {
+            return Ok(None);
+        };
+        if !mettail_runtime::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE {
+            return Err(preparation_scope::binding_failure(
+                mettail_runtime::BindingFailure::UnsupportedProfile,
+            ));
+        }
+        self.reserve(1, 0)?;
+        let work = identity_lookup_work(env.binders.len(), env.binders.capacity())?;
+        self.reserve(work, 0)?;
+        // Only moniker identity resolves a selector. Neither pretty names nor
+        // the separate FLT-hole environment may substitute for this lookup.
+        Ok(env.binders.get(selector).copied())
+    }
+
     pub(super) fn share<T>(&mut self, source: &Arc<T>) -> Result<Arc<T>, RholangAstLowerError> {
         self.reserve(3, 1)?;
         Ok(Arc::clone(source))
@@ -127,6 +309,35 @@ fn polyadic_count(rest: usize) -> Result<usize, RholangAstLowerError> {
         .ok_or(RholangAstLowerError::PreparationSizeOverflow)
 }
 
+/// Native get on the clean, immutable identity map built by BoundEnv.
+///
+/// No deletion/tombstones enter that map. NativeHashBagExtent therefore bounds
+/// buckets by twice its capacity; ProbeControl/CandidateCover bound original
+/// probe groups and distinct candidate callbacks. StageCharge supplies
+/// 22*groups + 2*entries + 17 control groups. AdmittedIdentityComparison's
+/// fresh SipHasher13(u32) path supplies 31+3 hashing groups; the native get
+/// shell supplies 13, and FreeVar Eq plus callback forwarding supplies 12 per
+/// candidate. This is logical work, not instructions, elapsed time or RSS.
+/// Empty get never hashes/probes, even when its map retained an allocation.
+fn identity_lookup_work(entries: usize, capacity: usize) -> Result<usize, RholangAstLowerError> {
+    if entries == 0 {
+        return Ok(5);
+    }
+    let overflow = || RholangAstLowerError::PreparationSizeOverflow;
+    let buckets = capacity.checked_mul(2).ok_or_else(overflow)?.max(1);
+    let groups = (buckets / 16).max(1);
+    let probes = groups.checked_mul(22).ok_or_else(overflow)?;
+    let candidates = entries.checked_mul(14).ok_or_else(overflow)?;
+    64usize
+        .checked_add(probes)
+        .and_then(|work| work.checked_add(candidates))
+        .ok_or_else(overflow)
+}
+
 #[cfg(test)]
 #[path = "preparation_source_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "preparation_body_tests.rs"]
+mod body_tests;

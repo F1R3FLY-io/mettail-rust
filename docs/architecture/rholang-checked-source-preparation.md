@@ -86,6 +86,46 @@ selector tests check its code-generation premise. Native compilation,
 collection-copy tests on a small stack, and emitted-frame measurements are
 separate checks: the model alone does not establish a physical stack bound.
 
+## Binder-local body search
+
+The body finder uses one shared `Proc`/`Name`/`Emit` worklist for original and
+checked preparation. `Emit` occurs after the node's children, so the first
+selected foreign-language term (FLT) is the first eligible postorder
+occurrence, not the first distinct pointer or printed term. Send expansion
+precedes scheduling. Quoted channels precede send payloads; list elements and
+method arguments retain source order. Nested `new` and receive bodies, and
+receive patterns, remain opaque to this binder-local search.
+
+Parallel processes use the existing paid `HashBag` entry visitor, expanding
+each stored multiplicity and skipping zero repetitions. Maps use the existing
+paid entry visitor in insertion order, visiting each key before its value.
+The shared paid task-batch reversal puts those occurrences on the last-in,
+first-out worklist without reversing their eventual visit order. No key is
+hashed, sorted, copied, or deduplicated by this scheduling operation.
+
+Checked search reserves before creating its worklist, pushing and popping
+tasks, advancing iterators, retaining expanded nodes, and projecting a result.
+The terminal pop and iterator advances are included. A refusal returns the
+original error without a search result or fallback; previously accepted
+reservations stay spent. Pending tasks only borrow their source nodes.
+
+FLT eligibility uses the original immutable `BoundEnv` identity map. A free
+selector must resolve by moniker identity; matching diagnostic spellings or
+FLT-hole names do not qualify it. A bound selector is not eligible at this
+stage. Successful selection shares the original `Arc<FltNode>`, preserving
+the pointer that the replacement pass will recognize.
+
+Native identity lookup is admitted before the unchanged `get().copied()`.
+The pinned scalar-hashing, equality, and probe models supply its finite work
+allowance; no new dictionary or string comparison is introduced. The map's
+clean construction invariant supplies its capacity bound. Empty maps take
+the original no-hash shortcut. Checked arithmetic or reservation failure
+precedes lookup. These are logical operation allowances, not exact CPU costs.
+
+The negative fold search uses the same paid traversal. Held-fold constructors
+are outside the current checked public source profile and are refused before
+width evaluation. Internal original preparation retains its existing folds.
+
 ## Verification boundary
 
 `RholangPreparationReservation` supplies the checked precharge, exact successful
@@ -100,7 +140,15 @@ source, identity-preserving FLT copies, and public-path cancellation through
 head retention and terminal inspection. Deep and wide cases additionally run
 copying and normal refusal cleanup on 128 KiB stacks.
 
-These adapters cover head expansion and its retained results. Body-site scans,
-replacement, receive-pattern preparation, and final interpreter-value
-construction have separate resource obligations. Passing the head-expansion
-tests must not be presented as a bound on the whole prepared application.
+The body-search tests additionally check explicit postorder traces, original
+Map pairs, repeated and zero-count parallel occurrences, FLT pointer identity,
+opaque nested scopes, identity-only selector resolution, every reservation
+cut, and deep traversal on a small stack. `RholangBodyFirstOccurrence`,
+`SourceMapEntryVisit`, `NativeHashBagEntryVisit`, and `PaidTaskBatchReversal`
+supply the corresponding order and occurrence laws. The selector adapter
+reuses `AdmittedIdentityComparison` and the native probe/candidate bounds.
+
+These adapters cover head expansion and body-site search. Replacement,
+receive-pattern preparation, and final interpreter-value construction have
+separate resource obligations. Passing these focused tests must not be
+presented as a bound on the whole prepared application.

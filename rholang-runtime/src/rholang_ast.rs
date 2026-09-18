@@ -2473,7 +2473,12 @@ impl<'a> Drive<'a> {
     /// further sites (a `new` inside an operand), and the site index is `HELD_FOLD_SITES.len()`
     /// at the moment of registration.
     fn enter_body(&mut self, body: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
-        if let Some(node) = find_dynamic_flt(body, self.env(env)) {
+        if let Some(node) = find_dynamic_flt_preparing(
+            body,
+            self.envs.get(env),
+            self.source_preparation,
+            self.stacks.reservation,
+        )? {
             let ret_var = FreeVar::fresh_named("__mtl_flt_ret".to_string());
             let result_var = FreeVar::fresh_named("__mtl_flt_result".to_string());
             let result_drop =
@@ -2530,7 +2535,9 @@ impl<'a> Drive<'a> {
             )?;
             return Ok(());
         }
-        let Some((operand, kind, width)) = find_fold(body) else {
+        let Some((operand, kind, width)) =
+            find_fold_preparing(body, self.source_preparation, self.stacks.reservation)?
+        else {
             self.stacks.push(Job::Proc(body, env))?;
             return Ok(());
         };
@@ -4353,22 +4360,46 @@ fn flt_selector_level(node: &FltNode, env: &BoundEnv) -> Option<usize> {
 /// nested binder bodies are opaque: the former have their own Match-authority
 /// preparation pass and the latter stage in their own de-Bruijn environment.
 fn find_first_body_site<T>(proc: &Proc, mut project: impl FnMut(&Proc) -> Option<T>) -> Option<T> {
+    find_first_body_site_preparing(
+        proc,
+        SourcePreparation::Original,
+        &mut |_, _| Ok(()),
+        |candidate, _| Ok(project(candidate)),
+    )
+    .expect("original body traversal has no reservation failures")
+}
+
+fn find_first_body_site_preparing<T>(
+    proc: &Proc,
+    policy: SourcePreparation,
+    reservation: &mut StorageReservation<'_>,
+    mut project: impl FnMut(
+        &Proc,
+        &mut preparation_source::SourceBuilder<'_, '_>,
+    ) -> Result<Option<T>, RholangAstLowerError>,
+) -> Result<Option<T>, RholangAstLowerError> {
     enum Work<'a> {
         Proc(&'a Proc),
         Name(&'a Name),
         Emit(&'a Proc),
     }
 
+    let mut build = preparation_source::SourceBuilder::new(policy, reservation);
+    build.reserve(1, 1)?;
     let desugared_nodes = Arena::new();
-    let mut work = vec![Work::Proc(proc)];
-    while let Some(step) = work.pop() {
+    let mut work = build.worklist()?;
+    build.push(&mut work, || Work::Proc(proc))?;
+    while let Some(step) = build.pop(&mut work)? {
+        build.reserve(1, 0)?;
         match step {
             Work::Proc(proc) => {
-                if let Some(desugared) = desugar_surface_sugar_node(proc) {
-                    work.push(Work::Proc(desugared_nodes.alloc(desugared)));
+                if let Some(desugared) = build.desugar(proc)? {
+                    let desugared = build.keep(&desugared_nodes, desugared)?;
+                    build.push(&mut work, || Work::Proc(desugared))?;
                     continue;
                 }
-                work.push(Work::Emit(proc));
+                build.push(&mut work, || Work::Emit(proc))?;
+                build.reserve(1, 0)?;
                 match proc {
                     Proc::IntBinProc(child, _)
                     | Proc::UIntBinProc(child, _)
@@ -4380,15 +4411,17 @@ fn find_first_body_site<T>(proc: &Proc, mut project: impl FnMut(&Proc) -> Option
                     | Proc::Not(child)
                     | Proc::PLookaheadAll(child)
                     | Proc::PLookahead(child, _)
-                    | Proc::Matches(child, _) => work.push(Work::Proc(child.as_ref())),
+                    | Proc::Matches(child, _) => {
+                        build.push(&mut work, || Work::Proc(child.as_ref()))?
+                    },
                     Proc::POutput(channel, payload) | Proc::PPersistOutput(channel, payload) => {
-                        work.push(Work::Proc(payload.as_ref()));
-                        work.push(Work::Name(channel.as_ref()));
+                        build.push(&mut work, || Work::Proc(payload.as_ref()))?;
+                        build.push(&mut work, || Work::Name(channel.as_ref()))?;
                     },
                     Proc::POutputShort(channel, payload)
                     | Proc::PPersistOutputShort(channel, payload) => {
-                        work.push(Work::Proc(payload.as_ref()));
-                        work.push(Work::Proc(channel.as_ref()));
+                        build.push(&mut work, || Work::Proc(payload.as_ref()))?;
+                        build.push(&mut work, || Work::Proc(channel.as_ref()))?;
                     },
                     Proc::PParInfix(left, right)
                     | Proc::Add(left, right)
@@ -4405,21 +4438,21 @@ fn find_first_body_site<T>(proc: &Proc, mut project: impl FnMut(&Proc) -> Option
                     | Proc::And(left, right)
                     | Proc::Or(left, right)
                     | Proc::Implies(left, right) => {
-                        work.push(Work::Proc(right.as_ref()));
-                        work.push(Work::Proc(left.as_ref()));
+                        build.push(&mut work, || Work::Proc(right.as_ref()))?;
+                        build.push(&mut work, || Work::Proc(left.as_ref()))?;
                     },
                     Proc::PPar(parts) => {
-                        let first = work.len();
-                        work.extend(parts.iter_elements().map(Work::Proc));
-                        work[first..].reverse();
+                        build.push_bag_reversed(&mut work, parts, Work::Proc)?;
                     },
-                    Proc::PDrop(name) => work.push(Work::Name(name.as_ref())),
+                    Proc::PDrop(name) => build.push(&mut work, || Work::Name(name.as_ref()))?,
                     Proc::CastList(list) => {
+                        build.reserve(1, 0)?;
                         if let List::ListLit(items) = list.as_ref() {
-                            work.extend(items.iter().rev().map(Work::Proc));
+                            build.push_slice_reversed(&mut work, items, Work::Proc)?;
                         }
                     },
                     Proc::CastBag(bag) => {
+                        build.original_only("CastBag")?;
                         if let Bag::BagLit(entries) = bag.as_ref() {
                             let mut entries = entries.iter().collect::<Vec<_>>();
                             entries.sort_by_key(|(item, _)| *item);
@@ -4429,16 +4462,13 @@ fn find_first_body_site<T>(proc: &Proc, mut project: impl FnMut(&Proc) -> Option
                         }
                     },
                     Proc::CastMap(map) => {
+                        build.reserve(1, 0)?;
                         if let Map::MapLit(entries) = map.as_ref() {
-                            let mut children = Vec::with_capacity(entries.len() * 2);
-                            for (key, value) in entries.iter() {
-                                children.push(Work::Proc(key));
-                                children.push(Work::Proc(value));
-                            }
-                            work.extend(children.into_iter().rev());
+                            build.push_map_reversed(&mut work, entries, Work::Proc)?;
                         }
                     },
                     Proc::CastSet(set) => {
+                        build.original_only("CastSet")?;
                         if let Set::SetLit(items) = set.as_ref() {
                             let mut items = items.iter().collect::<Vec<_>>();
                             items.sort();
@@ -4446,6 +4476,7 @@ fn find_first_body_site<T>(proc: &Proc, mut project: impl FnMut(&Proc) -> Option
                         }
                     },
                     Proc::CastPathmap(pathmap) => {
+                        build.original_only("CastPathmap")?;
                         if let Pathmap::PathmapLit(entries) = pathmap.as_ref() {
                             let mut children = Vec::with_capacity(match entries.mode() {
                                 mettail_runtime::PathMapMode::Map => entries.len() * 2,
@@ -4461,8 +4492,8 @@ fn find_first_body_site<T>(proc: &Proc, mut project: impl FnMut(&Proc) -> Option
                         }
                     },
                     Proc::MethodCall(receiver, _, arguments) => {
-                        work.extend(arguments.iter().rev().map(Work::Proc));
-                        work.push(Work::Proc(receiver.as_ref()));
+                        build.push_slice_reversed(&mut work, arguments, Work::Proc)?;
+                        build.push(&mut work, || Work::Proc(receiver.as_ref()))?;
                     },
                     Proc::PForUser(..) | Proc::PNew(..) | Proc::PNewUris(..) => {},
                     _ => {},
@@ -4470,29 +4501,44 @@ fn find_first_body_site<T>(proc: &Proc, mut project: impl FnMut(&Proc) -> Option
             },
             Work::Name(name) => match name {
                 Name::NQuote(proc) | Name::NQuoteShort(proc) => {
-                    work.push(Work::Proc(proc.as_ref()));
+                    build.push(&mut work, || Work::Proc(proc.as_ref()))?;
                 },
-                Name::NParen(inner) => work.push(Work::Name(inner.as_ref())),
+                Name::NParen(inner) => build.push(&mut work, || Work::Name(inner.as_ref()))?,
                 _ => {},
             },
             Work::Emit(proc) => {
-                if let Some(site) = project(proc) {
-                    return Some(site);
+                build.reserve(2, 0)?;
+                if let Some(site) = project(proc, &mut build)? {
+                    return Ok(Some(site));
                 }
             },
         }
     }
-    None
+    Ok(None)
 }
 
 /// Find the first run-time-selected FLT in one binder body.
+#[cfg(test)]
 fn find_dynamic_flt(proc: &Proc, env: &BoundEnv) -> Option<Arc<FltNode>> {
-    find_first_body_site(proc, |proc| {
+    find_dynamic_flt_preparing(proc, env, SourcePreparation::Original, &mut |_, _| Ok(()))
+        .expect("original FLT traversal has no reservation failures")
+}
+
+fn find_dynamic_flt_preparing(
+    proc: &Proc,
+    env: &BoundEnv,
+    policy: SourcePreparation,
+    reservation: &mut StorageReservation<'_>,
+) -> Result<Option<Arc<FltNode>>, RholangAstLowerError> {
+    find_first_body_site_preparing(proc, policy, reservation, |proc, build| {
         let node = match proc {
             Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => node,
-            _ => return None,
+            _ => return Ok(None),
         };
-        flt_selector_level(node, env).map(|_| node.clone())
+        match build.selector_level(node, env)? {
+            Some(_) => build.share(node).map(Some),
+            None => Ok(None),
+        }
     })
 }
 
@@ -4503,6 +4549,33 @@ fn find_dynamic_flt(proc: &Proc, env: &BoundEnv) -> Option<Arc<FltNode>> {
 fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
     find_first_body_site(proc, |candidate| {
         liftable_fold_parts(candidate).map(|(operand, kind, width)| (operand.clone(), kind, width))
+    })
+}
+
+fn find_fold_preparing(
+    proc: &Proc,
+    policy: SourcePreparation,
+    reservation: &mut StorageReservation<'_>,
+) -> Result<Option<(Proc, FoldKind, i64)>, RholangAstLowerError> {
+    find_first_body_site_preparing(proc, policy, reservation, |candidate, build| {
+        if policy == SourcePreparation::Checked {
+            // The public source profile excludes these constructors. Keep the
+            // negative search paid, but never evaluate a width through try_eval
+            // or silently admit a new fold family at this internal boundary.
+            let constructor = match candidate {
+                Proc::IntBinProc(..) => "IntBinProc",
+                Proc::UIntBinProc(..) => "UIntBinProc",
+                Proc::FloatBinProc(..) => "FloatBinProc",
+                Proc::FixedBinProc(..) => "FixedBinProc",
+                Proc::BigintCastProc(..) => "BigintCastProc",
+                Proc::BigratCastProc(..) => "BigratCastProc",
+                _ => return Ok(None),
+            };
+            build.original_only(constructor)?;
+        }
+        liftable_fold_parts(candidate)
+            .map(|(operand, kind, width)| Ok((build.copy_proc(operand)?, kind, width)))
+            .transpose()
     })
 }
 
