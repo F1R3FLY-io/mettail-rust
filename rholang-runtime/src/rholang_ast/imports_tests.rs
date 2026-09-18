@@ -1,4 +1,5 @@
 use super::*;
+use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
 use mettail_runtime::Scope;
 use models::rhoapi::{EList, EMap, GUnforgeable, KeyValuePair};
 use prost::Message;
@@ -312,4 +313,274 @@ fn deep_admission_copy_and_drop_use_bounded_native_stack() {
         .expect("bounded-stack thread")
         .join()
         .expect("iterative traversal/copy/drop");
+}
+
+fn sample_imports() -> CheckedCallerImports {
+    CheckedCallerImports::admit(sample_entries().into_iter().collect(), limits(), &mut || false)
+        .expect("sample imports")
+}
+
+#[test]
+fn retained_copy_receipts_count_occurrences_and_exact_payloads_in_key_order() {
+    let admitted = sample_imports();
+    assert_eq!(admitted.keys(), ["", "a", "z"]);
+    assert_eq!(
+        admitted.copy_receipts,
+        [
+            ImportCopyReceipt { occurrences: 1, payload_bytes: 8 },
+            ImportCopyReceipt { occurrences: 5, payload_bytes: 24 },
+            ImportCopyReceipt { occurrences: 4, payload_bytes: 9 },
+        ]
+    );
+    let opaque = import(list(vec![
+        GPrivateBuilder::new_par_from_string("original-id".into()),
+        expression(ExprInstance::GByteArray(vec![0, 255, 7])),
+        new_gstring_par("λ".into(), vec![], false),
+    ]))
+    .expect("opaque and Unicode payloads");
+    let values = opaque.values();
+    let ExprInstance::EListBody(value) = values[0].exprs[0].expr_instance.as_ref().unwrap() else {
+        panic!("list carrier");
+    };
+    let Some(UnfInstance::GPrivateBody(private)) = &value.ps[0].unforgeables[0].unf_instance else {
+        panic!("private carrier");
+    };
+    assert_eq!(
+        opaque.copy_receipts[0],
+        ImportCopyReceipt {
+            occurrences: 4,
+            payload_bytes: private.id.len() + 3 + "λ".len(),
+        }
+    );
+}
+
+#[test]
+fn paid_key_value_copies_preserve_bytes_and_every_refusal_prefix() {
+    let admitted = sample_imports();
+    let expected: Vec<_> = admitted
+        .values()
+        .iter()
+        .map(Message::encode_to_vec)
+        .collect();
+    let mut trace = Vec::new();
+    let mut reserve = |work, units| {
+        trace.push((work, units));
+        Ok(())
+    };
+    let keys = admitted
+        .keys_with_reservation(&mut reserve)
+        .expect("paid keys");
+    let values = admitted
+        .values_with_reservation(&mut reserve)
+        .expect("paid values");
+    assert_eq!(keys, admitted.keys());
+    assert_eq!(
+        values
+            .iter()
+            .map(Message::encode_to_vec)
+            .collect::<Vec<_>>(),
+        expected
+    );
+    for cut in 0..trace.len() {
+        let mut prefix = Vec::new();
+        let result = (|| {
+            let mut reserve = |work, units| {
+                if prefix.len() == cut {
+                    return Err(RholangAstLowerError::Preparation(
+                        DynamicReflectionError::Cancelled,
+                    ));
+                }
+                prefix.push((work, units));
+                Ok(())
+            };
+            let keys = admitted.keys_with_reservation(&mut reserve)?;
+            let values = admitted.values_with_reservation(&mut reserve)?;
+            Ok::<_, RholangAstLowerError>((keys, values))
+        })();
+        assert!(matches!(
+            result,
+            Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+        ));
+        assert_eq!(prefix, trace[..cut]);
+        assert_eq!(
+            admitted
+                .values()
+                .iter()
+                .map(Message::encode_to_vec)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn repeated_paid_copies_reuse_the_same_budget_with_exact_and_one_under_limits() {
+    let admitted = sample_imports();
+    let mut work = 0usize;
+    let mut units = 0usize;
+    admitted
+        .values_with_reservation(&mut |w, u| {
+            work += w;
+            units += u;
+            Ok(())
+        })
+        .expect("copy trace");
+    for (work_limit, unit_limit, succeeds) in [
+        (2 * work, 2 * units, true),
+        (2 * work - 1, 2 * units, false),
+        (2 * work, 2 * units - 1, false),
+    ] {
+        let mut used = 0;
+        let mut cancel = || false;
+        let mut budget =
+            ReflectedCodecBudget::new(&mut used, work_limit as u64, unit_limit, &mut cancel);
+        let first = admitted
+            .values_with_reservation(&mut |w, u| {
+                budget
+                    .charge(w, u)
+                    .map_err(RholangAstLowerError::Preparation)
+            })
+            .expect("first complete copy remains affordable");
+        assert_eq!(budget.work_used(), work as u64);
+        let second = admitted.values_with_reservation(&mut |w, u| {
+            budget
+                .charge(w, u)
+                .map_err(RholangAstLowerError::Preparation)
+        });
+        assert_eq!(second.is_ok(), succeeds);
+        assert!(budget.work_used() >= work as u64);
+        if succeeds {
+            assert_eq!(second.unwrap(), first);
+            assert_eq!(budget.work_used(), work_limit as u64);
+            assert_eq!(budget.remaining_bytes(), 0);
+        }
+    }
+}
+
+#[test]
+fn receipt_arithmetic_overflow_refuses_before_reservation_callback() {
+    for receipt in [
+        ImportCopyReceipt {
+            occurrences: usize::MAX,
+            payload_bytes: 1,
+        },
+        ImportCopyReceipt {
+            occurrences: usize::MAX / 4 + 1,
+            payload_bytes: 0,
+        },
+    ] {
+        assert!(receipt
+            .reserve(&mut |_, _| panic!("overflow must precede callback"))
+            .is_err());
+    }
+}
+
+#[test]
+fn zero_copy_allowance_refuses_even_for_the_empty_roster() {
+    for admitted in [CheckedCallerImports::default(), sample_imports()] {
+        for (work_limit, units, expected) in [
+            (0, 1_000_000, DynamicReflectionError::WorkLimit),
+            (1_000_000, 0, DynamicReflectionError::PayloadByteLimit),
+        ] {
+            let mut used = 0;
+            let mut cancel = || false;
+            let mut budget = ReflectedCodecBudget::new(&mut used, work_limit, units, &mut cancel);
+            assert_eq!(
+                admitted
+                    .values_with_reservation(&mut |w, u| {
+                        budget
+                            .charge(w, u)
+                            .map_err(RholangAstLowerError::Preparation)
+                    })
+                    .err(),
+                Some(RholangAstLowerError::Preparation(expected))
+            );
+            assert_eq!(budget.work_used(), 0);
+        }
+    }
+}
+
+#[test]
+fn checked_nested_news_keep_deep_imports_and_exact_shared_budget() {
+    let source = new_scope(Proc::PNewUris(
+        vec![Uri::UriText("`deep`".into())],
+        Scope::new(vec![Binder(FreeVar::fresh_named("uri"))], Arc::new(Proc::PZero)),
+    ));
+    let mut deep = GPrivateBuilder::new_par_from_string("original-private-id".into());
+    for _ in 0..32 {
+        deep = list(vec![deep]);
+    }
+    let expected = deep.encode_to_vec();
+    let admitted =
+        CheckedCallerImports::admit(HashMap::from([("deep".into(), deep)]), limits(), &mut || {
+            false
+        })
+        .expect("deep original import");
+    let context = BoundEnv::new().with_caller_imports(admitted);
+    let original = session::lower_public_body(&source, context.clone()).expect("original New");
+    let run = |work_limit, units| {
+        let mut used = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut used, work_limit, units, &mut cancel);
+        let result = session::lower_public_body_with_budget(&source, context.clone(), &mut budget);
+        (result, budget.work_used(), units - budget.remaining_bytes())
+    };
+    let (result, work, units) = run(100_000_000, 100_000_000);
+    let result = result.expect("checked nested New");
+    assert_eq!(result.par.encode_to_vec(), original.par.encode_to_vec());
+    let outer = &result.par.news[0];
+    let inner = &outer.p.as_ref().expect("outer body").news[0];
+    for new in [outer, inner] {
+        assert_eq!(new.injections["deep"].encode_to_vec(), expected);
+    }
+    assert_eq!(inner.uri, ["deep"]);
+    assert!(run(work, units).0.is_ok());
+    assert!(run(work - 1, units).0.is_err());
+    assert!(run(work, units - 1).0.is_err());
+    assert!(run(work, units).0.is_ok(), "failed session must not poison the next request");
+}
+
+#[test]
+fn paid_deep_copy_and_late_refusal_cleanup_are_stack_safe() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            let mut value = scalar(1);
+            for _ in 0..2048 {
+                value = list(vec![value]);
+            }
+            let admitted = import(value).expect("deep admitted input");
+            assert_eq!(admitted.copy_receipts[0].occurrences, 2049);
+            let expected = admitted.values()[0].encode_to_vec();
+            let mut trace = Vec::new();
+            let result = admitted
+                .values_with_reservation(&mut |w, u| {
+                    trace.push((w, u));
+                    Ok(())
+                })
+                .expect("prepaid deep native copy");
+            assert_eq!(result[0].encode_to_vec(), expected);
+            drop(result);
+            let mut calls = 0;
+            assert!(matches!(
+                admitted.values_with_reservation(&mut |_, _| {
+                    calls += 1;
+                    if calls == trace.len() {
+                        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+                    } else {
+                        Ok(())
+                    }
+                }),
+                Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+            ));
+            drop(
+                admitted
+                    .values_with_reservation(&mut |_, _| Ok(()))
+                    .expect("fresh attempt after refusal"),
+            );
+            drop(admitted);
+        })
+        .expect("small-stack thread")
+        .join()
+        .expect("deep copy and normal cleanup");
 }

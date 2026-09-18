@@ -126,6 +126,56 @@ The negative fold search uses the same paid traversal. Held-fold constructors
 are outside the current checked public source profile and are refused before
 width evaluation. Internal original preparation retains its existing folds.
 
+The replacement worklist uses the same child order and selects only the first
+matching occurrence. Once replaced, later subtrees are copied without further
+sugar expansion. Checked copies preserve FLT pointer identity. Each continuation
+consumes its saved result-stack suffix after reserving that suffix's storage.
+Reconstructed parallel processes sum colliding occurrence counts; reconstructed
+maps retain the first equal key object and position but the last value. These
+are the existing collection semantics, not a new deduplication policy.
+
+Replacement reserves before copying, scheduling, allocating result slots, and
+performing native collection insertion. Refusal returns no transformed body;
+already accepted charges remain spent. The caller's local replacement flag is
+not a published result and need not be rolled back after refusal.
+
+## Receive preparation and lexical FLT captures
+
+Receive rows borrow their original binds and optional guard. The checked
+adapter reserves the ordered roster before allocation and polls before each
+iterator advance. Monadic receive patterns retain the payload verbatim;
+empty and polyadic receives use the existing list encoding. Pattern copying
+uses the generated checked worker. Appending a pattern binder checks the
+counter and reserves the copied identity and slot before mutating the state.
+
+An FLT construction hole such as `${text:Text}` names a lexical value. Its
+name is not a moniker identity, installed-language handle, or registry lookup.
+The environment therefore keeps a separate construction-hole context:
+
+- Source `new` bindings and ordinary receive bindings introduce named slots.
+- FLT receive captures introduce slots in the same index space.
+- Later source bindings shadow earlier names, using the existing reversed
+  de-Bruijn index convention for joint receives.
+- Generated construction-return binders shift existing indices but do not
+  introduce names. Even an identically spelled user binding is not shadowed
+  by an internal temporary.
+- Ordinary process/name references and the FLT language selector retain their
+  identity-based resolution. Construction aliases never participate in that
+  lookup or confer language authority.
+
+Positive FLT construction and qualified `where` predicates share this context.
+A predicate is retained as a structural descriptor with its explicit selector
+and capture coordinates. The ordinary guard worklist retains Boolean
+connectives around those descriptors; it does not construct or evaluate the
+guest term during lowering. Runtime predicate evaluation and the atomic
+communication decision remain separate obligations of the shared language
+service and matcher.
+
+The context extension reuses the ordered insertion, shadowing, and shifted
+outer-scope laws in `RholangSourceScope`. Context-copy admission includes the
+additional owned entries and names. These laws establish lexical indices,
+not a resource bound for descriptor encoding or semantic execution.
+
 ## Verification boundary
 
 `RholangPreparationReservation` supplies the checked precharge, exact successful
@@ -148,7 +198,8 @@ cut, and deep traversal on a small stack. `RholangBodyFirstOccurrence`,
 supply the corresponding order and occurrence laws. The selector adapter
 reuses `AdmittedIdentityComparison` and the native probe/candidate bounds.
 
-These adapters cover head expansion and body-site search. Replacement,
-receive-pattern preparation, and final interpreter-value construction have
+These adapters cover head expansion, body-site search and replacement, and the
+stated receive roster and pattern-copy operations. Complete FLT request/descriptor
+encoding and final interpreter-value construction have
 separate resource obligations. Passing these focused tests must not be
 presented as a bound on the whole prepared application.

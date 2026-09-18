@@ -6,6 +6,183 @@ fn integer(value: i64) -> Proc {
     Proc::CastInt(Arc::new(Int::NumLit(value)))
 }
 
+fn receive_cases() -> Vec<(InputBind, Proc)> {
+    let channel = Arc::new(Name::NQuoteNil);
+    let quoted = Arc::new(Name::NQuote(Arc::new(integer(42))));
+    let first = Arc::new(Name::NQuote(Arc::new(integer(1))));
+    let rest = vec![Name::NQuote(Arc::new(integer(2)))];
+    vec![
+        (InputBind::InputBind(quoted.clone(), channel.clone()), integer(42)),
+        (InputBind::InputBindPersistent(quoted, channel.clone()), integer(42)),
+        (InputBind::InputBindQuoted(Arc::new(integer(42)), channel.clone()), integer(42)),
+        (
+            InputBind::InputBindQuotedPersistent(Arc::new(integer(42)), channel.clone()),
+            integer(42),
+        ),
+        (InputBind::InputBindEmpty(channel.clone()), mk_proc_list(Vec::new())),
+        (InputBind::InputBindEmptyPersistent(channel.clone()), mk_proc_list(Vec::new())),
+        (
+            InputBind::InputBindPolyadic(first.clone(), rest.clone(), channel.clone()),
+            mk_proc_list(vec![integer(1), integer(2)]),
+        ),
+        (
+            InputBind::InputBindPersistentPolyadic(first, rest, channel),
+            mk_proc_list(vec![integer(1), integer(2)]),
+        ),
+    ]
+}
+
+#[test]
+fn paid_receive_patterns_preserve_arity_and_every_refusal_prefix() {
+    for (source, expected) in receive_cases() {
+        let unchanged = source.clone();
+        assert_eq!(bind_pattern_proc(&source), Some(expected.clone()));
+        let mut charges = Vec::new();
+        let actual = SourceBuilder::new(SourcePreparation::Checked, &mut |w, u| {
+            charges.push((w, u));
+            Ok(())
+        })
+        .bind_pattern(&source)
+        .expect("checked receive pattern");
+        assert_eq!(actual, Some(expected.clone()));
+        assert_eq!(
+            SourceBuilder::new(SourcePreparation::Original, &mut |_, _| {
+                panic!("original adapter must not reserve")
+            })
+            .bind_pattern(&source)
+            .expect("original pattern"),
+            Some(expected)
+        );
+        for cut in 0..charges.len() {
+            let mut accepted = Vec::new();
+            let result = SourceBuilder::new(SourcePreparation::Checked, &mut |w, u| {
+                if accepted.len() == cut {
+                    return Err(RholangAstLowerError::Preparation(
+                        DynamicReflectionError::Cancelled,
+                    ));
+                }
+                accepted.push((w, u));
+                Ok(())
+            })
+            .bind_pattern(&source);
+            assert_eq!(
+                result,
+                Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+            );
+            assert_eq!(accepted, charges[..cut]);
+            assert_eq!(source, unchanged);
+        }
+        let work = charges.iter().map(|(w, _)| *w as u64).sum::<u64>();
+        let units = charges.iter().map(|(_, u)| *u).sum::<usize>();
+        for (work_limit, unit_limit, succeeds) in [
+            (work, units, true),
+            (work - 1, units, false),
+            (work, units - 1, false),
+            (0, 0, false),
+        ] {
+            let mut used = 0;
+            let mut cancel = || false;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut used, work_limit, unit_limit, &mut cancel);
+            let result = SourceBuilder::new(SourcePreparation::Checked, &mut |w, u| {
+                budget
+                    .charge(w, u)
+                    .map_err(RholangAstLowerError::Preparation)
+            })
+            .bind_pattern(&source);
+            assert_eq!(result.is_ok(), succeeds);
+        }
+    }
+}
+
+#[test]
+fn receive_binder_state_is_atomic_at_every_cut_and_counter_overflow() {
+    let variable = FreeVar::fresh_named("capture".to_owned());
+    let mut state = PatternState::default();
+    let mut charges = Vec::new();
+    assert_eq!(
+        SourceBuilder::new(SourcePreparation::Checked, &mut |w, u| {
+            charges.push((w, u));
+            Ok(())
+        })
+        .bind_pattern_variable(&mut state, &variable)
+        .expect("first binder"),
+        0
+    );
+    assert_eq!(state.counter, 1);
+    assert_eq!(state.binders[0].0, variable);
+    for cut in 0..charges.len() {
+        let mut state = PatternState::default();
+        let mut calls = 0;
+        let result = SourceBuilder::new(SourcePreparation::Checked, &mut |_, _| {
+            if calls == cut {
+                return Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled));
+            }
+            calls += 1;
+            Ok(())
+        })
+        .bind_pattern_variable(&mut state, &variable);
+        assert!(result.is_err());
+        assert_eq!(state.counter, 0);
+        assert!(state.binders.is_empty());
+    }
+    let mut state = PatternState { counter: i32::MAX, binders: Vec::new() };
+    let result = SourceBuilder::new(SourcePreparation::Checked, &mut |_, _| Ok(()))
+        .bind_pattern_variable(&mut state, &variable);
+    assert_eq!(result, Err(RholangAstLowerError::PreparationSizeOverflow));
+    assert_eq!(state.counter, i32::MAX);
+    assert!(state.binders.is_empty());
+}
+
+#[test]
+fn paid_receive_rows_borrow_original_occurrences_and_guard() {
+    let channel = Arc::new(Name::NQuoteNil);
+    let first = Arc::new(InputBind::InputBindEmpty(channel.clone()));
+    let rest = vec![InputBind::InputBindEmptyPersistent(channel)];
+    let condition = Arc::new(integer(42));
+    let rows = [
+        ForRow::ForRowSingleNoWhere(first.clone()),
+        ForRow::ForRowSingleWhere(first.clone(), condition.clone()),
+        ForRow::ForRowNoWhere(first.clone(), rest.clone()),
+        ForRow::ForRowWhere(first, rest, condition),
+    ];
+    for row in &rows {
+        let expected = decompose_for_row_borrowed(row).expect("borrowed oracle");
+        let mut charges = Vec::new();
+        let actual = SourceBuilder::new(SourcePreparation::Checked, &mut |w, u| {
+            charges.push((w, u));
+            Ok(())
+        })
+        .for_row(row)
+        .expect("paid row");
+        assert_eq!(actual.0.len(), expected.0.len());
+        for (left, right) in actual.0.iter().zip(&expected.0) {
+            assert!(std::ptr::eq(*left, *right));
+        }
+        assert_eq!(actual.1, expected.1);
+        match (actual.2, expected.2) {
+            (Some(left), Some(right)) => assert!(std::ptr::eq(left, right)),
+            (None, None) => {},
+            _ => panic!("guard association changed"),
+        }
+        for cut in 0..charges.len() {
+            let mut accepted = Vec::new();
+            let result = SourceBuilder::new(SourcePreparation::Checked, &mut |w, u| {
+                if accepted.len() == cut {
+                    return Err(RholangAstLowerError::Preparation(
+                        DynamicReflectionError::Cancelled,
+                    ));
+                }
+                accepted.push((w, u));
+                Ok(())
+            })
+            .for_row(row);
+            assert!(result.is_err());
+            assert_eq!(accepted, charges[..cut]);
+        }
+    }
+}
+
 // Expected core constructors are explicit, not obtained through either adapter.
 fn sugar_cases() -> Vec<(Proc, Proc)> {
     let channel = Arc::new(Name::NQuote(Arc::new(integer(7))));

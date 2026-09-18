@@ -15,6 +15,88 @@ pub(super) struct SourceBuilder<'a, 'r> {
 }
 
 impl<'a, 'r> SourceBuilder<'a, 'r> {
+    pub(super) fn push_proc_copy(
+        &mut self,
+        values: &mut Vec<Proc>,
+        source: &Proc,
+    ) -> Result<(), RholangAstLowerError> {
+        self.reserve(3, 1)?;
+        values
+            .len()
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        let copied = self.copy_proc(source)?;
+        values.push(copied);
+        Ok(())
+    }
+
+    pub(super) fn push_name_copy(
+        &mut self,
+        values: &mut Vec<Name>,
+        source: &Name,
+    ) -> Result<(), RholangAstLowerError> {
+        self.reserve(3, 1)?;
+        values
+            .len()
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        let copied = match self.policy {
+            SourcePreparation::Original => source.clone(),
+            SourcePreparation::Checked => source
+                .try_copy_iterative(BindingOperation::Clone, &mut |w, u| (self.reservation)(w, u))
+                .map_err(preparation_scope::binding_failure)?,
+        };
+        values.push(copied);
+        Ok(())
+    }
+
+    pub(super) fn copy_string(&mut self, source: &String) -> Result<String, RholangAstLowerError> {
+        match self.policy {
+            SourcePreparation::Original => Ok(source.clone()),
+            SourcePreparation::Checked => source
+                .try_copy_binding(BindingOperation::Clone, &mut |w, u| (self.reservation)(w, u))
+                .map_err(preparation_scope::binding_failure),
+        }
+    }
+
+    pub(super) fn take_children<T>(
+        &mut self,
+        values: &mut Vec<T>,
+        base: usize,
+        expected: usize,
+    ) -> Result<Vec<T>, RholangAstLowerError> {
+        self.reserve(3, 0)?;
+        if values.len().checked_sub(base) != Some(expected) {
+            return Err(RholangAstLowerError::UnsupportedProc(
+                "invalid body replacement child roster",
+            ));
+        }
+        let slots = expected
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        let work = expected
+            .checked_add(3)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        self.reserve(work, slots)?;
+        Ok(values.split_off(base))
+    }
+
+    pub(super) fn rebuild_parallel(
+        &mut self,
+        source: &mettail_runtime::HashBag<Proc>,
+        children: Vec<Proc>,
+    ) -> Result<mettail_runtime::HashBag<Proc>, RholangAstLowerError> {
+        preparation_rebuild::parallel(source, children, self.policy, self.reservation)
+    }
+
+    pub(super) fn rebuild_map(
+        &mut self,
+        source: &mettail_runtime::HashMapLit<Proc, Proc>,
+        pairs: Vec<(Proc, Proc)>,
+    ) -> Result<mettail_runtime::HashMapLit<Proc, Proc>, RholangAstLowerError> {
+        preparation_rebuild::map(source, pairs, self.policy, self.reservation)
+    }
+
     pub(super) fn new(
         policy: SourcePreparation,
         reservation: &'a mut StorageReservation<'r>,
@@ -249,6 +331,112 @@ impl<'a, 'r> SourceBuilder<'a, 'r> {
             Name::NQuoteNil => Proc::PZero,
             _ => Proc::Err,
         })
+    }
+
+    pub(super) fn bind_pattern(
+        &mut self,
+        bind: &InputBind,
+    ) -> Result<Option<Proc>, RholangAstLowerError> {
+        self.reserve(2, 0)?;
+        Ok(match bind {
+            InputBind::InputBind(lhs, _)
+            | InputBind::InputBindPersistent(lhs, _)
+            | InputBind::InputBindQuery(lhs, _, _) => Some(self.name_pattern(lhs)?),
+            InputBind::InputBindQuoted(pattern, _)
+            | InputBind::InputBindQuotedPersistent(pattern, _)
+            | InputBind::InputBindQuotedQuery(pattern, _, _) => Some(self.copy_proc(pattern)?),
+            InputBind::InputBindPolyadic(first, rest, _)
+            | InputBind::InputBindPersistentPolyadic(first, rest, _) => {
+                let count = polyadic_count(rest.len())?;
+                let records = polyadic_count(count)?;
+                self.reserve(3, records)?;
+                let mut items = Vec::with_capacity(count);
+                items.push(self.name_pattern(first)?);
+                self.reserve(1, 1)?;
+                let mut rest = rest.iter();
+                loop {
+                    self.reserve(2, 0)?;
+                    let Some(item) = rest.next() else { break };
+                    let pattern = self.name_pattern(item)?;
+                    self.reserve(1, 0)?;
+                    items.push(pattern);
+                }
+                let list = self.allocate(|| List::ListLit(items))?;
+                self.reserve(1, 1)?;
+                Some(Proc::CastList(list))
+            },
+            InputBind::InputBindEmpty(_)
+            | InputBind::InputBindEmptyPersistent(_)
+            | InputBind::InputBindEmptyQuery(_, _) => {
+                self.reserve(1, 1)?;
+                let list = self.allocate(|| List::ListLit(Vec::new()))?;
+                self.reserve(1, 1)?;
+                Some(Proc::CastList(list))
+            },
+            _ => None,
+        })
+    }
+
+    pub(super) fn bind_pattern_variable(
+        &mut self,
+        state: &mut PatternState,
+        variable: &FreeVar<String>,
+    ) -> Result<i32, RholangAstLowerError> {
+        self.reserve(3, 0)?;
+        let index = state.counter;
+        let next = index
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        state
+            .binders
+            .len()
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        let variable = match self.policy {
+            SourcePreparation::Original => variable.clone(),
+            SourcePreparation::Checked => variable
+                .try_copy_binding(BindingOperation::Clone, &mut |w, u| (self.reservation)(w, u))
+                .map_err(preparation_scope::binding_failure)?,
+        };
+        // No state mutation happens until both the owned identity and its slot
+        // are admitted. The existing left-to-right free-variable numbering stays.
+        self.reserve(3, 1)?;
+        state.binders.push(Binder(variable));
+        state.counter = next;
+        Ok(index)
+    }
+
+    pub(super) fn for_row<'s>(
+        &mut self,
+        row: &'s ForRow,
+    ) -> Result<(Vec<&'s InputBind>, bool, Option<&'s Proc>), RholangAstLowerError> {
+        self.reserve(2, 0)?;
+        let (first, rest, condition) = match row {
+            ForRow::ForRowSingleNoWhere(first) => (first.as_ref(), &[][..], None),
+            ForRow::ForRowSingleWhere(first, condition) => {
+                (first.as_ref(), &[][..], Some(condition.as_ref()))
+            },
+            ForRow::ForRowNoWhere(first, rest) => (first.as_ref(), rest.as_slice(), None),
+            ForRow::ForRowWhere(first, rest, condition) => {
+                (first.as_ref(), rest.as_slice(), Some(condition.as_ref()))
+            },
+            _ => return Err(RholangAstLowerError::UnsupportedProc("non-ground for-row")),
+        };
+        let count = polyadic_count(rest.len())?;
+        self.reserve(3, polyadic_count(count)?)?;
+        let mut binds = Vec::with_capacity(count);
+        binds.push(first);
+        let mut persistent = is_persistent_bind(first);
+        self.reserve(1, 1)?;
+        let mut rest = rest.iter();
+        loop {
+            self.reserve(2, 0)?;
+            let Some(bind) = rest.next() else { break };
+            self.reserve(3, 0)?;
+            binds.push(bind);
+            persistent = persistent || is_persistent_bind(bind);
+        }
+        Ok((binds, persistent, condition))
     }
 
     pub(super) fn quote(&mut self, source: &Arc<Proc>) -> Result<Arc<Name>, RholangAstLowerError> {

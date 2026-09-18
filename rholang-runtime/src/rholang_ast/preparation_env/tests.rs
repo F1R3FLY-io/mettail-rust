@@ -34,6 +34,7 @@ fn same_context(actual: &BoundEnv, expected: &BoundEnv) {
     assert_eq!(actual.scope_width, expected.scope_width);
     assert_eq!(actual.binders, expected.binders);
     assert_eq!(actual.hole_binders, expected.hole_binders);
+    assert_eq!(actual.construction_holes, expected.construction_holes);
     assert_eq!(actual.options, expected.options);
     assert_eq!(actual.admission, expected.admission);
     assert_eq!(actual.free_vars_are_patterns, expected.free_vars_are_patterns);
@@ -44,15 +45,16 @@ fn same_context(actual: &BoundEnv, expected: &BoundEnv) {
 #[test]
 fn exact_and_under_environment_limits_preserve_paid_prefix_and_input() {
     let (root, slots) = two_occurrences();
-    // n=2, s=1, b=5: inspection 2; copy 9 work and 17 payload units.
+    // n=3, s=1, b=8: old FLT capture plus both new capture namespaces.
+    // Inspection 3; copy 13 work and 24 payload units.
     for (work_limit, bytes, error, paid) in [
-        (0, 17, Some(DynamicReflectionError::WorkLimit), 0),
-        (1, 17, Some(DynamicReflectionError::WorkLimit), 0),
-        (2, 17, Some(DynamicReflectionError::WorkLimit), 2),
-        (10, 17, Some(DynamicReflectionError::WorkLimit), 2),
-        (11, 0, Some(DynamicReflectionError::PayloadByteLimit), 2),
-        (11, 16, Some(DynamicReflectionError::PayloadByteLimit), 2),
-        (11, 17, None, 11),
+        (0, 24, Some(DynamicReflectionError::WorkLimit), 0),
+        (2, 24, Some(DynamicReflectionError::WorkLimit), 0),
+        (3, 24, Some(DynamicReflectionError::WorkLimit), 3),
+        (15, 24, Some(DynamicReflectionError::WorkLimit), 3),
+        (16, 0, Some(DynamicReflectionError::PayloadByteLimit), 3),
+        (16, 23, Some(DynamicReflectionError::PayloadByteLimit), 3),
+        (16, 24, None, 16),
     ] {
         let (result, used, remaining, count) =
             run(&root, EnvironmentDerivation::Slots(&slots), work_limit, bytes);
@@ -87,7 +89,7 @@ fn cancellation_at_every_environment_poll_never_appends() {
             calls.get() == cancelled_call
         };
         let mut work = 0;
-        let mut budget = ReflectedCodecBudget::new(&mut work, 11, 17, &mut cancel);
+        let mut budget = ReflectedCodecBudget::new(&mut work, 16, 24, &mut cancel);
         let mut arena = EnvArena::new(&root);
         let result =
             arena.derive(ROOT_ENV, EnvironmentDerivation::Slots(&slots), &mut |work, bytes| {
@@ -100,8 +102,8 @@ fn cancellation_at_every_environment_poll_never_appends() {
             Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
         );
         assert!(arena.derived.is_empty());
-        assert_eq!(budget.work_used(), if cancelled_call == 1 { 0 } else { 2 });
-        assert_eq!(budget.remaining_bytes(), 17);
+        assert_eq!(budget.work_used(), if cancelled_call == 1 { 0 } else { 3 });
+        assert_eq!(budget.remaining_bytes(), 24);
         assert_eq!(calls.get(), cancelled_call);
         assert_eq!(root.hole_binders.get("aa"), Some(&0));
     }
@@ -119,10 +121,10 @@ fn duplicate_slots_pay_for_occurrences_and_keep_last_binding_and_full_width() {
         ReceiveSlot::Hole("h".into()),
         ReceiveSlot::Moniker(Binder(identity.clone())),
     ];
-    // Five one-byte key occurrences, two shifts; map size is NOT five.
-    let (result, used, bytes, count) = run(&root, EnvironmentDerivation::Slots(&slots), 18, 29);
+    // Eight one-byte key occurrences, two shifts; duplicate aliases still pay.
+    let (result, used, bytes, count) = run(&root, EnvironmentDerivation::Slots(&slots), 27, 44);
     let env = result.expect("all duplicate occurrences reserved");
-    assert_eq!((used, bytes, count), (18, 0, 1));
+    assert_eq!((used, bytes, count), (27, 0, 1));
     assert_eq!(env.scope_width, 5);
     assert_eq!(env.binders.get(&identity), Some(&0));
     assert_eq!(env.hole_binders.get("h"), Some(&1));
@@ -155,9 +157,9 @@ fn pattern_copy_preserves_context_and_does_not_charge_shifts() {
 fn helper_overflow_keeps_full_reservation_but_publishes_no_environment() {
     let (mut root, slots) = two_occurrences();
     root.hole_binders.insert("aa".into(), usize::MAX);
-    let (result, used, bytes, count) = run(&root, EnvironmentDerivation::Slots(&slots), 11, 17);
+    let (result, used, bytes, count) = run(&root, EnvironmentDerivation::Slots(&slots), 16, 24);
     assert_eq!(result.err(), Some(RholangAstLowerError::ScopeIndexOverflow));
-    assert_eq!((used, bytes, count), (11, 0, 0));
+    assert_eq!((used, bytes, count), (16, 0, 0));
     assert_eq!(root.hole_binders.get("aa"), Some(&usize::MAX));
 }
 

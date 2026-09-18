@@ -7,9 +7,11 @@
 //! processes are not accepted by the existing injection reducer.
 //!
 //! Admission borrows each structural child on an explicit worklist, charging
-//! its occurrence before pushing it. Source-New copies reuse the node's
-//! generated stack-safe Clone; total preparation/output charging is a separate
-//! enclosing obligation, not established by this import-only bound.
+//! its occurrence before pushing it. It retains each value's occurrence and
+//! payload totals for paid source-New copies through the node's generated
+//! stack-safe Clone, without rescanning completed values. These logical copy
+//! charges are not native instruction, allocator, or RSS bounds. ImportLimits
+//! do not bound the incoming HashMap's native bucket scan or canonical sort.
 
 use super::*;
 use models::rhoapi::g_unforgeable::UnfInstance;
@@ -55,6 +57,27 @@ pub enum ImportAdmissionError {
 #[derive(Default)]
 pub(crate) struct CheckedCallerImports {
     entries: Vec<(String, Par)>,
+    copy_receipts: Vec<ImportCopyReceipt>,
+}
+
+/// Measured by the existing admission walk, in the exact entry order.
+/// Closed metadata is empty; private-name and opaque byte payloads are counted
+/// by the same validator as primitive and nested collection payloads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImportCopyReceipt {
+    occurrences: usize,
+    payload_bytes: usize,
+}
+
+impl ImportCopyReceipt {
+    fn reserve(&self, reserve: &mut StorageReservation<'_>) -> Result<(), RholangAstLowerError> {
+        preparation_scope::reserve_parts(
+            self.occurrences,
+            self.occurrences,
+            self.payload_bytes,
+            reserve,
+        )
+    }
 }
 
 impl CheckedCallerImports {
@@ -80,12 +103,22 @@ impl CheckedCallerImports {
         entries.extend(source);
         entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
         poll(cancelled)?;
+        let mut copy_receipts = Vec::new();
+        copy_receipts
+            .try_reserve_exact(entries.len())
+            .map_err(|_| ImportAdmissionError::AllocationFailed)?;
         // Validate in canonical key order, not randomized HashMap order.
         for (_, value) in &entries {
+            let before_nodes = meter.nodes;
+            let before_bytes = meter.payload_bytes;
             validate_value(value, &mut meter, cancelled)?;
+            copy_receipts.push(ImportCopyReceipt {
+                occurrences: meter.nodes - before_nodes,
+                payload_bytes: meter.payload_bytes - before_bytes,
+            });
         }
         poll(cancelled)?;
-        Ok(Self { entries })
+        Ok(Self { entries, copy_receipts })
     }
 
     pub(super) fn keys(&self) -> Vec<String> {
@@ -123,6 +156,31 @@ impl CheckedCallerImports {
             .iter()
             .map(|(_, value)| value.clone())
             .collect()
+    }
+
+    /// Every call pays again through the caller's existing reservation. No
+    /// receipt is consumed, budget reset, or generated native Clone replaced.
+    pub(super) fn values_with_reservation(
+        &self,
+        reserve: &mut StorageReservation<'_>,
+    ) -> Result<Vec<Par>, RholangAstLowerError> {
+        let slots = self
+            .entries
+            .len()
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        preparation_scope::reserve_parts(3, slots, 0, reserve)?;
+        let mut values = Vec::with_capacity(self.entries.len());
+        let mut entries = self.entries.iter().zip(&self.copy_receipts);
+        loop {
+            preparation_scope::reserve_parts(2, 0, 0, reserve)?;
+            let Some(((_, value), receipt)) = entries.next() else {
+                break;
+            };
+            receipt.reserve(reserve)?;
+            values.push(value.clone());
+        }
+        Ok(values)
     }
 }
 

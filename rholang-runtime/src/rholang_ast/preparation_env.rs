@@ -12,6 +12,7 @@ use super::*;
 /// Borrow the inputs until admission; never prepare a copied context first.
 pub(super) enum EnvironmentDerivation<'a> {
     Binders(&'a [Binder<String>]),
+    SourceBinders(&'a [Binder<String>]),
     Slots(&'a [ReceiveSlot]),
     Pattern,
     Empty,
@@ -66,11 +67,25 @@ impl EnvArena<'_> {
                 .binders
                 .len()
                 .checked_add(source.hole_binders.len())
+                .and_then(|count| count.checked_add(source.construction_holes.len()))
                 .ok_or(RholangAstLowerError::PreparationSizeOverflow)?,
         };
         let (added, shifted) = match derivation {
             EnvironmentDerivation::Binders(binders) => (binders.len(), old),
-            EnvironmentDerivation::Slots(slots) => (slots.len(), old),
+            EnvironmentDerivation::SourceBinders(binders) => (
+                binders
+                    .len()
+                    .checked_mul(2)
+                    .ok_or(RholangAstLowerError::PreparationSizeOverflow)?,
+                old,
+            ),
+            EnvironmentDerivation::Slots(slots) => (
+                slots
+                    .len()
+                    .checked_mul(2)
+                    .ok_or(RholangAstLowerError::PreparationSizeOverflow)?,
+                old,
+            ),
             EnvironmentDerivation::Pattern | EnvironmentDerivation::Empty => (0, 0),
         };
         let occurrences = old
@@ -91,12 +106,24 @@ impl EnvArena<'_> {
                 reserve(0, 0)?;
                 add_key_bytes(&mut key_bytes, name.len())?;
             }
+            for name in source.construction_holes.keys() {
+                reserve(0, 0)?;
+                add_key_bytes(&mut key_bytes, name.len())?;
+            }
         }
         match derivation {
             EnvironmentDerivation::Binders(binders) => {
                 for binder in binders {
                     reserve(0, 0)?;
                     add_key_bytes(&mut key_bytes, variable_name_bytes(&binder.0))?;
+                }
+            },
+            EnvironmentDerivation::SourceBinders(binders) => {
+                for binder in binders {
+                    reserve(0, 0)?;
+                    let bytes = variable_name_bytes(&binder.0);
+                    add_key_bytes(&mut key_bytes, bytes)?;
+                    add_key_bytes(&mut key_bytes, bytes)?;
                 }
             },
             EnvironmentDerivation::Slots(slots) => {
@@ -106,6 +133,7 @@ impl EnvArena<'_> {
                         ReceiveSlot::Moniker(binder) => variable_name_bytes(&binder.0),
                         ReceiveSlot::Hole(name) => name.len(),
                     };
+                    add_key_bytes(&mut key_bytes, bytes)?;
                     add_key_bytes(&mut key_bytes, bytes)?;
                 }
             },
@@ -119,6 +147,9 @@ impl EnvArena<'_> {
         reserve(work, units)?;
         let derived = match derivation {
             EnvironmentDerivation::Binders(binders) => extend_env(source, binders)?,
+            EnvironmentDerivation::SourceBinders(binders) => {
+                source.extend_source_binders(binders)?
+            },
             EnvironmentDerivation::Slots(slots) => source.extend_slots(slots)?,
             EnvironmentDerivation::Pattern => source.in_pattern_position(),
             EnvironmentDerivation::Empty => match source.admission {

@@ -72,13 +72,24 @@ pub use scope::SourceAdmissionMode;
 pub(crate) mod imports;
 pub(crate) mod session;
 
+mod prepared_frontend;
+pub use prepared_frontend::{RholangPreparationPolicy, RholangProgramFrontend};
+
 mod preparation_env;
+mod preparation_flt;
+mod preparation_rebuild;
 mod preparation_scope;
 mod preparation_source;
 use preparation_env::EnvironmentDerivation;
 
 #[cfg(test)]
 mod preparation_tests;
+
+#[cfg(test)]
+mod preparation_capture_tests;
+
+#[cfg(test)]
+mod preparation_replacement_tests;
 
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
@@ -128,6 +139,10 @@ pub struct BoundEnv {
     /// `FreeVar`-keyed lookup misses), and a construction-position `${name}` reads
     /// its fill's `^bound` level from here too.
     hole_binders: HashMap<String, usize>,
+    // Named construction holes have their own lexical namespace. Source
+    // binders populate it; generated trampoline binders only shift it.
+    // This never participates in identity-based ordinary-variable resolution.
+    construction_holes: HashMap<String, usize>,
     resolver: Arc<dyn FltResolve>,
     caller_imports: Arc<imports::CheckedCallerImports>,
     /// M-1b: are unbound free variables being lowered in PATTERN position?
@@ -183,6 +198,7 @@ impl BoundEnv {
             scope_width: 0,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
+            construction_holes: HashMap::new(),
             resolver: Arc::new(EmptyFltResolver),
             caller_imports: Arc::default(),
             free_vars_are_patterns: false,
@@ -217,6 +233,7 @@ impl BoundEnv {
             scope_width: 0,
             binders: HashMap::new(),
             hole_binders: HashMap::new(),
+            construction_holes: HashMap::new(),
             resolver,
             caller_imports: Arc::default(),
             free_vars_are_patterns: false,
@@ -227,6 +244,10 @@ impl BoundEnv {
     /// pattern that introduced it), or `None` when `name` names no FLT hole.
     fn flt_hole_level(&self, name: &str) -> Option<usize> {
         self.hole_binders.get(name).copied()
+    }
+
+    fn construction_hole_level(&self, name: &str) -> Option<usize> {
+        self.construction_holes.get(name).copied()
     }
 
     /// L9-6b/#14: derive the continuation scope of a receive whose `slots` are its
@@ -249,14 +270,19 @@ impl BoundEnv {
             .iter()
             .map(|(name, index)| Ok((name.clone(), scope::checked_shift(*index, width)?)))
             .collect::<Result<HashMap<String, usize>, RholangAstLowerError>>()?;
+        let mut construction_holes = self.shift_construction_holes(width)?;
         for (formal_index, slot) in slots.iter().enumerate() {
             let level = width - 1 - formal_index;
             match slot {
                 ReceiveSlot::Moniker(binder) => {
                     binders.insert(binder.0.clone(), level);
+                    if let Some(name) = &binder.0.pretty_name {
+                        construction_holes.insert(name.clone(), level);
+                    }
                 },
                 ReceiveSlot::Hole(name) => {
                     hole_binders.insert(name.clone(), level);
+                    construction_holes.insert(name.clone(), level);
                 },
             }
         }
@@ -266,10 +292,35 @@ impl BoundEnv {
             scope_width,
             binders,
             hole_binders,
+            construction_holes,
             resolver: Arc::clone(&self.resolver),
             caller_imports: Arc::clone(&self.caller_imports),
             free_vars_are_patterns: self.free_vars_are_patterns,
         })
+    }
+
+    fn shift_construction_holes(
+        &self,
+        width: usize,
+    ) -> Result<HashMap<String, usize>, RholangAstLowerError> {
+        self.construction_holes
+            .iter()
+            .map(|(name, index)| Ok((name.clone(), scope::checked_shift(*index, width)?)))
+            .collect()
+    }
+
+    fn extend_source_binders(
+        &self,
+        binders: &[Binder<String>],
+    ) -> Result<BoundEnv, RholangAstLowerError> {
+        let mut env = extend_env(self, binders)?;
+        for (index, binder) in binders.iter().enumerate() {
+            if let Some(name) = &binder.0.pretty_name {
+                env.construction_holes
+                    .insert(name.clone(), binders.len() - 1 - index);
+            }
+        }
+        Ok(env)
     }
 }
 
@@ -1373,6 +1424,8 @@ enum Job<'a> {
     Pattern(&'a Proc, u32),
     /// `rholang_formula::lower_formula_in_env` — a spatial formula, compiled to a pattern.
     Formula(&'a Proc, EnvId),
+    /// A receive guard retains qualified predicates for the atomic matcher.
+    Guard(&'a Proc, EnvId),
     /// Run a continuation over the values its children left.
     Combine(Kont<'a>),
 }
@@ -2017,6 +2070,7 @@ fn drive_machine_preparing(
             Job::ForRows(rows, body, env) => drive.enter_for_rows(rows, body, env)?,
             Job::Pattern(pat, slot) => drive.enter_pattern(pat, slot)?,
             Job::Formula(formula, env) => drive.enter_formula(formula, env)?,
+            Job::Guard(guard, env) => drive.enter_guard(guard, env)?,
             Job::Combine(kont) => drive.combine(kont)?,
         }
     }
@@ -2147,7 +2201,7 @@ impl<'a> Drive<'a> {
                     )?,
                 };
                 let extended =
-                    self.derive_environment(env, EnvironmentDerivation::Binders(&binders))?;
+                    self.derive_environment(env, EnvironmentDerivation::SourceBinders(&binders))?;
                 if self.source_preparation == SourcePreparation::Checked {
                     preparation_scope::reserve_parts(3, 1, 0, self.stacks.reservation)?;
                 }
@@ -2176,8 +2230,10 @@ impl<'a> Drive<'a> {
                         self.stacks.reservation,
                     )?,
                 };
-                let extended =
-                    self.derive_environment(env, EnvironmentDerivation::Binders(&ordered_binders))?;
+                let extended = self.derive_environment(
+                    env,
+                    EnvironmentDerivation::SourceBinders(&ordered_binders),
+                )?;
                 if self.source_preparation == SourcePreparation::Checked {
                     preparation_scope::reserve_parts(3, 1, 0, self.stacks.reservation)?;
                 }
@@ -2484,33 +2540,36 @@ impl<'a> Drive<'a> {
             let result_drop =
                 Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(result_var.clone())))));
             let mut replaced = false;
-            let transformed =
-                self.keep(Arc::new(replace_dynamic_flt(body, &node, &result_drop, &mut replaced)));
+            let transformed = replace_first_body_site_preparing(
+                body,
+                &result_drop,
+                &mut replaced,
+                |candidate| {
+                    matches!(candidate,
+                        Proc::PFlt(found) | Proc::PFltFence(found) | Proc::PFltBrace(found)
+                            if Arc::ptr_eq(found, &node))
+                },
+                self.source_preparation,
+                self.stacks.reservation,
+            )?;
+            if self.source_preparation == SourcePreparation::Checked {
+                preparation_scope::reserve_parts(2, 2, 0, self.stacks.reservation)?;
+            }
+            let transformed = self.keep(Arc::new(transformed));
             debug_assert!(replaced, "the dynamic FLT finder and replacement PDA diverged");
 
             let env_new =
                 self.derive_environment(env, EnvironmentDerivation::Binders(&[Binder(ret_var)]))?;
             let selector = lower_proc_var(&node.selector, self.env(env_new))?;
-            let mut fills = BTreeMap::new();
-            for hole in &node.holes {
-                let level = self
-                    .env(env_new)
-                    .flt_hole_level(&hole.name)
-                    .ok_or_else(|| {
-                        RholangAstLowerError::FltReflect(format!(
-                            "construction hole ${{{}}} is not bound by an enclosing FLT pattern",
-                            hole.name
-                        ))
-                    })?;
-                fills.insert(
-                    hole.name.clone(),
-                    scope::lower_bound_index(self.env(env_new).scope_width, level)?,
-                );
-            }
+            let fills = flt_construction_captures(&node, self.env(env_new))?;
             node.validate()
                 .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
             let template = node.stage(FltPolarity::PositiveConstruction);
-            let (pieces, holes) = runtime_template_parts(template);
+            let (pieces, holes) = preparation_flt::template_parts(
+                template,
+                self.source_preparation,
+                self.stacks.reservation,
+            )?;
             let reply = new_boundvar_par(0, create_bit_vector(&[0]), false);
             let request = crate::language_install::encode_flt_construct_call(
                 selector,
@@ -2576,9 +2635,11 @@ impl<'a> Drive<'a> {
             Proc::PVar(ordvar) => match &ordvar.0 {
                 Var::Free(free_var) => {
                     let state = &mut self.pattern_states[slot as usize];
-                    let index = state.counter;
-                    state.counter += 1;
-                    state.binders.push(Binder(free_var.clone()));
+                    let index = preparation_source::SourceBuilder::new(
+                        self.source_preparation,
+                        self.stacks.reservation,
+                    )
+                    .bind_pattern_variable(state, free_var)?;
                     self.stacks.value(new_freevar_par(index, Vec::new()))?;
                 },
                 Var::Bound(_) => {
@@ -2633,6 +2694,47 @@ impl<'a> Drive<'a> {
                 let empty = self.empty_env()?;
                 self.stacks.push(Job::Proc(other, empty))?;
             },
+        }
+        Ok(())
+    }
+
+    fn enter_guard(&mut self, guard: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
+        match guard {
+            Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
+                let selector = lower_proc_var(&node.selector, self.env(env))?;
+                let captures = flt_construction_captures(node, self.env(env))?;
+                node.validate()
+                    .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
+                let template = node.stage(FltPolarity::PositiveConstruction);
+                let (pieces, holes) = preparation_flt::template_parts(
+                    template,
+                    self.source_preparation,
+                    self.stacks.reservation,
+                )?;
+                let descriptor = crate::guard_predicate::encode_flt_predicate_descriptor(
+                    selector,
+                    &pieces,
+                    &holes,
+                    template.category,
+                    &captures,
+                );
+                self.stacks.value(descriptor)?;
+            },
+            Proc::And(left, right) => self.push_children(
+                Kont::BinExpr(BinOp::And),
+                [Job::Guard(left, env), Job::Guard(right, env)],
+            )?,
+            Proc::Or(left, right) => self.push_children(
+                Kont::BinExpr(BinOp::Or),
+                [Job::Guard(left, env), Job::Guard(right, env)],
+            )?,
+            Proc::Implies(left, right) => {
+                self.push_children(Kont::Implies, [Job::Guard(left, env), Job::Guard(right, env)])?
+            },
+            Proc::Not(inner) => {
+                self.push_children(Kont::UnExpr(UnOp::Not), [Job::Guard(inner, env)])?
+            },
+            _ => self.stacks.push(Job::Proc(guard, env))?,
         }
         Ok(())
     }
@@ -2728,7 +2830,10 @@ fn unbind_uri_scope(
 
 impl<'a> Drive<'a> {
     fn enter_ddl(&mut self, root: DdlRoot<'a>, env: EnvId) -> Result<(), RholangAstLowerError> {
-        let plan = DdlLowerPlan::build(root);
+        let plan = match self.source_preparation {
+            SourcePreparation::Original => DdlLowerPlan::build(root),
+            SourcePreparation::Checked => DdlLowerPlan::try_build(root, self.stacks.reservation)?,
+        };
         let processes = self
             .stacks
             .collect_roster(plan.process_jobs().len(), plan.process_jobs())?;
@@ -2840,9 +2945,14 @@ impl<'a> Drive<'a> {
             },
             Kont::Ddl(plan) => {
                 let process_values = self.stacks.pop_values(plan.process_jobs().len())?;
-                let value = plan
-                    .finish(process_values)
-                    .map_err(RholangAstLowerError::DdlWire)?;
+                let value = match self.source_preparation {
+                    SourcePreparation::Original => plan
+                        .finish(process_values)
+                        .map_err(RholangAstLowerError::DdlWire)?,
+                    SourcePreparation::Checked => {
+                        plan.try_finish(process_values, self.stacks.reservation)?
+                    },
+                };
                 self.stacks.value(value)?;
             },
             Kont::SetLit(n) => {
@@ -2950,7 +3060,14 @@ impl<'a> Drive<'a> {
             },
             Kont::New { descriptor, env } => {
                 let body = self.stacks.pop_value()?;
-                let injections = self.env(env).caller_imports.values();
+                let injections = match self.source_preparation {
+                    SourcePreparation::Original => self.env(env).caller_imports.values(),
+                    SourcePreparation::Checked => self
+                        .envs
+                        .get(env)
+                        .caller_imports
+                        .values_with_reservation(self.stacks.reservation)?,
+                };
                 self.stacks.value(
                     Target::fresh(*descriptor, body, injections)
                         .map_err(RholangAstLowerError::FreshConstruction)?,
@@ -3023,7 +3140,7 @@ impl<'a> Drive<'a> {
                 match state.cond {
                     Some(guard) => {
                         let extended = state.extended_env;
-                        self.push_children(Kont::ForGuard(state), [Job::Proc(guard, extended)])?;
+                        self.push_children(Kont::ForGuard(state), [Job::Guard(guard, extended)])?;
                     },
                     None => return self.assemble_receive(state, None),
                 }
@@ -3184,12 +3301,21 @@ impl<'a> Drive<'a> {
             self.stacks.push(Job::Body(body, env))?;
             return Ok(());
         }
-        let (binds, persistent, cond) = decompose_for_row_borrowed(&rows[0])?;
+        let (binds, persistent, cond) = preparation_source::SourceBuilder::new(
+            self.source_preparation,
+            self.stacks.reservation,
+        )
+        .for_row(&rows[0])?;
         if binds.is_empty() {
             return Err(RholangAstLowerError::EmptyInputJoin);
         }
         let (env, pattern_tokens, pattern_preparations) =
             self.prepare_dynamic_patterns(&binds, env)?;
+        let records = binds
+            .len()
+            .checked_add(3)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        self.stacks.charge_storage(4, records)?;
         let binds_rho = Vec::with_capacity(binds.len());
         self.schedule_bind_source(Box::new(ForState {
             rows,
@@ -3215,13 +3341,30 @@ impl<'a> Drive<'a> {
         mut env: EnvId,
     ) -> Result<(EnvId, Vec<Option<FreeVar<String>>>, Vec<PatternPrepFrame>), RholangAstLowerError>
     {
+        let records = binds
+            .len()
+            .checked_mul(2)
+            .and_then(|count| count.checked_add(2))
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        self.stacks.charge_storage(binds.len(), records)?;
         let mut tokens = vec![None; binds.len()];
-        let mut frames = Vec::new();
-        for (index, bind) in binds.iter().enumerate() {
-            let Some(node) = bind_flt_node(bind) else {
+        let mut frames = Vec::with_capacity(binds.len());
+        let mut binds = binds.iter().enumerate();
+        loop {
+            self.stacks.charge_storage(3, 0)?;
+            let Some((index, bind)) = binds.next() else {
+                break;
+            };
+            let Some(node) = bind_flt_node_borrowed(bind) else {
                 continue;
             };
-            if flt_selector_level(node.as_ref(), self.env(env)).is_none() {
+            if preparation_source::SourceBuilder::new(
+                self.source_preparation,
+                self.stacks.reservation,
+            )
+            .selector_level(node, self.envs.get(env))?
+            .is_none()
+            {
                 continue;
             }
             let ret_var = FreeVar::fresh_named("__mtl_flt_pattern_ret".to_string());
@@ -3232,15 +3375,21 @@ impl<'a> Drive<'a> {
             node.validate()
                 .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
             let template = node.stage(FltPolarity::NegativePattern);
-            let (pieces, holes) = runtime_template_parts(template);
+            let (pieces, holes) = preparation_flt::template_parts(
+                template,
+                self.source_preparation,
+                self.stacks.reservation,
+            )?;
             let reply = new_boundvar_par(0, create_bit_vector(&[0]), false);
-            let request = crate::language_install::encode_flt_pattern_call(
+            let request = preparation_flt::pattern_request(
                 selector,
                 &pieces,
                 &holes,
                 template.category,
                 reply,
-            );
+                self.source_preparation,
+                self.stacks.reservation,
+            )?;
             frames.push(PatternPrepFrame {
                 channel: mettail_rholang_codegen::LANGUAGE_FLT_PATTERN_BAND
                     .channel(0, crate::language_install::LANGUAGE_FLT_PATTERN_ABI_V1),
@@ -3279,7 +3428,7 @@ impl<'a> Drive<'a> {
 
         // L9-6b: an FLT receive pattern is reflected by the guest, not walked here. Its holes
         // are receive binders, so they enter the slot list in bind order alongside monikers.
-        if let Some(node) = bind_flt_node(bind) {
+        if let Some(node) = bind_flt_node_borrowed(bind) {
             if let Some(token_var) = &state.pattern_tokens[state.next_bind] {
                 // `Reduce::eval_receive` substitutes patterns at depth one. An outer value
                 // referenced from a pattern is therefore a `VarRef { depth: 1 }`, not an
@@ -3346,11 +3495,16 @@ impl<'a> Drive<'a> {
             return self.schedule_bind_source(state);
         }
 
-        let pat_proc = bind_pattern_proc(bind)
-            .ok_or(RholangAstLowerError::UnsupportedProc("for-row pattern"))?;
+        let pat_proc = preparation_source::SourceBuilder::new(
+            self.source_preparation,
+            self.stacks.reservation,
+        )
+        .bind_pattern(bind)?
+        .ok_or(RholangAstLowerError::UnsupportedProc("for-row pattern"))?;
+        self.stacks.charge_storage(3, 2)?;
         let pat_proc = self.keep(Arc::new(pat_proc));
         let slot = u32::try_from(self.pattern_states.len())
-            .expect("rholang lowering: more than 2^32 receive binds in one term");
+            .map_err(|_| RholangAstLowerError::PreparationSizeOverflow)?;
         self.pattern_states.push(PatternState::default());
         state.pending_source = Some(source);
         self.push_children(Kont::ForPattern(state, slot), [Job::Pattern(pat_proc, slot)])?;
@@ -4624,6 +4778,25 @@ fn replace_first_body_site(
     replaced: &mut bool,
     is_site: impl Fn(&Proc) -> bool,
 ) -> Proc {
+    replace_first_body_site_preparing(
+        proc,
+        replacement,
+        replaced,
+        is_site,
+        SourcePreparation::Original,
+        &mut |_, _| Ok(()),
+    )
+    .expect("original body replacement has no resource refusal")
+}
+
+fn replace_first_body_site_preparing(
+    proc: &Proc,
+    replacement: &Proc,
+    replaced: &mut bool,
+    is_site: impl Fn(&Proc) -> bool,
+    policy: SourcePreparation,
+    reservation: &mut StorageReservation<'_>,
+) -> Result<Proc, RholangAstLowerError> {
     enum Job<'a> {
         VisitProc(&'a Proc),
         VisitName(&'a Name),
@@ -4639,29 +4812,42 @@ fn replace_first_body_site(
         },
     }
 
-    fn take_children<T>(values: &mut Vec<T>, base: usize, expected: usize) -> Vec<T> {
-        let children = values.split_off(base);
-        assert_eq!(children.len(), expected, "fold-rewrite continuation received the wrong arity");
-        children
-    }
-
+    let mut build = preparation_source::SourceBuilder::new(policy, reservation);
+    build.reserve(1, 1)?;
     let desugared_nodes = Arena::new();
-    let mut jobs = vec![Job::VisitProc(proc)];
-    let mut proc_values = Vec::new();
-    let mut name_values = Vec::new();
+    let mut jobs = build.worklist()?;
+    let mut proc_values = build.worklist()?;
+    let mut name_values = build.worklist()?;
+    build.push(&mut jobs, || Job::VisitProc(proc))?;
 
-    while let Some(job) = jobs.pop() {
+    while let Some(job) = build.pop(&mut jobs)? {
         match job {
             Job::VisitProc(proc) => {
                 if *replaced {
-                    proc_values.push(proc.clone());
+                    build.push_proc_copy(&mut proc_values, proc)?;
                     continue;
                 }
-                if let Some(desugared) = desugar_surface_sugar_node(proc) {
-                    jobs.push(Job::VisitProc(desugared_nodes.alloc(desugared)));
+                if let Some(desugared) = build.desugar(proc)? {
+                    let desugared = build.keep(&desugared_nodes, desugared)?;
+                    build.push(&mut jobs, || Job::VisitProc(desugared))?;
                     continue;
                 }
 
+                build.reserve(2, 0)?;
+                if policy == SourcePreparation::Checked {
+                    let excluded = match proc {
+                        Proc::IntBinProc(..) => Some("IntBinProc"),
+                        Proc::UIntBinProc(..) => Some("UIntBinProc"),
+                        Proc::FloatBinProc(..) => Some("FloatBinProc"),
+                        Proc::FixedBinProc(..) => Some("FixedBinProc"),
+                        Proc::BigintCastProc(..) => Some("BigintCastProc"),
+                        Proc::BigratCastProc(..) => Some("BigratCastProc"),
+                        _ => None,
+                    };
+                    if let Some(constructor) = excluded {
+                        build.original_only(constructor)?;
+                    }
+                }
                 let proc_base = proc_values.len();
                 let name_base = name_values.len();
                 match proc {
@@ -4676,19 +4862,19 @@ fn replace_first_body_site(
                     | Proc::Not(a)
                     | Proc::PLookaheadAll(a)
                     | Proc::PLookahead(a, _) => {
-                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                        jobs.push(Job::VisitProc(a.as_ref()));
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push(&mut jobs, || Job::VisitProc(a.as_ref()))?;
                     },
                     Proc::POutput(name, payload) | Proc::PPersistOutput(name, payload) => {
-                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                        jobs.push(Job::VisitProc(payload.as_ref()));
-                        jobs.push(Job::VisitName(name.as_ref()));
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push(&mut jobs, || Job::VisitProc(payload.as_ref()))?;
+                        build.push(&mut jobs, || Job::VisitName(name.as_ref()))?;
                     },
                     Proc::POutputShort(channel, payload)
                     | Proc::PPersistOutputShort(channel, payload) => {
-                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                        jobs.push(Job::VisitProc(payload.as_ref()));
-                        jobs.push(Job::VisitProc(channel.as_ref()));
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push(&mut jobs, || Job::VisitProc(payload.as_ref()))?;
+                        build.push(&mut jobs, || Job::VisitProc(channel.as_ref()))?;
                     },
                     Proc::PParInfix(left, right)
                     | Proc::Add(left, right)
@@ -4705,33 +4891,40 @@ fn replace_first_body_site(
                     | Proc::And(left, right)
                     | Proc::Or(left, right)
                     | Proc::Implies(left, right) => {
-                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                        jobs.push(Job::VisitProc(right.as_ref()));
-                        jobs.push(Job::VisitProc(left.as_ref()));
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push(&mut jobs, || Job::VisitProc(right.as_ref()))?;
+                        build.push(&mut jobs, || Job::VisitProc(left.as_ref()))?;
                     },
                     Proc::PPar(parts) => {
-                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                        let first = jobs.len();
-                        jobs.extend(parts.iter_elements().map(Job::VisitProc));
-                        jobs[first..].reverse();
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push_bag_reversed(&mut jobs, parts, Job::VisitProc)?;
                     },
                     Proc::PDrop(name) => {
-                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                        jobs.push(Job::VisitName(name.as_ref()));
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push(&mut jobs, || Job::VisitName(name.as_ref()))?;
                     },
                     Proc::CastList(list) => {
                         if let List::ListLit(items) = list.as_ref() {
-                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                            jobs.extend(items.iter().rev().map(Job::VisitProc));
+                            build.push(&mut jobs, || Job::BuildProc {
+                                proc,
+                                proc_base,
+                                name_base,
+                            })?;
+                            build.push_slice_reversed(&mut jobs, items, Job::VisitProc)?;
                         } else {
-                            proc_values.push(proc.clone());
+                            build.push_proc_copy(&mut proc_values, proc)?;
                         }
                     },
                     Proc::CastBag(bag) => {
+                        build.original_only("CastBag")?;
                         if let Bag::BagLit(entries) = bag.as_ref() {
                             let mut entries = entries.iter().collect::<Vec<_>>();
                             entries.sort_by_key(|(item, _)| *item);
-                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                            build.push(&mut jobs, || Job::BuildProc {
+                                proc,
+                                proc_base,
+                                name_base,
+                            })?;
                             jobs.extend(
                                 entries
                                     .into_iter()
@@ -4739,35 +4932,44 @@ fn replace_first_body_site(
                                     .map(|(item, _)| Job::VisitProc(item)),
                             );
                         } else {
-                            proc_values.push(proc.clone());
+                            build.push_proc_copy(&mut proc_values, proc)?;
                         }
                     },
                     Proc::CastMap(map) => {
                         if let Map::MapLit(entries) = map.as_ref() {
-                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                            let mut children = Vec::with_capacity(entries.len() * 2);
-                            for (key, value) in entries.iter() {
-                                children.push(Job::VisitProc(key));
-                                children.push(Job::VisitProc(value));
-                            }
-                            jobs.extend(children.into_iter().rev());
+                            build.push(&mut jobs, || Job::BuildProc {
+                                proc,
+                                proc_base,
+                                name_base,
+                            })?;
+                            build.push_map_reversed(&mut jobs, entries, Job::VisitProc)?;
                         } else {
-                            proc_values.push(proc.clone());
+                            build.push_proc_copy(&mut proc_values, proc)?;
                         }
                     },
                     Proc::CastSet(set) => {
+                        build.original_only("CastSet")?;
                         if let Set::SetLit(items) = set.as_ref() {
                             let mut items = items.iter().collect::<Vec<_>>();
                             items.sort();
-                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                            build.push(&mut jobs, || Job::BuildProc {
+                                proc,
+                                proc_base,
+                                name_base,
+                            })?;
                             jobs.extend(items.into_iter().rev().map(Job::VisitProc));
                         } else {
-                            proc_values.push(proc.clone());
+                            build.push_proc_copy(&mut proc_values, proc)?;
                         }
                     },
                     Proc::CastPathmap(pathmap) => {
+                        build.original_only("CastPathmap")?;
                         if let Pathmap::PathmapLit(entries) = pathmap.as_ref() {
-                            jobs.push(Job::BuildProc { proc, proc_base, name_base });
+                            build.push(&mut jobs, || Job::BuildProc {
+                                proc,
+                                proc_base,
+                                name_base,
+                            })?;
                             let mut children = Vec::with_capacity(match entries.mode() {
                                 mettail_runtime::PathMapMode::Map => entries.len() * 2,
                                 _ => entries.len(),
@@ -4780,41 +4982,45 @@ fn replace_first_body_site(
                             }
                             jobs.extend(children.into_iter().rev());
                         } else {
-                            proc_values.push(proc.clone());
+                            build.push_proc_copy(&mut proc_values, proc)?;
                         }
                     },
                     Proc::MethodCall(receiver, _, arguments) => {
-                        jobs.push(Job::BuildProc { proc, proc_base, name_base });
-                        jobs.extend(arguments.iter().rev().map(Job::VisitProc));
-                        jobs.push(Job::VisitProc(receiver.as_ref()));
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push_slice_reversed(&mut jobs, arguments, Job::VisitProc)?;
+                        build.push(&mut jobs, || Job::VisitProc(receiver.as_ref()))?;
                     },
                     _ if is_site(proc) => {
                         *replaced = true;
-                        proc_values.push(replacement.clone());
+                        build.push_proc_copy(&mut proc_values, replacement)?;
                     },
-                    _ => proc_values.push(proc.clone()),
+                    _ => build.push_proc_copy(&mut proc_values, proc)?,
                 }
             },
             Job::VisitName(name) => {
                 if *replaced {
-                    name_values.push(name.clone());
+                    build.push_name_copy(&mut name_values, name)?;
                     continue;
                 }
                 let proc_base = proc_values.len();
                 let name_base = name_values.len();
                 match name {
                     Name::NQuote(proc) | Name::NQuoteShort(proc) => {
-                        jobs.push(Job::BuildName { name, proc_base, name_base });
-                        jobs.push(Job::VisitProc(proc.as_ref()));
+                        build.push(&mut jobs, || Job::BuildName { name, proc_base, name_base })?;
+                        build.push(&mut jobs, || Job::VisitProc(proc.as_ref()))?;
                     },
                     Name::NParen(inner) => {
-                        jobs.push(Job::BuildName { name, proc_base, name_base });
-                        jobs.push(Job::VisitName(inner.as_ref()));
+                        build.push(&mut jobs, || Job::BuildName { name, proc_base, name_base })?;
+                        build.push(&mut jobs, || Job::VisitName(inner.as_ref()))?;
                     },
-                    _ => name_values.push(name.clone()),
+                    _ => build.push_name_copy(&mut name_values, name)?,
                 }
             },
             Job::BuildProc { proc, proc_base, name_base } => {
+                // Fixed constructor selection, at most two Arc shells, child
+                // extraction bookkeeping and normal owned result cleanup.
+                // Variable-width storage/key operations are admitted separately.
+                build.reserve(32, 8)?;
                 let rebuilt = match proc {
                     Proc::IntBinProc(..)
                     | Proc::UIntBinProc(..)
@@ -4822,38 +5028,44 @@ fn replace_first_body_site(
                     | Proc::FixedBinProc(..)
                     | Proc::BigintCastProc(..)
                     | Proc::BigratCastProc(..) => {
-                        let mut children = take_children(&mut proc_values, proc_base, 1);
+                        let mut children = build.take_children(&mut proc_values, proc_base, 1)?;
                         let operand = children.pop().expect("one fold operand");
                         rebuild_fold(proc, Arc::new(operand))
                     },
                     Proc::POutput(_, _) => {
-                        let payload = take_children(&mut proc_values, proc_base, 1)
+                        let payload = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one send payload");
-                        let name = take_children(&mut name_values, name_base, 1)
+                        let name = build
+                            .take_children(&mut name_values, name_base, 1)?
                             .pop()
                             .expect("one send channel");
                         Proc::POutput(Arc::new(name), Arc::new(payload))
                     },
                     Proc::PPersistOutput(_, _) => {
-                        let payload = take_children(&mut proc_values, proc_base, 1)
+                        let payload = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one persistent-send payload");
-                        let name = take_children(&mut name_values, name_base, 1)
+                        let name = build
+                            .take_children(&mut name_values, name_base, 1)?
                             .pop()
                             .expect("one persistent-send channel");
                         Proc::PPersistOutput(Arc::new(name), Arc::new(payload))
                     },
                     Proc::POutputShort(..) => {
-                        let mut children =
-                            take_children(&mut proc_values, proc_base, 2).into_iter();
+                        let mut children = build
+                            .take_children(&mut proc_values, proc_base, 2)?
+                            .into_iter();
                         let channel = children.next().expect("one short-send channel");
                         let payload = children.next().expect("one short-send payload");
                         Proc::POutputShort(Arc::new(channel), Arc::new(payload))
                     },
                     Proc::PPersistOutputShort(..) => {
-                        let mut children =
-                            take_children(&mut proc_values, proc_base, 2).into_iter();
+                        let mut children = build
+                            .take_children(&mut proc_values, proc_base, 2)?
+                            .into_iter();
                         let channel = children.next().expect("one persistent-short-send channel");
                         let payload = children.next().expect("one persistent-short-send payload");
                         Proc::PPersistOutputShort(Arc::new(channel), Arc::new(payload))
@@ -4873,63 +5085,74 @@ fn replace_first_body_site(
                     | Proc::And(..)
                     | Proc::Or(..)
                     | Proc::Implies(..) => {
-                        let mut children =
-                            take_children(&mut proc_values, proc_base, 2).into_iter();
+                        let mut children = build
+                            .take_children(&mut proc_values, proc_base, 2)?
+                            .into_iter();
                         let left = children.next().expect("left binary operand");
                         let right = children.next().expect("right binary operand");
                         rebuild_binary(proc, left, right)
                     },
-                    Proc::PPar(..) => {
-                        let child_count = proc_values.len() - proc_base;
-                        Proc::PPar(
-                            take_children(&mut proc_values, proc_base, child_count)
-                                .into_iter()
-                                .collect(),
-                        )
+                    Proc::PPar(parts) => {
+                        let child_count = proc_values
+                            .len()
+                            .checked_sub(proc_base)
+                            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                        let children =
+                            build.take_children(&mut proc_values, proc_base, child_count)?;
+                        Proc::PPar(build.rebuild_parallel(parts, children)?)
                     },
                     Proc::Matches(_, formula) => {
-                        let target = take_children(&mut proc_values, proc_base, 1)
+                        let target = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one matches target");
-                        Proc::Matches(Arc::new(target), formula.clone())
+                        Proc::Matches(Arc::new(target), build.share(formula)?)
                     },
                     Proc::NegProc(..) => {
-                        let inner = take_children(&mut proc_values, proc_base, 1)
+                        let inner = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one negation operand");
                         Proc::NegProc(Arc::new(inner))
                     },
                     Proc::Not(..) => {
-                        let inner = take_children(&mut proc_values, proc_base, 1)
+                        let inner = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one not operand");
                         Proc::Not(Arc::new(inner))
                     },
                     Proc::PLookaheadAll(..) => {
-                        let subject = take_children(&mut proc_values, proc_base, 1)
+                        let subject = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one lookahead subject");
                         Proc::PLookaheadAll(Arc::new(subject))
                     },
                     Proc::PLookahead(_, bound) => {
-                        let subject = take_children(&mut proc_values, proc_base, 1)
+                        let subject = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one bounded-lookahead subject");
-                        Proc::PLookahead(Arc::new(subject), bound.clone())
+                        Proc::PLookahead(Arc::new(subject), build.share(bound)?)
                     },
                     Proc::PDrop(..) => {
-                        let name = take_children(&mut name_values, name_base, 1)
+                        let name = build
+                            .take_children(&mut name_values, name_base, 1)?
                             .pop()
                             .expect("one drop name");
                         Proc::PDrop(Arc::new(name))
                     },
                     Proc::CastList(..) => {
-                        let child_count = proc_values.len() - proc_base;
-                        Proc::CastList(Arc::new(List::ListLit(take_children(
+                        let child_count = proc_values
+                            .len()
+                            .checked_sub(proc_base)
+                            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                        Proc::CastList(Arc::new(List::ListLit(build.take_children(
                             &mut proc_values,
                             proc_base,
                             child_count,
-                        ))))
+                        )?)))
                     },
                     Proc::CastBag(bag) => {
                         let Bag::BagLit(entries) = bag.as_ref() else {
@@ -4937,7 +5160,8 @@ fn replace_first_body_site(
                         };
                         let mut ordered = entries.iter().collect::<Vec<_>>();
                         ordered.sort_by_key(|(item, _)| *item);
-                        let children = take_children(&mut proc_values, proc_base, ordered.len());
+                        let children =
+                            build.take_children(&mut proc_values, proc_base, ordered.len())?;
                         let mut rebuilt = mettail_runtime::HashBag::new();
                         for (child, (_, count)) in children.into_iter().zip(ordered) {
                             rebuilt.insert_n(child, count);
@@ -4948,22 +5172,35 @@ fn replace_first_body_site(
                         let Map::MapLit(entries) = map.as_ref() else {
                             unreachable!("only map literals receive a continuation")
                         };
-                        let mut children =
-                            take_children(&mut proc_values, proc_base, entries.len() * 2)
-                                .into_iter();
-                        let mut rebuilt = mettail_runtime::HashMapLit::new();
-                        for _ in 0..entries.len() {
+                        let width = entries.len();
+                        let count = width
+                            .checked_mul(2)
+                            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                        let mut children = build
+                            .take_children(&mut proc_values, proc_base, count)?
+                            .into_iter();
+                        build.reserve(
+                            3,
+                            width
+                                .checked_add(1)
+                                .ok_or(RholangAstLowerError::PreparationSizeOverflow)?,
+                        )?;
+                        let mut pairs = Vec::with_capacity(width);
+                        for _ in 0..width {
+                            build.reserve(4, 0)?;
                             let key = children.next().expect("one map key");
                             let value = children.next().expect("one map value");
-                            rebuilt.insert(key, value);
+                            pairs.push((key, value));
                         }
+                        let rebuilt = build.rebuild_map(entries, pairs)?;
                         Proc::CastMap(Arc::new(Map::MapLit(rebuilt)))
                     },
                     Proc::CastSet(set) => {
                         let Set::SetLit(items) = set.as_ref() else {
                             unreachable!("only set literals receive a continuation")
                         };
-                        let children = take_children(&mut proc_values, proc_base, items.len());
+                        let children =
+                            build.take_children(&mut proc_values, proc_base, items.len())?;
                         Proc::CastSet(Arc::new(Set::SetLit(children.into_iter().collect())))
                     },
                     Proc::CastPathmap(pathmap) => {
@@ -4972,18 +5209,21 @@ fn replace_first_body_site(
                         };
                         let rebuilt = match entries.mode() {
                             mettail_runtime::PathMapMode::Empty => {
-                                take_children(&mut proc_values, proc_base, 0);
+                                build.take_children(&mut proc_values, proc_base, 0)?;
                                 mettail_runtime::PathMapLit::new()
                             },
                             mettail_runtime::PathMapMode::Set => {
-                                let children =
-                                    take_children(&mut proc_values, proc_base, entries.len());
+                                let children = build.take_children(
+                                    &mut proc_values,
+                                    proc_base,
+                                    entries.len(),
+                                )?;
                                 mettail_runtime::PathMapLit::from_set_iter(children)
                             },
                             mettail_runtime::PathMapMode::Map => {
-                                let mut children =
-                                    take_children(&mut proc_values, proc_base, entries.len() * 2)
-                                        .into_iter();
+                                let mut children = build
+                                    .take_children(&mut proc_values, proc_base, entries.len() * 2)?
+                                    .into_iter();
                                 let mut pairs = Vec::with_capacity(entries.len());
                                 for _ in 0..entries.len() {
                                     pairs.push((
@@ -4997,52 +5237,75 @@ fn replace_first_body_site(
                         Proc::CastPathmap(Arc::new(Pathmap::PathmapLit(rebuilt)))
                     },
                     Proc::MethodCall(_, method, arguments) => {
-                        let mut children =
-                            take_children(&mut proc_values, proc_base, 1 + arguments.len())
-                                .into_iter();
+                        let mut children = build
+                            .take_children(
+                                &mut proc_values,
+                                proc_base,
+                                arguments
+                                    .len()
+                                    .checked_add(1)
+                                    .ok_or(RholangAstLowerError::PreparationSizeOverflow)?,
+                            )?
+                            .into_iter();
                         let receiver = children.next().expect("one method receiver");
-                        Proc::MethodCall(Arc::new(receiver), method.clone(), children.collect())
+                        build.reserve(
+                            arguments.len(),
+                            arguments
+                                .len()
+                                .checked_add(1)
+                                .ok_or(RholangAstLowerError::PreparationSizeOverflow)?,
+                        )?;
+                        let method = build.copy_string(method)?;
+                        Proc::MethodCall(Arc::new(receiver), method, children.collect())
                     },
                     _ => unreachable!("only traversed constructors receive a continuation"),
                 };
                 assert_eq!(name_values.len(), name_base);
                 if !*replaced && is_site(&rebuilt) {
                     *replaced = true;
-                    proc_values.push(replacement.clone());
+                    build.push_proc_copy(&mut proc_values, replacement)?;
                 } else {
-                    proc_values.push(rebuilt);
+                    build.push(&mut proc_values, || rebuilt)?;
                 }
             },
             Job::BuildName { name, proc_base, name_base } => {
+                build.reserve(12, 3)?;
                 let rebuilt = match name {
                     Name::NQuote(..) => {
-                        let proc = take_children(&mut proc_values, proc_base, 1)
+                        let proc = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one quoted proc");
                         Name::NQuote(Arc::new(proc))
                     },
                     Name::NQuoteShort(..) => {
-                        let proc = take_children(&mut proc_values, proc_base, 1)
+                        let proc = build
+                            .take_children(&mut proc_values, proc_base, 1)?
                             .pop()
                             .expect("one short-quoted proc");
                         Name::NQuoteShort(Arc::new(proc))
                     },
                     Name::NParen(..) => {
-                        let inner = take_children(&mut name_values, name_base, 1)
+                        let inner = build
+                            .take_children(&mut name_values, name_base, 1)?
                             .pop()
                             .expect("one parenthesized name");
                         Name::NParen(Arc::new(inner))
                     },
                     _ => unreachable!("only traversed names receive a continuation"),
                 };
-                name_values.push(rebuilt);
+                build.push(&mut name_values, || rebuilt)?;
             },
         }
     }
 
-    assert_eq!(proc_values.len(), 1);
-    assert!(name_values.is_empty());
-    proc_values.pop().expect("fold rewrite result")
+    build.reserve(3, 0)?;
+    if proc_values.len() != 1 || !name_values.is_empty() {
+        return Err(RholangAstLowerError::UnsupportedProc(
+            "invalid body replacement result roster",
+        ));
+    }
+    Ok(proc_values.pop().expect("checked replacement result"))
 }
 
 /// Rebuild a binary expression node with the fold replaced in its first-found operand (left then
@@ -5455,15 +5718,17 @@ fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
 /// ALSO what kept the FLT pattern clear of `bind_pattern_proc`'s spurious
 /// one-element-list wrap; that wrap is gone, so only the reflection reason remains.)
 fn bind_flt_node(bind: &InputBind) -> Option<Arc<FltNode>> {
-    fn flt_of_proc(proc: &Proc) -> Option<Arc<FltNode>> {
+    bind_flt_node_borrowed(bind).cloned()
+}
+
+fn bind_flt_node_borrowed(bind: &InputBind) -> Option<&Arc<FltNode>> {
+    fn flt_of_proc(proc: &Proc) -> Option<&Arc<FltNode>> {
         match proc {
-            Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
-                Some(Arc::clone(node))
-            },
+            Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => Some(node),
             _ => None,
         }
     }
-    fn flt_of_name(name: &Name) -> Option<Arc<FltNode>> {
+    fn flt_of_name(name: &Name) -> Option<&Arc<FltNode>> {
         match name {
             Name::NQuote(proc) | Name::NQuoteShort(proc) => flt_of_proc(proc.as_ref()),
             _ => None,
@@ -5638,20 +5903,30 @@ fn flt_resolve_and_reflect(
 }
 
 /// L9-6b CONSTRUCTION arm: lower a `PFlt` in a VALUE (send / re-quote) position.
-/// Each declared hole `${name}` is FILLED with its in-scope binding — the reflected
-/// `^bound(peano(level))` image (E-2-D-opaque to the host binder machinery, so a
-/// captured hole survives the Rholang boundary), read by NAME from the enclosing
-/// FLT pattern's hole bindings. `reflect_flt_construction` (C2) then recomputes each
+/// Each declared hole `${name}` is filled with a host `BoundVar` read from the
+/// separate lexical construction-hole context: source-new bindings, ordinary
+/// receive bindings, and FLT-pattern captures. Generated trampoline binders
+/// shift these indices but never introduce aliases. `reflect_flt_construction`
+/// (C2) then recomputes each
 /// hole-bearing node's `⌜^nog⌝` marker from the FILLED subtree — never a stale
 /// `⌜^gnd⌝` — so a binder-carrying fill drives β. A hole-FREE `PFlt` (a spelled-out
 /// subject) has an empty fill map and reflects to its exact ground image.
 fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     let (ground, fingerprint) = flt_resolve_and_reflect(node, env)?;
+    let fills = flt_construction_captures(node, env)?;
+    reflect_flt_construction(&ground, &fills, &fingerprint)
+        .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))
+}
+
+fn flt_construction_captures(
+    node: &FltNode,
+    env: &BoundEnv,
+) -> Result<BTreeMap<String, Par>, RholangAstLowerError> {
     let mut fills: BTreeMap<String, Par> = BTreeMap::new();
     for hole in &node.holes {
-        let level = env.flt_hole_level(&hole.name).ok_or_else(|| {
+        let level = env.construction_hole_level(&hole.name).ok_or_else(|| {
             RholangAstLowerError::FltReflect(format!(
-                "construction hole ${{{}}} is not bound by an enclosing FLT pattern",
+                "construction hole ${{{}}} has no enclosing lexical binding",
                 hole.name
             ))
         })?;
@@ -5664,8 +5939,7 @@ fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, Rholang
         // recomputed marker is `⌜^nog⌝` (a fill only ever makes a node LESS ground).
         fills.insert(hole.name.clone(), scope::lower_bound_index(env.scope_width, level)?);
     }
-    reflect_flt_construction(&ground, &fills, &fingerprint)
-        .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))
+    Ok(fills)
 }
 
 /// L9-6b/#14 PATTERN arm: reflect a `PFlt` receive pattern to its marked `Par`
@@ -5736,6 +6010,7 @@ fn extend_env(
         scope_width,
         binders: binder_map,
         hole_binders,
+        construction_holes: env.shift_construction_holes(width)?,
         resolver: Arc::clone(&env.resolver),
         caller_imports: Arc::clone(&env.caller_imports),
         free_vars_are_patterns: env.free_vars_are_patterns,
