@@ -1444,6 +1444,26 @@ impl InstalledLanguageTable {
         Ok(operation(&entry.language))
     }
 
+    /// Revalidate a prepared multi-atom operation under one registry read
+    /// guard. No recursive acquisition is needed when several atoms belong
+    /// to the same owner. The caller supplies a mutation, never an evaluator.
+    pub fn with_authorized_batch<'a, R>(
+        &self,
+        requests: impl IntoIterator<Item = (&'a InstalledLanguageHandle, &'a [LanguageRight])>,
+        operation: impl FnOnce() -> R,
+    ) -> Result<R, LanguageAccessError> {
+        let state = self.state.read().map_err(|_| LanguageAccessError::Poisoned)?;
+        for (handle, rights) in requests {
+            self.valid_entry(&state, handle)?;
+            for right in rights {
+                if !handle.rights.contains(*right) {
+                    return Err(LanguageAccessError::MissingRight(*right));
+                }
+            }
+        }
+        Ok(operation())
+    }
+
     fn valid_entry<'a>(
         &self,
         state: &'a InstalledState,

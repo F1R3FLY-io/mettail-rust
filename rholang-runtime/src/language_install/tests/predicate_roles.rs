@@ -3,7 +3,7 @@ use crate::semantic_service::{InstalledSemanticBundle, InstalledSemanticError};
 use mettail_grammar_core::{LanguageCoreV1, TheorySemanticImageV1};
 use mettail_rholang_codegen::ReflectedCodecBudget;
 
-fn predicate_language() -> LanguageCoreV1 {
+pub(super) fn predicate_language() -> LanguageCoreV1 {
     let ctor = |name: &str| l([s(name)]);
     let value = m([
         ("mettail", s("language/3")),

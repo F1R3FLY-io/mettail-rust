@@ -1075,6 +1075,8 @@ pub struct SubstrateGuardMatcher {
     /// on builds/runners that install no Rholang-authored languages.
     #[cfg(feature = "rholang-runtime")]
     language_runtime: Option<Arc<crate::language_install::RholangLanguageRuntime>>,
+    #[cfg(feature = "rholang-runtime")]
+    predicate_cancellation: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// ★ Where a guard that produced NO VERDICT is written down. See [`GuardRefusalLedger`].
     refusals: GuardRefusalLedger,
 }
@@ -1092,6 +1094,8 @@ impl SubstrateGuardMatcher {
             flt: FltAutomatonMatcher::default(),
             #[cfg(feature = "rholang-runtime")]
             language_runtime: None,
+            #[cfg(feature = "rholang-runtime")]
+            predicate_cancellation: None,
             refusals: GuardRefusalLedger::new(),
         }
     }
@@ -1104,6 +1108,15 @@ impl SubstrateGuardMatcher {
             language_runtime: Some(runtime),
             ..Self::new()
         }
+    }
+
+    #[cfg(feature = "rholang-runtime")]
+    pub fn with_predicate_cancellation(
+        mut self,
+        cancel: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Self {
+        self.predicate_cancellation = Some(cancel);
+        self
     }
 
     /// A shared handle on this decider's refusal ledger.
@@ -1135,6 +1148,19 @@ impl SubstrateGuardMatcher {
 }
 
 impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for SubstrateGuardMatcher {
+    fn prepare_commit(
+        &self,
+        k: &TaggedContinuation,
+        matched: &[&ListParWithRandom],
+    ) -> Option<rspace_plus_plus::rspace::r#match::PreparedCommit> {
+        #[cfg(feature = "rholang-runtime")]
+        if let Some(runtime) = &self.language_runtime {
+            return self.prepare_installed_guard(runtime, k, matched);
+        }
+        self.check_commit(k, matched)
+            .then(rspace_plus_plus::rspace::r#match::PreparedCommit::default)
+    }
+
     /// Positional reflected FLT matching through the retained automaton; every
     /// non-admitted pattern delegates verbatim to f1r3node's spatial matcher.
     fn get(&self, pattern: &BindPattern, data: &ListParWithRandom) -> Option<ListParWithRandom> {
@@ -1192,6 +1218,120 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for SubstrateGuar
             self.refusals.record(refusal.clone());
         }
         disposition.commits()
+    }
+}
+
+#[cfg(feature = "rholang-runtime")]
+impl SubstrateGuardMatcher {
+    fn prepare_installed_guard(
+        &self,
+        runtime: &crate::language_install::RholangLanguageRuntime,
+        k: &TaggedContinuation,
+        matched: &[&ListParWithRandom],
+    ) -> Option<rspace_plus_plus::rspace::r#match::PreparedCommit> {
+        use crate::semantic_service::predicate::PredicateCommit;
+        use rspace_plus_plus::rspace::r#match::PreparedCommit;
+        let Some(condition) = k.guard.as_ref() else {
+            return Some(PreparedCommit::default());
+        };
+        let combined: Vec<Par> = matched
+            .iter()
+            .flat_map(|m| m.pars.iter().cloned())
+            .collect();
+        let substituted = substitute_bound_pars(condition, &combined);
+        let encoding = encode_par_guard(&substituted);
+        if !encoding
+            .opaque
+            .iter()
+            .any(crate::guard_predicate::is_descriptor)
+        {
+            return self.check_commit(k, matched).then(PreparedCommit::default);
+        }
+        if !encoding.vars.is_empty() {
+            self.refusals.record(par_refusal(
+                GuardRefusalCause::ResidualBinder { slots: encoding.vars.names().to_vec() },
+                RefusalProvenance::Term,
+                condition,
+            ));
+            return None;
+        }
+        let limits = runtime.service().policy().semantic_service;
+        let mut work = 0;
+        let mut remaining = limits.boundary_payload_bytes;
+        let mut evidence = Vec::new();
+        let mut diagnostic = None;
+        let mut cancel = || {
+            self.predicate_cancellation
+                .as_ref()
+                .is_some_and(|cancel| cancel())
+        };
+        let verdict = ground_verdict_with(
+            &encoding.formula,
+            &GuardAssignment::with_len(0),
+            &encoding.vars,
+            CONSENSUS_SUBSTRATE_CONFIG,
+            &mut |atom| {
+                let Some(fragment) = encoding.fragment(atom) else {
+                    return Sat3::DontKnow;
+                };
+                if crate::guard_predicate::is_descriptor(fragment) {
+                    match crate::guard_predicate::prepare(
+                        runtime,
+                        fragment,
+                        &combined,
+                        &mut work,
+                        &mut remaining,
+                        limits,
+                        &mut cancel,
+                    ) {
+                        Ok(prepared) => {
+                            let verdict = prepared.verdict();
+                            if verdict == Sat3::DontKnow {
+                                diagnostic =
+                                    Some(format!("installed predicate: {:?}", prepared.error()));
+                            }
+                            evidence.push(prepared);
+                            verdict
+                        },
+                        Err(error) => {
+                            diagnostic = Some(error);
+                            Sat3::DontKnow
+                        },
+                    }
+                } else {
+                    match guard_disposition(fragment, &[]) {
+                        GuardDisposition::Admits => Sat3::Sat,
+                        GuardDisposition::Refutes => Sat3::Unsat,
+                        other => {
+                            diagnostic = Some(format!("guard fragment: {other:?}"));
+                            Sat3::DontKnow
+                        },
+                    }
+                }
+            },
+        );
+        if let Some(diagnostic) = diagnostic {
+            self.refusals.record(par_refusal(
+                GuardRefusalCause::Unsupported { nodes: vec![diagnostic] },
+                RefusalProvenance::Term,
+                condition,
+            ));
+            return None;
+        }
+        match verdict {
+            Sat3::Sat if evidence.is_empty() => Some(PreparedCommit::default()),
+            Sat3::Sat => PredicateCommit::new(evidence, self.predicate_cancellation.clone())
+                .map(|permit| PreparedCommit::guarded(Arc::new(permit))),
+            Sat3::Unsat => None,
+            Sat3::DontKnow => {
+                self.refusals.record(par_refusal(
+                    GuardRefusalCause::FormulaUndecided,
+                    RefusalProvenance::Term,
+                    condition,
+                ));
+                None
+            },
+        }
     }
 }
 

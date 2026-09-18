@@ -101,7 +101,7 @@ fn prepare_reply<C: FnMut() -> bool>(
         },
         &mut poll,
     );
-    let PreparedSemanticReport { outcome, publication, usage } = prepared;
+    let PreparedSemanticReport { outcome, publication, usage, .. } = prepared;
     let publication = publication.ok_or(SemanticWireError::Shape(
         "semantic call has no fully authorized publication context",
     ))?;

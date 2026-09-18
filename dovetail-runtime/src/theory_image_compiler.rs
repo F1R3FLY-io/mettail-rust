@@ -185,10 +185,34 @@ pub fn validate_observation_predicate_roles<C: FnMut() -> bool>(
     language: &LanguageCoreV1,
     image: &TheorySemanticImageV1,
     limits: SemanticInputLimits,
-    mut is_cancelled: C,
+    is_cancelled: C,
 ) -> (Result<(), TheoryImageCompileError>, u64) {
+    let (result, work) = observation_predicate_keys(language, image, None, limits, is_cancelled);
+    (result.map(|_| ()), work)
+}
+
+/// The same checked admission worker, retaining the two native keys of one
+/// exact source observation coordinate. No term evaluator or equality is added.
+pub fn observation_predicate_result_keys<C: FnMut() -> bool>(
+    language: &LanguageCoreV1,
+    image: &TheorySemanticImageV1,
+    observation: usize,
+    limits: SemanticInputLimits,
+    is_cancelled: C,
+) -> (Result<Option<[dovetail::key::ContentKey; 2]>, TheoryImageCompileError>, u64) {
+    observation_predicate_keys(language, image, Some(observation), limits, is_cancelled)
+}
+
+fn observation_predicate_keys<C: FnMut() -> bool>(
+    language: &LanguageCoreV1,
+    image: &TheorySemanticImageV1,
+    selected: Option<usize>,
+    limits: SemanticInputLimits,
+    mut is_cancelled: C,
+) -> (Result<Option<[dovetail::key::ContentKey; 2]>, TheoryImageCompileError>, u64) {
     let mut work = 0u64;
     let result = (|| {
+        let mut retained = None;
         let limits = SemanticInputLimits {
             work: limits.work.min(u64::from(language.theory.limits.max_steps)),
             nodes: limits
@@ -302,8 +326,13 @@ pub fn validate_observation_predicate_roles<C: FnMut() -> bool>(
                 }
                 .into());
             }
+            if selected == Some(index) {
+                let rejecting = keys.pop().expect("two checked role keys");
+                let accepting = keys.pop().expect("two checked role keys");
+                retained = Some([accepting, rejecting]);
+            }
         }
-        Ok(())
+        Ok(retained)
     })();
     (result, work)
 }

@@ -24,6 +24,7 @@ use models::rhoapi::Par;
 use rspace_plus_plus::rspace::{errors::RSpaceError, rspace_interface::ProduceCommitGuard};
 use std::sync::Arc;
 
+pub(crate) mod predicate;
 mod wire;
 pub use wire::{
     semantic_runtime_definitions, LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_OBSERVE_URN,
@@ -233,6 +234,7 @@ struct SemanticServiceUsage {
 struct PreparedSemanticReport {
     outcome: Result<Vec<SemanticServiceResult>, InstalledSemanticError>,
     publication: Option<InstalledSemanticPublication>,
+    predicate_verdict: Option<mettail_prattail::algebra_tower::Sat3>,
     usage: SemanticServiceUsage,
 }
 
@@ -276,12 +278,23 @@ impl RholangLanguageRuntime {
         &self,
         request: SemanticServiceRequest<'_>,
         prefix: SemanticServicePrefix,
+        is_cancelled: C,
+    ) -> PreparedSemanticReport {
+        self.prepare_semantic_mode(request, prefix, is_cancelled, false)
+    }
+
+    fn prepare_semantic_mode<C: FnMut() -> bool>(
+        &self,
+        request: SemanticServiceRequest<'_>,
+        prefix: SemanticServicePrefix,
         mut is_cancelled: C,
+        predicate: bool,
     ) -> PreparedSemanticReport {
         let mut work = prefix.work;
         let mut kernel_work = None;
         let mut effective_limits = None;
         let mut publication = None;
+        let mut predicate_verdict = None;
         let host = self.service().policy().semantic_service;
         let mut remaining = 0;
         let outcome = (|| {
@@ -318,8 +331,22 @@ impl RholangLanguageRuntime {
                 &mut is_cancelled,
             );
             let prepared = (|| {
-                let SelectedSemanticOperation { action, input_sort, required } =
-                    select_semantic_operation(&installed, request.operation, &mut budget)?;
+                let selected_role = if predicate {
+                    Some(predicate::select_role(&installed, request.input, &mut budget)?)
+                } else {
+                    None
+                };
+                let operation = selected_role.map_or(request.operation, |index| {
+                    SemanticOperation::Observe(
+                        &installed.language_core().theory.observations[index].name,
+                    )
+                });
+                let SelectedSemanticOperation { action, input_sort, mut required } =
+                    select_semantic_operation(&installed, operation, &mut budget)?;
+                if predicate && !required.contains(&LanguageRight::Construct) {
+                    budget.charge(1, 1)?;
+                    required.push(LanguageRight::Construct);
+                }
                 let authorized = table
                     .authorize_all(&handle, &required)
                     .map_err(InstalledSemanticError::Access)?;
@@ -336,14 +363,25 @@ impl RholangLanguageRuntime {
                     &retained.handle,
                     &mut budget,
                 )?;
-                prepare_semantic_results(
+                let keys = match selected_role {
+                    Some(index) => {
+                        Some(predicate::role_keys(&installed, index, limits, &mut budget)?)
+                    },
+                    None => None,
+                };
+                let results = prepare_semantic_results(
                     &bundle,
                     SelectedSemanticExecution { action, input_sort },
                     request.input,
                     limits,
                     &mut budget,
                     &mut kernel_work,
-                )
+                )?;
+                if let Some(keys) = keys {
+                    predicate_verdict =
+                        Some(predicate::classify_results(&results, &keys, &mut budget)?);
+                }
+                Ok(results)
             })();
             remaining = budget.finish();
             prepared
@@ -351,6 +389,7 @@ impl RholangLanguageRuntime {
         PreparedSemanticReport {
             outcome,
             publication,
+            predicate_verdict,
             usage: SemanticServiceUsage {
                 work,
                 kernel_work,

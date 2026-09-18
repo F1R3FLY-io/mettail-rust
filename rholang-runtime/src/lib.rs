@@ -66,6 +66,11 @@ pub mod fold_contract;
 /// already short-circuits on. Front-end independent (the host redundancy leg is supplied by the
 /// caller), so it is available in every feature configuration.
 pub mod guard_discharge;
+// Upper applications enter MeTTaIL through this bridge, not additional crate edges.
+#[cfg(feature = "rholang-runtime")]
+pub use mettail_grammar_core::{DefaultRuntimeHost, LanguageRights, RuntimePolicy};
+#[cfg(feature = "rholang-runtime")]
+pub use mettail_rholang_codegen::EmptyFltResolver;
 /// ★ THE `where` → Dovetail/SFT WIRE, lowered half: the `rhoapi::Par` →
 /// [`mettail_prattail::guard_formula::GuardFormula`] encoder and the substrate's compile-time
 /// verdict — the AUTHORITY leg of [`guard_discharge::classify`].
@@ -74,6 +79,8 @@ pub mod guard_discharge;
 /// vocabulary the surface encoder (`mettail_languages::rholang::guard_substrate`) does, so both
 /// legs of a guard's life ask the same procedures.
 pub mod guard_par_substrate;
+#[cfg(feature = "rholang-runtime")]
+pub(crate) mod guard_predicate;
 #[cfg(feature = "rholang-runtime")]
 mod installed_flt;
 #[cfg(feature = "rholang-runtime")]

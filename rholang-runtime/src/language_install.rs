@@ -1791,6 +1791,27 @@ impl RholangLanguageRuntime {
         category: Option<&str>,
         fills: &BTreeMap<String, Par>,
     ) -> Result<Par, LanguageFltConstructionError> {
+        let limits = self.service.policy().semantic_service;
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = mettail_rholang_codegen::ReflectedCodecBudget::new(
+            &mut work,
+            limits.execution.work,
+            limits.boundary_payload_bytes,
+            &mut cancel,
+        );
+        self.construct_template_with_budget(token, pieces, holes, category, fills, &mut budget)
+    }
+
+    pub(crate) fn construct_template_with_budget<C: FnMut() -> bool>(
+        &self,
+        token: &Par,
+        pieces: &[RuntimeTemplatePiece],
+        holes: &[NamedRuntimeTemplateHole],
+        category: Option<&str>,
+        fills: &BTreeMap<String, Par>,
+        budget: &mut mettail_rholang_codegen::ReflectedCodecBudget<'_, C>,
+    ) -> Result<Par, LanguageFltConstructionError> {
         let handle = self
             .resolve(token, LanguageRight::Construct)
             .map_err(LanguageFltConstructionError::Runtime)?;
@@ -1855,6 +1876,23 @@ impl RholangLanguageRuntime {
             .map_err(LanguageRuntimeError::Parse)
             .map_err(LanguageFltConstructionError::Runtime)?;
         let fingerprint = grammar_fingerprint_label(handle.fingerprint());
+        // Ordinary receive scalars and where captures use one representation
+        // adapter. Canonical reflected FLTs are retained verbatim; the existing
+        // category admission below, not the scalar wrapper, proves membership.
+        let mut adapted_fills = None;
+        for (name, value) in fills {
+            budget
+                .charge(1, 0)
+                .map_err(LanguageFltConstructionError::Reflection)?;
+            if let Some(value) = reflect_native_capture(value, &fingerprint, budget)
+                .map_err(LanguageFltConstructionError::Reflection)?
+            {
+                adapted_fills
+                    .get_or_insert_with(|| fills.clone())
+                    .insert(name.clone(), value);
+            }
+        }
+        let fills = adapted_fills.as_ref().unwrap_or(fills);
         let admission = self.admission_for(handle.fingerprint(), core)?;
         let mut alternatives = Vec::with_capacity(parses.len());
         let mut inferred_categories = None;
@@ -2114,6 +2152,30 @@ pub struct NamedRuntimeTemplateHole {
     pub id: u32,
     pub name: String,
     pub category: Option<String>,
+}
+
+/// Adapt the already-parsed host scalar through the canonical native codec.
+/// This establishes representation only, never authority or category membership.
+fn reflect_native_capture<C: FnMut() -> bool>(
+    value: &Par,
+    owner: &str,
+    budget: &mut mettail_rholang_codegen::ReflectedCodecBudget<'_, C>,
+) -> Result<Option<Par>, DynamicReflectionError> {
+    use mettail_rholang_codegen::{
+        encode_dynamic_native_label, DynamicNativeRef, ReflectedPositionalContext,
+    };
+    if !value.locally_free.is_empty() || value.connective_used {
+        return Ok(None); // retain malformed input for authoritative admission to refuse
+    }
+    let native = match exact_expr(value) {
+        Some(ExprInstance::GString(text)) => DynamicNativeRef::Text(text),
+        Some(ExprInstance::GInt(value)) => DynamicNativeRef::Integer(i128::from(*value)),
+        Some(ExprInstance::GBool(value)) => DynamicNativeRef::Boolean(*value),
+        _ => return Ok(None),
+    };
+    let context = ReflectedPositionalContext::new(owner, budget)?;
+    let label = encode_dynamic_native_label(native, budget)?;
+    Ok(Some(context.assemble(&label, Vec::new(), budget)?.0))
 }
 
 #[derive(Debug)]
@@ -2853,13 +2915,13 @@ pub fn language_flt_pattern_definition(runtime: Arc<RholangLanguageRuntime>) -> 
     }
 }
 
-struct FltConstructCall {
-    handle: Par,
-    pieces: Vec<RuntimeTemplatePiece>,
-    holes: Vec<NamedRuntimeTemplateHole>,
-    category: String,
-    fills: BTreeMap<String, Par>,
-    reply: Par,
+pub(crate) struct FltConstructCall {
+    pub(crate) handle: Par,
+    pub(crate) pieces: Vec<RuntimeTemplatePiece>,
+    pub(crate) holes: Vec<NamedRuntimeTemplateHole>,
+    pub(crate) category: String,
+    pub(crate) fills: BTreeMap<String, Par>,
+    pub(crate) reply: Par,
 }
 
 struct FltPatternCall {
@@ -3097,7 +3159,9 @@ impl fmt::Display for FltConstructWireError {
     }
 }
 
-fn decode_flt_construct_call(datum: &Par) -> Result<FltConstructCall, FltConstructWireError> {
+pub(crate) fn decode_flt_construct_call(
+    datum: &Par,
+) -> Result<FltConstructCall, FltConstructWireError> {
     let fields = exact_list(datum).ok_or(FltConstructWireError::Shape(
         "expected [abi, handle, pieces, holes, root-category, fills, reply]",
     ))?;
@@ -3698,6 +3762,7 @@ fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
 #[cfg(test)]
 pub(crate) mod tests {
     mod predicate_roles;
+    mod predicate_where;
     mod regex_gslt;
     mod regex_quantifiers;
 
@@ -4362,7 +4427,11 @@ pub(crate) mod tests {
                 ("capability".to_owned(), token.clone()),
                 ("foreign-term".to_owned(), wrong_owner.clone()),
             ]),
-            ImportLimits { entries: 2, nodes: 10_000, payload_bytes: 1_000_000 },
+            ImportLimits {
+                entries: 2,
+                nodes: 10_000,
+                payload_bytes: 1_000_000,
+            },
             &mut || false,
         )
         .expect("closed capability and structural FLT are admissible caller values");
@@ -4378,7 +4447,9 @@ pub(crate) mod tests {
         assert_eq!(output.par.news.len(), 1);
         let transported = &output.par.news[0].injections;
         assert_eq!(transported.len(), 2);
-        let imported_token = transported.get("capability").expect("transported capability");
+        let imported_token = transported
+            .get("capability")
+            .expect("transported capability");
         let imported_wrong_owner = transported.get("foreign-term").expect("transported FLT");
         assert_eq!(imported_token.encode_to_vec(), token.encode_to_vec());
         assert_eq!(imported_wrong_owner.encode_to_vec(), wrong_owner.encode_to_vec());
@@ -4402,7 +4473,9 @@ pub(crate) mod tests {
             assert_eq!(report.kernel_work, None);
             assert!(report.work > 0);
         }
-        runtime.revoke(&token).expect("revoke the original capability");
+        runtime
+            .revoke(&token)
+            .expect("revoke the original capability");
         let revoked = runtime.execute_semantic(
             SemanticServiceRequest {
                 handle: imported_token,
