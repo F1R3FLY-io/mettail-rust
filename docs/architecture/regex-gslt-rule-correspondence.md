@@ -1,11 +1,13 @@
 # Regex GSLT rule-to-model correspondence
 
 The [inline Regex declaration](../../rholang-runtime/tests/fixtures/regex_gslt.rho)
-defines nullable and derivative computations as generalized structured language
-theory (GSLT) rewrites inside an ordinary Rholang `Module` and `Theory`. This
+defines nullable, derivative, full-match, search, and replacement computations as
+generalized structured language theory (GSLT) rewrites inside an ordinary
+Rholang `Module` and `Theory`. This
 document records how those declared rules correspond to existing Rocq models and
-concrete runtime tests. It does not claim that full matching, search, replacement,
-or the public-node application is complete; those retain the
+concrete runtime tests. The new application drivers require their focused runtime
+checks; their presence does not establish a completed public-node application.
+The required observable behavior remains the
 [application contract](regex-gslt-application-contract.md).
 
 The generated Rholang parser parses the inline declaration once. Elaboration
@@ -58,6 +60,56 @@ the finite core, but the DDL spells out disjoint constructor patterns.
 | Declared `nullable`/`derivative` actions and `Nullable`/`Derivative` observations | Nullable's only action terminal is `DoneBool`; derivative's is `DonePattern`. `SDone`, `NDone`, `DDone`, `EDone`, and `RDone` are local submachine returns. The existing kernel's `normalization_terminal_state` enforces the declared root terminal. An observation selects its declared action, not another evaluator. |
 
 ## Concrete checks
+
+### Application drivers
+
+The [completed-frame model](../../formal/rocq/runtime_grammar/theories/RegexGsltApplicationMachine.v)
+composes the existing nullable and derivative small-step machines. Its judgments
+describe completed child frames, not a native operation replacing those
+machines. The declaration's conditional `Step` rules lift one child rewrite;
+its `Done` rules hand off the completed child in the same order. The model was
+compiled and separately kernel-checked before these driver rules were added.
+This is a refinement of their control structure, not extraction of Rust or DDL
+from Rocq, and not proof that any chosen finite runtime budget suffices.
+
+| Declared driver | Completed-frame correspondence |
+| --- | --- |
+| `FullSurface`, `FullScan`, `FullDerivative`, `FullNullable` | Surface elaboration is reused once. `FullScanNext` consumes one original scalar and the completed derivative; `FullScanEnd` uses the completed nullable result. `full_scan_exact` and `full_scan_exists` relate the scan to the existing `full_match`. |
+| `PrefixScan`, `PrefixDerivative`, `PrefixUnwind`, `PrefixNullable` | `PrefixLonger` gives a successful later endpoint priority. Only a failed later prefix permits `PrefixFallback` to inspect current nullability. `prefix_scan_exact` and `prefix_scan_exists` establish the reference longest-prefix result without selecting the first alternative. |
+| `SearchScan`, `SearchPrefix`, `SearchAtEnd`, `SearchDone` | `SearchHere` accepts that longest prefix; `SearchLater` advances one original scalar only after a complete miss. `search_scan_exact` and `search_scan_leftmost_longest` establish the two priorities. The source retains absolute byte cursors and the final byte length for slicing. The existing application and intrinsic cursor laws supply the separate scalar/byte correspondence. |
+| `RenderEval`, `RenderLeft`, `RenderRight`, `RenderJoining` | `RenderAppend` completes the left template before the right, preserving ordered concatenation. `render_exact` and `render_exists` cover empty, literal, whole-match, and nested append templates. `JoinPieces` invokes the existing generic ordered-text-list intrinsic. |
+| `ReplaceSurface`, `ReplaceSearch`, `ReplaceRender`, `ReplaceSplice` | `replace_first_exact` fixes unchanged prefix, rendered replacement and unchanged suffix. A miss returns the original text. Search receives only original input, never replacement output. |
+| `ReplaceProgress`, `ReplaceEmptyEnd`, `ReplaceJoin`, `ReplaceJoinEmpty` | `replace_all_refines_reference` and `replace_all_reference_realized` relate all four branches to `ReplaceAllPlanSpec`. A nonempty match advances to its end; an empty match copies one original scalar, except at the end where it emits once and stops. `empty_replacement_frame_strictly_progresses` proves that distinction; `replace_all_frames_complete` establishes finite mathematical completion. |
+
+The [standalone Rholang application](../../rholang-runtime/tests/fixtures/regex_gslt_application.rho)
+embeds the same declaration, installs it through its URI capability, observes
+qualified FLTs with structural `Text` holes, and matches qualified result FLTs.
+It also uses the declared `FullMatch` predicate role directly in `where`.
+The source-parsing test checks that its embedded module is byte-identical to
+the service fixture. This mirror makes the application self-contained; it must
+be updated together with the service fixture. Node execution, guard refusal and
+funding/authority checks remain independent integration evidence.
+
+The added focused tests are:
+
+- `practical_regex_gslt_full_match_search_and_replacement_application_matrix`:
+  13 whole-text matches, six searches and eight replacements, including UTF-8
+  byte offsets, longest-alternative selection, whole-match rendering, empty
+  Unicode progress and the final empty match after a nonempty one.
+- `practical_regex_gslt_application_limits_refuse_without_partial_results`:
+  measured exact, one-less and zero work allowances plus cancellation for match,
+  search and empty-match replacement. A refusal has no successful result prefix.
+- `practical_regex_gslt_full_match_result_is_controlled_by_the_declared_driver`:
+  independently installs a changed terminal rule and checks that both the
+  full-language commitment and observed full-match result change.
+- `practical_regex_gslt_application_contains_the_checked_declaration_and_parses_once`:
+  one generated host parse of the entire ordinary application, not separate
+  parsing of its inline declaration.
+
+These new tests specify concrete validation obligations; this documentation
+does not assert their results before they have been run.
+
+### Nullable and derivative foundations
 
 The [installed-language tests](../../rholang-runtime/src/language_install/tests/regex_gslt.rs)
 cross the generated Rholang parser, installation, FLT construction, and the

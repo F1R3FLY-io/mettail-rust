@@ -2,6 +2,275 @@ use super::*;
 
 const SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt.rho");
 
+#[test]
+fn practical_regex_gslt_application_contains_the_checked_declaration_and_parses_once() {
+    let application = include_str!("../../../tests/fixtures/regex_gslt_application.rho");
+    assert_eq!(
+        application.matches(SOURCE.trim()).count(),
+        1,
+        "the standalone application embeds exactly the service-tested declaration"
+    );
+    let _program = Proc::parse_via_wpda(application)
+        .expect("one generated host parse includes the complete DDL and qualified FLT uses");
+}
+
+fn text_computation(
+    runtime: &RholangLanguageRuntime,
+    token: &Par,
+    fragments: &[&str],
+    text_values: &[&str],
+) -> Par {
+    assert_eq!(fragments.len(), text_values.len() + 1);
+    let handle = runtime
+        .resolve(token, LanguageRight::Construct)
+        .expect("construct authority");
+    let installed = runtime
+        .service
+        .table()
+        .authorize(&handle, LanguageRight::Construct)
+        .expect("installed language");
+    let owner = grammar_fingerprint_label(handle.fingerprint());
+    let mut pieces = Vec::with_capacity(fragments.len() + text_values.len());
+    let mut holes = Vec::with_capacity(text_values.len());
+    let mut fills = BTreeMap::new();
+    for (index, fragment) in fragments.iter().enumerate() {
+        pieces.push(RuntimeTemplatePiece::Text((*fragment).into()));
+        if let Some(text) = text_values.get(index) {
+            let id = u32::try_from(index).expect("small test hole index");
+            let name = format!("text{index}");
+            let ground = dynamic_syntax_to_ground_term(
+                &mettail_grammar_core::DynamicValue::Text((*text).into()),
+                installed.core(),
+                &BTreeMap::new(),
+            )
+            .expect("native text reflection");
+            fills.insert(
+                name.clone(),
+                mettail_rholang_codegen::reflect_ground_term_par(&ground, &owner),
+            );
+            holes.push(NamedRuntimeTemplateHole { id, name, category: Some("Text".into()) });
+            pieces.push(RuntimeTemplatePiece::Hole(id));
+        }
+    }
+    runtime
+        .construct_template(token, &pieces, &holes, Some("Computation"), &fills)
+        .expect("declared application computation with structural Text holes")
+}
+
+fn assert_regex_observation(
+    runtime: &RholangLanguageRuntime,
+    token: &Par,
+    name: &str,
+    input: &Par,
+    expected: &Par,
+) -> u64 {
+    let report = runtime.execute_semantic(
+        SemanticServiceRequest {
+            handle: token,
+            operation: SemanticOperation::Observe(name),
+            input,
+            limits: SemanticServiceLimits::default(),
+        },
+        || false,
+    );
+    let outputs = report.outcome.unwrap_or_else(|error| {
+        panic!("{name}: {error:?}; work={}, kernel={:?}", report.work, report.kernel_work)
+    });
+    assert_eq!(outputs.len(), 1, "{name}: one complete deterministic observation");
+    assert_eq!(
+        outputs[0].term.cmp(expected),
+        std::cmp::Ordering::Equal,
+        "{name}: exact complete structural result including metadata"
+    );
+    report.work
+}
+
+#[test]
+fn practical_regex_gslt_full_match_search_and_replacement_application_matrix() {
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(SOURCE))
+        .expect("complete practical regex declaration installs");
+    let token = &batch.exports[0].handle;
+    for (pattern, text, matches) in [
+        ("a(b|c)+", "abcb", true),
+        ("a(b|c)+", "ax", false),
+        ("a(b|c)+", "xab", false),
+        (".", "\n", true),
+        ("a{2,3}", "a", false),
+        ("a{2,3}", "aaa", true),
+        ("a{2,3}", "aaaa", false),
+        ("a{3,2}", "aaa", false),
+        ("()", "", true),
+        ("a", "", false),
+        ("()", "a", false),
+        ("é", "e\u{301}", false),
+        ("λ+", "λλ", true),
+    ] {
+        let prefix = format!("fullMatch({pattern},");
+        let input = text_computation(&runtime, token, &[&prefix, ")"], &[text]);
+        let expected = computation(
+            &runtime,
+            token,
+            if matches {
+                "doneBool(true)"
+            } else {
+                "doneBool(false)"
+            },
+        );
+        let work = assert_regex_observation(&runtime, token, "FullMatch", &input, &expected);
+        eprintln!("FullMatch({pattern:?},{text:?}) = {matches}; work={work}");
+    }
+    for (pattern, text, expected_span) in [
+        ("a+", "xaaab", Some((1, 4, "aaa"))),
+        ("a|aa", "aa", Some((0, 2, "aa"))),
+        ("a+", "bc", None),
+        ("λ+", "éλλx", Some((2, 6, "λλ"))),
+        ("()", "ab", Some((0, 0, ""))),
+        ("()", "", Some((0, 0, ""))),
+    ] {
+        let prefix = format!("search({pattern},");
+        let input = text_computation(&runtime, token, &[&prefix, ")"], &[text]);
+        let expected = match expected_span {
+            Some((start, end, matched)) => {
+                let prefix = format!("doneMatch(found({start},{end},");
+                text_computation(&runtime, token, &[&prefix, "))"], &[matched])
+            },
+            None => computation(&runtime, token, "doneMatch(noMatch)"),
+        };
+        let work = assert_regex_observation(&runtime, token, "Search", &input, &expected);
+        eprintln!("Search({pattern:?},{text:?}) = {expected_span:?}; work={work}");
+    }
+    for (name, operation, pattern, text, output) in [
+        ("ReplaceFirst", "replaceFirst", "a+", "baac", "bxc"),
+        ("ReplaceAll", "replaceAll", "a+", "aaba", "xbx"),
+        ("ReplaceFirst", "replaceFirst", "a+", "bc", "bc"),
+        ("ReplaceAll", "replaceAll", "()", "ab", "xaxbx"),
+        ("ReplaceAll", "replaceAll", "()", "λ", "xλx"),
+        ("ReplaceAll", "replaceAll", "a*", "a", "xx"),
+        ("ReplaceAll", "replaceAll", "()", "", "x"),
+    ] {
+        let prefix = format!("{operation}({pattern},literal(");
+        let input = text_computation(&runtime, token, &[&prefix, "),", ")"], &["x", text]);
+        let expected = text_computation(&runtime, token, &["doneText(", ")"], &[output]);
+        let work = assert_regex_observation(&runtime, token, name, &input, &expected);
+        eprintln!("{name}({pattern:?},{text:?}) = {output:?}; work={work}");
+    }
+    let input = text_computation(
+        &runtime,
+        token,
+        &["replaceFirst(a+,append(literal(", "),append(whole,literal(", "))),", ")"],
+        &["[", "]", "baac"],
+    );
+    let expected = text_computation(&runtime, token, &["doneText(", ")"], &["b[aa]c"]);
+    assert_regex_observation(&runtime, token, "ReplaceFirst", &input, &expected);
+}
+
+#[test]
+fn practical_regex_gslt_full_match_result_is_controlled_by_the_declared_driver() {
+    let original = "FullNullableDone : (FullNullable (NDone B)) ~> (DoneBool B);";
+    let replacement = "FullNullableDone : (FullNullable (NDone B)) ~> (DoneBool (BFalse));";
+    assert_eq!(SOURCE.matches(original).count(), 1);
+    let changed = SOURCE.replace(original, replacement);
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let mut commitments = Vec::with_capacity(2);
+    for (source, result) in [(SOURCE, "doneBool(true)"), (changed.as_str(), "doneBool(false)")] {
+        let batch = runtime
+            .install_all(rholang_ddl_candidate(source))
+            .expect("independent inline application declaration");
+        let token = &batch.exports[0].handle;
+        commitments.push(
+            runtime
+                .resolve(token, LanguageRight::Observe)
+                .expect("observation authority")
+                .fingerprint(),
+        );
+        let input = text_computation(&runtime, token, &["fullMatch(a,", ")"], &["a"]);
+        let expected = computation(&runtime, token, result);
+        assert_regex_observation(&runtime, token, "FullMatch", &input, &expected);
+    }
+    assert_ne!(
+        commitments[0], commitments[1],
+        "changed declared semantics has a distinct full-language owner"
+    );
+}
+
+#[test]
+fn practical_regex_gslt_application_limits_refuse_without_partial_results() {
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(SOURCE))
+        .expect("inline declaration");
+    let token = &batch.exports[0].handle;
+    for (name, fragments, texts, expected_fragments, expected_texts) in [
+        (
+            "FullMatch",
+            vec!["fullMatch(a+,", ")"],
+            vec!["aaa"],
+            vec!["doneBool(true)"],
+            vec![],
+        ),
+        (
+            "Search",
+            vec!["search(a|aa,", ")"],
+            vec!["aa"],
+            vec!["doneMatch(found(0,2,", "))"],
+            vec!["aa"],
+        ),
+        (
+            "ReplaceAll",
+            vec!["replaceAll((),literal(", "),", ")"],
+            vec!["x", "λ"],
+            vec!["doneText(", ")"],
+            vec!["xλx"],
+        ),
+    ] {
+        let input = text_computation(&runtime, token, &fragments, &texts);
+        let expected = text_computation(&runtime, token, &expected_fragments, &expected_texts);
+        let work = assert_regex_observation(&runtime, token, name, &input, &expected);
+        for (limit, succeeds) in [(0, false), (work - 1, false), (work, true)] {
+            let mut limits = SemanticServiceLimits::default();
+            limits.execution.work = limit;
+            let report = runtime.execute_semantic(
+                SemanticServiceRequest {
+                    handle: token,
+                    operation: SemanticOperation::Observe(name),
+                    input: &input,
+                    limits,
+                },
+                || false,
+            );
+            assert!(report.work <= limit, "{name}: shared work bound");
+            if succeeds {
+                let result = report.outcome.expect("exact measured work allowance");
+                assert_eq!(result.len(), 1);
+                assert_eq!(result[0].term.cmp(&expected), std::cmp::Ordering::Equal);
+            } else {
+                assert!(report.outcome.is_err(), "{name}: bounded refusal, no successful prefix");
+            }
+        }
+        let cancelled = runtime.execute_semantic(
+            SemanticServiceRequest {
+                handle: token,
+                operation: SemanticOperation::Observe(name),
+                input: &input,
+                limits: SemanticServiceLimits::default(),
+            },
+            || true,
+        );
+        assert!(cancelled.outcome.is_err(), "{name}: cancellation cannot commit a result");
+    }
+}
+
 fn computation(runtime: &RholangLanguageRuntime, token: &Par, source: &str) -> Par {
     runtime
         .construct_template(

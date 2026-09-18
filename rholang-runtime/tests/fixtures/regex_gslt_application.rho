@@ -1,3 +1,6 @@
+new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe`), stdout(`rho:io:stdout`) in {
+  new loaded, handlePipe in {
+    install!(
 Module RegexGSLT {
   Theory Regex() {
     Data({
@@ -413,4 +416,100 @@ Module RegexGSLT {
   }
 
   theory Regex()
+}
+      , *loaded) |
+    for(@installed <- loaded) {
+      handlePipe!(installed.get("ok").get("exports").nth(0).get("handle"))
+    } |
+    for(language <- handlePipe) {
+      new values, nullable, derived, matched, searched, firstReplaced, replaced in {
+        observe!([1, *language, "Nullable", language:Computation`nullable(a?)`,
+          [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+          *nullable]) |
+        observe!([1, *language, "Derivative", language:Computation`derivative(a,a+)`,
+          [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+          *derived]) |
+        values!(["abcb", "éλλx", "aaba", "x"]) |
+        for(@[matchText, searchText, replaceText, replacement] <- values) {
+          observe!([1, *language, "FullMatch",
+            language:Computation`fullMatch(a(b|c)+, ${matchText:Text})`,
+            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+            *matched]) |
+          observe!([1, *language, "Search",
+            language:Computation`search(λ+, ${searchText:Text})`,
+            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+            *searched]) |
+          observe!([1, *language, "ReplaceFirst",
+            language:Computation`replaceFirst(a+, literal(${replacement:Text}), ${replaceText:Text})`,
+            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+            *firstReplaced]) |
+          observe!([1, *language, "ReplaceAll",
+            language:Computation`replaceAll(a+, literal(${replacement:Text}), ${replaceText:Text})`,
+            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+            *replaced])
+        } |
+        for(@[1, 0, [[term, receipt]], usage] <- nullable) {
+          new result in {
+            result!(term) |
+            for(@language:Computation`doneBool(true)` <- result) {
+              stdout!(["nullable", true]) |
+              @"regex.nullable"!([true, receipt, usage])
+            }
+          }
+        } |
+        for(@[1, 0, [[term, receipt]], usage] <- derived) {
+          new result in {
+            result!(term) |
+            for(@language:Computation`donePattern(a*)` <- result) {
+              stdout!(["derivative", "a*"]) |
+              @"regex.derivative"!([term, receipt, usage])
+            }
+          }
+        } |
+        for(@[1, 0, [[term, receipt]], usage] <- matched) {
+          new result in {
+            result!(term) |
+            for(@language:Computation`doneBool(true)` <- result) {
+              stdout!(["full-match", true]) |
+              @"regex.match"!([true, receipt, usage]) |
+              @"regex.guard.input"!("abcb")
+            }
+          }
+        } |
+        for(@[1, 0, [[term, receipt]], usage] <- searched) {
+          new result in {
+            result!(term) |
+            for(@language:Computation`doneMatch(found(2,6,${found:Text}))` <- result) {
+              stdout!(["search", 2, 6, found]) |
+              @"regex.search"!([2, 6, found, receipt, usage])
+            }
+          }
+        } |
+        for(@[1, 0, [[term, receipt]], usage] <- firstReplaced) {
+          new result in {
+            result!(term) |
+            for(@language:Computation`doneText(${output:Text})` <- result) {
+              stdout!(["replace-first", output]) |
+              @"regex.replace-first"!([output, receipt, usage])
+            }
+          }
+        } |
+        for(@[1, 0, [[term, receipt]], usage] <- replaced) {
+          new result in {
+            result!(term) |
+            for(@language:Computation`doneText(${output:Text})` <- result) {
+              stdout!(["replace-all", output]) |
+              @"regex.replace"!([output, receipt, usage])
+            }
+          }
+        } |
+        for(@text <- @"regex.guard.input"
+            where language:Computation`fullMatch(a(b|c)+, ${text:Text})`) {
+          stdout!(["guard", text]) |
+          @"regex.guard"!(text)
+        } |
+        @"regex.guard.input"!("ax")
+      }
+    }
+  }
 }
