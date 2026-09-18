@@ -502,21 +502,7 @@ fn generate_assemble_task(
 /// task records. The source groups match PaidTaskBatchReversal exactly.
 pub(crate) fn paid_task_batch_reversal_body() -> TokenStream {
     quote! {
-        mettail_runtime::reserve_binding_parts(3, 2, 0, reserve)?;
-        let mut left = start;
-        let mut right = stack.len();
-        loop {
-            mettail_runtime::reserve_binding_parts(1, 0, 0, reserve)?;
-            let width = right.checked_sub(left).ok_or(
-                mettail_runtime::BindingFailure::InvalidCollectionInput(
-                    "binding task batch starts beyond the worklist"))?;
-            if width < 2 { return Ok(()) }
-            mettail_runtime::reserve_binding_parts(6, 1, 0, reserve)?;
-            right -= 1;
-            stack.swap(left, right);
-            left = left.checked_add(1)
-                .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
-        }
+        mettail_runtime::try_reverse_task_batch(stack, start, reserve)
     }
 }
 
@@ -2229,6 +2215,14 @@ mod bag_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paid_task_reversal_delegates_to_the_shared_runtime_machine() {
+        assert_eq!(
+            paid_task_batch_reversal_body().to_string(),
+            quote! { mettail_runtime::try_reverse_task_batch(stack, start, reserve) }.to_string()
+        );
+    }
 
     #[test]
     fn checked_variables_and_literals_use_the_existing_leaf_contracts() {

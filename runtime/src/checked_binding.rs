@@ -292,6 +292,45 @@ pub fn reserve_binding_parts<E>(
     reserve(work, units).map_err(BindingFailure::Reservation)
 }
 
+/// Reverse only the appended task batch, admitting each endpoint exchange.
+///
+/// Generated binding, source admission, and runtime source preparation share
+/// this exact machine. Whole task records move without cloning or dropping
+/// their payloads; the preceding stack prefix is untouched. Refusal keeps
+/// earlier paid swaps and propagates the original callback error. Setup and
+/// the first guard precede even invalid-start diagnostics.
+///
+/// `PaidTaskBatchReversal` proves the order, exterior, and logical charge laws.
+/// These charges cover logical operations, not physical instructions or RSS.
+pub fn try_reverse_task_batch<T, E>(
+    stack: &mut [T],
+    start: usize,
+    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+) -> Result<(), BindingFailure<E>> {
+    reserve_binding_parts(3, 2, 0, reserve)?;
+    let mut left = start;
+    let mut right = stack.len();
+    loop {
+        reserve_binding_parts(1, 0, 0, reserve)?;
+        let width = right
+            .checked_sub(left)
+            .ok_or(BindingFailure::InvalidCollectionInput(
+                "binding task batch starts beyond the worklist",
+            ))?;
+        if width < 2 {
+            return Ok(());
+        }
+        reserve_binding_parts(6, 1, 0, reserve)?;
+        right -= 1;
+        stack.swap(left, right);
+        left = left.checked_add(1).ok_or(BindingFailure::SizeOverflow)?;
+    }
+}
+
+#[cfg(test)]
+#[path = "checked_task_batch_tests.rs"]
+mod task_batch_tests;
+
 fn reserve_name<E>(
     name: &Option<String>,
     reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,

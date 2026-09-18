@@ -17,8 +17,8 @@ mod checked_cmp;
 mod checked_hash;
 pub use checked_binding::{
     append_binding_slots, reserve_binding_copy, reserve_binding_parts, take_binding_slot,
-    write_binding_slot, BindingFailure, BindingOperation, BindingSlotError, CheckedBindingLeaf,
-    CheckedIterativeBinding,
+    try_reverse_task_batch, write_binding_slot, BindingFailure, BindingOperation, BindingSlotError,
+    CheckedBindingLeaf, CheckedIterativeBinding,
 };
 pub use checked_cmp::{
     inspect_generated_multi_pattern_order_work, inspect_generated_single_pattern_order_work,
