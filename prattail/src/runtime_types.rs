@@ -767,7 +767,7 @@ pub fn lex_stream_core<'a, T: Clone>(
                 walk_col += 1;
             }
             walk_pos += 1;
-            if is_accepting(state) {
+            if is_accepting(state) && input.is_char_boundary(walk_pos) {
                 accepts.push((state, walk_pos, walk_line, walk_col));
             }
         }
@@ -1114,7 +1114,10 @@ fn expand_lex_node_impl<'a, T: Clone>(
             }
             state = next;
             walk_pos += 1;
-            if is_accepting(mode, state) {
+            // A byte DFA can accept an interior UTF-8 byte (notably raw guest
+            // chunks). Keep walking, but only scalar-boundary accepts can be
+            // materialized as the callback's &str or become successor nodes.
+            if is_accepting(mode, state) && input.is_char_boundary(walk_pos) {
                 accepts.push((state, walk_pos));
             }
         }
@@ -1991,7 +1994,7 @@ pub fn lex_stream_core_modal<'a, T: Clone>(
                 walk_col += 1;
             }
             walk_pos += 1;
-            if is_accepting(mode, state) {
+            if is_accepting(mode, state) && input.is_char_boundary(walk_pos) {
                 accepts.push((state, walk_pos, walk_line, walk_col));
             }
         }
@@ -3180,6 +3183,147 @@ mod tests {
         let path = dag.linear_path();
         let kinds: Vec<_> = path.iter().map(|(k, _)| k.clone()).collect();
         assert_eq!(kinds, vec![tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]);
+    }
+
+    #[test]
+    fn utf8_guest_chunks_preserve_text_modes_and_all_valid_stream_endpoints() {
+        for guest in ["search(λ+,x)", "éλλx", "€😀", "e\u{301}", " λ\n😀 "] {
+            let input = format!("lam`{guest}`");
+            let is_raw = |mode| mode != 0;
+            let map =
+                compute_mode_map(&input, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, is_raw)
+                    .expect("balanced raw Unicode guest");
+            let dag = lex_dag_core_modal(
+                &input,
+                None,
+                &map,
+                toy_cc,
+                toy_dnext,
+                toy_isacc,
+                toy_alts,
+                toy_to_kind,
+                is_raw,
+                toy_stream_none,
+            )
+            .expect("Unicode guest DAG");
+            for node in &dag.nodes {
+                assert!(input.is_char_boundary(node.byte_start));
+                for edge in &node.edges {
+                    assert!(input.is_char_boundary(edge.end_byte));
+                    assert_eq!(input.get(node.byte_start..edge.end_byte), Some(edge.text.as_str()));
+                }
+            }
+            let path = dag.linear_path();
+            assert_eq!(
+                path.iter()
+                    .map(|(kind, _)| kind.clone())
+                    .collect::<Vec<_>>(),
+                [tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]
+            );
+            assert_eq!(path[1].1, guest);
+            let (stream, eof) = lex_stream_core_modal(
+                &input,
+                None,
+                &map,
+                toy_cc,
+                toy_dnext,
+                toy_isacc,
+                toy_alts,
+                toy_to_kind,
+                is_raw,
+                toy_stream_none,
+            )
+            .expect("Unicode guest stream");
+            let chunk = stream
+                .entries
+                .iter()
+                .find(|entry| entry.byte_start == 4)
+                .expect("guest entry");
+            let expected: Vec<_> = (1..=guest.len())
+                .rev()
+                .filter(|&end| guest.is_char_boundary(end))
+                .collect();
+            assert_eq!(
+                chunk
+                    .alternatives
+                    .iter()
+                    .map(|alt| alt.end_byte - 4)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            for alt in &chunk.alternatives {
+                assert_eq!(alt.kind, tk("GuestChunk"));
+                assert_eq!(alt.text, guest[..alt.end_byte - 4]);
+            }
+            assert_eq!(eof.byte_offset, input.len());
+        }
+    }
+
+    #[test]
+    fn utf8_nonmodal_byte_dfa_keeps_every_sliceable_alternative() {
+        for input in ["abc", "λ", "€😀", "e\u{301}"] {
+            let classes = [0; 256];
+            let next = |state, _| state + 1;
+            let accept = |state| state != 0;
+            let alternatives = |state, _: &str| vec![(tk(&format!("bytes-{state}")), 0.0)];
+            let dag = lex_dag_core(input, None, &classes, next, accept, alternatives, toy_to_kind)
+                .expect("whole scalar alternatives");
+            let root = &dag.nodes[0];
+            let expected: Vec<_> = (1..=input.len())
+                .rev()
+                .filter(|&end| input.is_char_boundary(end))
+                .collect();
+            assert_eq!(
+                root.edges
+                    .iter()
+                    .map(|edge| edge.end_byte)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            let (stream, eof) =
+                lex_stream_core(input, None, &classes, next, accept, alternatives, toy_to_kind)
+                    .expect("whole scalar stream alternatives");
+            assert_eq!(
+                stream.entries[0]
+                    .alternatives
+                    .iter()
+                    .map(|alt| alt.end_byte)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(eof.column, input.chars().count());
+            for edge in &root.edges {
+                assert_eq!(edge.text, input[..edge.end_byte]);
+                assert_eq!(edge.kind, tk(&format!("bytes-{}", edge.end_byte)));
+            }
+        }
+    }
+
+    #[test]
+    fn utf8_partial_only_accept_reports_original_unexpected_character() {
+        let next = |state, _| if state == 0 { 1 } else { u32::MAX };
+        let accept = |state| state == 1;
+        let alternatives = |_, _: &str| vec![(tk("byte"), 0.0)];
+        let error = lex_dag_core("λ", None, &[0; 256], next, accept, alternatives, toy_to_kind)
+            .expect_err("an interior byte cannot be a token");
+        assert_eq!(error, "unexpected character 'λ' at byte 0");
+        let error = lex_stream_core("λ", None, &[0; 256], next, accept, alternatives, toy_to_kind)
+            .expect_err("an interior byte cannot be a token");
+        assert_eq!(error, "1:1: unexpected character 'λ'");
+        let error = lex_stream_core_modal(
+            "λ",
+            None,
+            &[1, 1],
+            |_, _| 0,
+            |_, state, class| next(state, class),
+            |_, state| accept(state),
+            |_, state, text| alternatives(state, text),
+            toy_to_kind,
+            |_| true,
+            toy_stream_none,
+        )
+        .expect_err("a raw mode does not make partial scalars sliceable");
+        assert_eq!(error, "1:1: unexpected character 'λ'");
     }
 
     #[test]
