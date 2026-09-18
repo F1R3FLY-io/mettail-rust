@@ -328,12 +328,20 @@ fn required_bag_field(field: &FieldInfo) -> bool {
 }
 
 fn required_checked_collection_field(field: &FieldInfo) -> bool {
-    required_vec_field(field) || required_bag_field(field)
+    required_vec_field(field) || required_bag_field(field) || required_map_field(field)
 }
 
-// Direct and literal Vec/Bag payloads share the checked owned-field path.
+fn required_map_field(field: &FieldInfo) -> bool {
+    field.is_collection
+        && !field.is_optional
+        && matches!(field.coll_type.as_ref(), Some(CollectionType::HashMap))
+}
+
+// Direct and literal Vec/Bag/Map payloads share the checked owned-field path.
 // RequiredVecBindingReservation covers vector shells; RequiredHashBagBindingReservation
-// supplies Bag reconstruction and ownership laws. Keep this adaptation local:
+// supplies Bag reconstruction; OrderedBindingReconstruction and
+// NativeMapRebuildCapacity supply the existing Map reconstruction contract.
+// Keep this adaptation local:
 // the shared classifier and primitive literals retain their existing meaning
 // for every other generated operation.
 fn checked_collection_payload<'a>(
@@ -345,12 +353,14 @@ fn checked_collection_payload<'a>(
         VariantKind::Collection {
             label,
             element_cat,
-            coll_type: coll_type @ (CollectionType::Vec | CollectionType::HashBag),
+            coll_type:
+                coll_type @ (CollectionType::Vec | CollectionType::HashBag | CollectionType::HashMap),
         }
         | VariantKind::CollectionLiteral {
             label,
             element_cat,
-            coll_type: coll_type @ (CollectionType::Vec | CollectionType::HashBag),
+            coll_type:
+                coll_type @ (CollectionType::Vec | CollectionType::HashBag | CollectionType::HashMap),
         } => Some((
             label,
             [FieldInfo {
@@ -1068,6 +1078,50 @@ fn bag_child_pushes(
     }}
 }
 
+fn map_child_pushes(
+    field: &FieldInfo,
+    source: &Ident,
+    range: &Ident,
+    emission: &CloneEmissionNames,
+) -> TokenStream {
+    let task_enum = &emission.task_enum;
+    let visit = format_ident!("Clone{}", field.category);
+    let push = emission.push_task(
+        quote! { #task_enum::#visit { src: child as *const _, slot: child_slot } },
+        quote! { operation.state() },
+    );
+    quote! {{
+        mettail_runtime::reserve_binding_parts(2, 1, 0, reserve)?;
+        let (start, width) = #range;
+        let end = start.checked_add(width)
+            .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+        let batch_start = stack.len();
+        let mut child_slot = start;
+        #source.try_for_each_entry(reserve, |key, value, reserve| {
+            (|| -> Result<(), mettail_runtime::BindingFailure<E>> {
+                // Original pair order, then reverse only this paid task batch.
+                mettail_runtime::reserve_binding_parts(4, 3, 0, reserve)?;
+                for child in [key, value] {
+                    mettail_runtime::reserve_binding_parts(2, 0, 0, reserve)?;
+                    if child_slot >= end {
+                        return Err(mettail_runtime::BindingFailure::InvalidCollectionInput(
+                            "binding Map scan exceeds its original slot range"));
+                    }
+                    #push
+                    child_slot = child_slot.checked_add(1)
+                        .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                }
+                Ok(())
+            })().map_err(mettail_runtime::NativeComparisonFailure::Admission)
+        }).map_err(mettail_runtime::BindingFailure::from)?;
+        if child_slot != end {
+            return Err(mettail_runtime::BindingFailure::InvalidCollectionInput(
+                "binding Map scan did not fill its original slot range"));
+        }
+        reverse_binding_task_batch(stack, batch_start, reserve)?;
+    }}
+}
+
 fn generate_scalar_visit(
     category: &Ident,
     label: &Ident,
@@ -1137,6 +1191,14 @@ fn generate_scalar_visit(
                 let #slot = (mettail_runtime::append_binding_slots(results, width, reserve)?, width);
             }
         }
+        else if required_map_field(field) {
+            quote! {
+                mettail_runtime::reserve_binding_parts(2, 0, 0, reserve)?;
+                let width = #name.len().checked_mul(2)
+                    .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                let #slot = (mettail_runtime::append_binding_slots(results, width, reserve)?, width);
+            }
+        }
         else if field.is_optional {
             quote! {
                 let #slot = match (#name, cloning) {
@@ -1177,6 +1239,9 @@ fn generate_scalar_visit(
             }
             if required_bag_field(field) {
                 return bag_child_pushes(field, name, slot, emission);
+            }
+            if required_map_field(field) {
+                return map_child_pushes(field, name, slot, emission);
             }
             let visit = format_ident!("Clone{}", field.category);
             let push = emission.push_task(
@@ -1378,6 +1443,37 @@ fn generate_scalar_assemble(
                         let mode = if cloning { mettail_runtime::HashBagRebuildMode::CloneEntries }
                             else { mettail_runtime::HashBagRebuildMode::BindingEntries };
                         #name.try_rebuild_entries_with(copied, mode, |step| #admit(step, reserve))?
+                    };
+                }
+            } else if required_map_field(field) {
+                let category = &field.category;
+                quote! {
+                    let #bare = {
+                        // The existing Vec allowance covers two owned child
+                        // slots per pair; each child already owns its cleanup.
+                        mettail_runtime::reserve_binding_parts(4, 1, 0, reserve)?;
+                        let (start, width) = #slot;
+                        let pairs = width / 2;
+                        if width % 2 != 0 {
+                            return Err(mettail_runtime::BindingFailure::InvalidCollectionInput(
+                                "binding Map requires complete key/value pairs"));
+                        }
+                        std::alloc::Layout::array::<(#category, #category)>(pairs)
+                            .map_err(|_| mettail_runtime::BindingFailure::SizeOverflow)?;
+                        let mut copied = Vec::with_capacity(pairs);
+                        for pair in 0..pairs {
+                            mettail_runtime::reserve_binding_parts(4, 1, 0, reserve)?;
+                            let offset = pair.checked_mul(2)
+                                .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                            let child_slot = start.checked_add(offset)
+                                .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                            let key = #take;
+                            let child_slot = child_slot.checked_add(1)
+                                .ok_or(mettail_runtime::BindingFailure::SizeOverflow)?;
+                            let value = #take;
+                            copied.push((key, value));
+                        }
+                        #category::try_rebuild_map_entries(#name, copied, reserve)?
                     };
                 }
             } else if field.is_optional {

@@ -7,6 +7,107 @@ fn variable(name: &FreeVar<String>) -> Proc {
     Proc::PVar(OrdVar(Var::Free(name.clone())))
 }
 
+#[test]
+fn paid_scope_opens_map_keys_and_values_including_empty_application_maps() {
+    use mettail_languages::rholang::Map;
+    use mettail_runtime::HashMapLit;
+    for empty in [true, false] {
+        let key = Binder(FreeVar::fresh_named("key"));
+        let value = Binder(FreeVar::fresh_named("value"));
+        let mut entries = HashMapLit::new();
+        if !empty {
+            entries.insert(variable(&key.0), variable(&value.0));
+            entries.insert(variable(&value.0), variable(&key.0));
+        }
+        let source = Proc::PNew(Scope::new(
+            vec![key, value],
+            Arc::new(Proc::CastMap(Arc::new(Map::MapLit(entries)))),
+        ));
+        let expected =
+            session::lower_public_body(&source, BoundEnv::new()).expect("original map scope");
+        let (actual, work, units) = prepare(&source, BoundEnv::new(), 100_000_000, 100_000_000);
+        let actual = actual.expect("checked map scope must no longer refuse MapLit");
+        assert_eq!(actual.par.encode_to_vec(), expected.par.encode_to_vec());
+        for (work_limit, unit_limit, succeeds) in
+            [(work, units, true), (work - 1, units, false), (work, units - 1, false)]
+        {
+            assert_eq!(
+                prepare(&source, BoundEnv::new(), work_limit, unit_limit)
+                    .0
+                    .is_ok(),
+                succeeds
+            );
+        }
+    }
+}
+
+#[test]
+fn checked_map_binding_preserves_pair_order_collisions_and_every_refusal_prefix() {
+    use mettail_languages::rholang::Map;
+    use mettail_runtime::{
+        BindingFailure, BindingOperation, BoundTerm, CheckedIterativeBinding, HashMapLit,
+    };
+    let a = FreeVar::fresh_named("a");
+    let b = FreeVar::fresh_named("b");
+    let mut entries = HashMapLit::new();
+    entries.insert(variable(&a), Proc::PZero);
+    entries.insert(variable(&b), variable(&a));
+    let source = Map::MapLit(entries);
+    let cloned = source
+        .try_copy_iterative(BindingOperation::Clone, &mut |_, _| Ok::<_, ()>(()))
+        .expect("checked Map clone");
+    assert_eq!(cloned, source);
+    let close_roster = vec![Binder(a.clone()), Binder(b.clone())];
+    let close = BindingOperation::Close {
+        state: BindingOperation::Clone.state(),
+        binders: &close_roster,
+    };
+    let mut expected = source.clone();
+    expected.close_term(BindingOperation::Clone.state(), &close_roster);
+    let closed = source
+        .try_copy_iterative(close, &mut |_, _| Ok::<_, ()>(()))
+        .unwrap();
+    assert_eq!(closed, expected);
+    // Opening two distinct bound keys with one repeated binder intentionally
+    // collides. Native ordered insertion retains first key/position, last value.
+    let merged = FreeVar::fresh_named("merged");
+    let open_roster = vec![Binder(merged.clone()), Binder(merged)];
+    let open = BindingOperation::Open {
+        state: BindingOperation::Clone.state(),
+        binders: &open_roster,
+    };
+    expected.open_term(BindingOperation::Clone.state(), &open_roster);
+    let mut trace = Vec::new();
+    let actual = closed
+        .try_copy_iterative(open, &mut |w, u| {
+            trace.push((w, u));
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+    assert_eq!(actual, expected);
+    let Map::MapLit(actual_entries) = &actual else {
+        panic!("Map literal")
+    };
+    let Map::MapLit(expected_entries) = &expected else {
+        panic!("Map literal")
+    };
+    assert_eq!(actual_entries.len(), 1);
+    assert!(actual_entries.iter().eq(expected_entries.iter()));
+    for cut in 1..=trace.len() {
+        let mut observed = Vec::new();
+        let refused = closed.try_copy_iterative(open, &mut |w, u| {
+            observed.push((w, u));
+            if observed.len() == cut {
+                Err(cut)
+            } else {
+                Ok(())
+            }
+        });
+        assert!(matches!(refused, Err(BindingFailure::Reservation(at)) if at == cut));
+        assert_eq!(observed, trace[..cut]);
+    }
+}
+
 fn nested() -> Proc {
     let outer = Binder(FreeVar::fresh_named("same"));
     let inner = Binder(FreeVar::fresh_named("same"));

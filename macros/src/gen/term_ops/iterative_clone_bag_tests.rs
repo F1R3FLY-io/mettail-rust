@@ -3,6 +3,35 @@
 use super::*;
 
 #[test]
+fn checked_maps_use_paid_pair_slots_and_existing_native_reconstruction() {
+    let language = super::super::iterative_hash::checked_tests::fixture_language();
+    let plan = super::super::iterative_drop::select_dummy_plan(&language);
+    let receipts = super::super::dummy_receipts::generate_dummy_receipts(&language, &plan)
+        .expect("fixture receipts");
+    let checked = CloneEmissionNames::checked(&language, &receipts);
+    let category = format_ident!("Map");
+    let variant = collect_category_variants(&category, &language)
+        .into_iter()
+        .find(|variant| matches!(variant, VariantKind::CollectionLiteral { .. }))
+        .expect("production Map literal descriptor");
+    assert!(checked_constructor_supported(&category, &variant, &checked));
+    let visit = generate_visit_arm(&category, &variant, &checked).to_string();
+    assert!(!visit.contains("UnsupportedConstructor"));
+    for required in ["checked_mul", "try_for_each_entry", "reverse_binding_task_batch"] {
+        assert!(visit.contains(required), "missing {required}: {visit}");
+    }
+    let assembly = generate_assemble_arm(&category, &variant, false, &checked)
+        .expect("checked Map assembly")
+        .to_string();
+    for required in ["take_binding_slot", "try_rebuild_map_entries", "checked_add"] {
+        assert!(assembly.contains(required), "missing {required}: {assembly}");
+    }
+    assert!(!assembly.contains("HashMapLit :: new"), "no unmetered native fallback");
+    syn::parse2::<syn::File>(generate_engine(&language, &checked))
+        .expect("complete checked engine parses with Map tasks");
+}
+
+#[test]
 fn unsupported_checked_shapes_refuse_without_ordinary_assembly() {
     let language = super::super::iterative_hash::checked_tests::fixture_language();
     let plan = super::super::iterative_drop::select_dummy_plan(&language);
@@ -34,7 +63,7 @@ fn unsupported_checked_shapes_refuse_without_ordinary_assembly() {
             rejected.push((ty.name.to_string(), label));
         }
     }
-    for category in ["Set", "Map", "Pathmap"] {
+    for category in ["Set", "Pathmap"] {
         assert!(rejected.iter().any(|(name, _)| name == category));
     }
     assert!(rejected.iter().any(|(_, label)| label == "POptionalVec"));
@@ -58,7 +87,7 @@ fn unsupported_checked_shapes_refuse_without_ordinary_assembly() {
             .to_string()
             .contains("UnsupportedConstructor"));
     };
-    for coll_type in [CollectionType::HashSet, CollectionType::HashMap, CollectionType::PathMap] {
+    for coll_type in [CollectionType::HashSet, CollectionType::PathMap] {
         assert_refused(&VariantKind::Collection {
             label: format_ident!("ExcludedDirect"),
             element_cat: category.clone(),
