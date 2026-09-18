@@ -982,8 +982,46 @@ fn checked_generated_fixture_uses_production_layout_and_captures_executable() {
             assert_eq!(seen,1,"Start arithmetic follows its one paid metadata group");
         }
 
+        fn generated_collection_rebuild_interfaces() {
+            use mettail_runtime::{HashBag, HashBagRebuildMode, HashMapLit};
+            let source = HashBag::new();
+            let entries = vec![(token("same"),1),(token("same"),1),(token("other"),1)];
+            let mut direct_trace = Vec::new();
+            let direct = source.try_rebuild_entries_with(entries.clone(),HashBagRebuildMode::CloneEntries,
+                |step| admit_bag_rebuild_proc(step,&mut |w,u| {direct_trace.push((w,u));Ok::<_,usize>(())}))
+                .expect("existing bag provider");
+            let mut public_trace = Vec::new();
+            let exposed = Proc::try_rebuild_hashbag_entries(&source,entries,HashBagRebuildMode::CloneEntries,
+                &mut |w,u| {public_trace.push((w,u));Ok::<_,usize>(())}).expect("exposed same provider");
+            assert_eq!(direct_trace,public_trace);
+            assert!(direct == exposed, "exposed Bag interface preserves the existing result");
+            assert_eq!(exposed.len(),3,"expanded occurrences retain multiplicity");
+
+            let mut source = HashMapLit::new();
+            for name in ["one","two","three"] {source.insert(token(name),Proc::PZero);}
+            let entries = vec![(token("same"),token("first")),(token("other"),token("middle")),
+                (token("same"),token("last"))];
+            let mut expected = HashMapLit::new();
+            for (key,value) in entries.clone() {expected.insert(key,value);}
+            let mut trace = Vec::new();
+            let actual = Proc::try_rebuild_map_entries(&source,entries.clone(),
+                &mut |w,u| {trace.push((w,u));Ok::<_,usize>(())}).expect("typed map admission");
+            assert!(actual.iter().eq(expected.iter()), "typed Map preserves ordered key/value pairs");
+            for cut in 0..trace.len() {
+                let mut count = 0;
+                let result = Proc::try_rebuild_map_entries(&source,entries.clone(),&mut |w,u| {
+                    let index = count;count+=1;
+                    assert_eq!((w,u),trace[index]);
+                    if index == cut {Err(cut)} else {Ok(())}
+                });
+                assert!(matches!(result,Err(BindingFailure::Reservation(index)) if index==cut));
+                assert_eq!(count,cut+1);
+            }
+        }
+
         fn main() {
             assert!(mettail_runtime::CHECKED_FX_PROFILE_AVAILABLE);
+            generated_collection_rebuild_interfaces();
             generated_bag_provider_examples();
             native_map_overhead_boundaries();
             contribution_inspection_examples();

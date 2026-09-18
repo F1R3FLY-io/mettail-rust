@@ -24,6 +24,10 @@ use moniker::{OnBoundFn, OnFreeFn, ScopeState};
 
 type FxBuildHasher = BuildHasherDefault<FxHasher>;
 
+#[cfg(test)]
+#[path = "hashmap_rebuild_tests.rs"]
+mod rebuild_tests;
+
 /// Deterministic, hashable, orderable map literal backed by `IndexMap`
 /// (insertion-order iteration).
 #[derive(Clone, Debug)]
@@ -113,6 +117,166 @@ impl<K, V> HashMapLit<K, V> {
     #[inline]
     pub fn iter(&self) -> indexmap::map::Iter<'_, K, V> {
         self.0.iter()
+    }
+
+    /// Rebuild an equal-width, already-owned ordered pair roster with admission.
+    ///
+    /// The fresh native map reserves the entire roster before insertion. Equal
+    /// transformed keys retain their first key object and position, but take
+    /// the last value, exactly as ordinary `insert`. No sorting is introduced.
+    /// Hash/Eq callbacks inspect complete future-operation receipts without
+    /// performing those native operations; their own inspection is paid through
+    /// the shared callback. Each native insertion follows its aggregate debit.
+    /// Inspectors must preserve keys and their stable native Hash/Eq behavior;
+    /// a callback that changes key identity invalidates the native map contract.
+    ///
+    /// The producer must already own paid input storage and independent normal
+    /// cleanup allowances for every key/value root, including Start refusal,
+    /// collision-discarded keys, displaced values, and a partial result. This
+    /// boundary pays flat container cleanup, not those recursive root bodies.
+    /// Refusal publishes no map; accepted charges remain spent. Requested layout
+    /// bytes and logical operations are not RSS or allocator-instruction bounds.
+    #[doc(hidden)]
+    pub fn try_rebuild_entries_with<E, R>(
+        &self,
+        entries: Vec<(K, V)>,
+        reserve: &mut R,
+        mut inspect_hash: impl FnMut(
+            &K,
+            &mut R,
+        ) -> Result<
+            crate::binding_receipt::BindingCharge,
+            crate::BindingFailure<E>,
+        >,
+        mut inspect_eq: impl FnMut(
+            &K,
+            &K,
+            &mut R,
+        ) -> Result<
+            crate::binding_receipt::BindingCharge,
+            crate::BindingFailure<E>,
+        >,
+    ) -> Result<Self, crate::BindingFailure<E>>
+    where
+        K: Eq + Hash,
+        R: FnMut(usize, usize) -> Result<(), E>,
+    {
+        use crate::binding_receipt::BindingCharge;
+        use crate::{reserve_binding_parts, BindingFailure};
+        if !crate::CHECKED_FX_PROFILE_AVAILABLE
+            || !crate::CHECKED_NATIVE_COMPARISON_PROFILE_AVAILABLE
+        {
+            return Err(BindingFailure::UnsupportedProfile);
+        }
+        // Fixed metadata, arithmetic and charge lifetime precede native allocation.
+        reserve_binding_parts(3, 1, 0, reserve)?;
+        let width = entries.len();
+        if width != self.len() {
+            return Err(BindingFailure::InvalidCollectionInput(
+                "Map reconstruction must preserve source roster width",
+            ));
+        }
+        let overflow = || BindingFailure::SizeOverflow;
+        let (buckets, allocation_bytes) = if width == 0 {
+            (1usize, 0usize)
+        } else {
+            // Slice is the pinned public repr(transparent) view of actual Bucket
+            // storage. Obtain its true stride/alignment without mirroring that
+            // private type, unsafe access, or allocating a representative bucket.
+            let slice = self.0.as_slice();
+            let dense_bytes = std::mem::size_of_val(slice);
+            let dense_align = std::mem::align_of_val(slice);
+            std::alloc::Layout::from_size_align(dense_bytes, dense_align)
+                .map_err(|_| overflow())?;
+            // The pinned table stores usize indices, so its minimum is four
+            // buckets. Capacity is NOT inverted to guess native table geometry.
+            let buckets = if width < 4 {
+                4
+            } else if width < 8 {
+                8
+            } else if width < 15 {
+                16
+            } else {
+                (width.checked_mul(8).ok_or_else(overflow)? / 7)
+                    .checked_next_power_of_two()
+                    .ok_or_else(overflow)?
+            };
+            let indices = std::alloc::Layout::array::<usize>(buckets).map_err(|_| overflow())?;
+            let controls = std::alloc::Layout::from_size_align(
+                buckets.checked_add(16).ok_or_else(overflow)?,
+                16,
+            )
+            .map_err(|_| overflow())?;
+            let table = indices.extend(controls).map_err(|_| overflow())?.0;
+            (buckets, dense_bytes.checked_add(table.size()).ok_or_else(overflow)?)
+        };
+        // Existing start_flat: shell/iterator setup + advances + flat root
+        // dispatch cleanup. Add two native allocations/releases and EMPTY
+        // control initialization; key/value destructor bodies are producer-paid.
+        let startup = width
+            .checked_mul(3)
+            .and_then(|v| v.checked_add(17))
+            .and_then(|v| {
+                if width == 0 {
+                    Some(v)
+                } else {
+                    buckets.checked_add(16).and_then(|n| v.checked_add(n))
+                }
+            })
+            .ok_or_else(overflow)?;
+        let records = width.checked_add(6).ok_or_else(overflow)?;
+        BindingCharge::new(startup, records, allocation_bytes)
+            .map_err(|_| overflow())?
+            .reserve(reserve)?;
+        let mut result =
+            Self(indexmap::IndexMap::with_capacity_and_hasher(width, FxBuildHasher::default()));
+        let groups = 1 + (buckets - 1) / 16;
+        for (key, value) in entries {
+            // NativeMapRebuildCapacity: retained<=processed<width guarantees
+            // reserve(1) and dense append cannot grow, even before occupancy is
+            // tested. Cached index hashes never rehash structural retained keys.
+            reserve_binding_parts(2, 1, 0, reserve)?;
+            if result.len() >= result.0.capacity() {
+                return Err(BindingFailure::InvalidCollectionInput(
+                    "fresh Map lost its preallocated capacity",
+                ));
+            }
+            let retained = result.len();
+            // Reuse probe_flat = 22*groups + 2*candidates + 17. Four more
+            // groups per candidate cover dense-index projection/equivalence
+            // dispatch; twelve cover IndexMap wrappers and occupied/vacant
+            // update, append and discarded-value dispatch (not root bodies).
+            let work = groups
+                .checked_mul(22)
+                .and_then(|n| retained.checked_mul(6).and_then(|m| n.checked_add(m)))
+                .and_then(|n| n.checked_add(29))
+                .ok_or_else(overflow)?;
+            let mut charge = BindingCharge::new(work, 0, 0).map_err(|_| overflow())?;
+            let hash = inspect_hash(&key, reserve)?;
+            charge.try_accumulate_parts(
+                hash.base_work(),
+                hash.records(),
+                hash.owned_bytes(),
+                reserve,
+            )?;
+            result
+                .try_visit_entries(reserve, |stored, _, reserve| {
+                    let eq = inspect_eq(&key, stored, reserve)
+                        .map_err(crate::NativeComparisonFailure::Admission)?;
+                    charge
+                        .try_accumulate_parts(
+                            eq.base_work(),
+                            eq.records(),
+                            eq.owned_bytes(),
+                            reserve,
+                        )
+                        .map_err(crate::NativeComparisonFailure::Admission)
+                })
+                .map_err(BindingFailure::from)?;
+            charge.reserve(reserve)?;
+            result.insert(key, value);
+        }
+        Ok(result)
     }
 
     /// Produce a paid comparison roster in the original insertion order.

@@ -17,6 +17,37 @@ pub(super) fn generate_hashbag_rebuild_admission(language: &LanguageDef) -> Toke
         let hash = format_ident!("inspect_hash_contribution_{}", suffix);
         let equal = format_ident!("inspect_comparison_contributions_{}", suffix);
         quote! {
+            impl #category {
+                /// Rebuild an already-owned ordered roster using the generated
+                /// native Hash/Eq admission, not a new collection algorithm.
+                /// The producer must prepay the roster and independent root cleanup.
+                pub fn try_rebuild_hashbag_entries<E>(
+                    source: &mettail_runtime::HashBag<Self>,
+                    entries: Vec<(Self, usize)>,
+                    mode: mettail_runtime::HashBagRebuildMode,
+                    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                ) -> Result<mettail_runtime::HashBag<Self>, mettail_runtime::BindingFailure<E>> {
+                    source.try_rebuild_entries_with(entries, mode, |step| #admit(step, reserve))
+                }
+
+                /// Preserve original ordered Map insertion while admitting its
+                /// native key operations through the same typed inspectors.
+                /// Input pairs and independent key/value cleanup are producer-paid.
+                pub fn try_rebuild_map_entries<V, E>(
+                    source: &mettail_runtime::HashMapLit<Self, V>,
+                    entries: Vec<(Self, V)>,
+                    reserve: &mut impl FnMut(usize, usize) -> Result<(), E>,
+                ) -> Result<mettail_runtime::HashMapLit<Self, V>, mettail_runtime::BindingFailure<E>> {
+                    source.try_rebuild_entries_with(
+                        entries, reserve,
+                        |key, reserve| #hash(key, reserve).map_err(mettail_runtime::BindingFailure::from),
+                        |key, stored, reserve| #equal(
+                            key, stored, InspectCmpContributionMode::Eq, reserve,
+                        ).map_err(mettail_runtime::BindingFailure::from),
+                    )
+                }
+            }
+
             #[allow(dead_code)]
             fn #admit<E>(
                 step: mettail_runtime::HashBagRebuildStep<'_, #category>,
