@@ -1091,13 +1091,15 @@ fn format_token_name_for_ebnf(token: &str) -> String {
                 .map(|inner| format!("\"$${inner}(\""))
                 .unwrap_or_else(|| format!("?{other}?"))
         },
-        other if let Some(encoded) = other.strip_prefix("Dollar_") => {
-            decode_terminal_bytes(encoded)
-                .map(|inner| format!("\"${inner}\""))
-                .unwrap_or_else(|| format!("?{other}?"))
-        },
+        other if other.starts_with("Dollar_") => other
+            .strip_prefix("Dollar_")
+            .and_then(decode_terminal_bytes)
+            .map(|inner| format!("\"${inner}\""))
+            .unwrap_or_else(|| format!("?{other}?")),
         // Exact byte-encoded keywords preserve case and Unicode.
-        other if let Some(encoded) = other.strip_prefix("Kw_") => decode_terminal_bytes(encoded)
+        other if other.starts_with("Kw_") => other
+            .strip_prefix("Kw_")
+            .and_then(decode_terminal_bytes)
             .map(|keyword| format!("\"{keyword}\""))
             .unwrap_or_else(|| format!("?{other}?")),
         // Hex-encoded terminals: Tok_6c_61_6d_20 → decode bytes to string
@@ -2100,10 +2102,20 @@ mod tests {
             assert_eq!(format_token_name_for_ebnf(&variant), format!("\"{terminal}\""));
         }
 
-        for terminal in ["$Proc", "$proc", "$$Proc(", "$$proc("] {
+        for terminal in ["$Proc", "$proc", "$λ", "$$Proc(", "$$proc("] {
             let variant = terminal_to_variant_name(terminal);
             assert_eq!(format_token_name_for_ebnf(&variant), format!("\"{terminal}\""));
         }
+    }
+
+    #[test]
+    fn malformed_encoded_terminal_names_keep_the_original_fallback() {
+        for name in ["Dollar_", "Kw_", "Dollar_gg", "Kw_ff", "Dollar_c0_af", "Kw_1ff"] {
+            assert_eq!(format_token_name_for_ebnf(name), format!("?{name}?"));
+        }
+        assert_eq!(format_token_name_for_ebnf("Dollar"), "\"$\"");
+        assert_eq!(format_token_name_for_ebnf("Dollarish"), "?Dollarish?");
+        assert_eq!(format_token_name_for_ebnf("Kwish"), "?Kwish?");
     }
 
     // ── Wrapped comment helper unit tests ────────────────────────────────
