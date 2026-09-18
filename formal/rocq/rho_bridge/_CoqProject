@@ -63,6 +63,7 @@ theories/RholangInheritedBindingFold.v
 theories/IndexedCopySlots.v
 theories/HashBagBindingReconstruction.v
 theories/OrderedBindingReconstruction.v
+theories/NativeMapRebuildCapacity.v
 theories/GeneratedDummyCleanupReservation.v
 theories/GeneratedBindingOutputReservation.v
 theories/MonikerLeafOperations.v
