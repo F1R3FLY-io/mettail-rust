@@ -122,4 +122,6 @@ theories/RegexGsltReplace.v
 theories/RegexGsltRules.v
 theories/RegexGsltOracle.v
 theories/RegexGsltApplication.v
+theories/RegexGsltApplicationMachine.v
+theories/WherePredicateCommit.v
 theories/ParserBackendSelection.v
