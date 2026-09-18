@@ -5,6 +5,7 @@
 //! performs only a structural, post-order projection to an ordinary Rholang
 //! value.  It never renders source and never invokes a parser.
 
+use crate::rholang_ast::RholangAstLowerError;
 use mettail_languages::rholang::{
     DdlBinding, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses, DdlImport,
     DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlPremise, DdlPremises, DdlReplacement,
@@ -13,6 +14,9 @@ use mettail_languages::rholang::{
 };
 use models::rhoapi::Par;
 use models::rust::utils::{new_elist_par, new_gstring_par};
+
+mod admission;
+type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), RholangAstLowerError> + 'a;
 
 /// Versioned, closed AST envelope emitted by the Rholang lowering.
 pub use mettail_elab::wire::DDL_AST_ENVELOPE_V2;
@@ -49,6 +53,14 @@ pub(crate) struct DdlLowerPlan<'a> {
 
 impl<'a> DdlLowerPlan<'a> {
     pub(crate) fn build(root: DdlRoot<'a>) -> Self {
+        Self::try_build(root, &mut |_, _| Ok(())).expect("unlimited DDL plan construction")
+    }
+
+    pub(crate) fn try_build(
+        root: DdlRoot<'a>,
+        reserve: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        admission::rosters(4, 2, reserve)?;
         let root = match root {
             DdlRoot::Module { name, imports, items } => Task::Module { name, imports, items },
             DdlRoot::Theory { name, parameters, body } => Task::Theory { name, parameters, body },
@@ -60,7 +72,37 @@ impl<'a> DdlLowerPlan<'a> {
         let mut operations = Vec::new();
         let mut processes = Vec::new();
 
-        while let Some(task) = tasks.pop() {
+        loop {
+            admission::parts(2, 0, 0, reserve)?;
+            let Some(task) = tasks.pop() else {
+                break;
+            };
+            admission::expansion(&task, reserve)?;
+            let (pending, emitted, process_count) = match &task {
+                Task::Text(_) | Task::QuotedText(_) | Task::FinishNode { .. } => (0, 1, 0),
+                Task::Process(_) => (0, 1, 1),
+                Task::Node { children, .. } => (
+                    children
+                        .len()
+                        .checked_add(1)
+                        .ok_or(RholangAstLowerError::PreparationSizeOverflow)?,
+                    0,
+                    0,
+                ),
+                _ => (1, 0, 0),
+            };
+            tasks
+                .len()
+                .checked_add(pending)
+                .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+            operations
+                .len()
+                .checked_add(emitted)
+                .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+            processes
+                .len()
+                .checked_add(process_count)
+                .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
             match task {
                 Task::Text(value) => operations.push(WireOp::Text(value)),
                 Task::QuotedText(value) => operations.push(WireOp::QuotedText(value)),
@@ -280,7 +322,7 @@ impl<'a> DdlLowerPlan<'a> {
             }
         }
 
-        Self { operations, processes }
+        Ok(Self { operations, processes })
     }
 
     pub(crate) fn process_jobs(&self) -> impl ExactSizeIterator<Item = &'a Proc> + '_ {
@@ -288,30 +330,69 @@ impl<'a> DdlLowerPlan<'a> {
     }
 
     pub(crate) fn finish(self, process_values: Vec<Par>) -> Result<Par, String> {
+        self.try_finish(process_values, &mut |_, _| Ok(()))
+            .map_err(|error| match error {
+                RholangAstLowerError::DdlWire(message) => message,
+                other => format!("{other:?}"),
+            })
+    }
+
+    pub(crate) fn try_finish(
+        self,
+        process_values: Vec<Par>,
+        reserve: &mut Reservation<'_>,
+    ) -> Result<Par, RholangAstLowerError> {
+        admission::parts(2, 0, 0, reserve)?;
         if process_values.len() != self.processes.len() {
-            return Err(format!(
+            admission::parts(8, 1, 128, reserve)?;
+            return Err(RholangAstLowerError::DdlWire(format!(
                 "DDL structural plan received {} process values; expected {}",
                 process_values.len(),
                 self.processes.len()
-            ));
+            )));
         }
+        admission::rosters(2, process_values.len(), reserve)?;
         let mut process_values: Vec<Option<Par>> = process_values.into_iter().map(Some).collect();
         let mut values = Vec::new();
+        admission::parts(3, 1, 0, reserve)?;
         for operation in self.operations {
+            // Iterator advance, dispatch, one output slot and its normal cleanup.
+            admission::parts(5, 1, 0, reserve)?;
+            values
+                .len()
+                .checked_add(1)
+                .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
             match operation {
-                WireOp::Text(value) => values.push(string_par(value.to_string())),
-                WireOp::QuotedText(value) => {
-                    values.push(string_par(decode_captured_string(value)?));
+                WireOp::Text(value) => {
+                    admission::text(value.len(), false, reserve)?;
+                    values.push(string_par(value.to_string()));
                 },
-                WireOp::Process(index) => values.push(
-                    process_values[index]
-                        .take()
-                        .expect("each DDL process slot occurs exactly once in the plan"),
-                ),
+                WireOp::QuotedText(value) => {
+                    admission::text(value.len(), true, reserve)?;
+                    values.push(string_par(
+                        decode_captured_string(value).map_err(RholangAstLowerError::DdlWire)?,
+                    ));
+                },
+                WireOp::Process(index) => {
+                    let value = process_values.get_mut(index).and_then(Option::take);
+                    match value {
+                        Some(value) => values.push(value),
+                        None => {
+                            let message =
+                                "DDL structural plan has an absent or repeated process slot";
+                            admission::parts(1, 1, message.len(), reserve)?;
+                            return Err(RholangAstLowerError::DdlWire(message.into()));
+                        },
+                    }
+                },
                 WireOp::Node { tag, child_count } => {
-                    let start = values.len().checked_sub(child_count).ok_or_else(|| {
-                        format!("DDL structural plan underflow while assembling `{tag}`")
-                    })?;
+                    let Some(start) = values.len().checked_sub(child_count) else {
+                        admission::parts(8, 1, 128, reserve)?;
+                        return Err(RholangAstLowerError::DdlWire(format!(
+                            "DDL structural plan underflow while assembling `{tag}`"
+                        )));
+                    };
+                    admission::node(child_count, tag.len(), reserve)?;
                     let mut children = values.split_off(start);
                     children.insert(0, string_par(tag.to_string()));
                     values.push(new_elist_par(
@@ -325,11 +406,25 @@ impl<'a> DdlLowerPlan<'a> {
                 },
             }
         }
+        admission::parts(3, 0, 0, reserve)?;
+        let mut unused = process_values.iter();
+        loop {
+            admission::parts(1, 0, 0, reserve)?;
+            let Some(slot) = unused.next() else {
+                break;
+            };
+            if slot.is_some() {
+                let message = "DDL structural plan left an embedded process slot unused";
+                admission::parts(1, 1, message.len(), reserve)?;
+                return Err(RholangAstLowerError::DdlWire(message.into()));
+            }
+        }
         if values.len() != 1 {
-            return Err(format!(
+            admission::parts(8, 1, 128, reserve)?;
+            return Err(RholangAstLowerError::DdlWire(format!(
                 "DDL structural plan produced {} root values; expected one",
                 values.len()
-            ));
+            )));
         }
         Ok(values.pop().expect("checked one DDL structural root"))
     }
@@ -599,7 +694,11 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Task<'a> {
         },
         DdlRuleAst::DdlRuleAstCollectionRemainder(first, tail) => {
             let (rest, name) = rule_ast_remainder_tail(tail.as_ref());
-            let mut children = Vec::with_capacity(rest.len().saturating_add(2));
+            let mut children = Vec::with_capacity(
+                rest.len()
+                    .checked_add(2)
+                    .expect("DDL roster width was checked before helper construction"),
+            );
             children.push(Task::RuleAst(first.as_ref()));
             children.extend(rest);
             children.push(Task::Node {
@@ -656,6 +755,10 @@ enum Task<'a> {
     Premise(&'a DdlPremise),
     RuleAst(&'a DdlRuleAst),
 }
+
+#[cfg(test)]
+#[path = "ddl_ast/admission_tests.rs"]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests {
