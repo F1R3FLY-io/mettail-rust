@@ -56,6 +56,7 @@ theories/RholangGraphCapacity.v
 theories/RholangInitialGraphMachine.v
 theories/RholangInitialGraphResources.v
 theories/RholangPreparationReservation.v
+theories/RholangBodyFirstOccurrence.v
 theories/RholangEnvironmentReservation.v
 theories/RholangScopeConstructionRecipe.v
 theories/RholangInheritedBindingFold.v
