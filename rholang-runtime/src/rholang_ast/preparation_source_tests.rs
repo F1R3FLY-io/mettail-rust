@@ -2,6 +2,249 @@ use super::*;
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
 use prost::Message;
 
+fn integer_signs(count: usize) -> Int {
+    let mut value = Int::NumLit(7);
+    for _ in 0..count {
+        value = Int::NegInt(Arc::new(value));
+    }
+    value
+}
+
+#[test]
+fn paid_integer_category_negations_preserve_bytes_and_each_refusal_boundary() {
+    for count in [0, 1, 4] {
+        let source = integer_signs(count);
+        let env = BoundEnv::new();
+        let mut expected = Target::integer(7);
+        for _ in 0..count {
+            expected = unary_expr_par(expected, |p| ExprInstance::ENegBody(ENeg { p }));
+        }
+        let mut trace = Vec::new();
+        let actual =
+            lower_int_value_preparing(&source, &env, SourcePreparation::Checked, &mut |w, u| {
+                trace.push((w, u));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(actual.encode_to_vec(), expected.encode_to_vec());
+        assert!(actual.locally_free.is_empty());
+        assert!(!actual.connective_used);
+        let total = trace
+            .iter()
+            .fold((0usize, 0usize), |(w, u), (x, y)| (w + x, u + y));
+        assert_eq!(total, (8 * count + 10, 4 * count + 16));
+        for cut in 0..trace.len() {
+            let mut observed = Vec::new();
+            let result = lower_int_value_preparing(
+                &source,
+                &env,
+                SourcePreparation::Checked,
+                &mut |w, u| {
+                    observed.push((w, u));
+                    if observed.len() == cut + 1 {
+                        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert!(matches!(
+                result,
+                Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+            ));
+            assert_eq!(observed, trace[..=cut]);
+        }
+        for (work, units, pass) in [
+            (total.0, total.1, true),
+            (total.0 - 1, total.1, false),
+            (total.0, total.1 - 1, false),
+            (0, 0, false),
+        ] {
+            let mut used = 0;
+            let mut cancel = || false;
+            let mut budget = ReflectedCodecBudget::new(&mut used, work as u64, units, &mut cancel);
+            let result = lower_int_value_preparing(
+                &source,
+                &env,
+                SourcePreparation::Checked,
+                &mut |w, u| {
+                    budget
+                        .charge(w, u)
+                        .map_err(RholangAstLowerError::Preparation)
+                },
+            );
+            assert_eq!(result.is_ok(), pass);
+        }
+        let original =
+            lower_int_value_preparing(&source, &env, SourcePreparation::Original, &mut |_, _| {
+                panic!("Original policy must not reserve")
+            })
+            .unwrap();
+        assert_eq!(original.encode_to_vec(), expected.encode_to_vec());
+        // Exercise the exposed CastInt driver path, not only the helper.
+        let process = Proc::CastInt(Arc::new(source));
+        let mut used = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut used, 1_000_000, 1_000_000, &mut cancel);
+        let prepared =
+            session::lower_public_body_with_budget(&process, BoundEnv::new(), &mut budget)
+                .expect("public integer-category chain");
+        assert_eq!(prepared.par.encode_to_vec(), expected.encode_to_vec());
+    }
+}
+
+#[test]
+fn paid_integer_category_deep_chain_and_partial_output_cleanup_use_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            let source = integer_signs(8192);
+            let env = BoundEnv::new();
+            let mut calls = 0;
+            let output = lower_int_value_preparing(
+                &source,
+                &env,
+                SourcePreparation::Checked,
+                &mut |_, _| {
+                    calls += 1;
+                    Ok(())
+                },
+            )
+            .unwrap();
+            // Inspect by borrowing the existing one-child spine; never clone it.
+            let mut cursor = &output;
+            for _ in 0..8192 {
+                let Some(ExprInstance::ENegBody(ENeg { p: Some(child) })) =
+                    cursor.exprs[0].expr_instance.as_ref()
+                else {
+                    panic!("negation spine")
+                };
+                cursor = child;
+            }
+            assert!(matches!(cursor.exprs[0].expr_instance, Some(ExprInstance::GInt(7))));
+            drop(output);
+            for stop in [1, 8192, calls - 3, calls] {
+                let mut at = 0;
+                let result = lower_int_value_preparing(
+                    &source,
+                    &env,
+                    SourcePreparation::Checked,
+                    &mut |_, _| {
+                        at += 1;
+                        if at == stop {
+                            Err(RholangAstLowerError::Preparation(
+                                DynamicReflectionError::Cancelled,
+                            ))
+                        } else {
+                            Ok(())
+                        }
+                    },
+                );
+                assert!(result.is_err());
+                assert_eq!(at, stop);
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn receive_slot_moves_and_hole_copies_preserve_each_paid_prefix() {
+    fn snapshot(slots: &[ReceiveSlot]) -> Vec<(Option<FreeVar<String>>, Option<String>)> {
+        slots
+            .iter()
+            .map(|slot| match slot {
+                ReceiveSlot::Moniker(binder) => (Some(binder.0.clone()), None),
+                ReceiveSlot::Hole(name) => (None, Some(name.clone())),
+            })
+            .collect()
+    }
+    let binders = [Binder(FreeVar::fresh_named("first")), Binder(FreeVar::fresh_named("second"))];
+    let names = ["same".to_owned(), "same".to_owned(), "λ".to_owned()];
+    for copies in [false, true] {
+        let run = |slots: &mut Vec<ReceiveSlot>, reserve: &mut StorageReservation<'_>, policy| {
+            let mut build = SourceBuilder::new(policy, reserve);
+            if copies {
+                build.copy_receive_holes(slots, names.iter())
+            } else {
+                build.extend_receive_slots(slots, binders.iter().cloned().map(ReceiveSlot::Moniker))
+            }
+        };
+        let mut expected = vec![(None, Some("existing".to_owned()))];
+        if copies {
+            expected.extend(names.iter().cloned().map(|name| (None, Some(name))));
+        } else {
+            expected.extend(binders.iter().map(|binder| (Some(binder.0.clone()), None)));
+        }
+        let mut actual = vec![ReceiveSlot::Hole("existing".into())];
+        let mut trace = Vec::new();
+        run(
+            &mut actual,
+            &mut |w, u| {
+                trace.push((w, u));
+                Ok(())
+            },
+            SourcePreparation::Checked,
+        )
+        .unwrap();
+        assert_eq!(snapshot(&actual), expected);
+        for cut in 0..trace.len() {
+            let mut slots = vec![ReceiveSlot::Hole("existing".into())];
+            let mut observed = Vec::new();
+            let result = run(
+                &mut slots,
+                &mut |w, u| {
+                    observed.push((w, u));
+                    if observed.len() == cut + 1 {
+                        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+                    } else {
+                        Ok(())
+                    }
+                },
+                SourcePreparation::Checked,
+            );
+            assert!(result.is_err());
+            assert_eq!(observed, trace[..=cut]);
+            let prefix = snapshot(&slots);
+            assert_eq!(prefix, expected[..prefix.len()]);
+        }
+        let total = trace
+            .iter()
+            .fold((0usize, 0usize), |(w, u), (x, y)| (w + x, u + y));
+        for (work, units, pass) in [
+            (total.0, total.1, true),
+            (total.0 - 1, total.1, false),
+            (total.0, total.1 - 1, false),
+        ] {
+            let mut used = 0;
+            let mut cancel = || false;
+            let mut budget = ReflectedCodecBudget::new(&mut used, work as u64, units, &mut cancel);
+            let mut slots = vec![ReceiveSlot::Hole("existing".into())];
+            let result = run(
+                &mut slots,
+                &mut |w, u| {
+                    budget
+                        .charge(w, u)
+                        .map_err(RholangAstLowerError::Preparation)
+                },
+                SourcePreparation::Checked,
+            );
+            assert_eq!(result.is_ok(), pass);
+            if pass {
+                assert_eq!(snapshot(&slots), expected);
+            }
+        }
+        let mut slots = vec![ReceiveSlot::Hole("existing".into())];
+        run(
+            &mut slots,
+            &mut |_, _| panic!("original transfer is unmetered"),
+            SourcePreparation::Original,
+        )
+        .unwrap();
+        assert_eq!(snapshot(&slots), expected);
+    }
+}
 fn integer(value: i64) -> Proc {
     Proc::CastInt(Arc::new(Int::NumLit(value)))
 }

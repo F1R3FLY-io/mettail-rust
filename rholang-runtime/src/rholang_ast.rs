@@ -2241,9 +2241,15 @@ impl<'a> Drive<'a> {
                 self.push_children(Kont::New { descriptor, env }, [Job::Body(body, extended)])?;
             },
             // ── A-S4 cast purity: casts lower STRUCTURALLY ───────────────────────────────────
-            Proc::CastInt(value) => self
-                .stacks
-                .value(lower_int_value(value.as_ref(), self.env(env))?)?,
+            Proc::CastInt(value) => {
+                let lowered = lower_int_value_preparing(
+                    value.as_ref(),
+                    self.envs.get(env),
+                    self.source_preparation,
+                    self.stacks.reservation,
+                )?;
+                self.stacks.value(lowered)?;
+            },
             Proc::CastBool(value) => self.stacks.value(lower_arm_cast_bool(value)?)?,
             Proc::CastStr(value) => self.stacks.value(lower_arm_cast_str(value)?)?,
             Proc::PVar(var) => self.stacks.value(lower_arm_p_var(var, self.env(env))?)?,
@@ -3452,9 +3458,11 @@ impl<'a> Drive<'a> {
                 token.locally_free = create_bit_vector(&[token_level]);
                 token.connective_used = true;
                 let pattern = crate::language_install::dynamic_flt_pattern_token_pattern(token);
-                for hole in &node.holes {
-                    state.slots.push(ReceiveSlot::Hole(hole.name.clone()));
-                }
+                preparation_source::SourceBuilder::new(
+                    self.source_preparation,
+                    self.stacks.reservation,
+                )
+                .copy_receive_holes(&mut state.slots, node.holes.iter().map(|hole| &hole.name))?;
                 state.binds_rho.push(ReceiveBind {
                     patterns: vec![pattern],
                     source: Some(source),
@@ -3470,9 +3478,14 @@ impl<'a> Drive<'a> {
             }
             let (pattern, free_count, hole_names) =
                 lower_flt_pattern(node.as_ref(), self.env(state.env))?;
-            for name in hole_names {
-                state.slots.push(ReceiveSlot::Hole(name));
-            }
+            preparation_source::SourceBuilder::new(
+                self.source_preparation,
+                self.stacks.reservation,
+            )
+            .extend_receive_slots(
+                &mut state.slots,
+                hole_names.into_iter().map(ReceiveSlot::Hole),
+            )?;
             state.binds_rho.push(ReceiveBind {
                 patterns: vec![pattern],
                 source: Some(source),
@@ -3523,9 +3536,11 @@ impl<'a> Drive<'a> {
             .expect("rholang lowering: a receive pattern ran without its source");
         let bind_binders = std::mem::take(&mut self.pattern_states[slot as usize].binders);
         let free_count = bind_binders.len() as i32;
-        for binder in bind_binders {
-            state.slots.push(ReceiveSlot::Moniker(binder));
-        }
+        preparation_source::SourceBuilder::new(self.source_preparation, self.stacks.reservation)
+            .extend_receive_slots(
+                &mut state.slots,
+                bind_binders.into_iter().map(ReceiveSlot::Moniker),
+            )?;
         state.binds_rho.push(ReceiveBind {
             patterns: vec![pat_par],
             source: Some(source),
@@ -4423,19 +4438,45 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// `locally_free`/`connective_used` propagation `unary_expr_par` performs at each level — is
 /// byte-identical.
 fn lower_int_value(value: &Int, _env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
+    lower_int_value_preparing(value, _env, SourcePreparation::Original, &mut |_, _| Ok(()))
+}
+
+fn lower_int_value_preparing(
+    value: &Int,
+    _env: &BoundEnv,
+    policy: SourcePreparation,
+    reservation: &mut StorageReservation<'_>,
+) -> Result<Par, RholangAstLowerError> {
+    let mut build = preparation_source::SourceBuilder::new(policy, reservation);
+    build.reserve(2, 2)?;
     let mut signs = 0usize;
     let mut value = value;
-    while let Int::NegInt(inner) = value {
-        signs += 1;
+    loop {
+        // Includes the terminal tag inspection, before following any edge.
+        build.reserve(2, 0)?;
+        let Int::NegInt(inner) = value else { break };
+        build.reserve(2, 0)?;
+        signs = signs
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
         value = inner.as_ref();
     }
+    build.reserve(1, 0)?;
     let Int::NumLit(literal) = value else {
         return Err(RholangAstLowerError::UnsupportedProc(
             "non-literal integer expression (Int category)",
         ));
     };
+    // Source-level call/result retention, not the separate complete native
+    // Par constructor receipt. Ground integer/unary summaries stay empty.
+    build.reserve(2, 1)?;
     let mut par = Target::integer(*literal);
-    for _ in 0..signs {
+    build.reserve(1, 1)?;
+    let mut signs = 0..signs;
+    loop {
+        build.reserve(2, 0)?;
+        let Some(_) = signs.next() else { break };
+        build.reserve(2, 1)?;
         par = unary_expr_par(par, |p| ExprInstance::ENegBody(ENeg { p }));
     }
     Ok(par)

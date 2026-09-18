@@ -15,6 +15,47 @@ pub(super) struct SourceBuilder<'a, 'r> {
 }
 
 impl<'a, 'r> SourceBuilder<'a, 'r> {
+    /// Transfer existing capture ownership into the join's distinct roster.
+    /// Refusal leaves only a paid prefix in the private receive state.
+    pub(super) fn extend_receive_slots(
+        &mut self,
+        slots: &mut Vec<ReceiveSlot>,
+        incoming: impl IntoIterator<Item = ReceiveSlot>,
+    ) -> Result<(), RholangAstLowerError> {
+        self.reserve(2, 1)?;
+        let mut incoming = incoming.into_iter();
+        loop {
+            self.reserve(2, 0)?;
+            let Some(slot) = incoming.next() else { break };
+            self.push(slots, || slot)?;
+        }
+        Ok(())
+    }
+
+    /// Borrowed FLT hole names need independent owned String credits; their
+    /// earlier template/request encoding does not pay this receive roster.
+    pub(super) fn copy_receive_holes<'s>(
+        &mut self,
+        slots: &mut Vec<ReceiveSlot>,
+        names: impl IntoIterator<Item = &'s String>,
+    ) -> Result<(), RholangAstLowerError> {
+        self.reserve(2, 1)?;
+        let mut names = names.into_iter();
+        loop {
+            self.reserve(2, 0)?;
+            let Some(name) = names.next() else { break };
+            // Reserve the destination slot before copying its owned payload.
+            self.reserve(3, 1)?;
+            slots
+                .len()
+                .checked_add(1)
+                .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+            let name = self.copy_string(name)?;
+            slots.push(ReceiveSlot::Hole(name));
+        }
+        Ok(())
+    }
+
     pub(super) fn push_proc_copy(
         &mut self,
         values: &mut Vec<Proc>,
