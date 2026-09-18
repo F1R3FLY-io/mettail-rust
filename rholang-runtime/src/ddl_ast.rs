@@ -18,6 +18,47 @@ use models::rust::utils::{new_elist_par, new_gstring_par};
 mod admission;
 type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), RholangAstLowerError> + 'a;
 
+/// Decoration of the existing two wire constructors. Implementations retain
+/// the closed list metadata policy and prepay their additional work through
+/// the supplied reservation. Process leaves are moved through unchanged.
+pub(crate) trait DdlWireValue: Sized {
+    fn text(value: String, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
+    fn closed_list(
+        children: Vec<Self>,
+        reserve: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError>;
+}
+
+impl DdlWireValue for Par {
+    fn text(value: String, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(string_par(value))
+    }
+
+    fn closed_list(
+        children: Vec<Self>,
+        _: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Ok(new_elist_par(children, Vec::new(), false, None, Vec::new(), false))
+    }
+}
+
+impl DdlWireValue for crate::rholang_ast::constructed_value::ConstructedValue {
+    fn text(value: String, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Self::text(value)
+    }
+
+    fn closed_list(
+        children: Vec<Self>,
+        reserve: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Self::closed_list(children, reserve)
+    }
+}
+
+#[cfg(test)]
+#[path = "ddl_ast/receipt_tests.rs"]
+mod receipt_tests;
+
 /// Versioned, closed AST envelope emitted by the Rholang lowering.
 pub use mettail_elab::wire::DDL_AST_ENVELOPE_V2;
 
@@ -342,6 +383,14 @@ impl<'a> DdlLowerPlan<'a> {
         process_values: Vec<Par>,
         reserve: &mut Reservation<'_>,
     ) -> Result<Par, RholangAstLowerError> {
+        self.try_finish_with(process_values, reserve)
+    }
+
+    pub(crate) fn try_finish_with<V: DdlWireValue>(
+        self,
+        process_values: Vec<V>,
+        reserve: &mut Reservation<'_>,
+    ) -> Result<V, RholangAstLowerError> {
         admission::parts(2, 0, 0, reserve)?;
         if process_values.len() != self.processes.len() {
             admission::parts(8, 1, 128, reserve)?;
@@ -352,26 +401,31 @@ impl<'a> DdlLowerPlan<'a> {
             )));
         }
         admission::rosters(2, process_values.len(), reserve)?;
-        let mut process_values: Vec<Option<Par>> = process_values.into_iter().map(Some).collect();
+        std::alloc::Layout::array::<Option<V>>(process_values.len())
+            .map_err(|_| RholangAstLowerError::PreparationSizeOverflow)?;
+        let mut process_values: Vec<Option<V>> = process_values.into_iter().map(Some).collect();
         let mut values = Vec::new();
         admission::parts(3, 1, 0, reserve)?;
         for operation in self.operations {
             // Iterator advance, dispatch, one output slot and its normal cleanup.
             admission::parts(5, 1, 0, reserve)?;
-            values
+            let next_len = values
                 .len()
                 .checked_add(1)
                 .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+            std::alloc::Layout::array::<V>(next_len)
+                .map_err(|_| RholangAstLowerError::PreparationSizeOverflow)?;
             match operation {
                 WireOp::Text(value) => {
                     admission::text(value.len(), false, reserve)?;
-                    values.push(string_par(value.to_string()));
+                    values.push(V::text(value.to_string(), reserve)?);
                 },
                 WireOp::QuotedText(value) => {
                     admission::text(value.len(), true, reserve)?;
-                    values.push(string_par(
+                    values.push(V::text(
                         decode_captured_string(value).map_err(RholangAstLowerError::DdlWire)?,
-                    ));
+                        reserve,
+                    )?);
                 },
                 WireOp::Process(index) => {
                     let value = process_values.get_mut(index).and_then(Option::take);
@@ -393,16 +447,14 @@ impl<'a> DdlLowerPlan<'a> {
                         )));
                     };
                     admission::node(child_count, tag.len(), reserve)?;
+                    let width = child_count
+                        .checked_add(1)
+                        .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                    std::alloc::Layout::array::<V>(width)
+                        .map_err(|_| RholangAstLowerError::PreparationSizeOverflow)?;
                     let mut children = values.split_off(start);
-                    children.insert(0, string_par(tag.to_string()));
-                    values.push(new_elist_par(
-                        children,
-                        Vec::new(),
-                        false,
-                        None,
-                        Vec::new(),
-                        false,
-                    ));
+                    children.insert(0, V::text(tag.to_string(), reserve)?);
+                    values.push(V::closed_list(children, reserve)?);
                 },
             }
         }

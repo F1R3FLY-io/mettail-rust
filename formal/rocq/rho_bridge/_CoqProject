@@ -162,8 +162,10 @@ theories/GeneratedMapCategoryComparison.v
 theories/BehavioralFlatCopy.v
 theories/RholangBoundMetadata.v
 theories/RholangDeepConstructionSize.v
+theories/DdlFinishErasure.v
 theories/RholangFreshMetadataPasses.v
 theories/RholangConstructionCleanup.v
+theories/NativeAppendOperationBound.v
 theories/RholangCleanupEvents.v
 theories/RholangFltTransport.v
 theories/RholangFltRequestRecipes.v
