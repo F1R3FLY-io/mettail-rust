@@ -35,509 +35,237 @@ pub(crate) fn build_per_category_rules(
     language: &LanguageDef,
     categories: &[String],
 ) -> Vec<Vec<GrammarRule>> {
-    let cat_idx: std::collections::HashMap<&str, usize> = categories
+    use mettail_prattail::wpda_rule_analysis::synthetic::{
+        build_per_category_rules as build_shared_rules, TypeInput, UserInput,
+    };
+    let users: Vec<_> = language
+        .terms
         .iter()
-        .enumerate()
-        .map(|(i, n)| (n.as_str(), i))
+        .map(|rule| UserInput {
+            category: rule.category.to_string(),
+            source: rule,
+        })
         .collect();
+    let types: Vec<_> = language
+        .types
+        .iter()
+        .map(|ty| TypeInput {
+            name: ty.name.to_string(),
+            is_data: ty.is_data(),
+            has_native: ty.native_type.is_some(),
+            has_collection: ty.collection_kind.is_some(),
+            source: ty,
+        })
+        .collect();
+    let mut adapter = MacroSynthesisAdapter { language };
+    let derived = build_shared_rules(categories, &users, &types, CollectionType::Vec, &mut adapter);
+    // Retain the original harmless macro expansion at the same final phase.
+    let _ = format_ident!("_unused");
+    derived
+}
 
-    let mut per_cat: Vec<Vec<GrammarRule>> = vec![Vec::new(); categories.len()];
+/// Only source-specific observations and original operations live here.
+/// Eligibility, order and complete synthetic shapes come from the shared driver.
+struct MacroSynthesisAdapter<'a> {
+    language: &'a LanguageDef,
+}
 
-    // 1. User rules from language.terms — in source order.
-    for rule in &language.terms {
-        let cat = rule.category.to_string();
-        if let Some(&i) = cat_idx.get(cat.as_str()) {
-            per_cat[i].push(rule.clone());
-        }
+impl mettail_prattail::wpda_rule_analysis::synthetic::SynthesisAdapter
+    for MacroSynthesisAdapter<'_>
+{
+    type SourceUser = GrammarRule;
+    type SourceType = mettail_ast::language::LangType;
+    type RulePayload = GrammarRule;
+    type CollectionKind = CollectionType;
+
+    fn clone_user(&mut self, rule: &GrammarRule) -> GrammarRule {
+        rule.clone()
     }
 
-    // 1b. Plan 3 (ambient cluster, 2026-05-10): normalize old-BNF rules to
-    // judgement-style by synthesizing `term_context` + `syntax_pattern`
-    // from `items`. The user-written .rs syntax stays exactly as written;
-    // this conversion is internal macro plumbing so downstream classifiers
-    // (`classify_binder`, `classify_postfix_mixfix`, `classify_collection`)
-    // — which only read the judgement-form fields — can dispatch these
-    // rules. `convert_items_to_term_context` is a no-op for judgement-form
-    // rules (early-returns) and for atomic/literal/Var rules (those use
-    // the existing classify_atomic / VarRule paths). See its docstring in
-    // `ast/src/grammar.rs` for the conversion rules.
-    for cat_rules in per_cat.iter_mut() {
-        for rule in cat_rules.iter_mut() {
-            mettail_ast::grammar::convert_items_to_term_context(rule);
-        }
+    fn normalize_user(&mut self, rule: &mut GrammarRule) {
+        mettail_ast::grammar::convert_items_to_term_context(rule);
     }
 
-    // 2. Synthetic literal-patterned rules.
-    //
-    // Two cases give a category an implicit atomic-literal variant:
-    //   (a) Explicit `literals { ... }` block — `from_literals: true` TokenDef.
-    //   (b) Implicit native-type — `LangType.native_type = Some(_)` without
-    //       a `literals` block (e.g., BaseMath's `![i32] as Num`). The
-    //       trampoline path auto-emits a `Token::Integer/Float/Boolean/String`
-    //       arm with a default eval body (e.g., `parse_int_lit(text, Some(I32))`).
-    //
-    // Both cases produce a `LiteralPatterned`-classified rule. The rule's
-    // `rust_code` carries the eval body; for case (a) it's the user's
-    // `eval: ![ { ... } ]` block; for case (b) it's a synthesized default
-    // matching the trampoline's behavior.
-    for type_def in &language.types {
-        if type_def.is_data() {
-            continue;
-        }
-        let cat_name = type_def.name.to_string();
-        let Some(&i) = cat_idx.get(cat_name.as_str()) else {
-            continue;
-        };
-        // Skip collection-typed categories — handled separately below.
-        if type_def.collection_kind.is_some() {
-            continue;
-        }
-        // Does this category have a from_literals TokenDef?
-        let _has_literal_block = language.token_defs.iter().any(|td| {
+    fn first_item_is_var(&mut self, rule: &GrammarRule) -> bool {
+        rule.items
+            .first()
+            .map(|item| matches!(item, GrammarItem::NonTerminal { kind: NonTerminalKind::Var, .. }))
+            .unwrap_or(false)
+    }
+
+    fn materialize_synthetic(
+        &mut self,
+        rule: mettail_prattail::wpda_rule_analysis::synthetic::SyntheticRule<CollectionType>,
+    ) -> GrammarRule {
+        materialize_synthetic_rule(rule)
+    }
+
+    fn has_literal_block(&mut self, ty: &Self::SourceType) -> bool {
+        let cat_name = ty.name.to_string();
+        self.language.token_defs.iter().any(|td| {
             td.from_literals
                 && td
                     .category
                     .as_ref()
                     .map(|c| c.to_string() == cat_name)
                     .unwrap_or(false)
-        });
-        // Skip if no native_type — a Var-only category gets a separate
-        // synthetic Var rule below (Phase 5a).
-        let Some(_native_type) = type_def.native_type.as_ref() else {
-            continue;
-        };
-        // Synthesize a rule matching the `AtomicShape::LiteralPatterned`
-        // classifier: single-item rule with `items[0] = NonTerminal(Category,
-        // cat_name)` and `rule.category == cat_name`.
-        let label = crate::gen::generate_literal_label(
-            type_def
-                .native_type
-                .as_ref()
-                .expect("native_type checked above"),
-        );
-        let cat_ident = Ident::new(&cat_name, Span::call_site());
-        let synthetic = GrammarRule {
-            label,
-            category: cat_ident.clone(),
-            items: vec![GrammarItem::NonTerminal {
-                ident: cat_ident,
-                kind: NonTerminalKind::Category,
-            }],
-            bindings: Vec::new(),
-            term_context: None,
-            syntax_pattern: None,
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            shares_level_with_previous: false,
-            prefix_bp: None,
-            tier_directive: None,
-            // Literal-pattern shape synthesis is a foundational rule
-            // (not cross-cat auto-injection per Stage 3.13b/3.13c), so
-            // it remains visible to legacy unified-trampoline cast_rules.
-            is_auto_injected: false,
-            doc_comment: None,
-            is_canonical_synonym: false,
-        };
-        per_cat[i].push(synthetic);
+        })
     }
 
-    // Stage 1.3: synthetic collection-literal rules for `LangType` entries
-    // whose `collection_kind` is `Some(...)`. The macro pipeline emits
-    // language-level `ListLit/BagLit/MapLit` constructors; the WPDS path
-    // mirrors them with judgement-style rules in the shape
-    // `term_context = [Simple{elems, Collection{coll_type, element}}]`,
-    // `syntax_pattern = [Literal(open), Op(Sep{elems, sep}), Literal(close)]`
-    // so that `classify_collection` picks them up.
-    for type_def in &language.types {
-        if type_def.is_data() {
-            continue;
-        }
-        let cat_name = type_def.name.to_string();
-        let Some(&i) = cat_idx.get(cat_name.as_str()) else {
-            continue;
-        };
-        let Some(coll_kind) = type_def.collection_kind.as_ref() else {
-            continue;
-        };
-        // Stage 2 (2026-06-27): read the delimiters through the single
-        // delimiters() accessor; only the irreducible variant → (kind, label)
-        // mapping stays a per-variant match.
+    fn literal_label(&mut self, ty: &Self::SourceType) -> String {
+        crate::gen::generate_literal_label(
+            ty.native_type
+                .as_ref()
+                .expect("native_type checked by shared synthesis gate"),
+        )
+        .to_string()
+    }
+
+    fn collection(
+        &mut self,
+        ty: &Self::SourceType,
+    ) -> mettail_prattail::wpda_rule_analysis::synthetic::CollectionRecipe<CollectionType> {
+        use mettail_prattail::wpda_rule_analysis::synthetic::CollectionRecipe;
+        let coll_kind = ty
+            .collection_kind
+            .as_ref()
+            .expect("collection_kind checked by shared synthesis gate");
         let d = coll_kind.delimiters();
-        let (kind, label_str) = match coll_kind {
+        let (kind, label) = match coll_kind {
             CollectionCategory::List(_) => (CollectionType::Vec, "ListLit"),
             CollectionCategory::Bag(_) => (CollectionType::HashBag, "BagLit"),
             CollectionCategory::Map(_) => (CollectionType::HashMap, "MapLit"),
             CollectionCategory::Set(_) => (CollectionType::HashSet, "SetLit"),
             CollectionCategory::Pathmap(_) => (CollectionType::PathMap, "PathmapLit"),
         };
-        let (open, close, sep) = (d.open.clone(), d.close.clone(), d.sep.clone());
-        // Resolve element category from the collection's payload type.
-        let element_cat_str = language
-            .collection_element_type_for_category(&type_def.name)
+        let (open, close, separator) = (d.open.clone(), d.close.clone(), d.sep.clone());
+        let element_category = self
+            .language
+            .collection_element_type_for_category(&ty.name)
             .map(|i| i.to_string())
-            .unwrap_or_else(|| type_def.name.to_string());
-        // Trim trailing `(` from open delimiter (default form `list(` -> `list`).
-        // `classify_collection` accepts both compact three-element patterns and
-        // split-open four-element patterns; the split form keeps the generated
-        // collection rule aligned with lexer tokens.
-        let trimmed_open = open.trim_end_matches('(').to_string();
-        let needs_synth_paren = open != trimmed_open;
-        let cat_ident = Ident::new(&cat_name, Span::call_site());
-        let elems_ident = Ident::new("elems", Span::call_site());
-        let element_ident = Ident::new(&element_cat_str, Span::call_site());
-        let label_ident = Ident::new(label_str, Span::call_site());
-        let mut sp: Vec<mettail_ast::grammar::SyntaxExpr> = Vec::new();
-        sp.push(mettail_ast::grammar::SyntaxExpr::Literal(trimmed_open));
-        if needs_synth_paren {
-            sp.push(mettail_ast::grammar::SyntaxExpr::Literal("(".to_string()));
+            .unwrap_or_else(|| ty.name.to_string());
+        CollectionRecipe {
+            kind,
+            label: label.to_string(),
+            element_category,
+            open,
+            close,
+            separator,
         }
-        sp.push(mettail_ast::grammar::SyntaxExpr::Op(mettail_ast::grammar::PatternOp::Sep {
-            collection: elems_ident.clone(),
-            separator: sep,
-            source: None,
-        }));
-        sp.push(mettail_ast::grammar::SyntaxExpr::Literal(close));
-        let synthetic = GrammarRule {
-            label: label_ident,
-            category: cat_ident,
-            items: Vec::new(),
-            bindings: Vec::new(),
-            term_context: Some(vec![mettail_ast::grammar::TermParam::Simple {
-                name: elems_ident,
-                ty: mettail_ast::types::TypeExpr::Collection {
-                    coll_type: kind,
-                    element: Box::new(mettail_ast::types::TypeExpr::Base(element_ident)),
+    }
+
+    fn var_label(&mut self, ty: &Self::SourceType) -> String {
+        crate::gen::generate_var_label(&ty.name).to_string()
+    }
+
+    fn declares_binder(&mut self) -> bool {
+        mettail_ast::grammar_shapes::declares_binder(self.language)
+    }
+}
+
+/// Materialize only the bounded shapes synthesized by the original algorithm.
+/// User rules never pass through this function; their entire original metadata
+/// stays in the owned payload. Runtime adapters consume recipes without syn.
+fn materialize_synthetic_rule(
+    rule: mettail_prattail::wpda_rule_analysis::synthetic::SyntheticRule<CollectionType>,
+) -> GrammarRule {
+    use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
+    use mettail_ast::types::TypeExpr;
+    use mettail_prattail::wpda_rule_analysis::{
+        atomic::{LegacyAtomicItem, LegacyAtomicKind},
+        synthetic::{SyntheticParam, SyntheticType},
+        InfixSyntaxShape,
+    };
+    let ident = |name: &str| Ident::new(name, Span::call_site());
+    let materialize_type = |ty| match ty {
+        SyntheticType::Base(name) => TypeExpr::Base(ident(&name)),
+        SyntheticType::Collection { kind, element } => TypeExpr::Collection {
+            coll_type: kind,
+            element: Box::new(TypeExpr::Base(ident(&element))),
+        },
+    };
+    // Original synthesis validates the category/domain before derived labels.
+    // Native and Var label helpers have already run at their original sites.
+    // Generated parameter names are fixed; Lam's domain equals its home category.
+    let category = ident(&rule.category);
+    let term_context = rule.term_context.map(|params| {
+        params
+            .into_iter()
+            .map(|param| match param {
+                SyntheticParam::Simple { name, ty } => TermParam::Simple {
+                    name: ident(&name),
+                    ty: materialize_type(ty),
                 },
-            }]),
-            syntax_pattern: Some(sp),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            shares_level_with_previous: false,
-            prefix_bp: None,
-            tier_directive: None,
-            // Collection-literal synthesis (List/Bag/Map) is a foundational
-            // rule, not cross-cat auto-injection. Remains visible to legacy
-            // unified-trampoline cast_rules.
-            is_auto_injected: false,
-            doc_comment: None,
-            is_canonical_synonym: false,
-        };
-        per_cat[i].push(synthetic);
-    }
-
-    // 3. Phase 5a: synthetic Var rules for user-defined categories without
-    //    an explicit Var rule. The macros (`gen/types/enums.rs:113-115`)
-    //    auto-generate `<First>Var(OrdVar)` variants for any category
-    //    lacking an `is_var_rule` rule. Mirror that logic here so the WPDS
-    //    parser can recognize bare Ident tokens as variables of the
-    //    surrounding category (e.g., `x` inside `lam x . x` parses as
-    //    `Term::TVar(OrdVar(Var::Free(get_or_create_var("x"))))`).
-    //
-    //    Conditions:
-    //    - Category appears in `categories` (so it's actually parseable).
-    //    - Category has no `native_type` (i.e., user-defined, not a literal
-    //      type like `Int`/`Bool`/`Str`).
-    //    - Category does not already have a user rule whose `items[0] =
-    //      NonTerminal { kind: Var, .. }`.
-    for type_def in &language.types {
-        // Closed data categories contain only their declared constructors.
-        // In particular, they do not receive the object-language variable
-        // sentinel that makes ordinary syntactic categories open under
-        // substitution.
-        if type_def.is_data() {
-            continue;
-        }
-        let cat_name = type_def.name.to_string();
-        let Some(&i) = cat_idx.get(cat_name.as_str()) else {
-            continue;
-        };
-        // Stage 3.20 / Commit 4 part 2 (Plan agent Fix A, 2026-05-06):
-        // native-typed categories (e.g. Int with `![i32] as Int`) ALSO
-        // get synthetic Var rules. `gen/types/enums.rs:113-118` auto-emits
-        // matching `IVar`/`BVar`/`FVar` AST variants UNCONDITIONALLY for
-        // every category lacking an explicit user Var rule, so the parser
-        // must follow. Pre-fix, native-typed categories had AST variants
-        // but no parser rule — `Int::parse_recovering("x")` failed with
-        // "no Ident arm" at PrefixDispatch even though `Int::IVar(...)`
-        // exists in the AST. Symptom: test_calc_recovery_variable failed.
-        //
-        // Skip if the user already wrote an explicit Var rule for this category.
-        let has_user_var_rule = per_cat[i].iter().any(|r| {
-            r.items
-                .first()
-                .map(|item| {
-                    matches!(item, GrammarItem::NonTerminal { kind: NonTerminalKind::Var, .. })
+                SyntheticParam::Abstraction { binder, body, domain, codomain } => {
+                    TermParam::Abstraction {
+                        binder: ident(&binder),
+                        body: ident(&body),
+                        ty: TypeExpr::Arrow {
+                            domain: Box::new(TypeExpr::Base(ident(&domain))),
+                            codomain: Box::new(TypeExpr::Base(ident(&codomain))),
+                        },
+                    }
+                },
+            })
+            .collect()
+    });
+    let label = ident(&rule.label);
+    GrammarRule {
+        label,
+        category,
+        items: rule
+            .items
+            .into_iter()
+            .map(|item| match item {
+                LegacyAtomicItem::Terminal(text) => GrammarItem::Terminal(text),
+                LegacyAtomicItem::NonTerminal { kind, ident: name } => GrammarItem::NonTerminal {
+                    ident: ident(&name),
+                    kind: match kind {
+                        LegacyAtomicKind::Integer => NonTerminalKind::Integer,
+                        LegacyAtomicKind::Boolean => NonTerminalKind::Boolean,
+                        LegacyAtomicKind::StringLiteral => NonTerminalKind::StringLiteral,
+                        LegacyAtomicKind::FloatLiteral => NonTerminalKind::FloatLiteral,
+                        LegacyAtomicKind::Var => NonTerminalKind::Var,
+                        LegacyAtomicKind::Ident => NonTerminalKind::Ident,
+                        LegacyAtomicKind::Category => NonTerminalKind::Category,
+                    },
+                },
+                LegacyAtomicItem::Other => {
+                    unreachable!("original synthesis emits no unsupported legacy item")
+                },
+            })
+            .collect(),
+        bindings: Vec::new(),
+        term_context,
+        syntax_pattern: rule.syntax_pattern.map(|syntax| {
+            syntax
+                .into_iter()
+                .map(|item| match item {
+                    InfixSyntaxShape::Literal(text) => SyntaxExpr::Literal(text),
+                    InfixSyntaxShape::Param(name) => SyntaxExpr::Param(ident(&name)),
+                    InfixSyntaxShape::Sep { collection, separator } => {
+                        SyntaxExpr::Op(PatternOp::Sep {
+                            collection: ident(&collection),
+                            separator,
+                            source: None,
+                        })
+                    },
+                    InfixSyntaxShape::Other => {
+                        unreachable!("original synthesis emits no unsupported syntax")
+                    },
                 })
-                .unwrap_or(false)
-        });
-        if has_user_var_rule {
-            continue;
-        }
-        // Synthesize a Var rule for this category. Shape: single-item rule
-        // with `items[0] = NonTerminal(Var, cat_name)`. Label = generate_var_label.
-        let label = crate::gen::generate_var_label(&type_def.name);
-        let cat_ident = Ident::new(&cat_name, Span::call_site());
-        let synthetic = GrammarRule {
-            label,
-            category: cat_ident.clone(),
-            items: vec![GrammarItem::NonTerminal {
-                ident: cat_ident,
-                kind: NonTerminalKind::Var,
-            }],
-            bindings: Vec::new(),
-            term_context: None,
-            syntax_pattern: None,
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            shares_level_with_previous: false,
-            prefix_bp: None,
-            tier_directive: None,
-            // Var-rule synthesis is a foundational rule (mirrors macro
-            // `gen/types/enums.rs:113-115` auto-Var emission), not
-            // cross-cat auto-injection. Remains visible to legacy
-            // unified-trampoline cast_rules.
-            is_auto_injected: false,
-            doc_comment: None,
-            is_canonical_synonym: false,
-        };
-        per_cat[i].push(synthetic);
+                .collect()
+        }),
+        rust_code: None,
+        eval_mode: None,
+        is_right_assoc: false,
+        shares_level_with_previous: false,
+        prefix_bp: None,
+        tier_directive: None,
+        is_auto_injected: false,
+        doc_comment: None,
+        is_canonical_synonym: false,
     }
-
-    // 4. Phase 5b: synthetic dollar-application rules per (home, dom)
-    //    category pair, for languages with binders.
-    //
-    //    F4 fix (2026-05-11): plug WPDS hole left by the trampoline →
-    //    WPDS migration. The trampoline at
-    //    `target/generated/<lang>/ast.rs` emits dollar-application
-    //    handlers ($cat(f, x) → binary; $$cat(f, x1, ..., xN) → variadic)
-    //    for every (home, dom) category pair, but the WPDS engine
-    //    emitted by `wpda_codegen/` had no corresponding dispatch arm.
-    //    We close the gap by synthesizing matching judgement-style
-    //    GrammarRules so the standard classify_binder / classify_collection
-    //    paths emit prefix arms uniformly.
-    //
-    //    Triggers (from `automata/codegen.rs:2498` and
-    //    `ebnf.rs:1076-1083`):
-    //    - `$cat` → single token (lexed as `Token::Fixed("$<dom_lowercase>")`)
-    //    - `$$cat(` → single token (lexed as `Token::Fixed("$$<dom_lowercase>(")`)
-    //
-    //    AST variants `Cat::Apply{Dom}(Box<Cat>, Box<Dom>)` and
-    //    `Cat::MApply{Dom}(Box<Cat>, Vec<Dom>)` are auto-generated by
-    //    `gen/types/enums.rs:155-172` from the same (home, dom) iteration.
-    //    Synthetic rule labels match exactly so the emit_binder_action_entry
-    //    path constructs the correct variant.
-    //
-    //    Gating: only for languages with binders. Without binders, the
-    //    lexer's FIRST set doesn't include Dollar/Ddollar tokens (per
-    //    `pipeline.rs:2265-2280`) and the trampoline doesn't emit dollar
-    //    handlers either.
-    //
-    // ★ #98: the predicate is READ from `mettail_ast::grammar_shapes`, not restated
-    //    here. This site was the FIRST to gate on binder declaration and it carried its
-    //    own inlined copy — while `logic/common.rs::compute_hol_domain_pairs`, which
-    //    decides whether the AST variants these rules construct exist at all, gated on
-    //    nothing. The two answers have to agree (a synthetic rule whose target variant
-    //    was not emitted is a dangling reference; a variant with no synthetic rule is
-    //    unparseable), and the only way to guarantee agreement is one function. The
-    //    shared form additionally recurses into `#opt(…)` and consults `items` even when
-    //    a term context is present — two cases the inlined copy answered `false` for.
-    let has_binders = mettail_ast::grammar_shapes::declares_binder(language);
-    if has_binders {
-        let category_names: Vec<String> = language
-            .types
-            .iter()
-            .filter(|category| !category.is_data())
-            .map(|category| category.name.to_string())
-            .collect();
-        // For each (home, dom) pair: synthesize Apply{Dom} and MApply{Dom}.
-        for home in &category_names {
-            let Some(&home_i) = cat_idx.get(home.as_str()) else {
-                continue;
-            };
-            for dom in &category_names {
-                let dom_lower = dom.to_lowercase();
-                let dollar_token = format!("${}", dom_lower);
-                let ddollar_token = format!("$${}(", dom_lower);
-                let home_ident = Ident::new(home, Span::call_site());
-                let dom_ident = Ident::new(dom, Span::call_site());
-                let apply_label = format_ident!("Apply{}", dom);
-                let mapply_label = format_ident!("MApply{}", dom);
-                let f_ident = Ident::new("f", Span::call_site());
-                let x_ident = Ident::new("x", Span::call_site());
-                let xs_ident = Ident::new("xs", Span::call_site());
-
-                // Apply{Dom}: `$<dom_lower>` "(" f "," x ")"
-                // Multi-Param non-binder shape (classify_binder accepts).
-                let apply_rule = GrammarRule {
-                    label: apply_label,
-                    category: home_ident.clone(),
-                    items: Vec::new(),
-                    bindings: Vec::new(),
-                    term_context: Some(vec![
-                        mettail_ast::grammar::TermParam::Simple {
-                            name: f_ident.clone(),
-                            ty: mettail_ast::types::TypeExpr::Base(home_ident.clone()),
-                        },
-                        mettail_ast::grammar::TermParam::Simple {
-                            name: x_ident.clone(),
-                            ty: mettail_ast::types::TypeExpr::Base(dom_ident.clone()),
-                        },
-                    ]),
-                    syntax_pattern: Some(vec![
-                        mettail_ast::grammar::SyntaxExpr::Literal(dollar_token),
-                        mettail_ast::grammar::SyntaxExpr::Literal("(".to_string()),
-                        mettail_ast::grammar::SyntaxExpr::Param(f_ident.clone()),
-                        mettail_ast::grammar::SyntaxExpr::Literal(",".to_string()),
-                        mettail_ast::grammar::SyntaxExpr::Param(x_ident),
-                        mettail_ast::grammar::SyntaxExpr::Literal(")".to_string()),
-                    ]),
-                    rust_code: None,
-                    eval_mode: None,
-                    is_right_assoc: false,
-                    shares_level_with_previous: false,
-                    prefix_bp: None,
-                    tier_directive: None,
-                    is_auto_injected: false,
-                    doc_comment: None,
-                    is_canonical_synonym: false,
-                };
-                per_cat[home_i].push(apply_rule);
-
-                // MApply{Dom}: `$$<dom_lower>(` f "," (xs ',' ...)+ ")"
-                // Class-2 SimpleCollection shape (classify_binder accepts
-                // for the variadic-args slot).
-                let mapply_rule = GrammarRule {
-                    label: mapply_label,
-                    category: home_ident.clone(),
-                    items: Vec::new(),
-                    bindings: Vec::new(),
-                    term_context: Some(vec![
-                        mettail_ast::grammar::TermParam::Simple {
-                            name: f_ident.clone(),
-                            ty: mettail_ast::types::TypeExpr::Base(home_ident),
-                        },
-                        mettail_ast::grammar::TermParam::Simple {
-                            name: xs_ident.clone(),
-                            ty: mettail_ast::types::TypeExpr::Collection {
-                                coll_type: mettail_ast::types::CollectionType::Vec,
-                                element: Box::new(mettail_ast::types::TypeExpr::Base(dom_ident)),
-                            },
-                        },
-                    ]),
-                    syntax_pattern: Some(vec![
-                        mettail_ast::grammar::SyntaxExpr::Literal(ddollar_token),
-                        mettail_ast::grammar::SyntaxExpr::Param(f_ident),
-                        mettail_ast::grammar::SyntaxExpr::Literal(",".to_string()),
-                        mettail_ast::grammar::SyntaxExpr::Op(
-                            mettail_ast::grammar::PatternOp::Sep {
-                                collection: xs_ident,
-                                separator: ",".to_string(),
-                                source: None,
-                            },
-                        ),
-                        mettail_ast::grammar::SyntaxExpr::Literal(")".to_string()),
-                    ]),
-                    rust_code: None,
-                    eval_mode: None,
-                    is_right_assoc: false,
-                    shares_level_with_previous: false,
-                    prefix_bp: None,
-                    tier_directive: None,
-                    is_auto_injected: false,
-                    doc_comment: None,
-                    is_canonical_synonym: false,
-                };
-                per_cat[home_i].push(mapply_rule);
-            }
-        }
-
-        // 4b. Lambda synthetic rules per (home, binder_cat) category pair.
-        //    Syntax (from trampoline at `ambient/ast.rs:7303-7345`):
-        //    - Single-binder: `^x.{body}` — binds a `binder_cat` name,
-        //      body in home category wrapped in mandatory braces.
-        //    - Multi-binder: `^[x1, x2, ...].{body}` — Class 3 form
-        //      (deferred to follow-up).
-        //
-        //    AST variants `Cat::Lam{BinderCat}(Scope<Binder<String>, Box<Cat>>)`
-        //    and `Cat::MLam{BinderCat}(Scope<Vec<Binder<String>>, Box<Cat>>)`
-        //    are auto-generated by `gen/types/enums.rs` for every
-        //    (home, binder_cat) pair when the language has binders. The
-        //    suffix in `Lam{BinderCat}` names the BINDER type; the body
-        //    type is always the home category (`Box<Cat>`).
-        for home in &category_names {
-            let Some(&home_i) = cat_idx.get(home.as_str()) else {
-                continue;
-            };
-            // #307 eval-layer fix (2026-06-11): emit ONE surface lambda
-            // rule per home category (tag = Lam<Home>), not one per
-            // (home, binder_cat) pair. All Lam{BinderCat} rules shared
-            // the IDENTICAL surface syntax `^x.{p}` — a pure 13-way
-            // tag-ambiguity fan by construction (the binder's category
-            // is not inferable from the surface; binding lives in the
-            // body's typed occurrences). The fan exploded the cursor
-            // budget (`$name(^loc.{loc!(init)}, n)` via the Language
-            // path: 65 cursors > 64) and produced 13 α-equivalent
-            // alternatives differing only in the inert tag. β-reduction
-            // is tag-agnostic (normalize.rs matches every Lam<D'> tag
-            // and substitutes by the APPLICATION's domain), so a single
-            // tag loses nothing. Declared-rule abstractions (PInputs,
-            // PNew) build their own variants and are unaffected.
-            for binder_cat in std::iter::once(home) {
-                let binder_ident = Ident::new(binder_cat, Span::call_site());
-                let home_ident = Ident::new(home, Span::call_site());
-                let lam_label = format_ident!("Lam{}", binder_cat);
-                let x_ident = Ident::new("x", Span::call_site());
-                let p_ident = Ident::new("p", Span::call_site());
-
-                // Lam{BinderCat}: `^` x `.` `{` p `}` where x:BinderCat,
-                // p:Home. Class 1 binder rule (Abstraction term param).
-                let lam_rule = GrammarRule {
-                    label: lam_label,
-                    category: home_ident.clone(),
-                    items: Vec::new(),
-                    bindings: Vec::new(),
-                    term_context: Some(vec![mettail_ast::grammar::TermParam::Abstraction {
-                        binder: x_ident.clone(),
-                        body: p_ident.clone(),
-                        ty: mettail_ast::types::TypeExpr::Arrow {
-                            domain: Box::new(mettail_ast::types::TypeExpr::Base(binder_ident)),
-                            codomain: Box::new(mettail_ast::types::TypeExpr::Base(home_ident)),
-                        },
-                    }]),
-                    syntax_pattern: Some(vec![
-                        mettail_ast::grammar::SyntaxExpr::Literal("^".to_string()),
-                        mettail_ast::grammar::SyntaxExpr::Param(x_ident),
-                        mettail_ast::grammar::SyntaxExpr::Literal(".".to_string()),
-                        mettail_ast::grammar::SyntaxExpr::Literal("{".to_string()),
-                        mettail_ast::grammar::SyntaxExpr::Param(p_ident),
-                        mettail_ast::grammar::SyntaxExpr::Literal("}".to_string()),
-                    ]),
-                    rust_code: None,
-                    eval_mode: None,
-                    is_right_assoc: false,
-                    shares_level_with_previous: false,
-                    prefix_bp: None,
-                    tier_directive: None,
-                    is_auto_injected: false,
-                    doc_comment: None,
-                    is_canonical_synonym: false,
-                };
-                per_cat[home_i].push(lam_rule);
-
-                // MLam{BinderCat}: Class 3 multi-binder form. Deferred —
-                // requires MultiAbstraction term context which the
-                // existing classify_binder handles via a different path.
-            }
-        }
-    }
-
-    // Silence `unused` (format_ident imported for call-site clarity).
-    let _ = format_ident!("_unused");
-
-    per_cat
 }
 
 #[cfg(test)]
@@ -922,6 +650,70 @@ mod tests {
             ]
         );
         assert!(build_per_category_rules(&language, &[]).is_empty());
+    }
+
+    #[test]
+    fn synthesis_baseline_duplicate_declarations_keep_two_binder_passes() {
+        let mut language = synthesis_baseline_binder_language();
+        language.types.push(language.types[0].clone());
+        let rules = build_per_category_rules(&language, &["Int".into(), "Bool".into()]);
+        assert_eq!(
+            synthesis_baseline_labels(&rules[0]),
+            [
+                "DeclaredBinder", "NumLit", "NumLit", "IVar",
+                "ApplyInt", "MApplyInt", "ApplyBool", "MApplyBool", "ApplyInt", "MApplyInt",
+                "ApplyInt", "MApplyInt", "ApplyBool", "MApplyBool", "ApplyInt", "MApplyInt",
+                "LamInt", "LamInt",
+            ],
+            "duplicate type visits append literals and application pairs, suppress the second Var, and defer both lambdas to the final pass",
+        );
+        assert_eq!(
+            synthesis_baseline_labels(&rules[1]),
+            [
+                "BoolLit",
+                "BVar",
+                "ApplyInt",
+                "MApplyInt",
+                "ApplyBool",
+                "MApplyBool",
+                "ApplyInt",
+                "MApplyInt",
+                "LamBool"
+            ],
+        );
+    }
+
+    #[test]
+    fn synthesis_original_invalid_name_order_follows_declarations_not_output_buckets() {
+        // Observe the original rejection in a child: this checks first-error
+        // ordering without depending on the compiler backend's unwind support.
+        const CHILD: &str = "METTAIL_SYNTHESIS_INVALID_NAME_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("the test executable has a path"),
+            )
+            .args([
+                "--exact",
+                "gen::runtime::wpda_codegen::synthetic::tests::synthesis_original_invalid_name_order_follows_declarations_not_output_buckets",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .expect("run the isolated invalid-name synthesis test");
+            assert!(!output.status.success(), "raw category spellings must be rejected");
+            let diagnostic = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                diagnostic.contains("\"r#type\" is not a valid Ident"),
+                "original native synthesis visits declarations before output buckets: {diagnostic}",
+            );
+            assert!(!diagnostic.contains("\"r#match\" is not a valid Ident"));
+            return;
+        }
+        let mut language = lang_with_int_and_bool_literals();
+        language.types[0].name = Ident::new_raw("type", Span::call_site());
+        language.types[1].name = Ident::new_raw("match", Span::call_site());
+        build_per_category_rules(&language, &["r#match".into(), "r#type".into()]);
     }
 
     #[test]

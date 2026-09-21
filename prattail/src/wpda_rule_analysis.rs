@@ -16,6 +16,7 @@
 use crate::binding_power::{Associativity, InfixRuleInfo, MixfixPart, MixfixRep};
 
 pub mod atomic;
+pub mod synthetic;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.
 #[derive(Clone, Debug, PartialEq, Eq)]
