@@ -480,3 +480,247 @@ fn optional_classifier_is_stack_safe_at_depth_20k() {
         .join()
         .expect("optional classifier small-stack gate panicked");
 }
+
+#[test]
+fn optional_projection_preserves_empty_and_refusal_counter_states() {
+    let language = nested_optional_language(nested_optional_rule());
+    let params = HashMap::new();
+    let mut group = 17;
+    let mut slot = 23;
+    let empty = classify_optional_body(&[], &language, &params, None, &mut group, &mut slot)
+        .expect("empty root sequence is accepted");
+    assert!(empty.0.is_empty() && empty.1.is_empty());
+    assert_eq!((group, slot), (17, 23));
+
+    let empty_child = [SyntaxExpr::Op(PatternOp::Opt { inner: Vec::new() })];
+    assert!(
+        classify_optional_body(&empty_child, &language, &params, None, &mut group, &mut slot,)
+            .is_none()
+    );
+    // The original classifier allocates the group identity before rejecting
+    // the empty child; failure does not roll the caller's counter back.
+    assert_eq!((group, slot), (18, 23));
+
+    group = u32::MAX;
+    assert!(
+        classify_optional_body(&empty_child, &language, &params, None, &mut group, &mut slot,)
+            .is_none()
+    );
+    assert_eq!((group, slot), (u32::MAX, 23));
+
+    let unsupported = [
+        SyntaxExpr::Op(PatternOp::Opt {
+            inner: vec![SyntaxExpr::Literal("ready".to_string())],
+        }),
+        SyntaxExpr::Op(PatternOp::Var(Ident::new("unknown", Span::call_site()))),
+    ];
+    group = 41;
+    assert!(
+        classify_optional_body(&unsupported, &language, &params, None, &mut group, &mut slot,)
+            .is_none()
+    );
+    assert_eq!((group, slot), (42, 23));
+}
+
+#[test]
+fn optional_projection_preserves_capture_roles_and_order() {
+    let language = nested_optional_language(nested_optional_rule());
+    let mut params = HashMap::new();
+    for (name, role) in [
+        ("binder", ParamKind::Binder),
+        ("ident", ParamKind::Simple { cat: "Ident".to_string() }),
+        ("body_ident", ParamKind::Body { cat: "Ident".to_string() }),
+        ("value", ParamKind::Simple { cat: "Expr".to_string() }),
+        ("body", ParamKind::Body { cat: "Expr".to_string() }),
+        ("guard", ParamKind::Guard),
+    ] {
+        params.insert(name.to_string(), role);
+    }
+    let ident = |name: &str| Ident::new(name, Span::call_site());
+    let mut root = vec![
+        SyntaxExpr::Literal("anchor".to_string()),
+        SyntaxExpr::TokenKind { name: ident("Word"), bind: None },
+        SyntaxExpr::TokenKind {
+            name: ident("Word"),
+            bind: Some(ident("named")),
+        },
+        SyntaxExpr::GuestBody {
+            open: ident("Open"),
+            close: ident("Close"),
+            bind: ident("guest"),
+            kind: mettail_ast::grammar::DelimitedRegionKind::Flt,
+        },
+    ];
+    root.extend(
+        ["binder", "ident", "body_ident", "value", "body", "guard"]
+            .into_iter()
+            .map(|name| SyntaxExpr::Param(ident(name))),
+    );
+    let mut group = 7;
+    let mut slot = 9;
+    let (positions, args) =
+        classify_optional_body(&root, &language, &params, None, &mut group, &mut slot)
+            .expect("all original supported capture roles");
+    assert_eq!((group, slot), (7, 9));
+    assert_eq!(positions.len(), 10);
+    assert_eq!(args.len(), 9);
+    assert!(matches!(&positions[0], BinderPosition::Literal(text) if text == "anchor"));
+    assert!(
+        matches!(&positions[1], BinderPosition::TokenKindCapture { kind_name, param_name }
+        if kind_name == "Word" && param_name == "__tok_Word")
+    );
+    assert!(
+        matches!(&positions[2], BinderPosition::TokenKindCapture { kind_name, param_name }
+        if kind_name == "Word" && param_name == "named")
+    );
+    assert!(matches!(&positions[3], BinderPosition::GuestBodyCapture {
+        open_kind, nested_open_kinds, close_kind, param_name
+    } if open_kind == "Open" && nested_open_kinds.is_empty()
+        && close_kind == "Close" && param_name == "guest"));
+    assert!(matches!(&positions[4], BinderPosition::BinderListLoop {
+        separator, close, inner_positions, collection_param_cat,
+        allow_empty: false, allow_multi: false, slot_idx: 0
+    } if separator.is_empty() && close.is_empty() && collection_param_cat.is_none()
+        && matches!(inner_positions.as_slice(), [BinderPosition::BinderIdent])));
+    assert!(matches!(&positions[5], BinderPosition::IdentTextCapture { param_name }
+        if param_name == "ident"));
+    assert!(matches!(&positions[6], BinderPosition::IdentTextCapture { param_name }
+        if param_name == "body_ident"));
+    for position in &positions[7..9] {
+        assert!(matches!(position, BinderPosition::ParamParse { cat, collection: None }
+            if cat == "Expr"));
+    }
+    assert!(matches!(&positions[9], BinderPosition::GuardSlot));
+    assert_eq!(format!("{args:?}"),
+        "[TokenText { param_name: \"__tok_Word\" }, TokenText { param_name: \"named\" }, GuestBody { param_name: \"guest\", kind: Flt }, BinderName, IdentText { param_name: \"ident\" }, IdentText { param_name: \"body_ident\" }, Term(\"Expr\"), Term(\"Expr\"), Predicate]");
+}
+
+#[test]
+fn optional_projection_preserves_separator_gates_and_slot_failures() {
+    let language = nested_optional_language(nested_optional_rule());
+    let declared = mettail_ast::language::CollectionDelimiters {
+        open: "[".to_string(),
+        close: "]".to_string(),
+        sep: ",".to_string(),
+        key_val_sep: Some("=>".to_string()),
+    };
+    for kind in [
+        CollectionType::Vec,
+        CollectionType::HashBag,
+        CollectionType::HashSet,
+        CollectionType::HashMap,
+        CollectionType::PathMap,
+    ] {
+        let mut params = HashMap::new();
+        params.insert(
+            "xs".to_string(),
+            ParamKind::SimpleCollection {
+                elem_cat: "Expr".to_string(),
+                coll_kind: kind.clone(),
+            },
+        );
+        let sep = || {
+            SyntaxExpr::Op(PatternOp::Sep {
+                collection: Ident::new("xs", Span::call_site()),
+                separator: ",".to_string(),
+                source: None,
+            })
+        };
+        let root = [
+            sep(),
+            SyntaxExpr::Literal("]".to_string()),
+            SyntaxExpr::Literal("after".to_string()),
+        ];
+        let mut group = 3;
+        let mut slot = 11;
+        let (positions, args) = classify_optional_body(
+            &root,
+            &language,
+            &params,
+            Some(&declared),
+            &mut group,
+            &mut slot,
+        )
+        .expect("separator and its immediate literal close");
+        assert_eq!((group, slot), (3, 12));
+        assert_eq!(positions.len(), 2);
+        assert!(matches!(&positions[1], BinderPosition::Literal(text) if text == "after"));
+        let BinderPosition::ParamParse { cat, collection: Some(info) } = &positions[0] else {
+            panic!("collection parsing position");
+        };
+        assert_eq!(cat, "Expr");
+        assert_eq!(info.elem_cat, "Expr");
+        assert_eq!(info.separator, ",");
+        assert_eq!(info.close, "]");
+        assert_eq!(info.slot_idx, 11);
+        let expected_pair = match kind {
+            CollectionType::HashMap | CollectionType::PathMap => Some("=>"),
+            _ => None,
+        };
+        assert_eq!(info.key_val_separator.as_deref(), expected_pair);
+        assert!(
+            matches!(args.as_slice(), [ActionArgKind::CollectionDrain { elem_cat, coll_kind }]
+            if elem_cat == "Expr" && coll_kind == &kind)
+        );
+
+        slot = u8::MAX;
+        assert!(classify_optional_body(
+            &root,
+            &language,
+            &params,
+            Some(&declared),
+            &mut group,
+            &mut slot,
+        )
+        .is_none());
+        assert_eq!((group, slot), (3, u8::MAX));
+        for invalid in [
+            vec![sep()],
+            vec![sep(), SyntaxExpr::Param(Ident::new("xs", Span::call_site()))],
+            vec![SyntaxExpr::Param(Ident::new("xs", Span::call_site()))],
+            vec![
+                SyntaxExpr::Op(PatternOp::Sep {
+                    collection: Ident::new("xs", Span::call_site()),
+                    separator: ",".to_string(),
+                    source: Some(Box::new(PatternOp::Var(Ident::new("xs", Span::call_site())))),
+                }),
+                SyntaxExpr::Literal("]".to_string()),
+            ],
+        ] {
+            slot = 11;
+            assert!(classify_optional_body(
+                &invalid,
+                &language,
+                &params,
+                Some(&declared),
+                &mut group,
+                &mut slot,
+            )
+            .is_none());
+            assert_eq!((group, slot), (3, 11));
+        }
+    }
+
+    let mut params = HashMap::new();
+    params.insert("xs".to_string(), ParamKind::BinderList);
+    let root = [
+        SyntaxExpr::Op(PatternOp::Sep {
+            collection: Ident::new("xs", Span::call_site()),
+            separator: ";".to_string(),
+            source: None,
+        }),
+        SyntaxExpr::Literal("end".to_string()),
+    ];
+    let mut group = 3;
+    let mut slot = u8::MAX;
+    let (positions, args) =
+        classify_optional_body(&root, &language, &params, None, &mut group, &mut slot)
+            .expect("binder-list separators do not allocate collection slots");
+    assert_eq!((group, slot), (3, u8::MAX));
+    assert!(matches!(positions.as_slice(), [BinderPosition::BinderListLoop {
+        separator, close, inner_positions, collection_param_cat,
+        allow_empty: true, allow_multi: true, slot_idx: 0
+    }] if separator == ";" && close == "end" && collection_param_cat.is_none()
+        && matches!(inner_positions.as_slice(), [BinderPosition::BinderIdent])));
+    assert!(matches!(args.as_slice(), [ActionArgKind::BinderList]));
+}
