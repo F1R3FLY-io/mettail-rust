@@ -134,12 +134,12 @@ pub(crate) const SPINE_RULE_BASE: u16 = 0xF800;
 // Item model — the EMITTED-ACTION-SHAPE alphabet (plan §2 merge criterion).
 // ═══════════════════════════════════════════════════════════════════════════
 
+pub(crate) use mettail_prattail::wpda_rule_analysis::factoring::{
+    build_tree, flatten_forest, mixfix_spine_arm_coords, CandidateMember, GroupMember,
+    MemberCommit, MemberKind, SpineItem, SpineTree, LIMIT_REFUSAL,
+};
 #[cfg(test)]
 use mettail_prattail::wpda_rule_analysis::factoring::{finalize_leaf, SpinePosMap};
-pub(crate) use mettail_prattail::wpda_rule_analysis::factoring::{
-    build_tree, CandidateMember, GroupMember, MemberCommit, MemberKind, SpineItem, SpineTree,
-    LIMIT_REFUSAL,
-};
 
 #[cfg(test)]
 #[path = "../../../../tests/support/spine_tree_lifecycle.rs"]
@@ -1434,56 +1434,6 @@ fn build_mixfix_group(
     })
 }
 
-/// The SPINE-side arm plan of a single-root mixfix trie: the PRE-ROOT arm
-/// key `(2, 0, 0)` (the state the fan pushes — its arm consumes the ROOT
-/// EDGE itself, the F1 pre-root convention transported to mixfix
-/// coordinates) plus, per INTERIOR node `n` in preorder, the arm key = the
-/// spine state AFTER consuming `n`'s edge item — that arm consumes `n`'s
-/// CHILDREN's edges (chain step or divergence fork). Returns `None` when
-/// two arms would collide on a key (a second shared operand re-enters at
-/// the same `(0, 0, 0)` via the width-1 spine's un-bumped `marker.bp == 0`
-/// — the [`IneligibleReason::MultiOperandSharedSpine`] condition).
-fn mixfix_spine_arm_coords(root: &SpineTree) -> Option<Vec<((u8, u8, u8), &SpineTree)>> {
-    /// The spine state after consuming `item` from `state` (spine
-    /// coordinates use kinds 2 and 0 only — post-operand literals are all
-    /// kind-0; the spine never runs kind 1 because its marker never bumps).
-    fn advance(state: (u8, u8, u8), item: &SpineItem) -> (u8, u8, u8) {
-        match item {
-            SpineItem::Literal { .. } => match state {
-                (2, c, s) => (2, c, s + 1),
-                (0, c, s) => (0, c, s + 1),
-                other => panic!(
-                    "S1-FACTORING F5-2: spine coordinate walk reached kind {} — \
-                     only kinds 2 and 0 occur on a spine path",
-                    other.0,
-                ),
-            },
-            // The descent keeps the SPINE marker (bp = 0) on top; the
-            // Unwinding-MixfixMarker arm re-enters at (0, marker.bp = 0, 0).
-            SpineItem::ParamParse { .. } => (0, 0, 0),
-        }
-    }
-    let mut out: Vec<((u8, u8, u8), &SpineTree)> = Vec::new();
-    let mut seen: BTreeSet<(u8, u8, u8)> = BTreeSet::new();
-    seen.insert((2, 0, 0)); // the pre-root arm key
-                            // (interior node, state BEFORE consuming its edge item).
-    let mut stack: Vec<(&SpineTree, (u8, u8, u8))> = vec![(root, (2, 0, 0))];
-    while let Some((node, state_before)) = stack.pop() {
-        let SpineTree::Interior { item, children } = node else {
-            continue;
-        };
-        let arm_key = advance(state_before, item);
-        if !seen.insert(arm_key) {
-            return None;
-        }
-        out.push((arm_key, node));
-        for child in children.iter().rev() {
-            stack.push((child, arm_key));
-        }
-    }
-    Some(out)
-}
-
 /// The EMISSION-EFFECTIVE mixfix partition (the F5-2 integration point).
 /// With [`super::forks::S1_FACTORING`] `&&`
 /// [`super::forks::S1F5_MIXFIX_COHORTS`] it is [`build_mixfix_factoring`]
@@ -1746,133 +1696,6 @@ impl SpineEmission {
     pub(crate) fn any_groups(&self) -> bool {
         !self.trigger_spine_owner_fn.is_empty()
     }
-}
-
-/// One flattened spine node during emission.
-struct FlatNode<'t> {
-    node_id: u8,
-    children: Vec<(&'t SpineTree, u8)>, // child tree + child node id
-}
-
-/// Preorder node-id assignment over a group FOREST (F5-1). Interior nodes
-/// get arm ids; leaves are consumed as EDGES of their parent's arm (no own
-/// arm).
-///
-/// EDGE CONVENTION (F1 root-edge fix, 2026-07-12): every `SpineTree` node
-/// carries the item on the edge INTO it (a root's item = the group's FIRST
-/// post-trigger item), and an ARM consumes EDGES — so the arm at node `n`
-/// emits the actions consuming `n`'s CHILDREN's items. The root edges
-/// therefore need a SYNTHETIC PRE-ROOT arm: node id 1 (the coordinate the
-/// spine trigger branch pushes, `rule_at(cat, SPINE_ID, 1)`) consumes the
-/// forest roots' items — mirroring the member-side convention where arm
-/// position `p` consumes `positions[p-1]` (the original arm 1 consumes the
-/// first post-trigger item). Without the pre-root arm the first
-/// post-trigger item would never be consumed (arm 1 would fork over the
-/// root's CHILDREN edges — e.g. `@ Nil !…` dispatching `!`/`!!` guards
-/// against the `Nil` token).
-///
-/// The pre-root children ARE the forest roots in the normative A1 order
-/// (`remainder ++ accepts`, see [`build_tree`]) — a multi-root forest
-/// (root accepts / root twins) makes the pre-root arm itself the accept
-/// fork. Interior roots take ids from 2 in forest order, so a single-root
-/// forest reproduces the F1 id assignment exactly (root = 2, descendants
-/// from 3, preorder).
-///
-/// ★ #141 G8 — `refusals` is the same `&mut` sink the trie build uses. The three
-/// invariants below (non-empty forest, ≥2 leaves, and the `u8` node-id ceiling)
-/// were `assert!`s; the last of them is a REAL ENCODING LIMIT a wide group
-/// reaches. See [`LIMIT_REFUSAL`].
-fn flatten_forest<'a>(roots: &'a [SpineTree], refusals: &mut Vec<String>) -> Vec<FlatNode<'a>> {
-    let mut out: Vec<FlatNode<'a>> = Vec::new();
-    // The F1 "root must be Interior" invariant generalizes (plan §6): the
-    // forest is non-empty and carries one leaf per member of a ≥2-member
-    // group (the leaf/member equality itself is checked at build).
-    if roots.is_empty() {
-        refusals.push(format!(
-            "{LIMIT_REFUSAL} an eligible group's spine forest is empty, so there is no \
-             arm for its trigger branch to enter. This is a macro bug, not a grammar bug \
-             — please report it.",
-        ));
-    }
-    let forest_leaves = roots.iter().map(SpineTree::leaf_count).sum::<usize>();
-    if forest_leaves < 2 {
-        refusals.push(format!(
-            "{LIMIT_REFUSAL} an eligible group's spine forest carries {forest_leaves} \
-             leaf/leaves, but a group has ≥2 members and one leaf per member. This is a \
-             macro bug, not a grammar bug — please report it.",
-        ));
-    }
-    // Pre-root arm: node 1 consumes the root EDGES; interior roots land on
-    // their own arms at ids assigned from 2, leaf roots commit (id 0).
-    let mut next_id: u8 = 2;
-    let mut pre_root_children: Vec<(&SpineTree, u8)> = Vec::with_capacity(roots.len());
-    for root in roots {
-        let cid = match root {
-            SpineTree::Interior { .. } => {
-                let cid = next_id;
-                // ★ #141 G8 — a REAL ENCODING LIMIT: marker positions are `u8`
-                // and the id space above 250 is reserved. A wide group reaches
-                // it, and what it deserves is a message rather than a mute abort.
-                if next_id >= 250 {
-                    refusals.push(format!(
-                        "{LIMIT_REFUSAL} a group's spine needs more than 250 interior \
-                         node ids, but a marker position is a `u8` and ids at or above \
-                         250 are reserved. Reduce the number of members sharing this \
-                         prefix, or shorten the surface they share.",
-                    ));
-                }
-                next_id = next_id.saturating_add(1);
-                cid
-            },
-            SpineTree::Leaf { .. } => 0,
-        };
-        pre_root_children.push((root, cid));
-    }
-    // (tree, assigned id) worklist — preorder, root-major.
-    let mut stack: Vec<(&SpineTree, u8)> = Vec::with_capacity(roots.len());
-    for (root, cid) in pre_root_children.iter().rev() {
-        if *cid != 0 {
-            stack.push((root, *cid));
-        }
-    }
-    out.push(FlatNode { node_id: 1, children: pre_root_children });
-    while let Some((node, node_id)) = stack.pop() {
-        let SpineTree::Interior { children, .. } = node else {
-            continue;
-        };
-        let mut child_entries = Vec::with_capacity(children.len());
-        for child in children {
-            let cid = match child {
-                SpineTree::Interior { .. } => {
-                    let cid = next_id;
-                    // ★ #141 G8 — the descendant twin of the pre-root ceiling
-                    // above; same `u8` marker-position limit, same message.
-                    if next_id >= 250 {
-                        refusals.push(format!(
-                            "{LIMIT_REFUSAL} a group's spine needs more than 250 interior \
-                             node ids, but a marker position is a `u8` and ids at or \
-                             above 250 are reserved. Reduce the number of members sharing \
-                             this prefix, or shorten the surface they share.",
-                        ));
-                    }
-                    next_id = next_id.saturating_add(1);
-                    cid
-                },
-                // Leaves carry no arm of their own — the parent's arm
-                // consumes the leaf edge and COMMITS.
-                SpineTree::Leaf { .. } => 0,
-            };
-            child_entries.push((child, cid));
-        }
-        // Push interior children for preorder continuation.
-        for (child, cid) in child_entries.iter().rev() {
-            if *cid != 0 {
-                stack.push((child, *cid));
-            }
-        }
-        out.push(FlatNode { node_id, children: child_entries });
-    }
-    out
 }
 
 /// The (symbol, new_state) target tokens for consuming a child edge.

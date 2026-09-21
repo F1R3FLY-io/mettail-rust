@@ -95,6 +95,7 @@ theories/BinderOptionalProjection.v
 theories/TermParamReaderProjection.v
 theories/BinderRuleProjection.v
 theories/FactoringTreeRelocation.v
+theories/FactoringForestWalkRelocation.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v
