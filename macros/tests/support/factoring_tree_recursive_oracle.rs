@@ -244,3 +244,163 @@ fn factoring_tree_recursive_oracle_deep_shared_prefix_fits_small_stack() {
         .join()
         .expect("factoring-tree small-stack test panicked");
 }
+
+fn walk_leaf(item: SpineItem, rule_idx: u16) -> SpineTree {
+    let mut refusals = Vec::new();
+    let leaf =
+        finalize_leaf(member(MemberKind::Nullary, rule_idx, vec![item.clone()]), 1, &mut refusals);
+    assert!(refusals.is_empty());
+    SpineTree::Leaf { item, member: leaf }
+}
+
+#[test]
+fn factoring_flatten_forest_pins_root_and_sibling_allocation_before_preorder_descent() {
+    let roots = vec![
+        SpineTree::Interior {
+            item: literal("a"),
+            children: vec![
+                SpineTree::Interior {
+                    item: literal("a-left"),
+                    children: vec![
+                        SpineTree::Interior {
+                            item: literal("a-deep"),
+                            children: vec![walk_leaf(literal("deep-end"), 40)],
+                        },
+                        walk_leaf(literal("left-end"), 41),
+                    ],
+                },
+                walk_leaf(literal("a-middle"), 42),
+                SpineTree::Interior {
+                    item: literal("a-right"),
+                    children: vec![walk_leaf(literal("right-end"), 43)],
+                },
+            ],
+        },
+        walk_leaf(literal("root-accept"), 44),
+        SpineTree::Interior {
+            item: literal("b"),
+            children: vec![
+                SpineTree::Interior {
+                    item: literal("b-child"),
+                    children: vec![walk_leaf(literal("b-child-end"), 45)],
+                },
+                walk_leaf(literal("b-end"), 46),
+            ],
+        },
+    ];
+    let SpineTree::Interior { children: a, .. } = &roots[0] else {
+        panic!("fixture root a")
+    };
+    let SpineTree::Interior { children: left, .. } = &a[0] else {
+        panic!("fixture a-left")
+    };
+    let SpineTree::Interior { children: deep, .. } = &left[0] else {
+        panic!("fixture a-deep")
+    };
+    let SpineTree::Interior { children: right, .. } = &a[2] else {
+        panic!("fixture a-right")
+    };
+    let SpineTree::Interior { children: b, .. } = &roots[2] else {
+        panic!("fixture root b")
+    };
+    let SpineTree::Interior { children: b_child, .. } = &b[0] else {
+        panic!("fixture b-child")
+    };
+    // Root b receives 3 before any descendants of a. Sibling a-right receives
+    // 5 before a-deep receives 6, even though a-deep is emitted first.
+    let expected = vec![
+        (1, vec![(&roots[0], 2), (&roots[1], 0), (&roots[2], 3)]),
+        (2, vec![(&a[0], 4), (&a[1], 0), (&a[2], 5)]),
+        (4, vec![(&left[0], 6), (&left[1], 0)]),
+        (6, vec![(&deep[0], 0)]),
+        (5, vec![(&right[0], 0)]),
+        (3, vec![(&b[0], 7), (&b[1], 0)]),
+        (7, vec![(&b_child[0], 0)]),
+    ];
+    let mut refusals = Vec::new();
+    let flat = flatten_forest(&roots, &mut refusals);
+    assert!(refusals.is_empty());
+    assert_eq!(flat.iter().map(|node| node.node_id).collect::<Vec<_>>(), [1, 2, 4, 6, 5, 3, 7]);
+    assert_eq!(flat.len(), expected.len());
+    for (actual, (node_id, children)) in flat.iter().zip(expected) {
+        assert_eq!(actual.node_id, node_id);
+        assert_eq!(actual.children.len(), children.len());
+        for ((actual_child, actual_id), (expected_child, expected_id)) in
+            actual.children.iter().zip(children)
+        {
+            assert_eq!(*actual_id, expected_id, "child ID of arm {node_id}");
+            assert!(
+                std::ptr::eq(*actual_child, expected_child),
+                "borrowed child identity of arm {node_id}"
+            );
+        }
+    }
+}
+
+#[test]
+fn factoring_mixfix_walk_pins_preorder_coordinates_borrowing_and_leaf_skips() {
+    let operand = SpineItem::ParamParse { cat_src_idx: 7, cur_bp: 9 };
+    let root = SpineTree::Interior {
+        item: literal("root"),
+        children: vec![
+            walk_leaf(operand.clone(), 50),
+            SpineTree::Interior {
+                item: operand.clone(),
+                children: vec![
+                    walk_leaf(operand.clone(), 51),
+                    SpineTree::Interior {
+                        item: literal("after-operand"),
+                        children: vec![walk_leaf(literal("after-end"), 52)],
+                    },
+                ],
+            },
+            walk_leaf(literal("skipped-literal"), 53),
+            SpineTree::Interior {
+                item: literal("right"),
+                children: vec![SpineTree::Interior {
+                    item: literal("right-deep"),
+                    children: vec![walk_leaf(literal("right-end"), 54)],
+                }],
+            },
+        ],
+    };
+    let SpineTree::Interior { children, .. } = &root else {
+        panic!("fixture root")
+    };
+    let SpineTree::Interior { children: operand_children, .. } = &children[1] else {
+        panic!("fixture operand")
+    };
+    let SpineTree::Interior { children: right_children, .. } = &children[3] else {
+        panic!("fixture right")
+    };
+    let expected = [
+        ((2, 0, 1), &root),
+        ((0, 0, 0), &children[1]),
+        ((0, 0, 1), &operand_children[1]),
+        ((2, 0, 2), &children[3]),
+        ((2, 0, 3), &right_children[0]),
+    ];
+    // Advancing the skipped leaves would collide with later interior keys.
+    let actual = mixfix_spine_arm_coords(&root).expect("leaf edges do not allocate spine arms");
+    assert_eq!(actual.len(), expected.len());
+    for ((key, node), (expected_key, expected_node)) in actual.iter().zip(expected) {
+        assert_eq!(*key, expected_key);
+        assert_ne!(*key, (2, 0, 0), "pre-root key is reserved, not an emitted interior arm");
+        assert!(std::ptr::eq(*node, expected_node), "arm plan borrows the source node");
+    }
+    let leaf_root = walk_leaf(operand.clone(), 55);
+    assert!(mixfix_spine_arm_coords(&leaf_root)
+        .expect("leaf root has no arm")
+        .is_empty());
+    let repeated_operand = SpineTree::Interior {
+        item: operand.clone(),
+        children: vec![SpineTree::Interior {
+            item: operand,
+            children: vec![walk_leaf(literal("end"), 56)],
+        }],
+    };
+    assert!(
+        mixfix_spine_arm_coords(&repeated_operand).is_none(),
+        "repeated operand interiors collide"
+    );
+}
