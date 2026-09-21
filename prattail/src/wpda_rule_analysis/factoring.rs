@@ -673,3 +673,417 @@ pub fn mixfix_spine_arm_coords(root: &SpineTree) -> Option<Vec<((u8, u8, u8), &S
     }
     Some(out)
 }
+
+/// Base of the synthetic spine rule-index space: `SPINE_ID = SPINE_RULE_BASE +
+/// group ordinal per category` (plan §2 item 1). Chosen clear of every real
+/// per-category rule index and BELOW the recovery branch offset space
+/// (the macro's `wpda_codegen::forks::RECOVERY_BASE` = `0xFE00`); amendment A9 asserts the
+/// allocation never crosses either bound.
+pub const SPINE_RULE_BASE: u16 = 0xF800;
+
+/// An ELIGIBLE factored group: one spine branch replaces its members'
+/// per-rule Fork branches (F1).
+#[derive(Debug)]
+pub struct SpineGroup {
+    /// `SPINE_RULE_BASE + ordinal` within the owning category (plan §2 item
+    /// 1; amendment A9 bounds asserted at allocation).
+    pub spine_id: u16,
+    /// Uniform initial `BinderRule.body_src_idx` across the group's binder
+    /// members (eligibility assert, red-team AV2 gap b); the owning
+    /// category's own src_idx for an all-nullary group (no BinderRule state
+    /// consumes it before a commit in that case).
+    pub body_src_idx: u16,
+    /// The factored suffix FOREST (F5-1: [`build_tree`] returns sibling
+    /// accept leaves alongside the interior remainder). Single-root while no
+    /// member's whole item list is the root edge; multiple roots when a
+    /// member accepts at depth 1 (root-accept — the pre-root arm itself
+    /// becomes the accept fork). Root order is the NORMATIVE forest order
+    /// (amendment A1, stated at [`build_tree`]): `remainder ++ accepts`.
+    /// Under the F0 stance every eligible group is single-root.
+    pub roots: Vec<SpineTree>,
+}
+
+impl SpineGroup {
+    pub fn member_rule_idxs(&self) -> BTreeSet<u16> {
+        self.leaves().iter().map(|m| m.rule_idx).collect()
+    }
+
+    // dead_code: model accessor, exercised only by the `#[cfg(test)]` INV-8 assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn leaf_count(&self) -> usize {
+        self.roots.iter().map(SpineTree::leaf_count).sum()
+    }
+
+    pub fn leaves(&self) -> Vec<&GroupMember> {
+        let mut out = Vec::with_capacity(self.roots.len());
+        for root in &self.roots {
+            out.extend(root.leaves());
+        }
+        out
+    }
+
+    /// The leaf for `rule_idx` together with its leaf EDGE item, if present
+    /// (leaves ↔ members stay a bijection under F5-1 — accepts ARE leaves).
+    // dead_code: model accessor, exercised only by the `#[cfg(test)]` INV-8 assertions.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn leaf_for(&self, rule_idx: u16) -> Option<(&SpineItem, &GroupMember)> {
+        self.roots.iter().find_map(|root| root.leaf_for(rule_idx))
+    }
+}
+
+/// Why a bucket member is emitted as an ordinary (unfactored) singleton.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SingletonReason {
+    /// The member shares its first post-trigger item with no sibling.
+    LoneRootChild,
+    /// ★A2: the member participates in the `(cat, rule_idx)`-keyed cast
+    /// machinery and must keep its own rule identity on every frame — see
+    /// `numeric_cast_adapter::cast_machinery_participates`.
+    CastMachinery,
+    /// The member has no mergeable post-trigger item at all (its first item
+    /// already terminates mergeability — e.g. Rholang `PNew`'s leading
+    /// binder-list) — it commits at the trigger exactly as today.
+    EmptySequence,
+    /// The macro's `wpda_codegen::forks::S1_FACTORING` is `false`: the emission-effective
+    /// partition degenerates to the identity (every member its own
+    /// singleton).
+    FactoringDisabled,
+    /// F5-2 D-5 (whole-slice eligibility, mixfix surface only): the member
+    /// belongs to a `(cat, trigger)` mixfix slice whose root partition did
+    /// NOT cover the ENTIRE slice with one ≥2-member group (grouped +
+    /// ungrouped members sharing the trigger) — the whole cohort degrades to
+    /// unfactored per-member emission. Documented limitation; the loop-v2
+    /// runtime shape stays trivial (spine pushed ⇒ skip the slice loop; else
+    /// verbatim loop).
+    PartialSliceCohort,
+}
+
+// dead_code: whole struct is INV-8 model data — constructed by discovery, read only by the `#[cfg(test)]` accounting assertions.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone)]
+pub struct SingletonMember {
+    pub rule_idx: u16,
+    pub reason: SingletonReason,
+}
+
+/// Why a ≥2-member candidate group is NOT factored in F0 (emitted unfactored,
+/// byte-identical to today; F5 territory).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IneligibleReason {
+    /// One or more members are proper prefixes of siblings (interior
+    /// accept-nodes — e.g. Rholang `InputBindQuoted` inside the `@`-led
+    /// query row). Modeled here, deferred to F5 (plan §5).
+    InteriorAccept { accepting_rule_idxs: Vec<u16> },
+    /// Binder members disagree on the initial `BinderRule.body_src_idx`
+    /// (red-team AV2 gap b — the spine state would be ill-defined).
+    NonUniformBodySrc { body_src_idxs: Vec<u16> },
+    /// F5-2 (mixfix surface): members disagree on `result_src_idx` — the
+    /// spine marker's category, the goal-gate check, and the fire output
+    /// category all read it, so a mixed-result cohort cannot share one spine
+    /// branch (`result_src`-uniformity is the mixfix analog of
+    /// `body_src_idx`-uniformity).
+    NonUniformResultSrc { result_src_idxs: Vec<u16> },
+    /// F5-2 A-M5 (mitigant-(a) future-grammar guard): a literal item that a
+    /// member consumes strictly AFTER its first operand is itself an
+    /// operator trigger of the operand's category — the operand could ABSORB
+    /// the divergence token, so two members could close on the SAME span and
+    /// the min-member spine stamp would adjudicate an intra-cohort ⊕-tie
+    /// that OFF adjudicates with distinct member stamps. Next-token-disjoint
+    /// alone does NOT imply span-disjoint; the whole cohort degrades to
+    /// unfactored.
+    OperandAbsorbableDivergence { texts: Vec<String> },
+    /// F5-2 spine-coordinate constraint: the SHARED spine path carries more
+    /// than one operand item. The spine's post-operand re-entry coordinate
+    /// is `(kind 0, marker.bp, 0)` via the Unwinding-MixfixMarker arm, and
+    /// the width-1 spine keeps `marker.bp = 0` (no kind-1 bump runs on the
+    /// spine), so a second shared operand would re-enter at the SAME
+    /// `(0, 0, 0)` key as the first — an arm-key collision. The cohort
+    /// degrades to unfactored (loudly recorded, never silently mis-keyed).
+    MultiOperandSharedSpine,
+}
+
+// dead_code: whole struct is INV-8 model data — read only by the `#[cfg(test)]` accounting assertions.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug)]
+pub struct IneligibleGroup {
+    pub reason: IneligibleReason,
+    pub member_rule_idxs: Vec<u16>,
+}
+
+/// One `(category, leading_literal)` prefix cohort.
+///
+/// `leading_literal` / `cohort_size` / `ineligible` / `singletons` are INV-8
+/// model data read only by the `#[cfg(test)]` accounting assertions (dead in
+/// the non-test lib build); only `groups` is consumed by emission.
+#[derive(Debug)]
+pub struct FactoringBucket {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub leading_literal: String,
+    /// Total members discovered in this bucket BEFORE any exclusion — the
+    /// INV-8 no-loss denominator (amendment A5): group leaves plus ineligible
+    /// members plus singletons equal `cohort_size`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub cohort_size: usize,
+    pub groups: Vec<SpineGroup>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub ineligible: Vec<IneligibleGroup>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub singletons: Vec<SingletonMember>,
+}
+
+#[derive(Debug)]
+pub struct CategoryFactoring {
+    pub category_src_idx: u16,
+    pub buckets: Vec<FactoringBucket>,
+    /// ★ #141 G8 — the ENCODING-LIMIT refusals discovered while building this
+    /// category's partition, rendered by `build_spine_emission_from_parts` into
+    /// `SpineEmission::refusals` and spliced into the generated engine module as
+    /// `compile_error!`s. See [`LIMIT_REFUSAL`].
+    pub refusals: Vec<String>,
+}
+
+/// Original enabled prefix partition over authored per-category rule rows.
+///
+/// Discovery runs once per category. Cast checks retain the original bucket
+/// and member order, after indexed rule lookup and before empty-item exclusion.
+/// The callbacks borrow original rules; they must not eagerly reorder discovery
+/// or normalize descriptors. The caller retains the original encoding/input
+/// preconditions and supplies its unchanged recovery-branch base.
+///
+/// `PrefixFactoringProjection.v` models the callback and tree-call boundary,
+/// including the original arithmetic domain and diagnostic effects.
+pub fn build_prefix_factoring_with<R>(
+    per_cat: &[Vec<R>],
+    accept_continue: bool,
+    recovery_base: u16,
+    mut discover: impl FnMut(u16, &[R]) -> Vec<(String, CandidateMember)>,
+    mut cast_participates: impl FnMut(&R) -> bool,
+) -> Vec<CategoryFactoring> {
+    let mut out = Vec::with_capacity(per_cat.len());
+    // ★ #141 G8 — one sink per category, drained into that category's
+    // `CategoryFactoring` (`std::mem::take` at the push below).
+    let mut refusals: Vec<String> = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let category_src_idx = cat_i as u16;
+        let members = discover(category_src_idx, rules);
+        // Bucket by leading literal, first-seen order (mirrors the
+        // `unified_order` insertion-order discipline in `prefix.rs`).
+        let mut bucket_order: Vec<String> = Vec::new();
+        let mut bucket_members: Vec<Vec<CandidateMember>> = Vec::new();
+        for (trigger, member) in members {
+            match bucket_order.iter().position(|t| t == &trigger) {
+                Some(i) => bucket_members[i].push(member),
+                None => {
+                    bucket_order.push(trigger);
+                    bucket_members.push(vec![member]);
+                },
+            }
+        }
+        let mut buckets = Vec::with_capacity(bucket_order.len());
+        // SPINE_ID ordinals are per-category, over ELIGIBLE groups only, in
+        // bucket-then-group discovery order (deterministic).
+        let mut next_spine_ordinal: u16 = 0;
+        for (leading_literal, bucket) in bucket_order.into_iter().zip(bucket_members) {
+            let cohort_size = bucket.len();
+            let mut groups: Vec<SpineGroup> = Vec::new();
+            let mut ineligible: Vec<IneligibleGroup> = Vec::new();
+            let mut singletons: Vec<SingletonMember> = Vec::new();
+            // Member-level exclusions first (★A2 / empty sequence), then
+            // root-partition of the remainder.
+            let mut groupable: Vec<CandidateMember> = Vec::with_capacity(bucket.len());
+            for member in bucket {
+                let rule = &rules[member.rule_idx as usize];
+                if cast_participates(rule) {
+                    singletons.push(SingletonMember {
+                        rule_idx: member.rule_idx,
+                        reason: SingletonReason::CastMachinery,
+                    });
+                } else if member.items.is_empty() {
+                    singletons.push(SingletonMember {
+                        rule_idx: member.rule_idx,
+                        reason: SingletonReason::EmptySequence,
+                    });
+                } else {
+                    groupable.push(member);
+                }
+            }
+            // Root partition = the groups (plan §2: partition by the first
+            // post-trigger item's emitted-action shape).
+            let mut root_order: Vec<SpineItem> = Vec::new();
+            let mut root_parts: Vec<Vec<CandidateMember>> = Vec::new();
+            for member in groupable {
+                let item = member.items[0].clone();
+                match root_order.iter().position(|existing| existing == &item) {
+                    Some(i) => root_parts[i].push(member),
+                    None => {
+                        root_order.push(item);
+                        root_parts.push(vec![member]);
+                    },
+                }
+            }
+            for (root_item, part) in root_order.into_iter().zip(root_parts) {
+                if part.len() == 1 {
+                    let lone = &part[0];
+                    singletons.push(SingletonMember {
+                        rule_idx: lone.rule_idx,
+                        reason: SingletonReason::LoneRootChild,
+                    });
+                    continue;
+                }
+                let member_rule_idxs: Vec<u16> = part.iter().map(|m| m.rule_idx).collect();
+                let body_src_idxs: Vec<u16> = {
+                    let mut seen = BTreeSet::new();
+                    part.iter()
+                        .filter_map(|m| m.body_src_idx)
+                        .filter(|b| seen.insert(*b))
+                        .collect()
+                };
+                let mut interior_accepts: Vec<u16> = Vec::new();
+                let roots = build_tree(
+                    1,
+                    root_item,
+                    part,
+                    accept_continue,
+                    &mut interior_accepts,
+                    &mut refusals,
+                );
+                if !interior_accepts.is_empty() {
+                    // Only reachable with `accept_continue == false` (F5-1
+                    // dormant stance) — [`build_tree`] leafs exhausted
+                    // members out otherwise.
+                    ineligible.push(IneligibleGroup {
+                        reason: IneligibleReason::InteriorAccept {
+                            accepting_rule_idxs: interior_accepts,
+                        },
+                        member_rule_idxs,
+                    });
+                    continue;
+                }
+                if body_src_idxs.len() > 1 {
+                    // Red-team AV2 gap b: the spine's single BinderRule
+                    // body_src_idx would be ill-defined. Covers accept
+                    // members' body_src too — `body_src_idxs` is computed
+                    // over the whole part before the trie build.
+                    ineligible.push(IneligibleGroup {
+                        reason: IneligibleReason::NonUniformBodySrc { body_src_idxs },
+                        member_rule_idxs,
+                    });
+                    continue;
+                }
+                // Eligible: every leaf carries exactly one rule by
+                // construction (single-member base; under the F0
+                // stance twins and proper prefixes were routed to
+                // interior_accepts above, under F5-1 they ARE leaves).
+                let leaf_count: usize = roots.iter().map(SpineTree::leaf_count).sum();
+                if leaf_count != member_rule_idxs.len() {
+                    refusals.push(format!(
+                        "{LIMIT_REFUSAL} the eligible group for category index \
+                         {category_src_idx} at trigger {leading_literal:?} built \
+                         {leaf_count} spine leaves for {} members. Every member commits at \
+                         exactly one leaf by construction, so the trie build and the member \
+                         list disagree. This is a macro bug, not a grammar bug — please \
+                         report it.",
+                        member_rule_idxs.len(),
+                    ));
+                }
+                let body_src_idx = body_src_idxs
+                    .first()
+                    .copied()
+                    // All-nullary group: no BinderRule state consumes the
+                    // field before a commit; carry the owning category.
+                    .unwrap_or(category_src_idx);
+                groups.push(SpineGroup {
+                    spine_id: SPINE_RULE_BASE + next_spine_ordinal,
+                    body_src_idx,
+                    roots,
+                });
+                next_spine_ordinal += 1;
+            }
+            buckets.push(FactoringBucket {
+                leading_literal,
+                cohort_size,
+                groups,
+                ineligible,
+                singletons,
+            });
+        }
+        // ★A9: the synthetic spine id space must stay clear of the recovery
+        // branch offset space AND the u16 domain.
+        let spine_id_end = SPINE_RULE_BASE as u32 + next_spine_ordinal as u32;
+        // ★ #141 G8 — the two A9 ceilings, and the clearest case in the file for
+        // refusing rather than asserting: a grammar with enough factorable
+        // prefixes in ONE category reaches them, and what it deserves is a
+        // message naming the category and the ceiling it crossed.
+        if spine_id_end >= recovery_base as u32 {
+            refusals.push(format!(
+                "{LIMIT_REFUSAL} category index {category_src_idx} allocates \
+                 {next_spine_ordinal} synthetic spine ids, ending at {spine_id_end:#06x}, \
+                 which collides with the recovery-branch id space that begins at {:#06x}. \
+                 Reduce the number of distinct factorable prefixes declared in this \
+                 category.",
+                recovery_base,
+            ));
+        }
+        if spine_id_end >= u16::MAX as u32 {
+            refusals.push(format!(
+                "{LIMIT_REFUSAL} category index {category_src_idx} ends its synthetic spine \
+                 id space at {spine_id_end:#06x}, which overflows the `u16` a rule index \
+                 is encoded in. Reduce the number of distinct factorable prefixes declared \
+                 in this category.",
+            ));
+        }
+        out.push(CategoryFactoring {
+            category_src_idx,
+            buckets,
+            refusals: std::mem::take(&mut refusals),
+        });
+    }
+    out
+}
+
+/// Original disabled factoring path: every discovered member is a singleton.
+///
+/// Retains empty categories and first-seen trigger/member order. This path does
+/// not index rule rows, consult cast machinery, build trees or check spine IDs.
+pub fn prefix_identity_partition<R>(
+    per_cat: &[Vec<R>],
+    mut discover: impl FnMut(u16, &[R]) -> Vec<(String, CandidateMember)>,
+) -> Vec<CategoryFactoring> {
+    let mut out = Vec::with_capacity(per_cat.len());
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let category_src_idx = cat_i as u16;
+        let members = discover(category_src_idx, rules);
+        let mut bucket_order: Vec<String> = Vec::new();
+        let mut bucket_singletons: Vec<Vec<SingletonMember>> = Vec::new();
+        for (trigger, member) in members {
+            let singleton = SingletonMember {
+                rule_idx: member.rule_idx,
+                reason: SingletonReason::FactoringDisabled,
+            };
+            match bucket_order.iter().position(|t| t == &trigger) {
+                Some(i) => bucket_singletons[i].push(singleton),
+                None => {
+                    bucket_order.push(trigger);
+                    bucket_singletons.push(vec![singleton]);
+                },
+            }
+        }
+        let buckets = bucket_order
+            .into_iter()
+            .zip(bucket_singletons)
+            .map(|(leading_literal, singletons)| FactoringBucket {
+                leading_literal,
+                cohort_size: singletons.len(),
+                groups: Vec::new(),
+                ineligible: Vec::new(),
+                singletons,
+            })
+            .collect();
+        out.push(CategoryFactoring {
+            category_src_idx,
+            buckets,
+            refusals: Vec::new(),
+        });
+    }
+    out
+}
