@@ -219,6 +219,10 @@ pub use mettail_prattail::wpda_rule_analysis::binder::{
 mod model_lifecycle_tests;
 
 #[cfg(test)]
+#[path = "../../../../tests/support/binder_classifier_projection.rs"]
+mod classifier_projection_tests;
+
+#[cfg(test)]
 #[path = "../../../../tests/support/binder_traversal_recursive_oracle.rs"]
 mod traversal_recursive_oracle;
 
