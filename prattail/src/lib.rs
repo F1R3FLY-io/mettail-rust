@@ -59,6 +59,7 @@ mod graph_algorithms;
 
 pub mod automata;
 pub mod binding_power;
+pub mod wpda_rule_analysis;
 pub mod classify;
 /// ★ The cross-category projection-boundary walk's per-hop decision, factored out so its
 /// verified Rocq model can be executed against it (`tests/crosscat_boundary_oracle.rs`).
