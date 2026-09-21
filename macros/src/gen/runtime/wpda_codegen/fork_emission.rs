@@ -440,4 +440,74 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn equal_ordinals_preserve_first_tag_and_ambiguous_duplicates_accumulate() {
+        let mut model = ForkEmissionOrdinalModel::new();
+        model.record_site2_row(0, 4, 2, "first");
+        model.record_site2_row(0, 4, 2, "equal-second");
+        model.record_site2_row(0, 4, 2, "equal-third");
+        assert_eq!(model.site2_row_count(), 1);
+        assert_eq!(model.site2_ordinal(0, 4), Some(2));
+        assert_eq!(model.ambiguous_rule_count(), 0);
+
+        model.record_site2_row(0, 4, 3, "conflict");
+        // Once ambiguous, even exact duplicates append to the diagnostic history.
+        for (ordinal, tag) in [(2, "first"), (3, "conflict"), (2, "first")] {
+            model.record_site2_row(0, 4, ordinal, tag);
+            assert_eq!(model.site2_row_count(), 0);
+            assert_eq!(model.site2_ordinal(0, 4), None);
+            assert!(model.is_ambiguous_multi_bucket(0, 4));
+            assert_eq!(model.ambiguous_rule_count(), 1);
+        }
+        assert_eq!(model.census_keys(), [(0, 4)]);
+        let tokens = model.into_tokens("AccumulatorHistory").to_string();
+        assert!(
+            tokens.contains(
+                "(cat 0, rule 4): first@2 vs conflict@3 vs first@2 vs conflict@3 vs first@2."
+            ),
+            "first tag and later duplicate observations retain their order: {tokens}"
+        );
+        assert!(!tokens.contains("equal-second") && !tokens.contains("equal-third"));
+        assert!(tokens.contains("2u8 => 0u16"));
+    }
+
+    #[test]
+    fn census_and_token_diagnostics_keep_derived_then_ambiguous_order() {
+        let mut model = ForkEmissionOrdinalModel::new();
+        model.record_site2_row(7, 2, 11, "derived-last");
+        model.record_site2_row(3, 9, 4, "derived-middle");
+        model.record_site2_row(1, 8, 6, "ambiguous-high-first");
+        model.record_site2_row(0, 9, 3, "ambiguous-low-first");
+        model.record_site2_row(3, 1, 0, "zero-first");
+        model.record_site2_row(1, 8, 8, "ambiguous-high-second");
+        model.record_site2_row(0, 9, 5, "ambiguous-low-second");
+
+        // Each class is sorted independently; ambiguous keys follow all derived keys.
+        let keys = model.census_keys();
+        assert_eq!(keys, [(3, 1), (3, 9), (7, 2), (0, 9), (1, 8)]);
+        assert_eq!(model.site2_row_count(), 3);
+        assert_eq!(model.ambiguous_rule_count(), 2);
+        for (cat, rule) in keys {
+            assert_eq!(model.emitted_value(2, cat, rule), 0);
+        }
+
+        let tokens = model.into_tokens("AccumulatorOrder").to_string();
+        assert!(
+            tokens.contains(
+                "Derived NONZERO static positions (census-only, election-inert): \
+                 (cat 3, rule 9)@4 [derived-middle]; (cat 7, rule 2)@11 [derived-last]. \
+                 AMBIGUOUS-MULTI-BUCKET (fallback-0-resolved, Option A): \
+                 (cat 0, rule 9): ambiguous-low-first@3 vs ambiguous-low-second@5; \
+                 (cat 1, rule 8): ambiguous-high-first@6 vs ambiguous-high-second@8."
+            ),
+            "both diagnostic classes and their contents retain their order: {tokens}"
+        );
+        assert!(
+            !tokens.contains("zero-first"),
+            "zero rows are counted but omitted from the nonzero inventory"
+        );
+        assert!(tokens.contains("2u8 => 0u16"));
+        assert!(!tokens.contains("(3u16 , 9u16)") && !tokens.contains("(7u16 , 2u16)"));
+    }
 }
