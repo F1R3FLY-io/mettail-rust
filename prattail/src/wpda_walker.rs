@@ -1110,9 +1110,10 @@ use crate::automata::{token_kind_matches_capture_name, TokenKind};
 use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
 use crate::wpda_runtime::{
-    ActionArg, ActionEntry, CollectionSpec, RealizationError, ReconstructionFailure,
-    SemanticBuilder, StackSymbolV2, SymbolKind, WpdaConfiguration, WpdaMaxStepsExceeded,
-    WpdaMutableTokenSource, WpdaResolveResult, WpdaState, WpdaTokenSource,
+    ActionArg, ActionEntry, ActionInvocationError, ActionSignature, CollectionSpec,
+    RealizationError, ReconstructionFailure, SemanticBuilder, StackSymbolV2, SymbolKind,
+    WpdaConfiguration, WpdaMaxStepsExceeded, WpdaMutableTokenSource, WpdaResolveResult, WpdaState,
+    WpdaTokenSource,
 };
 
 /// Token-level atom producer available to stack-safe chain synthesis.
@@ -1193,6 +1194,33 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
         let _ = (src_idx, rule_idx);
         None
+    }
+
+    /// Borrow action metadata from either the original static table or an
+    /// owned parser image. Static engines retain their existing table lookup.
+    #[inline]
+    fn action_signature(&self, src_idx: u16, rule_idx: u16) -> Option<ActionSignature<'_>> {
+        self.action_for(src_idx, rule_idx)
+            .map(ActionEntry::signature)
+    }
+
+    /// Execute a trusted constructor with this engine's context. Runtime
+    /// adapters override this hook instead of synthesizing static function
+    /// pointers. Missing dispatch and protocol/resource failures are errors,
+    /// not evidence that the grammar rejects this argument combination.
+    #[inline]
+    fn execute_action(
+        &self,
+        src_idx: u16,
+        rule_idx: u16,
+        builder: &mut SemanticBuilder,
+        args: Vec<ActionArg>,
+    ) -> Result<(), ActionInvocationError> {
+        let entry = self
+            .action_for(src_idx, rule_idx)
+            .ok_or(ActionInvocationError::MissingAction { category: src_idx, rule: rule_idx })?;
+        (entry.action_fn)(builder, args);
+        Ok(())
     }
 
     /// SPPF-realize observational-dedup hook (2026-06-28).
@@ -6967,7 +6995,7 @@ where
             if cat_src_idx != root_cat {
                 continue;
             }
-            let Some(entry) = self.engine.action_for(root_cat, local_rule_idx) else {
+            let Some(entry) = self.engine.action_signature(root_cat, local_rule_idx) else {
                 continue;
             };
             if entry.arity != 1
@@ -9633,9 +9661,8 @@ where
             !is_spine_rule_id(local_rule_idx),
             "S1 H9: spine id {local_rule_idx:#06x} reached realize (cat {cat})",
         );
-        let action_entry = self.engine.action_for(cat, local_rule_idx);
-        let action_fn = match action_entry {
-            Some(e) => e.action_fn,
+        let action_entry = match self.engine.action_signature(cat, local_rule_idx) {
+            Some(entry) => entry,
             None => return Vec::new(), // No matching action for this packing.
         };
         // Bug A guard, P3 Pocket-C revision (2026-07-11): an
@@ -9651,11 +9678,7 @@ where
         // panicked the whole parse on the FIRST ghost, killing the valid
         // sibling flats (receipt: class3 `with [ ] ( ) . { 0 }`).
         {
-            let expected_arity = action_entry
-                .expect(
-                    "wpda_walker: action_entry is Some — the None arm returned Vec::new() above",
-                )
-                .arity as usize;
+            let expected_arity = action_entry.arity as usize;
             if expected_arity != arity {
                 #[cfg(debug_assertions)]
                 {
@@ -9874,7 +9897,13 @@ where
                     ActionArg::UnsetCollectionValue => "UnsetCollectionValue",
                 })
                 .collect();
-            (action_fn)(&mut sb, popped);
+            if let Err(cause) = self
+                .engine
+                .execute_action(cat, local_rule_idx, &mut sb, popped)
+            {
+                self.record_realization_error(RealizationError::Action { rule_idx, cause });
+                return Vec::new();
+            }
             let post_len = sb.len();
             let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
             // Bug J resolution (Part A, 2026-05-16): mandate-compliant
@@ -14392,7 +14421,7 @@ where
         }
         let Some(entry) = self
             .engine
-            .action_for((rule_idx >> 16) as u16, (rule_idx & 0xffff) as u16)
+            .action_signature((rule_idx >> 16) as u16, (rule_idx & 0xffff) as u16)
         else {
             return self.cgll_reconstruction_failed(
                 node,
@@ -14405,7 +14434,14 @@ where
         if usize::from(entry.arity) != args.len() {
             return None;
         }
-        match SemanticBuilder::invoke_selected_action(*entry, args) {
+        match SemanticBuilder::invoke_selected_action_with(entry, args, |builder, args| {
+            self.engine.execute_action(
+                (rule_idx >> 16) as u16,
+                (rule_idx & 0xffff) as u16,
+                builder,
+                args,
+            )
+        }) {
             Ok(Some(arg)) => Some((arg, weight)),
             Ok(None) => None,
             Err(cause) => {
@@ -17441,7 +17477,7 @@ where
             let fires_standalone = !self.engine.is_binder_internal_collection(cat_u16, rule_u16)
                 && self
                     .engine
-                    .action_for(cat_u16, rule_u16)
+                    .action_signature(cat_u16, rule_u16)
                     .is_some_and(|entry| entry.arity == 1);
             if fires_standalone {
                 if collection_zs.is_empty() {
@@ -22776,7 +22812,7 @@ where
                             {
                                 let cat = (*rule_idx >> 16) as u16;
                                 let local_rule_idx = (*rule_idx & 0xFFFF) as u16;
-                                let Some(entry) = self.engine.action_for(cat, local_rule_idx)
+                                let Some(entry) = self.engine.action_signature(cat, local_rule_idx)
                                 else {
                                     outcome = None;
                                     continue;
@@ -22977,9 +23013,8 @@ where
         context: PackingWitnessContext,
         collection_values: Vec<(u8, Arc<dyn std::any::Any + Send + Sync>)>,
     ) -> Option<SppfSymbolTerm> {
-        let entry = self
-            .engine
-            .action_for(context.cat, context.local_rule_idx)?;
+        self.engine
+            .action_signature(context.cat, context.local_rule_idx)?;
         let mut builder = SemanticBuilder::new();
         let collection_ids = Self::collection_ids_in_args(&context.args);
         Self::preallocate_collection_slots(&mut builder, &collection_ids);
@@ -23011,7 +23046,14 @@ where
             return None;
         }
         let popped = builder.pop_args(context.arity);
-        (entry.action_fn)(&mut builder, popped);
+        if let Err(cause) =
+            self.engine
+                .execute_action(context.cat, context.local_rule_idx, &mut builder, popped)
+        {
+            let rule_idx = (u32::from(context.cat) << 16) | u32::from(context.local_rule_idx);
+            self.record_realization_error(RealizationError::Action { rule_idx, cause });
+            return None;
+        }
         if builder.len() != pre_len.saturating_sub(context.arity).saturating_add(1) {
             return None;
         }
@@ -23097,9 +23139,8 @@ where
     )> {
         let cat_src_idx = symbol.category_src_idx;
         let local_rule_idx = symbol.rule_index_in_category;
-        let entry = self.engine.action_for(cat_src_idx, local_rule_idx)?;
+        let entry = self.engine.action_signature(cat_src_idx, local_rule_idx)?;
         let arity = entry.arity as usize;
-        let action_fn = entry.action_fn;
         let expected_input_cats = entry.expected_input_cats;
 
         // Filter TriggerTerminal children — same filter as
@@ -23218,7 +23259,14 @@ where
         let pre_collection_len = sb.collection_stack_len();
         let pre_action_len = sb.len();
         let popped = sb.pop_args(arity);
-        action_fn(&mut sb, popped);
+        if let Err(cause) = self
+            .engine
+            .execute_action(cat_src_idx, local_rule_idx, &mut sb, popped)
+        {
+            let rule_idx = (u32::from(cat_src_idx) << 16) | u32::from(local_rule_idx);
+            self.record_realization_error(RealizationError::Action { rule_idx, cause });
+            return None;
+        }
         let expected_len = pre_action_len.saturating_sub(arity).saturating_add(1);
         if sb.len() != expected_len {
             // Action elided (cross-cat-incompatible arg). Return None.
@@ -23278,7 +23326,7 @@ where
         _item_pos: u8,
         body_cat: u16,
     ) -> bool {
-        let Some(entry) = self.engine.action_for(cat, rule) else {
+        let Some(entry) = self.engine.action_signature(cat, rule) else {
             return false;
         };
         if entry.expected_input_cats.contains(&body_cat) {
@@ -23375,7 +23423,7 @@ where
                 pending.extend(members.iter().rev().copied());
                 continue;
             }
-            let Some(entry) = self.engine.action_for(cat_src_idx, rule_idx) else {
+            let Some(entry) = self.engine.action_signature(cat_src_idx, rule_idx) else {
                 continue;
             };
             if entry.arity == 1 && entry.expected_input_cats.len() == 1 {
@@ -23576,6 +23624,9 @@ where
 // ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod action_dispatch_tests;
 
 #[cfg(test)]
 #[path = "../tests/support/wpda_witness_recursive_oracle.rs"]

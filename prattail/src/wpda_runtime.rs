@@ -3346,6 +3346,30 @@ pub struct ActionEntry {
     pub output_cat: u16,
 }
 
+/// Borrowed rule metadata shared by static tables and owned parser images.
+///
+/// The input-category slice retains constructor argument order. Its lifetime
+/// follows the engine/image borrow; runtime images need neither leaked slices
+/// nor language-specific function pointers to describe their actions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActionSignature<'a> {
+    pub arity: u8,
+    pub expected_input_cats: &'a [u16],
+    pub output_cat: u16,
+}
+
+impl ActionEntry {
+    /// Project metadata without changing the static action-table ABI.
+    #[inline]
+    pub fn signature(&self) -> ActionSignature<'_> {
+        ActionSignature {
+            arity: self.arity,
+            expected_input_cats: self.expected_input_cats,
+            output_cat: self.output_cat,
+        }
+    }
+}
+
 /// B13c / Candidate H: sentinel category index meaning "any category
 /// accepted" — used for non-Term arg slots (Ident, Token, Predicate,
 /// CollectionId, BinderScope) where category matching doesn't apply.

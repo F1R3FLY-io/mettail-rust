@@ -1,4 +1,4 @@
-use super::{ActionArg, ActionArgMismatch, ActionEntry, SemanticBuilder};
+use super::{ActionArg, ActionArgMismatch, ActionEntry, ActionSignature, SemanticBuilder};
 use std::sync::Arc;
 
 /// One closed, ordered collection selection. This is not a native collection
@@ -35,6 +35,7 @@ impl SelectedCollection {
 /// a grammar's semantic action is undefined on a particular combination.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionInvocationError {
+    MissingAction { category: u16, rule: u16 },
     Arity { expected: usize, actual: usize },
     CollectionLimit { limit: usize, actual: usize },
     UnboundCollectionReference { id: u8 },
@@ -49,6 +50,9 @@ pub enum ActionInvocationError {
 impl std::fmt::Display for ActionInvocationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::MissingAction { category, rule } => {
+                write!(formatter, "no semantic action exists for category {category}, rule {rule}")
+            },
             Self::Arity { expected, actual } => {
                 write!(formatter, "action requires {expected} arguments, but received {actual}")
             },
@@ -157,7 +161,21 @@ impl SemanticBuilder {
         entry: ActionEntry,
         args: Vec<ActionArg>,
     ) -> Result<Option<ActionArg>, ActionInvocationError> {
-        let expected = usize::from(entry.arity);
+        Self::invoke_selected_action_with(entry.signature(), args, |builder, args| {
+            (entry.action_fn)(builder, args);
+            Ok(())
+        })
+    }
+
+    /// Use the existing selected-occurrence preparation with an engine-owned
+    /// callback. The callback is monomorphized and may borrow immutable image
+    /// metadata; it is not untrusted executable grammar code.
+    pub fn invoke_selected_action_with(
+        signature: ActionSignature<'_>,
+        args: Vec<ActionArg>,
+        action: impl FnOnce(&mut Self, Vec<ActionArg>) -> Result<(), ActionInvocationError>,
+    ) -> Result<Option<ActionArg>, ActionInvocationError> {
+        let expected = usize::from(signature.arity);
         if args.len() != expected {
             return Err(ActionInvocationError::Arity { expected, actual: args.len() });
         }
@@ -201,7 +219,7 @@ impl SemanticBuilder {
                 },
             }
         }
-        Self::invoke_action(entry, values, collections)
+        Self::invoke_action_with(signature, values, collections, action)
     }
 
     /// Invoke a generated action on one fully selected argument combination.
@@ -224,19 +242,38 @@ impl SemanticBuilder {
         args: Vec<ActionArg>,
         collections: Vec<Vec<ActionArg>>,
     ) -> Result<Option<ActionArg>, ActionInvocationError> {
-        let expected = usize::from(entry.arity);
+        Self::invoke_action_with(entry.signature(), args, collections, |builder, args| {
+            (entry.action_fn)(builder, args);
+            Ok(())
+        })
+    }
+
+    /// The shared invocation boundary for static and context-aware actions.
+    ///
+    /// Frame protocol failures remain sticky. A callback error is checked
+    /// before result classification, so even a provisionally pushed term is
+    /// withheld on failure. The static wrapper returns `Ok(())` after calling
+    /// its original function, preserving the original success/refusal/errors.
+    pub fn invoke_action_with(
+        signature: ActionSignature<'_>,
+        args: Vec<ActionArg>,
+        collections: Vec<Vec<ActionArg>>,
+        action: impl FnOnce(&mut Self, Vec<ActionArg>) -> Result<(), ActionInvocationError>,
+    ) -> Result<Option<ActionArg>, ActionInvocationError> {
+        let expected = usize::from(signature.arity);
         if args.len() != expected {
             return Err(ActionInvocationError::Arity { expected, actual: args.len() });
         }
         let frame = ActionCollectionFrame::new(collections)?;
         let mut builder = Self::new();
         builder.action_collections = Some(Box::new(frame));
-        (entry.action_fn)(&mut builder, args);
+        let action_result = action(&mut builder, args);
         builder
             .action_collections
             .take()
             .expect("invocation-local collection frame remains installed")
             .finish(!builder.stack.is_empty())?;
+        action_result?;
         if !builder.binder_scopes.is_empty()
             || !builder.collection_stack.is_empty()
             || !builder.optional_stack.is_empty()

@@ -86,6 +86,7 @@ theories/CollectionItemKBestLifting.v
 theories/OccurrenceCollectionAssembly.v
 theories/SelectedOccurrencePlan.v
 theories/RealizationFailureBoundary.v
+theories/ActionDispatchAdapter.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v
