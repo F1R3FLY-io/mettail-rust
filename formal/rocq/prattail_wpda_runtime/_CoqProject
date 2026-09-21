@@ -93,6 +93,7 @@ theories/SyntheticRuleProjection.v
 theories/CollectionClassifierProjection.v
 theories/BinderOptionalProjection.v
 theories/TermParamReaderProjection.v
+theories/BinderRuleProjection.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v

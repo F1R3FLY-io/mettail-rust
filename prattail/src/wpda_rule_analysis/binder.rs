@@ -260,6 +260,7 @@ pub enum ActionArgKind {
 mod model_lifecycle;
 
 pub mod optional;
+pub mod rule;
 pub mod term_param;
 
 /// Parameter roles observed by the binder classifier in declaration order.
