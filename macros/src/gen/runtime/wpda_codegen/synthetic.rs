@@ -543,7 +543,9 @@ pub(crate) fn build_per_category_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::language::{LangType, TokenDef};
+    use mettail_ast::grammar::{rule_fixture, PatternOp, SyntaxExpr, TermParam};
+    use mettail_ast::language::{CategoryRole, CollectionDelimiters, LangType, TokenDef};
+    use mettail_ast::types::TypeExpr;
     use proc_macro2::Span;
     use syn::{parse_quote, Ident};
 
@@ -651,5 +653,331 @@ mod tests {
         assert_eq!(per_cat[1][0].label.to_string(), "BoolLit");
         assert_eq!(per_cat[0][1].label.to_string(), "IVar");
         assert_eq!(per_cat[1][1].label.to_string(), "BVar");
+    }
+
+    fn synthesis_baseline_ident(name: &str) -> Ident {
+        Ident::new(name, Span::call_site())
+    }
+
+    fn synthesis_baseline_user(label: &str, category: &str) -> GrammarRule {
+        GrammarRule {
+            items: vec![GrammarItem::Terminal(label.into())],
+            ..rule_fixture(synthesis_baseline_ident(label), synthesis_baseline_ident(category))
+        }
+    }
+
+    fn synthesis_baseline_labels(rules: &[GrammarRule]) -> Vec<String> {
+        rules.iter().map(|rule| rule.label.to_string()).collect()
+    }
+
+    fn synthesis_baseline_collection(open: &str) -> LangType {
+        LangType {
+            name: synthesis_baseline_ident("Seq"),
+            role: CategoryRole::Object,
+            native_type: Some(parse_quote!(Vec<Int>)),
+            collection_kind: Some(CollectionCategory::List(CollectionDelimiters {
+                open: open.into(),
+                close: "]end".into(),
+                sep: ";;".into(),
+                key_val_sep: None,
+            })),
+        }
+    }
+
+    fn synthesis_baseline_binder_language() -> LanguageDef {
+        let mut language = lang_with_int_and_bool_literals();
+        let binder = TermParam::Abstraction {
+            binder: synthesis_baseline_ident("x"),
+            body: synthesis_baseline_ident("p"),
+            ty: TypeExpr::Arrow {
+                domain: Box::new(TypeExpr::Base(synthesis_baseline_ident("Bool"))),
+                codomain: Box::new(TypeExpr::Base(synthesis_baseline_ident("Int"))),
+            },
+        };
+        language.terms.push(GrammarRule {
+            term_context: Some(vec![binder]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("bind".into()),
+                SyntaxExpr::Param(synthesis_baseline_ident("p")),
+            ]),
+            ..rule_fixture(
+                synthesis_baseline_ident("DeclaredBinder"),
+                synthesis_baseline_ident("Int"),
+            )
+        });
+        language
+    }
+
+    #[test]
+    fn synthesis_baseline_exact_user_literal_collection_var_phase_order() {
+        let mut language = lang_with_int_and_bool_literals();
+        language.types.push(synthesis_baseline_collection("seq("));
+        language.terms = vec![
+            synthesis_baseline_user("BoolFirst", "Bool"),
+            synthesis_baseline_user("IntFirst", "Int"),
+            synthesis_baseline_user("SeqFirst", "Seq"),
+            synthesis_baseline_user("IntSecond", "Int"),
+        ];
+        let categories = vec!["Seq".into(), "Bool".into(), "Int".into()];
+        let rules = build_per_category_rules(&language, &categories);
+        assert_eq!(rules.len(), 3);
+        assert_eq!(synthesis_baseline_labels(&rules[0]), ["SeqFirst", "ListLit", "SVar"]);
+        assert_eq!(synthesis_baseline_labels(&rules[1]), ["BoolFirst", "BoolLit", "BVar"]);
+        assert_eq!(
+            synthesis_baseline_labels(&rules[2]),
+            ["IntFirst", "IntSecond", "NumLit", "IVar"]
+        );
+        for (category, entries) in categories.iter().zip(&rules) {
+            assert!(entries
+                .iter()
+                .all(|rule| rule.category.to_string() == *category));
+        }
+        assert_eq!(format!("{:?}", rules[2][0]), format!("{:?}", language.terms[1]));
+        assert_eq!(format!("{:?}", rules[2][1]), format!("{:?}", language.terms[3]));
+    }
+
+    #[test]
+    fn synthesis_baseline_explicit_first_item_var_suppresses_native_and_collection_vars() {
+        let mut language = lang_with_int_and_bool_literals();
+        language.types.push(synthesis_baseline_collection("["));
+        for (label, category) in [("ExplicitIntVar", "Int"), ("ExplicitSeqVar", "Seq")] {
+            language.terms.push(GrammarRule {
+                // Suppression observes first-item kind, not arity or ident equality.
+                items: vec![
+                    GrammarItem::NonTerminal {
+                        ident: synthesis_baseline_ident("not_the_category"),
+                        kind: NonTerminalKind::Var,
+                    },
+                    GrammarItem::Terminal("suffix".into()),
+                ],
+                ..rule_fixture(synthesis_baseline_ident(label), synthesis_baseline_ident(category))
+            });
+        }
+        language.terms.push(GrammarRule {
+            items: vec![
+                GrammarItem::Terminal("prefix".into()),
+                GrammarItem::NonTerminal {
+                    ident: synthesis_baseline_ident("Bool"),
+                    kind: NonTerminalKind::Var,
+                },
+            ],
+            ..rule_fixture(synthesis_baseline_ident("LaterVar"), synthesis_baseline_ident("Bool"))
+        });
+        let rules =
+            build_per_category_rules(&language, &["Int".into(), "Seq".into(), "Bool".into()]);
+        assert_eq!(synthesis_baseline_labels(&rules[0]), ["ExplicitIntVar", "NumLit"]);
+        assert_eq!(synthesis_baseline_labels(&rules[1]), ["ExplicitSeqVar", "ListLit"]);
+        assert_eq!(synthesis_baseline_labels(&rules[2]), ["LaterVar", "BoolLit", "BVar"]);
+    }
+
+    #[test]
+    fn synthesis_baseline_binder_pair_order_and_one_lambda_per_home() {
+        let language = synthesis_baseline_binder_language();
+        let rules = build_per_category_rules(&language, &["Bool".into(), "Int".into()]);
+        assert_eq!(
+            synthesis_baseline_labels(&rules[0]),
+            ["BoolLit", "BVar", "ApplyInt", "MApplyInt", "ApplyBool", "MApplyBool", "LamBool",]
+        );
+        assert_eq!(
+            synthesis_baseline_labels(&rules[1]),
+            [
+                "DeclaredBinder",
+                "NumLit",
+                "IVar",
+                "ApplyInt",
+                "MApplyInt",
+                "ApplyBool",
+                "MApplyBool",
+                "LamInt",
+            ]
+        );
+        let expected_apply = GrammarRule {
+            term_context: Some(vec![
+                TermParam::Simple {
+                    name: synthesis_baseline_ident("f"),
+                    ty: TypeExpr::Base(synthesis_baseline_ident("Int")),
+                },
+                TermParam::Simple {
+                    name: synthesis_baseline_ident("x"),
+                    ty: TypeExpr::Base(synthesis_baseline_ident("Bool")),
+                },
+            ]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("$bool".into()),
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Param(synthesis_baseline_ident("f")),
+                SyntaxExpr::Literal(",".into()),
+                SyntaxExpr::Param(synthesis_baseline_ident("x")),
+                SyntaxExpr::Literal(")".into()),
+            ]),
+            ..rule_fixture(synthesis_baseline_ident("ApplyBool"), synthesis_baseline_ident("Int"))
+        };
+        assert_eq!(format!("{:?}", rules[1][5]), format!("{expected_apply:?}"));
+        let expected_mapply = GrammarRule {
+            term_context: Some(vec![
+                TermParam::Simple {
+                    name: synthesis_baseline_ident("f"),
+                    ty: TypeExpr::Base(synthesis_baseline_ident("Int")),
+                },
+                TermParam::Simple {
+                    name: synthesis_baseline_ident("xs"),
+                    ty: TypeExpr::Collection {
+                        coll_type: CollectionType::Vec,
+                        element: Box::new(TypeExpr::Base(synthesis_baseline_ident("Bool"))),
+                    },
+                },
+            ]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("$$bool(".into()),
+                SyntaxExpr::Param(synthesis_baseline_ident("f")),
+                SyntaxExpr::Literal(",".into()),
+                SyntaxExpr::Op(PatternOp::Sep {
+                    collection: synthesis_baseline_ident("xs"),
+                    separator: ",".into(),
+                    source: None,
+                }),
+                SyntaxExpr::Literal(")".into()),
+            ]),
+            ..rule_fixture(synthesis_baseline_ident("MApplyBool"), synthesis_baseline_ident("Int"))
+        };
+        assert_eq!(format!("{:?}", rules[1][6]), format!("{expected_mapply:?}"));
+        let expected_lam = GrammarRule {
+            term_context: Some(vec![TermParam::Abstraction {
+                binder: synthesis_baseline_ident("x"),
+                body: synthesis_baseline_ident("p"),
+                ty: TypeExpr::Arrow {
+                    domain: Box::new(TypeExpr::Base(synthesis_baseline_ident("Int"))),
+                    codomain: Box::new(TypeExpr::Base(synthesis_baseline_ident("Int"))),
+                },
+            }]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("^".into()),
+                SyntaxExpr::Param(synthesis_baseline_ident("x")),
+                SyntaxExpr::Literal(".".into()),
+                SyntaxExpr::Literal("{".into()),
+                SyntaxExpr::Param(synthesis_baseline_ident("p")),
+                SyntaxExpr::Literal("}".into()),
+            ]),
+            ..rule_fixture(synthesis_baseline_ident("LamInt"), synthesis_baseline_ident("Int"))
+        };
+        assert_eq!(format!("{:?}", rules[1][7]), format!("{expected_lam:?}"));
+    }
+
+    #[test]
+    fn synthesis_baseline_data_categories_keep_only_declared_rules() {
+        let mut language = synthesis_baseline_binder_language();
+        language.types[1].role = CategoryRole::Data;
+        let mut collection = synthesis_baseline_collection("seq(");
+        collection.role = CategoryRole::Data;
+        language.types.push(collection);
+        language
+            .terms
+            .push(synthesis_baseline_user("ClosedBool", "Bool"));
+        language
+            .terms
+            .push(synthesis_baseline_user("ClosedSeq", "Seq"));
+        let rules =
+            build_per_category_rules(&language, &["Int".into(), "Bool".into(), "Seq".into()]);
+        assert_eq!(
+            synthesis_baseline_labels(&rules[0]),
+            ["DeclaredBinder", "NumLit", "IVar", "ApplyInt", "MApplyInt", "LamInt",]
+        );
+        assert_eq!(synthesis_baseline_labels(&rules[1]), ["ClosedBool"]);
+        assert_eq!(synthesis_baseline_labels(&rules[2]), ["ClosedSeq"]);
+    }
+
+    #[test]
+    fn synthesis_baseline_duplicate_and_missing_parse_categories() {
+        let language = synthesis_baseline_binder_language();
+        let duplicate =
+            build_per_category_rules(&language, &["Int".into(), "Bool".into(), "Int".into()]);
+        assert!(duplicate[0].is_empty(), "the original category map chooses the last duplicate");
+        assert_eq!(
+            synthesis_baseline_labels(&duplicate[2]),
+            [
+                "DeclaredBinder",
+                "NumLit",
+                "IVar",
+                "ApplyInt",
+                "MApplyInt",
+                "ApplyBool",
+                "MApplyBool",
+                "LamInt",
+            ]
+        );
+        let missing = build_per_category_rules(&language, &["Int".into(), "Unknown".into()]);
+        assert!(missing[1].is_empty());
+        // Missing Bool home does not remove Bool from the declared-domain loop.
+        assert_eq!(
+            synthesis_baseline_labels(&missing[0]),
+            [
+                "DeclaredBinder",
+                "NumLit",
+                "IVar",
+                "ApplyInt",
+                "MApplyInt",
+                "ApplyBool",
+                "MApplyBool",
+                "LamInt",
+            ]
+        );
+        assert!(build_per_category_rules(&language, &[]).is_empty());
+    }
+
+    #[test]
+    fn synthesis_baseline_collection_trims_all_trailing_opens_but_splits_once() {
+        for (open, expected_prefix) in [
+            ("[", vec!["["]),
+            ("seq(", vec!["seq", "("]),
+            ("seq(((", vec!["seq", "("]),
+            ("(", vec!["", "("]),
+            ("", vec![""]),
+            ("seq(x(", vec!["seq(x", "("]),
+        ] {
+            let mut language = lang_with_int_and_bool_literals();
+            language.types.push(synthesis_baseline_collection(open));
+            let rules = build_per_category_rules(&language, &["Seq".into()]);
+            assert_eq!(synthesis_baseline_labels(&rules[0]), ["ListLit", "SVar"]);
+            let mut syntax: Vec<SyntaxExpr> = expected_prefix
+                .into_iter()
+                .map(|text| SyntaxExpr::Literal(text.into()))
+                .collect();
+            syntax.push(SyntaxExpr::Op(PatternOp::Sep {
+                collection: synthesis_baseline_ident("elems"),
+                separator: ";;".into(),
+                source: None,
+            }));
+            syntax.push(SyntaxExpr::Literal("]end".into()));
+            let expected = GrammarRule {
+                term_context: Some(vec![TermParam::Simple {
+                    name: synthesis_baseline_ident("elems"),
+                    ty: TypeExpr::Collection {
+                        coll_type: CollectionType::Vec,
+                        element: Box::new(TypeExpr::Base(synthesis_baseline_ident("Int"))),
+                    },
+                }]),
+                syntax_pattern: Some(syntax),
+                ..rule_fixture(synthesis_baseline_ident("ListLit"), synthesis_baseline_ident("Seq"))
+            };
+            assert_eq!(format!("{:?}", rules[0][0]), format!("{expected:?}"), "open={open:?}");
+        }
+        // No native element descriptor uses the original category-name fallback.
+        let mut language = lang_with_int_and_bool_literals();
+        let mut category = synthesis_baseline_collection("[");
+        category.native_type = None;
+        language.types.push(category);
+        let rules = build_per_category_rules(&language, &["Seq".into()]);
+        let context = rules[0][0]
+            .term_context
+            .as_ref()
+            .expect("collection has explicit context");
+        match &context[0] {
+            TermParam::Simple {
+                ty: TypeExpr::Collection { element, .. }, ..
+            } => {
+                assert!(matches!(element.as_ref(), TypeExpr::Base(name) if name == "Seq"));
+            },
+            _ => panic!("expected the original single collection parameter"),
+        }
     }
 }
