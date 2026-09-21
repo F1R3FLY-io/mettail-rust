@@ -147,6 +147,61 @@ fn factoring_tree_recursive_oracle_preserves_twins_and_refusal_order() {
 }
 
 #[test]
+fn factoring_tree_recursive_oracle_separates_continuation_order_from_eager_accept_refusals() {
+    let root = literal("root");
+    let mut continuing =
+        member(MemberKind::Mixfix, 30, vec![root.clone(), literal("continuation")]);
+    let mut exhausted = member(MemberKind::Mixfix, 31, vec![root.clone()]);
+    continuing.mixfix_coords.clear();
+    exhausted.mixfix_coords.clear();
+    // Source order encounters the continuation first. Partitioning still
+    // finalizes the parent accept before descending into that continuation.
+    let members = vec![continuing, exhausted];
+
+    for accept_continue in [true, false] {
+        assert_equivalent(members.clone(), accept_continue);
+        let mut accepts = Vec::new();
+        let mut refusals = Vec::new();
+        let forest = build_tree(
+            1,
+            root.clone(),
+            members.clone(),
+            accept_continue,
+            &mut accepts,
+            &mut refusals,
+        );
+        let output_order: Vec<_> = forest
+            .iter()
+            .flat_map(SpineTree::leaves)
+            .map(|leaf| leaf.rule_idx)
+            .collect();
+        assert!(matches!(forest.first(), Some(SpineTree::Interior { .. })));
+        let expected_refusals = if accept_continue {
+            assert_eq!(output_order, [30, 31], "continuation precedes parent accept in output");
+            assert!(accepts.is_empty());
+            assert_eq!(forest.len(), 2);
+            assert!(matches!(&forest[1], SpineTree::Leaf { member, .. } if member.rule_idx == 31));
+            vec![(31, 1), (30, 2)]
+        } else {
+            assert_eq!(output_order, [30]);
+            assert_eq!(accepts, [31]);
+            assert_eq!(forest.len(), 1);
+            vec![(30, 2)]
+        };
+        assert_eq!(refusals.len(), expected_refusals.len());
+        for (refusal, (rule_idx, depth)) in refusals.iter().zip(expected_refusals) {
+            assert!(
+                refusal.starts_with(&format!(
+                    "{LIMIT_REFUSAL} the mixfix member at rule index {rule_idx} recorded 0 spine \
+                     coordinates but leafs at depth {depth},"
+                )),
+                "unexpected refusal order or coordinate: {refusal}"
+            );
+        }
+    }
+}
+
+#[test]
 fn factoring_tree_recursive_oracle_preserves_wide_first_occurrence_order() {
     const WIDTH: usize = 1_024;
     let root = literal("root");
