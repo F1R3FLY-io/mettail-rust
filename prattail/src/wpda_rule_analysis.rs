@@ -19,6 +19,7 @@ pub mod atomic;
 pub mod binder;
 pub mod collection;
 pub mod factoring;
+pub mod fork_emission;
 pub mod synthetic;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.

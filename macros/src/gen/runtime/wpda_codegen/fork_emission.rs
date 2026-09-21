@@ -63,58 +63,29 @@
 //!     default on every input, queried or not)
 //!   - site > 3 → `u16::MAX` (the trait default's `_` arm)
 
+use mettail_prattail::wpda_rule_analysis::fork_emission::ForkEmissionOrdinalModel as SharedForkEmissionOrdinalModel;
 use proc_macro2::TokenStream;
 use quote::quote;
-use std::collections::BTreeMap;
 
-/// One derived site-2 row: the rule's initiating-branch static declaration
-/// position within its dispatch bucket.
-#[derive(Debug, Clone)]
-struct ForkEmissionOrdinalRow {
-    emission_ordinal: u16,
-    /// Human-readable bucket identity for collision diagnostics (the
-    /// bucket's token pattern + guard, or a site label).
-    bucket_tag: String,
+/// Macro emission adapter over the original shared descriptor accumulator.
+#[derive(Default)]
+pub(crate) struct ForkEmissionOrdinalModel {
+    descriptor: SharedForkEmissionOrdinalModel,
 }
 
-/// The per-grammar fork-emission ordinal model, filled by the prefix/binder
-/// emitters during engine generation and emitted as the module-level
-/// `WPDA_FORK_EMISSION_ORDINAL` fn beside the Parikh tables.
-#[derive(Debug, Default)]
-pub(crate) struct ForkEmissionOrdinalModel {
-    /// `(category_src_idx, rule_index_in_category) -> row`, ordered for
-    /// deterministic emission (BTreeMap — the generated match arms must be
-    /// byte-stable across builds).
-    site2_rows: BTreeMap<(u16, u16), ForkEmissionOrdinalRow>,
-    /// Option A: rules whose initiating branch position DIFFERS across
-    /// dispatch buckets — classified ambiguous, moved OUT of `site2_rows`
-    /// (they resolve through the site-2 fallback `0`), with every observed
-    /// `bucket-tag@position` retained for the doc comment + diagnostics.
-    ambiguous_multi_bucket: BTreeMap<(u16, u16), Vec<String>>,
+impl std::fmt::Debug for ForkEmissionOrdinalModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.descriptor, f)
+    }
 }
 
 impl ForkEmissionOrdinalModel {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self {
+            descriptor: SharedForkEmissionOrdinalModel::new(),
+        }
     }
 
-    /// Record one site-2 row at the rule's static declaration position.
-    ///
-    /// Amendment-6 detection, Option-A resolution (coordinator decision
-    /// 2026-07-14): each `(cat, rule)` keeps AT MOST ONE derived row —
-    ///   - first observation: the row is recorded;
-    ///   - an equal-position duplicate (the same rule reachable through
-    ///     another bucket at the SAME declared position): dedups silently
-    ///     to the single row (no ambiguity — the static position IS
-    ///     single-valued);
-    ///   - a DIFFERING-position observation: the rule is reclassified
-    ///     AMBIGUOUS-MULTI-BUCKET — its row is REMOVED (it joins the
-    ///     underived remainder = the fallback `0`, today's trait-default
-    ///     value, zero K-C movement) and every colliding `bucket@position`
-    ///     is retained for the generated doc comment + the codegen
-    ///     diagnostic line. No panic (probe P7: shipped grammars collide
-    ///     legitimately via per-FIRST-token projection dispatch), and no
-    ///     guessed ordinal.
     pub(crate) fn record_site2_row(
         &mut self,
         category_src_idx: u16,
@@ -122,76 +93,35 @@ impl ForkEmissionOrdinalModel {
         emission_ordinal: u16,
         bucket_tag: &str,
     ) {
-        let key = (category_src_idx, rule_index_in_category);
-        if let Some(tags) = self.ambiguous_multi_bucket.get_mut(&key) {
-            // Already ambiguous: retain the additional observation.
-            tags.push(format!("{bucket_tag}@{emission_ordinal}"));
-            return;
-        }
-        match self.site2_rows.get(&key) {
-            Some(existing) if existing.emission_ordinal != emission_ordinal => {
-                let removed = self
-                    .site2_rows
-                    .remove(&key)
-                    .expect("the just-matched row is present");
-                self.ambiguous_multi_bucket.insert(
-                    key,
-                    vec![
-                        format!("{}@{}", removed.bucket_tag, removed.emission_ordinal),
-                        format!("{bucket_tag}@{emission_ordinal}"),
-                    ],
-                );
-            },
-            Some(_) => {}, // equal-position duplicate: one row.
-            None => {
-                self.site2_rows.insert(
-                    key,
-                    ForkEmissionOrdinalRow {
-                        emission_ordinal,
-                        bucket_tag: bucket_tag.to_string(),
-                    },
-                );
-            },
-        }
+        self.descriptor.record_site2_row(
+            category_src_idx,
+            rule_index_in_category,
+            emission_ordinal,
+            bucket_tag,
+        );
     }
 
-    /// Number of derived (single-valued) site-2 rows.
     pub(crate) fn site2_row_count(&self) -> usize {
-        self.site2_rows.len()
+        self.descriptor.site2_row_count()
     }
 
-    /// Number of ambiguous-multi-bucket rules (fallback-resolved).
     pub(crate) fn ambiguous_rule_count(&self) -> usize {
-        self.ambiguous_multi_bucket.len()
+        self.descriptor.ambiguous_rule_count()
     }
 
-    /// Test-facing readback of a derived ordinal (`None` = underived,
-    /// including the ambiguous class).
     #[cfg(test)]
     pub(crate) fn site2_ordinal(&self, cat: u16, rule: u16) -> Option<u16> {
-        self.site2_rows
-            .get(&(cat, rule))
-            .map(|r| r.emission_ordinal)
+        self.descriptor.site2_ordinal(cat, rule)
     }
 
-    /// Test-facing readback of the ambiguous classification.
     #[cfg(test)]
     pub(crate) fn is_ambiguous_multi_bucket(&self, cat: u16, rule: u16) -> bool {
-        self.ambiguous_multi_bucket.contains_key(&(cat, rule))
+        self.descriptor.is_ambiguous_multi_bucket(cat, rule)
     }
 
-    /// Test-facing census DOMAIN: every `(cat, rule)` key the emitters
-    /// recorded — derived rows ∪ ambiguous-multi-bucket keys. The F1
-    /// value-identity units iterate exactly this domain (per the
-    /// coordinator requirement: derive the domain from the census, don't
-    /// sample blindly).
     #[cfg(test)]
     pub(crate) fn census_keys(&self) -> Vec<(u16, u16)> {
-        let mut keys: Vec<(u16, u16)> =
-            Vec::with_capacity(self.site2_rows.len() + self.ambiguous_multi_bucket.len());
-        keys.extend(self.site2_rows.keys().copied());
-        keys.extend(self.ambiguous_multi_bucket.keys().copied());
-        keys
+        self.descriptor.census_keys()
     }
 
     /// The VALUE the emitted `WPDA_FORK_EMISSION_ORDINAL` returns for a
@@ -247,12 +177,13 @@ impl ForkEmissionOrdinalModel {
         let skip_idx = super::binder::OPTIONAL_GROUP_SKIP_BRANCH_INDEX;
         let total_rows = self.site2_row_count();
         let ambiguous_count = self.ambiguous_rule_count();
+        let (site2_rows, ambiguous_multi_bucket) = self.descriptor.into_parts();
         // F1 detection surface 1/2: the derived-position census + the
         // ambiguous inventory in the generated doc comment — RECORDED,
         // inspectable, never election-active.
         let mut nonzero = 0usize;
-        let mut census_entries: Vec<String> = Vec::with_capacity(self.site2_rows.len());
-        for (&(cat, rule), row) in &self.site2_rows {
+        let mut census_entries: Vec<String> = Vec::with_capacity(site2_rows.len());
+        for (&(cat, rule), row) in &site2_rows {
             if row.emission_ordinal == 0 {
                 continue;
             }
@@ -270,11 +201,10 @@ impl ForkEmissionOrdinalModel {
                 census_entries.join("; ")
             )
         };
-        let ambiguous_doc = if self.ambiguous_multi_bucket.is_empty() {
+        let ambiguous_doc = if ambiguous_multi_bucket.is_empty() {
             String::new()
         } else {
-            let entries: Vec<String> = self
-                .ambiguous_multi_bucket
+            let entries: Vec<String> = ambiguous_multi_bucket
                 .iter()
                 .map(|(&(cat, rule), tags)| {
                     format!("(cat {cat}, rule {rule}): {}", tags.join(" vs "))
@@ -306,7 +236,7 @@ impl ForkEmissionOrdinalModel {
         // F1 detection surface 2/2: the loud-but-nonfatal codegen
         // diagnostic line (the DIS-lint summary style — printed once per
         // generated language when ambiguity exists).
-        if !self.ambiguous_multi_bucket.is_empty() {
+        if !ambiguous_multi_bucket.is_empty() {
             eprintln!(
                 "note[FORK-ORD] ({lang_name}): {ambiguous_count} multi-bucket-ambiguous \
                  rule(s) resolved to the site-2 fallback 0 (zero K-C movement); \
