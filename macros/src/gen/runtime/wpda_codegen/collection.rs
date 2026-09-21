@@ -1830,6 +1830,217 @@ mod tests {
         assert!(matches!(shape.coll_kind, CollectionType::Vec));
     }
 
+    fn collection_baseline_rule(kind: CollectionType, split: bool) -> GrammarRule {
+        let ident = |name| Ident::new(name, Span::call_site());
+        let mut syntax = vec![SyntaxExpr::Literal("open".into())];
+        if split {
+            syntax.push(SyntaxExpr::Literal("(".into()));
+        }
+        syntax.push(SyntaxExpr::Op(PatternOp::Sep {
+            collection: ident("items"),
+            separator: ";;".into(),
+            source: None,
+        }));
+        syntax.push(SyntaxExpr::Literal("close".into()));
+        GrammarRule {
+            term_context: Some(vec![TermParam::Simple {
+                name: ident("items"),
+                ty: TypeExpr::Collection {
+                    coll_type: kind,
+                    element: Box::new(TypeExpr::Base(ident("Element"))),
+                },
+            }]),
+            syntax_pattern: Some(syntax),
+            ..rule_fixture(ident("Constructor"), ident("Home"))
+        }
+    }
+
+    #[test]
+    fn collection_baseline_all_kinds_preserve_complete_descriptor() {
+        for kind in [
+            CollectionType::Vec,
+            CollectionType::HashBag,
+            CollectionType::HashSet,
+            CollectionType::HashMap,
+            CollectionType::PathMap,
+        ] {
+            for split in [false, true] {
+                let rule = collection_baseline_rule(kind.clone(), split);
+                let shape = classify_collection(&rule, &empty_lang()).expect("original shape");
+                assert_eq!(shape.open_token, "open");
+                assert_eq!(shape.has_synth_paren, split);
+                assert_eq!(shape.close, "close");
+                assert_eq!(shape.separator, ";;");
+                assert_eq!(shape.pair_separator, None);
+                assert_eq!(shape.element_cat, "Element");
+                assert_eq!(shape.coll_kind, kind);
+                assert_eq!(shape.label, "Constructor");
+            }
+        }
+    }
+
+    #[test]
+    fn collection_baseline_rejects_inexact_context_and_syntax() {
+        let original = collection_baseline_rule(CollectionType::Vec, false);
+        let mut cases = Vec::new();
+        for context in [
+            None,
+            Some(Vec::new()),
+            Some(vec![TermParam::GuardBody {
+                name: Ident::new("guard", Span::call_site()),
+            }]),
+            Some(vec![TermParam::Simple {
+                name: Ident::new("items", Span::call_site()),
+                ty: TypeExpr::Base(Ident::new("Element", Span::call_site())),
+            }]),
+        ] {
+            let mut rule = original.clone();
+            rule.term_context = context;
+            cases.push(rule);
+        }
+        let mut two_params = original.clone();
+        let context = two_params.term_context.as_mut().expect("fixture context");
+        context.push(context[0].clone());
+        cases.push(two_params);
+        let mut nested = original.clone();
+        if let TermParam::Simple {
+            ty: TypeExpr::Collection { element, .. }, ..
+        } = &mut nested.term_context.as_mut().expect("fixture context")[0]
+        {
+            *element = Box::new(TypeExpr::Collection {
+                coll_type: CollectionType::Vec,
+                element: Box::new(TypeExpr::Base(Ident::new("Element", Span::call_site()))),
+            });
+        } else {
+            panic!("fixture has a simple collection parameter");
+        }
+        cases.push(nested);
+        for syntax in [None, Some(Vec::new())] {
+            let mut rule = original.clone();
+            rule.syntax_pattern = syntax;
+            cases.push(rule);
+        }
+        for slot in 0..3 {
+            let mut rule = original.clone();
+            rule.syntax_pattern.as_mut().expect("fixture syntax")[slot] =
+                SyntaxExpr::Param(Ident::new("items", Span::call_site()));
+            cases.push(rule);
+        }
+        let mut extra = original.clone();
+        extra
+            .syntax_pattern
+            .as_mut()
+            .expect("fixture syntax")
+            .extend([SyntaxExpr::Literal("extra".into()), SyntaxExpr::Literal("extra".into())]);
+        cases.push(extra);
+        let mut wrong_split = collection_baseline_rule(CollectionType::Vec, true);
+        wrong_split.syntax_pattern.as_mut().expect("fixture syntax")[1] =
+            SyntaxExpr::Literal("[".into());
+        cases.push(wrong_split);
+        for (name, source) in [
+            ("different", None),
+            (
+                "items",
+                Some(Box::new(PatternOp::Zip {
+                    left: Ident::new("items", Span::call_site()),
+                    right: Ident::new("items", Span::call_site()),
+                })),
+            ),
+        ] {
+            let mut rule = original.clone();
+            rule.syntax_pattern.as_mut().expect("fixture syntax")[1] =
+                SyntaxExpr::Op(PatternOp::Sep {
+                    collection: Ident::new(name, Span::call_site()),
+                    separator: ";;".into(),
+                    source,
+                });
+            cases.push(rule);
+        }
+        for (index, rule) in cases.iter().enumerate() {
+            assert!(classify_collection(rule, &empty_lang()).is_none(), "case {index}");
+        }
+    }
+
+    #[test]
+    fn collection_baseline_empty_literal_spellings_are_retained() {
+        let mut rule = collection_baseline_rule(CollectionType::Vec, false);
+        rule.syntax_pattern = Some(vec![
+            SyntaxExpr::Literal(String::new()),
+            SyntaxExpr::Op(PatternOp::Sep {
+                collection: Ident::new("items", Span::call_site()),
+                separator: String::new(),
+                source: None,
+            }),
+            SyntaxExpr::Literal(String::new()),
+        ]);
+        let shape = classify_collection(&rule, &empty_lang()).expect("empty literals allowed");
+        assert_eq!(
+            (shape.open_token, shape.close, shape.separator),
+            (String::new(), String::new(), String::new())
+        );
+    }
+
+    #[test]
+    fn collection_baseline_pair_separator_uses_first_declared_result_category() {
+        let mut language = empty_lang();
+        let declaration = |kind| mettail_ast::language::LangType {
+            name: Ident::new("Home", Span::call_site()),
+            role: Default::default(),
+            native_type: None,
+            collection_kind: kind,
+        };
+        let custom = CollectionDelimiters {
+            open: "[".into(),
+            close: "]".into(),
+            sep: ",".into(),
+            key_val_sep: Some("=>".into()),
+        };
+        let vector = collection_baseline_rule(CollectionType::Vec, false);
+        let map = collection_baseline_rule(CollectionType::HashMap, false);
+        assert_eq!(
+            classify_collection(&map, &language)
+                .expect("map shape")
+                .pair_separator,
+            None
+        );
+        for kind in [CollectionCategory::Map(custom.clone()), CollectionCategory::Pathmap(custom)] {
+            language.types = vec![declaration(Some(kind))];
+            assert_eq!(
+                classify_collection(&vector, &language)
+                    .expect("vector shape")
+                    .pair_separator
+                    .as_deref(),
+                Some("=>")
+            );
+            // A first matching noncollection declaration blocks later duplicates.
+            language.types.insert(0, declaration(None));
+            assert_eq!(
+                classify_collection(&map, &language)
+                    .expect("map shape")
+                    .pair_separator,
+                None
+            );
+        }
+        let mut defaults = CollectionCategory::map_defaults();
+        defaults.key_val_sep = None;
+        language.types = vec![declaration(Some(CollectionCategory::Map(defaults)))];
+        assert_eq!(
+            classify_collection(&map, &language)
+                .expect("map shape")
+                .pair_separator
+                .as_deref(),
+            Some(":")
+        );
+        language.types =
+            vec![declaration(Some(CollectionCategory::List(CollectionCategory::map_defaults())))];
+        assert_eq!(
+            classify_collection(&map, &language)
+                .expect("map shape")
+                .pair_separator,
+            None
+        );
+    }
+
     fn optional_inner_collection_rule() -> GrammarRule {
         GrammarRule {
             term_context: Some(vec![
