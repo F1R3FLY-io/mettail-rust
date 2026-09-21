@@ -91,6 +91,7 @@ theories/InfixClassifierProjection.v
 theories/AtomicClassifierProjection.v
 theories/SyntheticRuleProjection.v
 theories/CollectionClassifierProjection.v
+theories/BinderOptionalProjection.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v

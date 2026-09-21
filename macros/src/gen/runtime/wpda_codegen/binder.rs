@@ -209,6 +209,10 @@ pub(crate) fn build_prefix_bp_map(
     map
 }
 
+use mettail_prattail::wpda_rule_analysis::binder::optional::{
+    optional_first_token_set, BinderSyntaxObservation, BinderSyntaxReader,
+    OptionalOperationObservation,
+};
 use mettail_prattail::wpda_rule_analysis::binder::ParamKind;
 pub use mettail_prattail::wpda_rule_analysis::binder::{
     ActionArgKind, BinderPosition, BinderShape, CollectionSepInfo,
@@ -585,23 +589,51 @@ fn emit_binder_list_entry(
     }
 }
 
-fn optional_first_token_set(positions: &[BinderPosition]) -> Vec<String> {
-    let Some(first) = positions.first() else {
-        return Vec::new();
-    };
-    match first {
-        BinderPosition::Literal(text) => vec![text.clone()],
-        BinderPosition::OptionalGroup { first_token_set, .. } => first_token_set.clone(),
-        _ => Vec::new(),
+struct MacroBinderSyntaxReader;
+
+impl<'syntax> BinderSyntaxReader<'syntax> for MacroBinderSyntaxReader {
+    type Sequence = &'syntax [SyntaxExpr];
+    type Name = &'syntax Ident;
+    type Operation = &'syntax PatternOp;
+
+    fn sequence_len(&self, sequence: Self::Sequence) -> usize {
+        sequence.len()
+    }
+
+    fn at(
+        &self,
+        sequence: Self::Sequence,
+        index: usize,
+    ) -> Option<BinderSyntaxObservation<'syntax, Self::Name, Self::Operation>> {
+        Some(match sequence.get(index)? {
+            SyntaxExpr::Literal(text) => BinderSyntaxObservation::Literal(text),
+            SyntaxExpr::Param(name) => BinderSyntaxObservation::Param(name),
+            SyntaxExpr::TokenKind { name, bind } => {
+                BinderSyntaxObservation::TokenKind { name, bind: bind.as_ref() }
+            },
+            SyntaxExpr::GuestBody { open, close, bind, kind } => {
+                BinderSyntaxObservation::GuestBody { open, close, bind, kind: *kind }
+            },
+            SyntaxExpr::Op(operation) => BinderSyntaxObservation::Op(operation),
+        })
+    }
+
+    fn operation(
+        &self,
+        operation: Self::Operation,
+    ) -> OptionalOperationObservation<'syntax, Self::Name, Self::Sequence, Self::Operation> {
+        match operation {
+            PatternOp::Opt { inner } => OptionalOperationObservation::Opt { inner },
+            PatternOp::Sep { collection, separator, source } => OptionalOperationObservation::Sep {
+                collection,
+                separator,
+                source: source.as_deref(),
+            },
+            _ => OptionalOperationObservation::Other(operation),
+        }
     }
 }
 
-/// Compile a syntax-pattern optional body into recursive binder/action models
-/// without recursing on the native stack.
-///
-/// Each `Frame` is one suspended sequence. Completing a child optional appends
-/// its two model nodes to the parent and resumes the parent's next item. This is
-/// the construction-time PDA paired with the runtime optional-group PDA.
 fn classify_optional_body(
     root: &[SyntaxExpr],
     language: &LanguageDef,
@@ -610,171 +642,15 @@ fn classify_optional_body(
     next_group_idx: &mut u32,
     collection_slots_so_far: &mut u8,
 ) -> Option<(Vec<BinderPosition>, Vec<ActionArgKind>)> {
-    struct Frame<'syntax> {
-        items: &'syntax [SyntaxExpr],
-        next: usize,
-        positions: Vec<BinderPosition>,
-        args: Vec<ActionArgKind>,
-        group_idx: Option<u32>,
-    }
-
-    let mut frames = vec![Frame {
-        items: root,
-        next: 0,
-        positions: Vec::new(),
-        args: Vec::new(),
-        group_idx: None,
-    }];
-
-    loop {
-        let finished = frames
-            .last()
-            .is_some_and(|frame| frame.next == frame.items.len());
-        if finished {
-            let completed = frames.pop()?;
-            if let Some(parent) = frames.last_mut() {
-                let group_idx = completed.group_idx?;
-                if completed.positions.is_empty() {
-                    return None;
-                }
-                let first_token_set = optional_first_token_set(&completed.positions);
-                parent.positions.push(BinderPosition::OptionalGroup {
-                    positions: completed.positions,
-                    group_idx,
-                    first_token_set,
-                });
-                parent.args.push(ActionArgKind::Optional(completed.args));
-                continue;
-            }
-            return Some((completed.positions, completed.args));
-        }
-
-        let frame = frames.last_mut()?;
-        let item_idx = frame.next;
-        frame.next += 1;
-        match &frame.items[item_idx] {
-            SyntaxExpr::Literal(text) => {
-                frame.positions.push(BinderPosition::Literal(text.clone()));
-            },
-            SyntaxExpr::TokenKind { name, bind } => {
-                let kind_name = name.to_string();
-                let param_name = bind
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| format!("__tok_{kind_name}"));
-                frame.positions.push(BinderPosition::TokenKindCapture {
-                    kind_name,
-                    param_name: param_name.clone(),
-                });
-                frame.args.push(ActionArgKind::TokenText { param_name });
-            },
-            SyntaxExpr::GuestBody { open, close, bind, kind } => {
-                let param_name = bind.to_string();
-                frame.positions.push(BinderPosition::GuestBodyCapture {
-                    open_kind: open.to_string(),
-                    nested_open_kinds: super::guest_body_nested_open_kinds(
-                        language,
-                        &open.to_string(),
-                    ),
-                    close_kind: close.to_string(),
-                    param_name: param_name.clone(),
-                });
-                frame
-                    .args
-                    .push(ActionArgKind::GuestBody { param_name, kind: *kind });
-            },
-            SyntaxExpr::Param(name) => {
-                let param_name = name.to_string();
-                match param_map.get(&param_name)? {
-                    ParamKind::Binder => {
-                        frame.positions.push(BinderPosition::BinderListLoop {
-                            separator: String::new(),
-                            close: String::new(),
-                            inner_positions: vec![BinderPosition::BinderIdent],
-                            collection_param_cat: None,
-                            allow_empty: false,
-                            allow_multi: false,
-                            slot_idx: 0,
-                        });
-                        frame.args.push(ActionArgKind::BinderName);
-                    },
-                    ParamKind::Body { cat } | ParamKind::Simple { cat }
-                        if mettail_ast::grammar::NonTerminalKind::classify(cat)
-                            == mettail_ast::grammar::NonTerminalKind::Ident =>
-                    {
-                        frame.positions.push(BinderPosition::IdentTextCapture {
-                            param_name: param_name.clone(),
-                        });
-                        frame.args.push(ActionArgKind::IdentText { param_name });
-                    },
-                    ParamKind::Body { cat } | ParamKind::Simple { cat } => {
-                        frame.positions.push(BinderPosition::ParamParse {
-                            cat: cat.clone(),
-                            collection: None,
-                        });
-                        frame.args.push(ActionArgKind::Term(cat.clone()));
-                    },
-                    ParamKind::Guard => {
-                        frame.positions.push(BinderPosition::GuardSlot);
-                        frame.args.push(ActionArgKind::Predicate);
-                    },
-                    ParamKind::BinderList | ParamKind::SimpleCollection { .. } => return None,
-                }
-            },
-            SyntaxExpr::Op(PatternOp::Opt { inner }) => {
-                let group_idx = *next_group_idx;
-                *next_group_idx = next_group_idx.checked_add(1)?;
-                frames.push(Frame {
-                    items: inner,
-                    next: 0,
-                    positions: Vec::new(),
-                    args: Vec::new(),
-                    group_idx: Some(group_idx),
-                });
-            },
-            SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
-                let close = match frame.items.get(frame.next) {
-                    Some(SyntaxExpr::Literal(text)) => text.clone(),
-                    _ => return None,
-                };
-                frame.next += 1;
-                match param_map.get(&collection.to_string())? {
-                    ParamKind::BinderList => {
-                        frame.positions.push(BinderPosition::BinderListLoop {
-                            separator: separator.clone(),
-                            close,
-                            inner_positions: vec![BinderPosition::BinderIdent],
-                            collection_param_cat: None,
-                            allow_empty: true,
-                            allow_multi: true,
-                            slot_idx: 0,
-                        });
-                        frame.args.push(ActionArgKind::BinderList);
-                    },
-                    ParamKind::SimpleCollection { elem_cat, coll_kind } => {
-                        let slot_idx = *collection_slots_so_far;
-                        *collection_slots_so_far = collection_slots_so_far.checked_add(1)?;
-                        frame.positions.push(BinderPosition::ParamParse {
-                            cat: elem_cat.clone(),
-                            collection: Some(CollectionSepInfo {
-                                separator: separator.clone(),
-                                close,
-                                elem_cat: elem_cat.clone(),
-                                key_val_separator: kv_sep_for(coll_kind, declared_delims),
-                                slot_idx,
-                            }),
-                        });
-                        frame.args.push(ActionArgKind::CollectionDrain {
-                            elem_cat: elem_cat.clone(),
-                            coll_kind: coll_kind.clone(),
-                        });
-                    },
-                    _ => return None,
-                }
-            },
-            SyntaxExpr::Op(_) => return None,
-        }
-    }
+    mettail_prattail::wpda_rule_analysis::binder::optional::classify_optional_body(
+        &MacroBinderSyntaxReader,
+        root,
+        param_map,
+        next_group_idx,
+        collection_slots_so_far,
+        |open| super::guest_body_nested_open_kinds(language, open),
+        |kind| kv_sep_for(kind, declared_delims),
+    )
 }
 
 /// Try to classify a `GrammarRule` as a multi-step rule (binder, multi-Param,
