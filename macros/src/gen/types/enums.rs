@@ -502,8 +502,10 @@ fn generate_variant_from_term_context(
             // L9-3: a `v@Tok` capture is the matched token's TEXT, extracted by
             // the walker via `as_token_text()` and carried inertly as a bare
             // `String` — no `Arc`/`Box`, because a capture is plain text.
-            (FieldSlotSource::TokenText, false) => fields.push(quote! { std::string::String }),
-            (FieldSlotSource::TokenText, true) => {
+            (FieldSlotSource::TokenText { .. }, false) => {
+                fields.push(quote! { std::string::String })
+            },
+            (FieldSlotSource::TokenText { .. }, true) => {
                 fields.push(quote! { Option<std::string::String> })
             },
             // L9-4: a `*flt(…)` guest body is an opaque `Arc<FltNode>` leaf.

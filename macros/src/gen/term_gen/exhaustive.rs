@@ -13,6 +13,7 @@
 
 use crate::gen::term_gen::{
     count_optional_positions, ident_samples, is_ident_position, is_lang_type,
+    CaptureSamplingContext,
 };
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
@@ -24,8 +25,9 @@ use syn::Ident;
 
 /// Generate term generation code for all exported categories
 pub fn generate_term_generation(language: &LanguageDef) -> TokenStream {
+    let sampling = CaptureSamplingContext::new(language);
     let context_struct = generate_context_struct(language);
-    let context_impl = generate_context_impl(language);
+    let context_impl = generate_context_impl(language, &sampling);
     let public_apis = generate_public_apis(language);
 
     quote! {
@@ -64,7 +66,10 @@ fn generate_context_struct(language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate impl GenerationContext with generation methods
-fn generate_context_impl(language: &LanguageDef) -> TokenStream {
+fn generate_context_impl(
+    language: &LanguageDef,
+    sampling: &CaptureSamplingContext<'_>,
+) -> TokenStream {
     let new_fields: Vec<TokenStream> = language
         .types
         .iter()
@@ -93,7 +98,9 @@ fn generate_context_impl(language: &LanguageDef) -> TokenStream {
         .types
         .iter()
         .filter(|lang_type| !lang_type.is_data())
-        .map(|lang_type| generate_category_generation_method(lang_type.name.clone(), language))
+        .map(|lang_type| {
+            generate_category_generation_method(lang_type.name.clone(), language, sampling)
+        })
         .collect();
 
     quote! {
@@ -138,7 +145,11 @@ fn generate_context_impl(language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate generation method for a specific category
-fn generate_category_generation_method(cat_name: Ident, language: &LanguageDef) -> TokenStream {
+fn generate_category_generation_method(
+    cat_name: Ident,
+    language: &LanguageDef,
+    sampling: &CaptureSamplingContext<'_>,
+) -> TokenStream {
     let method_name = category_to_generate_method(&cat_name);
     let field_name = category_to_field_name(&cat_name);
 
@@ -152,8 +163,8 @@ fn generate_category_generation_method(cat_name: Ident, language: &LanguageDef) 
         })
         .collect();
 
-    let depth_0_cases = generate_depth_0_cases(&cat_name, &rules, language);
-    let depth_d_cases = generate_depth_d_cases(&cat_name, &rules, language);
+    let depth_0_cases = generate_depth_0_cases(&cat_name, &rules, language, sampling);
+    let depth_d_cases = generate_depth_d_cases(&cat_name, &rules, language, sampling);
 
     quote! {
         fn #method_name(&mut self, depth: usize) {
@@ -179,6 +190,7 @@ fn generate_depth_0_cases(
     cat_name: &Ident,
     rules: &[&GrammarRule],
     language: &LanguageDef,
+    sampling: &CaptureSamplingContext<'_>,
 ) -> TokenStream {
     let mut cases = Vec::new();
 
@@ -189,7 +201,7 @@ fn generate_depth_0_cases(
         // fields are token-text `String`s; construct it with a deterministic
         // regex-valid sample per capture (decision F.2).
         if let Some(construction) =
-            crate::gen::term_gen::capture_only_construction(rule, language, cat_name, label)
+            crate::gen::term_gen::capture_only_construction(rule, cat_name, label, sampling)
         {
             cases.push(quote! { terms.push(#construction); });
             continue;
@@ -339,6 +351,7 @@ fn generate_depth_d_cases(
     cat_name: &Ident,
     rules: &[&GrammarRule],
     language: &LanguageDef,
+    sampling: &CaptureSamplingContext<'_>,
 ) -> TokenStream {
     let mut cases = Vec::new();
 
@@ -388,7 +401,7 @@ fn generate_depth_d_cases(
         // Generate recursive case
         if rule.bindings.is_empty() {
             // Simple constructor without binders
-            cases.push(generate_simple_constructor_case(cat_name, rule, language));
+            cases.push(generate_simple_constructor_case(cat_name, rule, language, sampling));
         } else {
             // Constructor with binders
             cases.push(generate_binder_constructor_case(cat_name, rule, language));
@@ -411,6 +424,7 @@ fn generate_simple_constructor_case(
     cat_name: &Ident,
     rule: &GrammarRule,
     language: &LanguageDef,
+    sampling: &CaptureSamplingContext<'_>,
 ) -> TokenStream {
     let label = &rule.label;
 
@@ -440,7 +454,7 @@ fn generate_simple_constructor_case(
     // variation, and this one representative keeps the term present in the
     // exhaustive corpus (decision F.2).
     if let Some(construction) =
-        crate::gen::term_gen::capture_only_construction(rule, language, cat_name, label)
+        crate::gen::term_gen::capture_only_construction(rule, cat_name, label, sampling)
     {
         return quote! { terms.push(#construction); };
     }

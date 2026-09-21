@@ -460,3 +460,4 @@ theories/CrossLanguageSeparation.v
 # suffix serialization, and zero persistent-receiver admission.
 theories/FltRetainedSetAutomaton.v
 theories/LookaheadTraceDelivery.v
+theories/CaptureTokenSamplingAdapter.v

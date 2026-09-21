@@ -2,8 +2,11 @@
 //!
 //! Provides both exhaustive enumeration and random sampling of terms.
 
+mod capture_samples;
 mod exhaustive;
 mod random;
+
+pub(crate) use capture_samples::CaptureSamplingContext;
 
 pub use exhaustive::*;
 pub use random::*;
@@ -71,9 +74,15 @@ pub(crate) fn is_ident_position(cat: &Ident) -> bool {
 /// the two that build a `String`).
 pub(crate) fn ident_samples(language: &LanguageDef) -> Result<Vec<String>, String> {
     use crate::gen::test_gen::automaton_walk::classify::effective_pattern_for;
-    use crate::gen::test_gen::automaton_walk::nfa_walk::{deterministic_sample, pattern_admits};
-
     let pattern = effective_pattern_for(language, "Ident");
+    ident_samples_from_pattern(language, &pattern)
+}
+
+fn ident_samples_from_pattern(
+    language: &LanguageDef,
+    pattern: &str,
+) -> Result<Vec<String>, String> {
+    use crate::gen::test_gen::automaton_walk::nfa_walk::{deterministic_sample, pattern_admits};
     let Some(base) = deterministic_sample(&pattern) else {
         return Err(format!(
             "mettail: the effective `Ident` pattern of language `{}` ({pattern:?}) admits no \
@@ -184,22 +193,19 @@ pub(crate) fn random_ident_expr(language: &LanguageDef) -> TokenStream {
 /// L9-3: build a constructor literal for a CAPTURES-ONLY rule (`Cat::Label(
 /// "<sample>".to_string(), ...)`), synthesizing each `v@Tok` capture's text via
 /// a deterministic, regex-valid DFA sample of the token kind's effective
-/// pattern (decision F.2 — the sampled text re-lexes to the same token, so
-/// `parse(display(t)) == t` holds). Returns `None` unless the rule is
+/// pattern. Acceptance by that pattern does not establish whole-lexer priority
+/// or a complete parse/display roundtrip. Returns `None` unless the rule is
 /// captures-only: no interleaved `Param`/`Op` fields, no binder `Scope`, and an
-/// empty term context. Such rules (the FLT surface, the L9-3 toy) are the only
-/// capture rules the term generators need to synthesize; a capture interleaved
-/// with terms/binders is not produced (its structural fields have their own
-/// generators, and no grammar mixes them).
-pub fn capture_only_construction(
+/// empty term context. Mixed token/category constructors (including DDL rules)
+/// require the caller's structural constructor assembly; this leaf helper does
+/// not synthesize their category children. Sampling failures emit a diagnostic,
+/// not an empty string or an invented term.
+pub(crate) fn capture_only_construction(
     rule: &mettail_ast::grammar::GrammarRule,
-    language: &LanguageDef,
     cat_name: &Ident,
     label: &Ident,
+    sampling: &CaptureSamplingContext<'_>,
 ) -> Option<TokenStream> {
-    use crate::gen::test_gen::automaton_walk::classify::effective_pattern_for;
-    use crate::gen::test_gen::automaton_walk::nfa_walk::deterministic_sample;
-
     let sp = rule.syntax_pattern.as_deref()?;
     // A captures-only rule carries at least one opaque-leaf capture: a
     // `v@Tok` TokenKind (→ token-text `String`) or a `*flt(v, open, close)`
@@ -225,8 +231,13 @@ pub fn capture_only_construction(
     for e in sp {
         match e {
             SyntaxExpr::TokenKind { name, .. } => {
-                let pattern = effective_pattern_for(language, &name.to_string());
-                let sample = deterministic_sample(&pattern).unwrap_or_default();
+                let sample = match sampling.sample(&name.to_string()) {
+                    Ok(sample) => sample,
+                    Err(message) => {
+                        let message = format!("{message}; constructor {cat_name}::{label}");
+                        return Some(quote! { compile_error!(#message) });
+                    },
+                };
                 args.push(quote! { #sample.to_string() });
             },
             SyntaxExpr::GuestBody { open, close, kind, .. } => {
@@ -239,8 +250,13 @@ pub fn capture_only_construction(
                 // the deterministic opener sample minus its delimiter suffix, so
                 // it satisfies the opener token's pattern (e.g. `[a-z]+` for the
                 // backtick form, the literal `box` for the reserved-tag brace).
-                let open_pattern = effective_pattern_for(language, &open.to_string());
-                let opener_sample = deterministic_sample(&open_pattern).unwrap_or_default();
+                let opener_sample = match sampling.sample(&open.to_string()) {
+                    Ok(sample) => sample,
+                    Err(message) => {
+                        let message = format!("{message}; constructor {cat_name}::{label}");
+                        return Some(quote! { compile_error!(#message) });
+                    },
+                };
                 let (open_delim, _close_delim) = crate::gen::syntax::display::flt_delimiters_for(
                     &open.to_string(),
                     &close.to_string(),

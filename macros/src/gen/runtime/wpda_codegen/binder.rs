@@ -4437,7 +4437,7 @@ pub(crate) fn declared_field_shapes(layout: &crate::gen::capture::FieldLayout) -
     let mut out = Vec::with_capacity(layout.slots.len());
     for slot in &layout.slots {
         let tag = match &slot.source {
-            FieldSlotSource::TokenText => FieldShapeTag::TokenText,
+            FieldSlotSource::TokenText { .. } => FieldShapeTag::TokenText,
             FieldSlotSource::GuestBody { .. } => FieldShapeTag::GuestBody,
             FieldSlotSource::Param(TermParam::GuardBody { .. }) => FieldShapeTag::Predicate,
             FieldSlotSource::Param(

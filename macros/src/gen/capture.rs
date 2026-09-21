@@ -140,7 +140,7 @@ pub(crate) struct CaptureLayout<'a> {
 pub(crate) enum FieldSlotSource<'a> {
     /// A `v@Tok` capture. Declared in the SYNTAX PATTERN, not the term context,
     /// so there is no [`TermParam`] to point at.
-    TokenText,
+    TokenText { kind: &'a syn::Ident },
     /// A `*flt(bind, open, close)` guest-body capture, likewise pattern-declared.
     /// Carries the opener/closer token KIND names for the WPDA codegen.
     GuestBody {
@@ -311,7 +311,7 @@ pub(crate) fn capture_layout<'a>(
     let mut scope: Option<CaptureScope<'a>> = None;
     for slot in layout.slots {
         let kind = match slot.source {
-            FieldSlotSource::TokenText => CaptureFieldKind::TokenText,
+            FieldSlotSource::TokenText { .. } => CaptureFieldKind::TokenText,
             FieldSlotSource::GuestBody { open, close, kind } => {
                 CaptureFieldKind::GuestBody { open, close, kind }
             },
@@ -396,7 +396,7 @@ fn walk_pattern<'a>(
                     .unwrap_or_else(|| format!("__tok_{}", name));
                 out.push(FieldSlot {
                     name: field_name,
-                    source: FieldSlotSource::TokenText,
+                    source: FieldSlotSource::TokenText { kind: name },
                     optional,
                 });
             },
@@ -586,7 +586,10 @@ mod tests {
             assert_eq!(actual.name, expected.name);
             assert_eq!(actual.optional, expected.optional);
             match (&actual.source, &expected.source) {
-                (FieldSlotSource::TokenText, FieldSlotSource::TokenText) => {},
+                (
+                    FieldSlotSource::TokenText { kind: actual },
+                    FieldSlotSource::TokenText { kind: expected },
+                ) => assert_eq!(actual, expected),
                 (
                     FieldSlotSource::GuestBody {
                         open: actual_open,
@@ -758,6 +761,45 @@ mod tests {
         assert_eq!(layout.non_scope.len(), 1);
         assert_eq!(layout.non_scope[0].name, "w");
         assert!(matches!(layout.non_scope[0].kind, CaptureFieldKind::TokenText));
+    }
+
+    #[test]
+    fn token_provenance_preserves_order_and_optional_shape() {
+        let pattern = vec![
+            SyntaxExpr::TokenKind {
+                name: id("Ident"),
+                bind: Some(id("name")),
+            },
+            SyntaxExpr::Op(PatternOp::Opt {
+                inner: vec![SyntaxExpr::TokenKind {
+                    name: id("StringLiteral"),
+                    bind: Some(id("text")),
+                }],
+            }),
+            SyntaxExpr::TokenKind {
+                name: id("Ident"),
+                bind: Some(id("again")),
+            },
+        ];
+        let layout = field_layout(&[], Some(&pattern));
+        let actual: Vec<_> = layout
+            .slots
+            .iter()
+            .map(|slot| {
+                let FieldSlotSource::TokenText { kind } = slot.source else {
+                    panic!("token capture lost its provenance");
+                };
+                (slot.name.as_str(), kind.to_string(), slot.optional)
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                ("name", "Ident".to_owned(), false),
+                ("text", "StringLiteral".to_owned(), true),
+                ("again", "Ident".to_owned(), false),
+            ]
+        );
     }
 
     #[test]

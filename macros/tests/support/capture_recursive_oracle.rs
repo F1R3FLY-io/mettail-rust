@@ -77,7 +77,7 @@ pub(super) fn walk_pattern<'a>(
                     .unwrap_or_else(|| format!("__tok_{name}"));
                 out.push(FieldSlot {
                     name: field_name,
-                    source: FieldSlotSource::TokenText,
+                    source: FieldSlotSource::TokenText { kind: name },
                     optional,
                 });
             },

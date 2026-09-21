@@ -14,6 +14,7 @@
 use crate::gen::native::NativeType;
 use crate::gen::term_gen::{
     count_optional_positions, is_ident_position, is_lang_type, random_ident_expr,
+    CaptureSamplingContext,
 };
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
@@ -25,11 +26,12 @@ use syn::Ident;
 
 /// Generate random term generation code for all exported categories
 pub fn generate_random_generation(language: &LanguageDef) -> TokenStream {
+    let sampling = CaptureSamplingContext::new(language);
     let category_impls: Vec<TokenStream> = language
         .types
         .iter()
         .filter(|lang_type| !lang_type.is_data())
-        .map(|lang_type| generate_random_for_category(&lang_type.name, language))
+        .map(|lang_type| generate_random_for_category(&lang_type.name, language, &sampling))
         .collect();
 
     quote! {
@@ -38,7 +40,11 @@ pub fn generate_random_generation(language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate random generation methods for a specific category
-fn generate_random_for_category(cat_name: &Ident, language: &LanguageDef) -> TokenStream {
+fn generate_random_for_category(
+    cat_name: &Ident,
+    language: &LanguageDef,
+    sampling: &CaptureSamplingContext<'_>,
+) -> TokenStream {
     let rules: Vec<&GrammarRule> = language
         .terms
         .iter()
@@ -48,8 +54,8 @@ fn generate_random_for_category(cat_name: &Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
-    let depth_0_impl = generate_random_depth_0(cat_name, &rules, language);
-    let depth_d_impl = generate_random_depth_d(cat_name, &rules, language);
+    let depth_0_impl = generate_random_depth_0(cat_name, &rules, language, sampling);
+    let depth_d_impl = generate_random_depth_d(cat_name, &rules, language, sampling);
 
     quote! {
         impl #cat_name {
@@ -117,6 +123,7 @@ fn generate_random_depth_0(
     cat_name: &Ident,
     rules: &[&GrammarRule],
     language: &LanguageDef,
+    sampling: &CaptureSamplingContext<'_>,
 ) -> TokenStream {
     let mut cases = Vec::new();
 
@@ -143,7 +150,7 @@ fn generate_random_depth_0(
         // nullary/var/literal shape — construct it with a deterministic
         // regex-valid sample per `v@Tok` capture (decision F.2).
         if let Some(construction) =
-            crate::gen::term_gen::capture_only_construction(rule, language, cat_name, label)
+            crate::gen::term_gen::capture_only_construction(rule, cat_name, label, sampling)
         {
             cases.push(construction);
             continue;
@@ -364,6 +371,7 @@ fn generate_random_depth_d(
     cat_name: &Ident,
     rules: &[&GrammarRule],
     language: &LanguageDef,
+    sampling: &CaptureSamplingContext<'_>,
 ) -> TokenStream {
     let mut constructor_cases = Vec::new();
 
@@ -486,7 +494,7 @@ fn generate_random_depth_d(
 
     if constructor_cases.is_empty() {
         // No recursive constructors - just return depth 0
-        let depth_0 = generate_random_depth_0(cat_name, rules, language);
+        let depth_0 = generate_random_depth_0(cat_name, rules, language, sampling);
         quote! { #depth_0 }
     } else {
         // Generate match arms instead of closures to avoid borrowing issues
