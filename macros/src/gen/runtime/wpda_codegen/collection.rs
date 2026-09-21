@@ -25,31 +25,8 @@ use crate::gen::type_expr_walk::TypeExprBaseIdents;
 use super::binder::{classify_binder_in, BinderPosition, BinderShape, CollectionSepInfo};
 
 /// Classification of a collection-literal rule.
-#[derive(Debug, Clone)]
-pub struct CollectionShape {
-    /// First-token slice of the open delimiter — what the lexer emits as a
-    /// single `Fixed` token. When `has_synth_paren` is true, the full logical
-    /// open delimiter is this token followed by a separate `"("` token.
-    pub open_token: String,
-    /// True when the synthetic-rule emitter (`synthetic.rs`) split a default
-    /// open delimiter like `"list("` into the 4-element pattern
-    /// `[Literal("list"), Literal("("), Op(Sep), Literal(close)]`. The
-    /// engine consumes two tokens in sequence (open keyword, then `(`) before
-    /// pushing the CollectionMarker.
-    pub has_synth_paren: bool,
-    /// Close delimiter.
-    pub close: String,
-    /// Separator between elements (e.g., `"|"` for HashBag, `","` for Map between pairs).
-    pub separator: String,
-    /// Pair separator for Map (`":"` between key and value). `None` for List/Bag/Set.
-    pub pair_separator: Option<String>,
-    /// Category name of each element (e.g., `"Proc"`).
-    pub element_cat: String,
-    /// Container kind (Vec, HashBag, HashSet, HashMap).
-    pub coll_kind: CollectionType,
-    /// Constructor label (e.g., `"PPar"`).
-    pub label: String,
-}
+pub type CollectionShape =
+    mettail_prattail::wpda_rule_analysis::collection::CollectionShape<CollectionType>;
 
 fn collect_binder_collection_infos<'a>(
     positions: &'a [BinderPosition],
@@ -231,84 +208,59 @@ pub(crate) fn classify_collection(
     rule: &GrammarRule,
     language: &LanguageDef,
 ) -> Option<CollectionShape> {
-    let tc = rule.term_context.as_ref()?;
-    let sp = rule.syntax_pattern.as_ref()?;
-    // Expect exactly 1 Simple param of Collection type.
-    if tc.len() != 1 {
-        return None;
-    }
-    let (param_name, coll_type, element_ident) = match &tc[0] {
-        TermParam::Simple {
-            name,
-            ty: TypeExpr::Collection { coll_type, element },
-        } => match element.as_ref() {
-            TypeExpr::Base(elem) => (name, coll_type.clone(), elem.to_string()),
-            _ => return None,
-        },
-        _ => return None,
+    use mettail_prattail::wpda_rule_analysis::{
+        collection::{CollectionParamShape, CollectionRuleShape},
+        InfixSyntaxShape,
     };
-    // Accept 3-element [Literal, Op(Sep), Literal] or 4-element
-    // [Literal, Literal("("), Op(Sep), Literal] form.
-    let (open_token, has_synth_paren, sep_idx, close_idx) = match sp.len() {
-        3 => {
-            let open_kw = match &sp[0] {
-                SyntaxExpr::Literal(s) => s.clone(),
-                _ => return None,
-            };
-            (open_kw, false, 1usize, 2usize)
-        },
-        4 => {
-            let open_kw = match &sp[0] {
-                SyntaxExpr::Literal(s) => s.clone(),
-                _ => return None,
-            };
-            // Second element must be the literal `(` synthesized by synthetic.rs
-            // (which splits default open delimiters of the form `kw(`).
-            match &sp[1] {
-                SyntaxExpr::Literal(s) if s == "(" => {},
-                _ => return None,
-            }
-            (open_kw, true, 2usize, 3usize)
-        },
-        _ => return None,
-    };
-    let close = match &sp[close_idx] {
-        SyntaxExpr::Literal(s) => s.clone(),
-        _ => return None,
-    };
-    let separator = match &sp[sep_idx] {
-        SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None })
-            if collection == param_name =>
-        {
-            separator.clone()
-        },
-        _ => return None,
-    };
-    // Look up the pair_separator from the LangType's collection_kind for Maps.
-    // For List/Bag/Set this is None; for Map it's the user's `key_val_sep`
-    // (default `":"` per `language.rs::map_defaults`).
-    //
-    // Stage 3 (2026-06-27): routed through the single `kv_sep_for` resolver
-    // (`coll_type` from the declared category, `declared = Some(d)`) — byte-
-    // identical to the former per-variant `match`: Map/Pathmap carry a declared
-    // `key_val_sep` (so the declared value wins) while List/Bag/Set carry
-    // `key_val_sep = None` AND a non-kv `coll_type` (so type_default is also
-    // `None`).
-    let pair_separator = language
-        .types
-        .iter()
-        .find(|t| t.name == rule.category)
-        .and_then(|t| t.collection_kind.as_ref())
-        .and_then(|c| kv_sep_for(&c.coll_type(), Some(c.delimiters())));
-    Some(CollectionShape {
-        open_token,
-        has_synth_paren,
-        close,
-        separator,
-        pair_separator,
-        element_cat: element_ident,
-        coll_kind: coll_type,
+    // Keep every authored position. Unlike the infix projection, a Sep with
+    // a source is unsupported here and must not become an accepted plain Sep.
+    let view = CollectionRuleShape {
         label: rule.label.to_string(),
+        term_context: rule.term_context.as_ref().map(|params| {
+            params
+                .iter()
+                .map(|param| match param {
+                    TermParam::Simple {
+                        name,
+                        ty: TypeExpr::Collection { coll_type, element },
+                    } => CollectionParamShape::SimpleCollection {
+                        name: name.to_string(),
+                        kind: coll_type,
+                        element_base: match element.as_ref() {
+                            TypeExpr::Base(element) => Some(element.to_string()),
+                            _ => None,
+                        },
+                    },
+                    _ => CollectionParamShape::Other,
+                })
+                .collect()
+        }),
+        syntax_pattern: rule.syntax_pattern.as_ref().map(|syntax| {
+            syntax
+                .iter()
+                .map(|item| match item {
+                    SyntaxExpr::Literal(text) => InfixSyntaxShape::Literal(text.clone()),
+                    SyntaxExpr::Param(name) => InfixSyntaxShape::Param(name.to_string()),
+                    SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
+                        InfixSyntaxShape::Sep {
+                            collection: collection.to_string(),
+                            separator: separator.clone(),
+                        }
+                    },
+                    _ => InfixSyntaxShape::Other,
+                })
+                .collect()
+        }),
+    };
+    mettail_prattail::wpda_rule_analysis::collection::classify_collection(&view, || {
+        // Retain the original first-match result-category lookup, lazily after
+        // successful structural classification, using the original Ident.
+        language
+            .types
+            .iter()
+            .find(|t| t.name == rule.category)
+            .and_then(|t| t.collection_kind.as_ref())
+            .and_then(|c| kv_sep_for(&c.coll_type(), Some(c.delimiters())))
     })
 }
 

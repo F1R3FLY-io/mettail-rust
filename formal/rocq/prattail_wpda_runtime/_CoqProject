@@ -90,6 +90,7 @@ theories/ActionDispatchAdapter.v
 theories/InfixClassifierProjection.v
 theories/AtomicClassifierProjection.v
 theories/SyntheticRuleProjection.v
+theories/CollectionClassifierProjection.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v
