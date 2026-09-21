@@ -18,6 +18,7 @@ use crate::binding_power::{Associativity, InfixRuleInfo, MixfixPart, MixfixRep};
 pub mod atomic;
 pub mod binder;
 pub mod collection;
+pub mod factoring;
 pub mod synthetic;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.

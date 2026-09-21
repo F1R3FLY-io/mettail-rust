@@ -90,6 +90,7 @@ railroad-diagrams = []
 smt = ["dep:z3"]
 
 [dependencies]
+indexmap = { workspace = true }
 mettail-grammar-core = { path = "../grammar-core" }
 mettail-semantic-key = { path = "../semantic-key" }
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved
