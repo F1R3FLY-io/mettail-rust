@@ -74,7 +74,7 @@ fn classify_rule(rule: &GrammarRule) -> Option<InfixRuleInfo> {
 /// Project only observations consumed by the shared original classifier.
 /// Keeping every position (including unsupported markers) preserves its
 /// length and name checks. This projection performs no normalization/search.
-fn project_infix_rule(rule: &GrammarRule) -> InfixRuleShape {
+pub(super) fn project_infix_rule(rule: &GrammarRule) -> InfixRuleShape {
     debug_assert_eq!(
         mettail_ast::grammar::NonTerminalKind::classify(IDENT_CAPTURE_KIND_NAME),
         mettail_ast::grammar::NonTerminalKind::Ident,

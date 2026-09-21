@@ -260,175 +260,91 @@ pub enum AtomicShape {
 /// rules (`term_context` + `syntax_pattern`), since Calculator / Rholang
 /// use exclusively judgement-style.
 pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShape {
-    // Judgement-style rules: check `term_context` + `syntax_pattern` to
-    // recognize TerminalKeyword (empty context, single literal pattern).
-    if let (Some(tc), Some(sp)) = (&rule.term_context, &rule.syntax_pattern) {
-        // Nullary rule with a single terminal literal pattern → TerminalKeyword.
-        // Example: `Err . |- "error" : Int` (tc=[], sp=[Literal("error")]).
-        if tc.is_empty() && sp.len() == 1 {
-            if let mettail_ast::grammar::SyntaxExpr::Literal(text) = &sp[0] {
-                return AtomicShape::TerminalKeyword {
-                    terminal_text: text.clone(),
-                    wrapper_variant: rule.label.clone(),
-                };
-            }
-        }
-        // GAP-3 (2026-06-28): 0-operand MULTI-literal keyword-prefix rule
-        // (`Map "(" ")"`, `Pathmap "(" ")"`, `@ Nil`). Empty term-context AND
-        // two-or-more syntax items that are ALL `Literal` (no `Param`/`Op`).
-        // The first literal is the dispatch trigger; the rest are consumed by
-        // the reused `MixfixLiteralRun { kind: 2, parts_len == 0 }` arm.
-        //
-        // Placement safety: `tc.is_empty()` means the CrossCat* blocks below
-        // (which require `tc.len() == 1`) can never match these rules, and the
-        // all-`Literal` guard excludes every `Param`/`Op`-bearing shape (PPar,
-        // POutput, etc. carry a `Param` ⇒ untouched). The single-literal case
-        // already returned above as `TerminalKeyword`, so here `sp.len() >= 2`.
-        if tc.is_empty()
-            && sp.len() >= 2
-            && sp
-                .iter()
-                .all(|e| matches!(e, mettail_ast::grammar::SyntaxExpr::Literal(_)))
-        {
-            let mut literals = sp.iter().filter_map(|e| match e {
-                mettail_ast::grammar::SyntaxExpr::Literal(t) => Some(t.clone()),
-                _ => None,
-            });
-            let trigger = literals
-                .next()
-                .expect("classify_atomic: sp.len() >= 2 guarantees a first literal");
-            let trailing_literals: Vec<String> = literals.collect();
-            return AtomicShape::NullaryLiteralRun {
+    use mettail_prattail::wpda_rule_analysis::atomic::{
+        classify_atomic as classify_shared_atomic, AtomicDescriptor, AtomicUnaryPrefix,
+        LegacyAtomicItem, LegacyAtomicKind,
+    };
+
+    let view = super::infix::project_infix_rule(rule);
+    let items: Vec<_> = rule
+        .items
+        .iter()
+        .map(|item| match item {
+            GrammarItem::NonTerminal { kind, ident } => LegacyAtomicItem::NonTerminal {
+                kind: match kind {
+                    NonTerminalKind::Integer => LegacyAtomicKind::Integer,
+                    NonTerminalKind::Boolean => LegacyAtomicKind::Boolean,
+                    NonTerminalKind::StringLiteral => LegacyAtomicKind::StringLiteral,
+                    NonTerminalKind::FloatLiteral => LegacyAtomicKind::FloatLiteral,
+                    NonTerminalKind::Var => LegacyAtomicKind::Var,
+                    NonTerminalKind::Ident => LegacyAtomicKind::Ident,
+                    NonTerminalKind::Category => LegacyAtomicKind::Category,
+                },
+                ident: ident.to_string(),
+            },
+            GrammarItem::Terminal(text) => LegacyAtomicItem::Terminal(text.clone()),
+            _ => LegacyAtomicItem::Other,
+        })
+        .collect();
+    let descriptor = classify_shared_atomic(
+        &view,
+        &items,
+        || {
+            super::builtin_metadata::classify_unary_prefix_shape(rule).map(|shape| {
+                AtomicUnaryPrefix {
+                    trigger: shape.trigger,
+                    operand_category: shape.operand_category,
+                }
+            })
+        },
+        |_| {
+            // Preserve the original identifier object and resolver. The shared
+            // classifier calls this only for this exact singleton Category item.
+            let [GrammarItem::NonTerminal { ident, kind: NonTerminalKind::Category }] =
+                rule.items.as_slice()
+            else {
+                unreachable!("shared atomic classifier only resolves singleton Category items");
+            };
+            classify_literal_patterned(ident, language)
+        },
+    );
+    match descriptor {
+        AtomicDescriptor::LiteralInteger => AtomicShape::LiteralInteger,
+        AtomicDescriptor::LiteralBoolean => AtomicShape::LiteralBoolean,
+        AtomicDescriptor::LiteralString => AtomicShape::LiteralString,
+        AtomicDescriptor::LiteralFloat => AtomicShape::LiteralFloat,
+        AtomicDescriptor::LiteralPatterned(payload) => payload,
+        AtomicDescriptor::TerminalKeyword { terminal_text, .. } => AtomicShape::TerminalKeyword {
+            terminal_text,
+            wrapper_variant: rule.label.clone(),
+        },
+        AtomicDescriptor::NullaryLiteralRun { trigger, trailing_literals, .. } => {
+            AtomicShape::NullaryLiteralRun {
                 trigger,
                 trailing_literals,
                 wrapper_variant: rule.label.clone(),
-            };
-        }
-        // Stage 1.1: cross-category projection (e.g. `ProcInt . i:Int |- i : Proc`,
-        // `CastBigRat . r:BigRat |- r : Proc`). One Simple param of base type,
-        // syntax_pattern is just `Param(name)`, source_cat ≠ result_cat.
-        if tc.len() == 1 && sp.len() == 1 {
-            if let mettail_ast::grammar::TermParam::Simple { name: param_name, ty } = &tc[0] {
-                if let mettail_ast::grammar::SyntaxExpr::Param(syn_name) = &sp[0] {
-                    if syn_name == param_name {
-                        if let mettail_ast::types::TypeExpr::Base(source_ident) = ty {
-                            let source_cat = source_ident.to_string();
-                            if source_cat != rule.category.to_string() {
-                                return AtomicShape::CrossCatProjection {
-                                    source_cat_name: source_cat,
-                                    wrapper_variant: rule.label.clone(),
-                                };
-                            }
-                        }
-                    }
-                }
             }
-        }
-        // Stage 1.1: cross-category prefix unary (e.g. `LenStr . s:Str |- "len" s : Int`).
-        // Two-element syntax_pattern: Literal + Param, single Simple param,
-        // source_cat ≠ result_cat. NOT a normal Pratt prefix (which has
-        // operand of same category as the result).
-        if tc.len() == 1 && sp.len() == 2 {
-            if let (
-                mettail_ast::grammar::SyntaxExpr::Literal(trigger),
-                mettail_ast::grammar::SyntaxExpr::Param(syn_name),
-            ) = (&sp[0], &sp[1])
-            {
-                if let mettail_ast::grammar::TermParam::Simple { name: param_name, ty } = &tc[0] {
-                    // ⚠ AN `Ident` OPERAND IS NOT A CROSS-CATEGORY SOURCE. Without this
-                    // guard, `Tagged . m:Ident |- "tag" m : Num` matched the
-                    // `Literal + Param` shape and classified as `CrossCatPrefixUnary`,
-                    // whose prefix arm routes the trigger to
-                    // `WpdaState::CrossCatDelegate` and DESCENDS INTO A CATEGORY. Three
-                    // consequences, all measured on #131: the walker never entered
-                    // `WpdaState::BinderRule`, so the `IdentTextCapture` fork emitted into
-                    // `binder_rule_c<cat>_r<rule>` was never executed (an instrumented gate
-                    // logged ZERO hits); the action's arg slot instead held the delegate's
-                    // `Term { type_name: "RealizedTerm" }`; and both fork-action twins
-                    // failed byte-identically, because an unexecuted fork cannot depend on
-                    // its action kind.
-                    //
-                    // Falling through leaves the rule to `classify_binder_in`, which admits
-                    // it (its `sp[0]` IS a `Literal` trigger) and routes it to
-                    // `UnifiedDescriptor::BinderPrefix` → `WpdaState::BinderRule` — the
-                    // dispatcher that actually calls the capture fork.
-                    if ty.is_ident_text() {
-                        // fall through to the binder-rule classification below
-                    } else if syn_name == param_name {
-                        if let mettail_ast::types::TypeExpr::Base(source_ident) = ty {
-                            let source_cat = source_ident.to_string();
-                            if source_cat != rule.category.to_string() {
-                                return AtomicShape::CrossCatPrefixUnary {
-                                    trigger: trigger.clone(),
-                                    source_cat_name: source_cat,
-                                    wrapper_variant: rule.label.clone(),
-                                };
-                            }
-                        }
-                    }
-                }
+        },
+        AtomicDescriptor::VarRule { .. } => {
+            AtomicShape::VarRule { wrapper_variant: rule.label.clone() }
+        },
+        AtomicDescriptor::CrossCatProjection { source_cat_name, .. } => {
+            AtomicShape::CrossCatProjection {
+                source_cat_name,
+                wrapper_variant: rule.label.clone(),
             }
-        }
-        // M6c.6.4.b (2026-05-14): same-cat unary prefix (e.g.,
-        // `Neg . a:Int |- "-" a : Int`). Recognized via the existing
-        // `builtin_metadata::classify_unary_prefix_shape` (operand
-        // category == rule.category guard already enforced there).
-        // Emits `AtomicShape::PrefixOperator` so the lex-Fork can
-        // bind `Fixed(trigger)` → this rule's `LexAltPrefixOp` branch.
-        if let Some(shape) = super::builtin_metadata::classify_unary_prefix_shape(rule) {
-            return AtomicShape::PrefixOperator {
-                trigger: shape.trigger,
-                operand_cat_name: shape.operand_category,
-            };
-        }
-        // Other judgement-style rules need Phase A.3+ emission.
-        return AtomicShape::NonAtomic;
-    }
-
-    if rule.items.len() != 1 {
-        return AtomicShape::NonAtomic;
-    }
-
-    match &rule.items[0] {
-        GrammarItem::NonTerminal { kind, ident } => match kind {
-            NonTerminalKind::Integer => AtomicShape::LiteralInteger,
-            NonTerminalKind::Boolean => AtomicShape::LiteralBoolean,
-            NonTerminalKind::StringLiteral => AtomicShape::LiteralString,
-            NonTerminalKind::FloatLiteral => AtomicShape::LiteralFloat,
-            NonTerminalKind::Var => {
-                // Phase 5a: synthetic Var rule for user-defined category.
-                // Rule shape: single-item NonTerminal(Var, cat) where
-                // `rule.category == ident`. Label is the Var-variant label
-                // (TVar / PVar / etc.) — use rule.label directly.
-                if rule.category == *ident {
-                    AtomicShape::VarRule { wrapper_variant: rule.label.clone() }
-                } else {
-                    AtomicShape::NonAtomic
-                }
-            },
-            // A rule whose ENTIRE body is one `Ident` is not an atomic literal rule: it
-            // would accept any identifier as a whole term of the category, which is what
-            // `NonTerminalKind::Var` exists for (and which carries the binder semantics an
-            // inert `Ident` must not have). `Ident` is a MID-RULE position kind; a
-            // single-item `Ident` rule has no atomic shape.
-            NonTerminalKind::Ident => AtomicShape::NonAtomic,
-            NonTerminalKind::Category => {
-                // LiteralPatterned detection: rule body is a single category
-                // reference AND that category has a `from_literals` TokenDef
-                // AND the rule's OWN category equals the referenced category
-                // (so cross-cat projections like `ProcInt . i:Int |- i : Proc`
-                // are NOT misclassified — they belong to Phase 3 cross-cat).
-                if rule.category != *ident {
-                    return AtomicShape::NonAtomic;
-                }
-                classify_literal_patterned(ident, language).unwrap_or(AtomicShape::NonAtomic)
-            },
         },
-        GrammarItem::Terminal(text) => AtomicShape::TerminalKeyword {
-            terminal_text: text.clone(),
-            wrapper_variant: rule.label.clone(),
+        AtomicDescriptor::CrossCatPrefixUnary { trigger, source_cat_name, .. } => {
+            AtomicShape::CrossCatPrefixUnary {
+                trigger,
+                source_cat_name,
+                wrapper_variant: rule.label.clone(),
+            }
         },
-        _ => AtomicShape::NonAtomic,
+        AtomicDescriptor::PrefixOperator { trigger, operand_cat_name } => {
+            AtomicShape::PrefixOperator { trigger, operand_cat_name }
+        },
+        AtomicDescriptor::NonAtomic => AtomicShape::NonAtomic,
     }
 }
 
@@ -3883,6 +3799,303 @@ mod tests {
             from_literals: true,
         });
         lang
+    }
+
+    // Compare the original classifier's complete result to fixed descriptors;
+    // no second classifier or native-kind resolver is implemented by these tests.
+    fn assert_atomic_projection_baseline(
+        rule: &GrammarRule,
+        language: &LanguageDef,
+        expected: AtomicShape,
+    ) {
+        let actual = classify_atomic(rule, language);
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+
+    #[test]
+    fn atomic_projection_baseline_judgement_priority_and_absence() {
+        let language = lang_with_int_literal();
+        let mut rule = category_rule("Declared", "Int", "Int");
+        rule.term_context = Some(Vec::new());
+        rule.syntax_pattern = Some(vec![SyntaxExpr::Literal("keyword".into())]);
+        assert_atomic_projection_baseline(
+            &rule,
+            &language,
+            AtomicShape::TerminalKeyword {
+                terminal_text: "keyword".into(),
+                wrapper_variant: rule.label.clone(),
+            },
+        );
+        rule.syntax_pattern = Some(Vec::new());
+        assert_atomic_projection_baseline(&rule, &language, AtomicShape::NonAtomic);
+
+        // Legacy fallback occurs when EITHER judgement field is absent, but
+        // never when both are present and judgement classification refuses.
+        for (tc_present, sp_present) in [(false, false), (true, false), (false, true)] {
+            let mut rule = atomic_rule("Legacy", "Int", NonTerminalKind::Integer);
+            rule.term_context = tc_present.then(Vec::new);
+            rule.syntax_pattern = sp_present.then(Vec::new);
+            assert_atomic_projection_baseline(&rule, &language, AtomicShape::LiteralInteger);
+        }
+    }
+
+    #[test]
+    fn atomic_projection_baseline_every_legacy_nonterminal_kind() {
+        let language = empty_lang();
+        for (kind, expected) in [
+            (NonTerminalKind::Integer, AtomicShape::LiteralInteger),
+            (NonTerminalKind::Boolean, AtomicShape::LiteralBoolean),
+            (NonTerminalKind::StringLiteral, AtomicShape::LiteralString),
+            (NonTerminalKind::FloatLiteral, AtomicShape::LiteralFloat),
+            (NonTerminalKind::Ident, AtomicShape::NonAtomic),
+            (NonTerminalKind::Category, AtomicShape::NonAtomic),
+            (NonTerminalKind::Var, AtomicShape::NonAtomic),
+        ] {
+            let rule = atomic_rule("Legacy", "Int", kind);
+            assert_atomic_projection_baseline(&rule, &language, expected);
+        }
+        let mut variable = category_rule("IVar", "Int", "Int");
+        if let GrammarItem::NonTerminal { kind, .. } = &mut variable.items[0] {
+            *kind = NonTerminalKind::Var;
+        }
+        assert_atomic_projection_baseline(
+            &variable,
+            &language,
+            AtomicShape::VarRule { wrapper_variant: variable.label.clone() },
+        );
+        let keyword = terminal_rule("Keyword", "Int", "exact");
+        assert_atomic_projection_baseline(
+            &keyword,
+            &language,
+            AtomicShape::TerminalKeyword {
+                terminal_text: "exact".into(),
+                wrapper_variant: keyword.label.clone(),
+            },
+        );
+        variable.items.clear();
+        assert_atomic_projection_baseline(&variable, &language, AtomicShape::NonAtomic);
+        variable.items = vec![GrammarItem::Terminal("a".into()), GrammarItem::Terminal("b".into())];
+        assert_atomic_projection_baseline(&variable, &language, AtomicShape::NonAtomic);
+    }
+
+    #[test]
+    fn atomic_projection_baseline_nullary_run_requires_all_literals() {
+        let language = empty_lang();
+        let mut rule = judgement_rule(
+            "Empty",
+            "Int",
+            &[],
+            vec![
+                SyntaxExpr::Literal("Map".into()),
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Literal(")".into()),
+            ],
+        );
+        // Legacy items must not replace a rejected judgement shape.
+        rule.items = vec![GrammarItem::Terminal("legacy".into())];
+        assert_atomic_projection_baseline(
+            &rule,
+            &language,
+            AtomicShape::NullaryLiteralRun {
+                trigger: "Map".into(),
+                trailing_literals: vec!["(".into(), ")".into()],
+                wrapper_variant: rule.label.clone(),
+            },
+        );
+        for position in 0..3 {
+            let mut unsupported = rule.clone();
+            unsupported
+                .syntax_pattern
+                .as_mut()
+                .expect("baseline fixture contains this declared field")[position] =
+                SyntaxExpr::TokenKind {
+                    name: Ident::new("Ident", Span::call_site()),
+                    bind: None,
+                };
+            assert_atomic_projection_baseline(&unsupported, &language, AtomicShape::NonAtomic);
+        }
+        rule.term_context = Some(vec![TermParam::GuardBody {
+            name: Ident::new("guard", Span::call_site()),
+        }]);
+        assert_atomic_projection_baseline(&rule, &language, AtomicShape::NonAtomic);
+    }
+
+    #[test]
+    fn atomic_projection_baseline_ident_guard_is_prefix_only() {
+        let language = empty_lang();
+        let mut rule = judgement_rule(
+            "Tagged",
+            "Int",
+            &[("name", "Ident")],
+            vec![
+                SyntaxExpr::Literal("tag".into()),
+                SyntaxExpr::Param(Ident::new("name", Span::call_site())),
+            ],
+        );
+        assert_atomic_projection_baseline(&rule, &language, AtomicShape::NonAtomic);
+        rule.syntax_pattern = Some(vec![SyntaxExpr::Param(Ident::new("name", Span::call_site()))]);
+        assert_atomic_projection_baseline(
+            &rule,
+            &language,
+            AtomicShape::CrossCatProjection {
+                source_cat_name: "Ident".into(),
+                wrapper_variant: rule.label.clone(),
+            },
+        );
+
+        let cross = judgement_rule(
+            "Cross",
+            "Int",
+            &[("value", "Other")],
+            vec![
+                SyntaxExpr::Literal("cast".into()),
+                SyntaxExpr::Param(Ident::new("value", Span::call_site())),
+            ],
+        );
+        assert_atomic_projection_baseline(
+            &cross,
+            &language,
+            AtomicShape::CrossCatPrefixUnary {
+                trigger: "cast".into(),
+                source_cat_name: "Other".into(),
+                wrapper_variant: cross.label.clone(),
+            },
+        );
+        let mut same = judgement_rule(
+            "Neg",
+            "Int",
+            &[("value", "Int")],
+            vec![
+                SyntaxExpr::Literal("-".into()),
+                SyntaxExpr::Param(Ident::new("value", Span::call_site())),
+            ],
+        );
+        assert_atomic_projection_baseline(
+            &same,
+            &language,
+            AtomicShape::PrefixOperator {
+                trigger: "-".into(),
+                operand_cat_name: "Int".into(),
+            },
+        );
+        same.syntax_pattern
+            .as_mut()
+            .expect("baseline fixture contains this declared field")[1] =
+            SyntaxExpr::Param(Ident::new("different", Span::call_site()));
+        assert_atomic_projection_baseline(&same, &language, AtomicShape::NonAtomic);
+    }
+
+    #[test]
+    fn atomic_projection_baseline_literal_payload_is_unchanged() {
+        let mut language = lang_with_int_literal();
+        let payload =
+            quote! { { let marker = "payload untouched"; user_eval::<i32>(text, marker) } };
+        language.token_defs[0].rust_code = Some(payload.clone());
+        let mut rule = category_rule("NotTheLiteralWrapper", "Int", "Int");
+        rule.rust_code = Some(mettail_ast::types::RustCodeBlock {
+            code: parse_quote! { wrong_rule_payload(text) },
+        });
+        assert_atomic_projection_baseline(
+            &rule,
+            &language,
+            AtomicShape::LiteralPatterned {
+                cat_name: "Int".into(),
+                native_type: language.types[0]
+                    .native_type
+                    .clone()
+                    .expect("baseline fixture contains this declared field"),
+                family: LiteralFamily::Integer,
+                wrapper_variant: Ident::new("NumLit", Span::call_site()),
+                rust_code: payload.clone(),
+            },
+        );
+        assert_eq!(
+            language.token_defs[0]
+                .rust_code
+                .as_ref()
+                .expect("baseline fixture contains this declared field")
+                .to_string(),
+            payload.to_string()
+        );
+        let cross = category_rule("Cross", "Other", "Int");
+        assert_atomic_projection_baseline(&cross, &language, AtomicShape::NonAtomic);
+    }
+
+    #[test]
+    fn atomic_projection_baseline_native_default_and_custom_election() {
+        let mut language = lang_with_int_literal();
+        language.token_defs[0].rust_code = None;
+        let rule = category_rule("Literal", "Int", "Int");
+        let default_payload = quote! {
+            mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32))
+                .map_err(|_| ())
+        };
+        assert_atomic_projection_baseline(
+            &rule,
+            &language,
+            AtomicShape::LiteralPatterned {
+                cat_name: "Int".into(),
+                native_type: language.types[0]
+                    .native_type
+                    .clone()
+                    .expect("baseline fixture contains this declared field"),
+                family: LiteralFamily::Integer,
+                wrapper_variant: Ident::new("NumLit", Span::call_site()),
+                rust_code: default_payload,
+            },
+        );
+
+        language.types[0].native_type = Some(parse_quote!(OpaqueCarrier));
+        assert_atomic_projection_baseline(&rule, &language, AtomicShape::NonAtomic);
+        let payload = quote! { decode_opaque(text) };
+        language.token_defs[0].rust_code = Some(payload.clone());
+        assert_atomic_projection_baseline(
+            &rule,
+            &language,
+            AtomicShape::LiteralPatterned {
+                cat_name: "Int".into(),
+                native_type: language.types[0]
+                    .native_type
+                    .clone()
+                    .expect("baseline fixture contains this declared field"),
+                family: LiteralFamily::Custom,
+                wrapper_variant: Ident::new("Lit", Span::call_site()),
+                rust_code: payload,
+            },
+        );
+        language.token_defs[0].from_literals = false;
+        assert_atomic_projection_baseline(&rule, &language, AtomicShape::NonAtomic);
+        language.token_defs[0].from_literals = true;
+        language.types[0].native_type = None;
+        assert_atomic_projection_baseline(&rule, &language, AtomicShape::NonAtomic);
+    }
+
+    #[test]
+    fn atomic_projection_baseline_uses_first_eligible_literal_payload() {
+        let mut language = lang_with_int_literal();
+        let mut ineligible = language.token_defs[0].clone();
+        ineligible.rust_code = None;
+        language.token_defs.insert(0, ineligible);
+        let first = quote! { first_eligible(text) };
+        language.token_defs[1].rust_code = Some(first.clone());
+        let mut later = language.token_defs[1].clone();
+        later.rust_code = Some(quote! { later_must_not_win(text) });
+        language.token_defs.push(later);
+        let rule = category_rule("Literal", "Int", "Int");
+        assert_atomic_projection_baseline(
+            &rule,
+            &language,
+            AtomicShape::LiteralPatterned {
+                cat_name: "Int".into(),
+                native_type: language.types[0]
+                    .native_type
+                    .clone()
+                    .expect("baseline fixture contains this declared field"),
+                family: LiteralFamily::Integer,
+                wrapper_variant: Ident::new("NumLit", Span::call_site()),
+                rust_code: first,
+            },
+        );
     }
 
     #[test]

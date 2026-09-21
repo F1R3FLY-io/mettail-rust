@@ -1,4 +1,4 @@
-//! Shared rule observations and the original WPDA infix classifier.
+//! Shared rule observations and the original WPDA infix and atomic classifiers.
 //!
 //! This is a relocation of the macro-era classifier, not a second rule
 //! analyzer. It produces the existing binding-power descriptions, not a new
@@ -14,6 +14,8 @@
 //! correspondence and before/after tests bind it to this relocated code.
 
 use crate::binding_power::{Associativity, InfixRuleInfo, MixfixPart, MixfixRep};
+
+pub mod atomic;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.
 #[derive(Clone, Debug, PartialEq, Eq)]
