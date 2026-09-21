@@ -1,4 +1,4 @@
-//! Shared rule observations and the original WPDA infix and atomic classifiers.
+//! Shared rule observations and original WPDA derivation implementations.
 //!
 //! This is a relocation of the macro-era classifier, not a second rule
 //! analyzer. It produces the existing binding-power descriptions, not a new
@@ -7,8 +7,8 @@
 //! order from concrete syntax. BNF normalization remains the caller's existing
 //! operation.
 //!
-//! These shallow views contain exactly what this classifier inspects. They
-//! are not a replacement grammar schema or binder/collection representation.
+//! The classifiers observe authored grammar through their existing descriptors
+//! or shallow readers. These are not a replacement language schema.
 //! Nested unsupported data is neither traversed nor copied. The projection
 //! boundary is modeled in `InfixClassifierProjection.v`; exact source
 //! correspondence and before/after tests bind it to this relocated code.
