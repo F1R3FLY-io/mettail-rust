@@ -75,6 +75,9 @@ pub mod forks;
 /// `cargo test -p macros grammar_generality`.
 #[cfg(test)]
 mod grammar_generality_prop;
+#[cfg(test)]
+#[path = "../../../../tests/support/category_census_baselines.rs"]
+mod category_census_baselines;
 /// #131: the `Ident`-capture ROUTING GATE — every declared `m:Ident` param must
 /// reach a token consumer in one of the two machines that can provide one. Runs
 /// at macro-expansion time; see the module docs for the three faults it rejects
