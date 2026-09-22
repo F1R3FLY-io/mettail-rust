@@ -210,11 +210,16 @@ pub(crate) fn build_prefix_bp_map(
     map
 }
 
+#[cfg(test)]
+use mettail_prattail::wpda_rule_analysis::binder::first_param_cat_from_positions;
 use mettail_prattail::wpda_rule_analysis::binder::optional::{
     BinderSyntaxObservation, BinderSyntaxReader, OptionalOperationObservation,
 };
 #[cfg(test)]
 use mettail_prattail::wpda_rule_analysis::binder::ParamKind;
+pub(crate) use mettail_prattail::wpda_rule_analysis::binder::{
+    binder_initial_body_cat, lookup_src_idx, required_top_cat_after_position,
+};
 pub use mettail_prattail::wpda_rule_analysis::binder::{
     ActionArgKind, BinderPosition, BinderShape, CollectionSepInfo,
 };
@@ -765,11 +770,6 @@ pub(crate) fn classify_binder_in(
     )
 }
 
-/// Look up a category name's src_idx in the categories slice.
-pub(crate) fn lookup_src_idx(name: &str, categories: &[String]) -> Option<u16> {
-    categories.iter().position(|c| c == name).map(|i| i as u16)
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // THE category-index resolver (task #141 G1+G2)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -913,68 +913,6 @@ pub(crate) fn cat_idx_tokens(
         Ok(idx) => quote! { #idx },
         Err(unresolved) => unresolved.compile_error(span),
     }
-}
-
-fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> {
-    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
-    while let Some(position) = work.pop() {
-        match position {
-            BinderPosition::ParamParse { cat, .. } => return Some(cat.as_str()),
-            BinderPosition::BinderListLoop { collection_param_cat: Some(cat), .. } => {
-                return Some(cat.as_str());
-            },
-            BinderPosition::BinderListLoop { inner_positions, .. }
-            | BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
-                work.extend(inner_positions.iter().rev());
-            },
-            // `IdentTextCapture` joins the no-category group: it consumes a TOKEN, not a
-            // nonterminal, so it contributes no parseable category to this lookup —
-            // exactly as `TokenKindCapture` and `BinderIdent` do not.
-            BinderPosition::Literal(_)
-            | BinderPosition::TokenKindCapture { .. }
-            | BinderPosition::IdentTextCapture { .. }
-            | BinderPosition::GuestBodyCapture { .. }
-            | BinderPosition::BinderIdent
-            | BinderPosition::GuardSlot => {},
-        }
-    }
-    None
-}
-
-/// S1-FACTORING F0 (2026-07-11): `pub(crate)` so the factoring trie's
-/// `SpineItem::Literal` merge key carries the SAME derived
-/// `required_top_cat` payload the `emit_binder_rule_body` Literal arm emits
-/// (emitted-action-shape equality — plan §2). Visibility-only change;
-/// emission is untouched.
-pub(crate) fn required_top_cat_after_position(
-    position: Option<&BinderPosition>,
-    categories: &[String],
-) -> Option<u16> {
-    match position {
-        Some(BinderPosition::ParamParse { cat, collection: None }) => {
-            lookup_src_idx(cat, categories)
-        },
-        Some(BinderPosition::ParamParse { collection: Some(_), .. }) => {
-            // Collection ParamParse slots leave a CollectionId action argument
-            // on the stack until the enclosing binder action drains it. They
-            // do not leave a term Symbol for literal guards to inspect.
-            None
-        },
-        _ => None,
-    }
-}
-
-/// Category carried in the initial `BinderRule` state.
-///
-/// For true abstraction binders this is the abstraction body category. For
-/// multi-parameter non-binder rules there is no abstraction body, but cohort
-/// equivalence still needs the first parsed parameter category instead of the
-/// result category.
-pub(crate) fn binder_initial_body_cat(shape: &BinderShape) -> Option<&str> {
-    shape
-        .body_cat
-        .as_deref()
-        .or_else(|| first_param_cat_from_positions(&shape.positions))
 }
 
 /// Phase 5 + F7 (2026-04-28): emit prefix-dispatch arms that recognize the

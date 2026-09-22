@@ -117,9 +117,10 @@ use std::collections::BTreeSet;
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr};
 use mettail_ast::language::LanguageDef;
 
+#[cfg(test)]
+use super::binder::BinderPosition;
 use super::binder::{
     binder_initial_body_cat, build_prefix_bp_map, classify_binder_in, lookup_src_idx,
-    required_top_cat_after_position, BinderPosition,
 };
 use super::prefix::{classify_atomic, AtomicShape};
 
@@ -128,9 +129,9 @@ use super::prefix::{classify_atomic, AtomicShape};
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) use mettail_prattail::wpda_rule_analysis::factoring::{
-    build_tree, flatten_forest, mixfix_spine_arm_coords, CandidateMember, CategoryFactoring,
-    GroupMember, IneligibleGroup, IneligibleReason, MemberCommit, MemberKind, SingletonMember,
-    SingletonReason, SpineItem, SpineTree, LIMIT_REFUSAL, SPINE_RULE_BASE,
+    binder_items, build_tree, flatten_forest, mixfix_spine_arm_coords, CandidateMember,
+    CategoryFactoring, GroupMember, IneligibleGroup, IneligibleReason, MemberCommit, MemberKind,
+    SingletonMember, SingletonReason, SpineItem, SpineTree, LIMIT_REFUSAL, SPINE_RULE_BASE,
 };
 #[cfg(test)]
 use mettail_prattail::wpda_rule_analysis::factoring::{
@@ -149,91 +150,6 @@ mod prefix_member_descriptor_baselines;
 // Member discovery — mirrors the `prefix.rs` unified-bucket insertion
 // conditions exactly (BinderPrefix / NullaryLiteralRun only).
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// Map a binder member's `BinderShape.positions` to its mergeable
-/// [`SpineItem`] prefix. Returns `(items, truncated)`.
-fn binder_items(
-    positions: &[BinderPosition],
-    category_src_idx: u16,
-    rule_idx: u16,
-    categories: &[String],
-    prefix_bp_map: &std::collections::HashMap<(u16, u16), u8>,
-) -> (Vec<SpineItem>, bool) {
-    let mut items = Vec::with_capacity(positions.len());
-    for (idx, position) in positions.iter().enumerate() {
-        match position {
-            BinderPosition::Literal(text) => {
-                let previous = if idx > 0 {
-                    positions.get(idx - 1)
-                } else {
-                    None
-                };
-                items.push(SpineItem::Literal {
-                    text: text.clone(),
-                    required_top_cat: required_top_cat_after_position(previous, categories),
-                });
-            },
-            BinderPosition::ParamParse { cat, collection: None } => {
-                // ★ #141 G1 — the FOURTH copy of the #133 `ParamParse` message stood here
-                // and it has been DELETED rather than routed, because at THIS site the
-                // refusal was worse than useless.
-                //
-                // Two measurements decide it. (1) Under this workspace's cranelift dev
-                // backend a `panic!` inside the proc macro prints NOTHING — the payload
-                // never appears and rustc dies with `fatal runtime error: Rust cannot
-                // catch foreign exceptions` (task #141 RED-0, 2026-07-29). (2) This
-                // module runs FIRST: `engine_impl.rs` calls `build_spine_emission`
-                // before `emit_binder_rule_body`, `emit_binder_list_loop_body` and
-                // `emit_optional_group_body`. So the panic here silently pre-empted the
-                // three sibling ParamParse sites that — as of #141 — refuse READABLY,
-                // through `binder::cat_idx_tokens`, naming the category and the rule.
-                //
-                // The right behaviour is therefore to DECLINE TO MERGE, which is this
-                // module's own documented escape for a position the shared spine trie
-                // has no node for (the identical `return (items, true)` below covers
-                // `TokenKindCapture`, `IdentTextCapture`, `BinderIdent`, `GuardSlot`,
-                // `OptionalGroup` and collection `ParamParse`). A category with no index
-                // is more reason to decline merging, not less.
-                //
-                // ⚠ This is NOT the fails-open shape the comment further down this file
-                // warns about, and the difference is worth stating precisely: declining
-                // routes the member to its OWN un-factored emission, which is
-                // `binder::emit_binder_rule_body`, which refuses with a `compile_error!`
-                // for this exact position class. The build cannot succeed with a wrong
-                // index; it fails with a message that names the category and the rule.
-                let Some(cat_src_idx) = lookup_src_idx(cat, categories) else {
-                    return (items, true);
-                };
-                // The SAME lookup `emit_binder_rule_body` emits: per-(cat,
-                // rule) — `classify_unary_prefix_shape` rules map to their
-                // prefix bp, everything else falls back to 0 (red-team AV2:
-                // this is why the six Short pos-1 arms are byte-equal).
-                let cur_bp = prefix_bp_map
-                    .get(&(category_src_idx, rule_idx))
-                    .copied()
-                    .unwrap_or(0u8);
-                items.push(SpineItem::ParamParse { cat_src_idx, cur_bp });
-            },
-            // Collection ParamParse / binder-list / guard / optional-group /
-            // L9-3 token-kind capture: terminate mergeability (leaf-side only,
-            // plan §2). A custom-kind capture consumes a distinct kind, so a
-            // rule carrying one does not merge into the shared spine trie.
-            // `IdentTextCapture` terminates mergeability for the SAME reason
-            // `TokenKindCapture` does — it consumes a token the shared spine trie has no
-            // node for. It is listed explicitly rather than folded into a wildcard so a
-            // future position variant still fails this match loudly.
-            BinderPosition::ParamParse { collection: Some(_), .. }
-            | BinderPosition::TokenKindCapture { .. }
-            | BinderPosition::IdentTextCapture { .. }
-            | BinderPosition::GuestBodyCapture { .. }
-            | BinderPosition::BinderIdent
-            | BinderPosition::BinderListLoop { .. }
-            | BinderPosition::GuardSlot
-            | BinderPosition::OptionalGroup { .. } => return (items, true),
-        }
-    }
-    (items, false)
-}
 
 /// Discover the bucket members of one category, in rule order, mirroring the
 /// `prefix.rs` unified-bucket insertion chain (`classify_atomic` shape gates
