@@ -578,7 +578,7 @@ fn emit_binder_list_entry(
     }
 }
 
-struct MacroBinderSyntaxReader;
+pub(super) struct MacroBinderSyntaxReader;
 
 impl<'syntax> BinderSyntaxReader<'syntax> for MacroBinderSyntaxReader {
     type Sequence = &'syntax [SyntaxExpr];
