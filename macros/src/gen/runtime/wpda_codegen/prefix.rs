@@ -3678,6 +3678,10 @@ fn literal_patterned_pattern_and_guard_for_kind(
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/support/unified_prefix_descriptor_baselines.rs"]
+mod unified_prefix_descriptor_baselines;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use mettail_ast::grammar::{
