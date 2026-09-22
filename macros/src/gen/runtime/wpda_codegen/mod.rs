@@ -391,88 +391,46 @@ fn emit_lexer_config(language: &LanguageDef) -> TokenStream {
 /// Order: user-rule categories first (in source order of the rules), then
 /// literal-only categories (in source order of `language.types`).
 pub(crate) fn collect_category_names_with_literals(language: &LanguageDef) -> Vec<String> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut categories = Vec::new();
-    // Pass 1: categories that appear as rule LHS.
-    for rule in &language.terms {
-        let cat = rule.category.to_string();
-        if seen.insert(cat.clone()) {
-            categories.push(cat);
-        }
+    mettail_prattail::wpda_rule_analysis::census::collect_category_names_with_literals(
+        &language.terms,
+        &language.types,
+        &language.token_defs,
+        &mut MacroCategoryCensusReader,
+    )
+}
+
+struct MacroCategoryCensusReader;
+
+impl mettail_prattail::wpda_rule_analysis::census::CategoryCensusReader
+    for MacroCategoryCensusReader
+{
+    type Rule = mettail_ast::grammar::GrammarRule;
+    type Type = mettail_ast::language::LangType;
+    type Token = mettail_ast::language::TokenDef;
+
+    fn rule_category(&mut self, rule: &Self::Rule) -> String {
+        rule.category.to_string()
     }
-    // Pass 2: categories with `from_literals` TokenDefs that weren't already
-    // added. Iterate `language.types` for stable declaration order.
-    for type_def in &language.types {
-        let cat = type_def.name.to_string();
-        if seen.contains(&cat) {
-            continue;
-        }
-        let has_literal_block = language.token_defs.iter().any(|td| {
-            td.from_literals
-                && td
-                    .category
-                    .as_ref()
-                    .map(|c| c.to_string() == cat)
-                    .unwrap_or(false)
-        });
-        if has_literal_block {
-            seen.insert(cat.clone());
-            categories.push(cat);
-        }
+
+    fn type_name(&mut self, category: &Self::Type) -> String {
+        category.name.to_string()
     }
-    // Stage 1.3 (Pass 3): collection-typed categories (`![Vec<T>] as List`,
-    // `![HashBag<T>] as Bag`, `![HashMap<K,V>] as Map`). These have
-    // `collection_kind = Some(...)` but no user-written rules; the WPDS
-    // codegen synthesizes `ListLit`/`BagLit`/`MapLit` rules in
-    // `synthetic.rs` and they need their categories present here so the
-    // synthesis loop can find their per-cat slot.
-    for type_def in &language.types {
-        let cat = type_def.name.to_string();
-        if seen.contains(&cat) {
-            continue;
-        }
-        if type_def.collection_kind.is_some() {
-            seen.insert(cat.clone());
-            categories.push(cat);
-        }
+
+    fn has_collection(&mut self, category: &Self::Type) -> bool {
+        category.collection_kind.is_some()
     }
-    // Stage 4 fix (Pass 4): native-type-only categories (e.g. Rholang's
-    // `![bool] as Bool` and `![str] as Str` declared at type-level but
-    // with no rules and no `literals { ... }` block). Cross-cat projection
-    // rules in OTHER categories may reference these as source categories
-    // (e.g., `CastBool . k:Bool |- k : Proc;`). Without the categories
-    // present in `WPDA_CATEGORIES`, the emitted CrossCatDelegate falls
-    // back to `source_src_idx: 0u16` (Proc) and the engine recurses into
-    // Proc's PrefixDispatch on the same token. The synthetic atomic-literal
-    // rule emitted in `synthetic.rs` for these native-type categories
-    // gives them a self-contained sub-parser.
-    for type_def in &language.types {
-        let cat = type_def.name.to_string();
-        if seen.contains(&cat) {
-            continue;
-        }
-        if type_def.native_type.is_some() {
-            seen.insert(cat.clone());
-            categories.push(cat);
-        }
+
+    fn has_native(&mut self, category: &Self::Type) -> bool {
+        category.native_type.is_some()
     }
-    // Pass 5: any remaining user-declared `LangType` not covered above.
-    // Examples: Ambient's `Name` (declared but with no LHS rules, no
-    // literals block, no collection_kind, no native_type). These are
-    // typically reference-only categories — their tokens are bound by
-    // other rules' production bodies. `synthetic.rs` Phase 5a fabricates
-    // a Var rule for any such category, giving them an identifier-shaped
-    // parser. Without this pass the synthetic Var rule never gets emitted
-    // (it's gated on the category being in `cat_idx` built from the
-    // categories list returned here), and any rule body referencing the
-    // category becomes unparseable.
-    for type_def in &language.types {
-        let cat = type_def.name.to_string();
-        if seen.insert(cat.clone()) {
-            categories.push(cat);
-        }
+
+    fn from_literals(&mut self, token: &Self::Token) -> bool {
+        token.from_literals
     }
-    categories
+
+    fn token_category(&mut self, token: &Self::Token) -> Option<String> {
+        token.category.as_ref().map(|category| category.to_string())
+    }
 }
 
 /// Index of the primary category (the first declared category — by

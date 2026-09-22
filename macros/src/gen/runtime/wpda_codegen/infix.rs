@@ -245,14 +245,11 @@ pub(crate) fn build_label_index(
     categories: &[String],
     per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
 ) -> std::collections::HashMap<(String, String), (u16, u16)> {
-    let mut idx = std::collections::HashMap::new();
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        let cat_name = &categories[cat_i];
-        for (rule_i, rule) in rules.iter().enumerate() {
-            idx.insert((cat_name.clone(), rule.label.to_string()), (cat_i as u16, rule_i as u16));
-        }
-    }
-    idx
+    mettail_prattail::wpda_rule_analysis::census::build_label_index_with(
+        categories,
+        per_cat,
+        |rule| rule.label.to_string(),
+    )
 }
 
 /// GEN-1 compile-time kill-switch (B-2 slice migration, Stage S0).
