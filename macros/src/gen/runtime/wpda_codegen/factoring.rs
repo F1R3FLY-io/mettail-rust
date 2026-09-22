@@ -146,6 +146,10 @@ mod spine_tree_lifecycle_tests;
 #[path = "../../../../tests/support/prefix_member_descriptor_baselines.rs"]
 mod prefix_member_descriptor_baselines;
 
+#[cfg(test)]
+#[path = "../../../../tests/support/prefix_discovery_baselines.rs"]
+mod prefix_discovery_baselines;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Member discovery — mirrors the `prefix.rs` unified-bucket insertion
 // conditions exactly (BinderPrefix / NullaryLiteralRun only).
