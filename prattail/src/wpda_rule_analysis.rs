@@ -23,6 +23,7 @@ pub mod factoring;
 pub mod fork_emission;
 pub mod mixfix;
 pub mod parikh;
+pub mod prefix;
 pub mod synthetic;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.

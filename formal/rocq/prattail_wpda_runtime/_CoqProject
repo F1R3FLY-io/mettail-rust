@@ -104,6 +104,8 @@ theories/MixfixDescriptorProjection.v
 theories/CategoryCensusProjection.v
 theories/LegacyRuleNormalizationProjection.v
 theories/ParikhDescriptorProjection.v
+theories/UnifiedPrefixDescriptorProjection.v
+theories/AuthoredRuleStoreProjection.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v

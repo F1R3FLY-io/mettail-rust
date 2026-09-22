@@ -80,6 +80,11 @@ impl std::fmt::Debug for ForkEmissionOrdinalModel {
 }
 
 impl ForkEmissionOrdinalModel {
+    /// Borrow the original accumulator for shared descriptor derivation.
+    pub(crate) fn descriptor_mut(&mut self) -> &mut SharedForkEmissionOrdinalModel {
+        &mut self.descriptor
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             descriptor: SharedForkEmissionOrdinalModel::new(),

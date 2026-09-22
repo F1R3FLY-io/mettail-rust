@@ -2504,35 +2504,10 @@ enum UnifiedDescriptor {
 
 /// B7 (2026-05-07) — unified bucket entry. Replaces the separate
 /// LhsBucketEntry (Pass 0) and atomic bucket map (Pass 1).
-struct UnifiedBucket {
-    pat: TokenStream,
-    extra_guard: Option<TokenStream>,
-    descs: Vec<UnifiedDescriptor>,
-}
+type UnifiedBucket =
+    mettail_prattail::wpda_rule_analysis::prefix::UnifiedBucket<TokenStream, UnifiedDescriptor>;
 
-fn insert_unified_descriptor(
-    unified_buckets: &mut std::collections::BTreeMap<(String, String), UnifiedBucket>,
-    unified_order: &mut Vec<(String, String)>,
-    pattern: TokenStream,
-    extra_guard: Option<TokenStream>,
-    desc: UnifiedDescriptor,
-) {
-    let pat_str = pattern.to_string();
-    let guard_str = extra_guard
-        .as_ref()
-        .map(|g| g.to_string())
-        .unwrap_or_default();
-    let key = (pat_str, guard_str);
-    if !unified_buckets.contains_key(&key) {
-        unified_order.push(key.clone());
-    }
-    let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
-        pat: pattern,
-        extra_guard,
-        descs: Vec::new(),
-    });
-    entry.descs.push(desc);
-}
+use mettail_prattail::wpda_rule_analysis::prefix::insert_unified_descriptor;
 
 /// B7 (2026-05-07) — emit a unified bucket as either a singleton arm
 /// (byte-identical to the pre-B7 emission for the matching kind) or a
@@ -2573,30 +2548,41 @@ fn record_initiating_rule_rows(
     s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
     bucket_tag: &str,
 ) -> Option<TokenStream> {
-    match s1_dispositions.get(&rule_idx) {
-        Some(super::factoring::SpineDisposition::GroupFirst { .. }) => {
-            let Some(members) = s1_group_members.get(&rule_idx) else {
-                let message = format!(
-                    "mettail: task #10 item 1 — the rule at category index \
-                     {category_src_idx}, rule index {rule_idx} is dispositioned \
-                     `GroupFirst` by the S1 factoring model but has no `group_members` \
-                     entry, so the fork emission cannot derive the site-2 rows its \
-                     members are owed. The two halves of the factoring model disagree; \
-                     this is a macro bug, not a grammar bug — please report it.",
-                );
-                return Some(quote! { compile_error!(#message); });
-            };
-            for &member in members {
-                fork_rows.record_site2_row(category_src_idx, member, branch_position, bucket_tag);
-            }
-            None
+    use mettail_prattail::wpda_rule_analysis::prefix::{
+        record_initiating_rule_rows as record_shared_rows, InitiatingRuleDisposition,
+    };
+
+    let missing = record_shared_rows(
+        fork_rows.descriptor_mut(),
+        category_src_idx,
+        rule_idx,
+        branch_position,
+        |rule| {
+            s1_dispositions
+                .get(&rule)
+                .map(|disposition| match disposition {
+                    super::factoring::SpineDisposition::GroupFirst { .. } => {
+                        InitiatingRuleDisposition::GroupFirst
+                    },
+                    super::factoring::SpineDisposition::GroupRest => {
+                        InitiatingRuleDisposition::GroupRest
+                    },
+                })
         },
-        Some(super::factoring::SpineDisposition::GroupRest) => None,
-        None => {
-            fork_rows.record_site2_row(category_src_idx, rule_idx, branch_position, bucket_tag);
-            None
-        },
-    }
+        |rule| s1_group_members.get(&rule).map(Vec::as_slice),
+        bucket_tag,
+    )?;
+    let category_src_idx = missing.category_src_idx;
+    let rule_idx = missing.rule_idx;
+    let message = format!(
+        "mettail: task #10 item 1 — the rule at category index \
+         {category_src_idx}, rule index {rule_idx} is dispositioned \
+         `GroupFirst` by the S1 factoring model but has no `group_members` \
+         entry, so the fork emission cannot derive the site-2 rows its \
+         members are owed. The two halves of the factoring model disagree; \
+         this is a macro bug, not a grammar bug — please report it.",
+    );
+    Some(quote! { compile_error!(#message); })
 }
 
 fn emit_unified_arm(
