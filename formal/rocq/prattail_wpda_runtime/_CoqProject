@@ -100,6 +100,7 @@ theories/PrefixFactoringProjection.v
 theories/ForkEmissionAccumulatorProjection.v
 theories/PrefixMemberDescriptorRelocation.v
 theories/PrefixDiscoveryProjection.v
+theories/MixfixDescriptorProjection.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v

@@ -20,6 +20,7 @@ pub mod binder;
 pub mod collection;
 pub mod factoring;
 pub mod fork_emission;
+pub mod mixfix;
 pub mod synthetic;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.

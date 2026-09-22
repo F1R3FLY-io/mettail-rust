@@ -278,59 +278,9 @@ pub(crate) fn build_label_index(
 /// Revert = flip back to `1`.
 pub(crate) const GEN1_MAX_SLICE: usize = usize::MAX;
 
-/// One operator resolved to its global packing coordinates, retaining a borrow of
-/// the source [`InfixOperator`] for its tier flags and binding powers. Produced by
-/// [`group_ops_by_cat_terminal`].
-pub(crate) struct GroupedOp<'a> {
-    /// The source operator (tier flags `is_postfix` / `is_mixfix`, `left_bp`,
-    /// `right_bp`, `terminal`, ...).
-    pub(crate) op: &'a InfixOperator,
-    /// Result-category source index (the packing's category).
-    pub(crate) result_src_idx: u16,
-    /// Local rule index within the result category.
-    pub(crate) rule_idx: u16,
-}
-
-/// B-2 (Stage S0) NO-LOSS foundation: group EVERY operator by
-/// `(operand cat_src_idx, terminal)`, preserving the canonical
-/// `bp_table.operators` order within each group (category-alphabetical ×
-/// infix/mixfix-then-postfix, each in declaration order — see
-/// `analyze_binding_powers`).
-///
-/// This single grouping feeds BOTH the per-tier slice emitters
-/// (`emit_{infix,postfix,mixfix}_bp_fn`) AND the lattice lex-alt emitter
-/// (`emit_infix_lex_alt_rule_arms`, `kind_dispatch.rs`), so the per-(cat,terminal)
-/// rule multiset is IDENTICAL across the two dispatch surfaces by construction —
-/// the GEN-1 NO-LOSS invariant. Operators whose operand category or
-/// `(result_category, label)` packing coordinates cannot be resolved are skipped
-/// (matching the legacy emitters' defensive `filter_map` / `continue`).
-pub(crate) fn group_ops_by_cat_terminal<'a>(
-    bp_table: &'a BindingPowerTable,
-    categories: &[String],
-    label_index: &std::collections::HashMap<(String, String), (u16, u16)>,
-) -> std::collections::BTreeMap<(u16, String), Vec<GroupedOp<'a>>> {
-    let mut grouped: std::collections::BTreeMap<(u16, String), Vec<GroupedOp<'a>>> =
-        std::collections::BTreeMap::new();
-    for op in &bp_table.operators {
-        let Some(cat_src_idx) = categories
-            .iter()
-            .position(|cat| cat == &op.category)
-            .map(|idx| idx as u16)
-        else {
-            continue;
-        };
-        let Some(&(result_src_idx, rule_idx)) =
-            label_index.get(&(op.result_category.clone(), op.label.clone()))
-        else {
-            continue;
-        };
-        grouped
-            .entry((cat_src_idx, op.terminal.clone()))
-            .or_default()
-            .push(GroupedOp { op, result_src_idx, rule_idx });
-    }
-    grouped
-}
+pub(crate) use mettail_prattail::wpda_rule_analysis::mixfix::{
+    group_ops_by_cat_terminal, GroupedOp,
+};
 
 /// Emit `infix_bp_<cat>(terminal) -> &'static [(l_bp, r_bp, result_src, rule_idx)]`.
 ///
