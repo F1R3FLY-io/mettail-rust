@@ -2,6 +2,8 @@ use syn::{parse::ParseStream, Ident, Result as SynResult, Token};
 
 use super::types::{CollectionType, EvalMode, RustCodeBlock, TypeExpr};
 
+mod legacy_normalization_adapter;
+
 /// Classification of a nonterminal reference in a grammar rule.
 ///
 /// Determined once at construction time based on the nonterminal name.
@@ -2717,116 +2719,13 @@ pub fn convert_term_context_to_items(
 /// order — old-BNF rules have no user param names, so there's no
 /// collision risk.
 pub fn convert_items_to_term_context(rule: &mut GrammarRule) {
-    use proc_macro2::Span;
+    use crate::legacy_rule_normalization::normalize_legacy_rule_with;
 
-    // Skip if already judgement-form (e.g., PNew in ambient.rs).
-    if rule.term_context.is_some() || rule.syntax_pattern.is_some() {
-        return;
+    let mut adapter = legacy_normalization_adapter::GrammarRuleAdapter { rule };
+    if let Some((tc, sp)) = normalize_legacy_rule_with(&mut adapter) {
+        rule.term_context = Some(tc);
+        rule.syntax_pattern = Some(sp);
     }
-
-    // Check: do all items qualify for conversion? If any NonTerminal is
-    // non-Category (Var, Integer, etc.), defer to the existing atomic/Var
-    // classifier paths — the rule isn't a binder/mixfix/collection shape.
-    for item in &rule.items {
-        if let GrammarItem::NonTerminal { kind, .. } = item {
-            if *kind != NonTerminalKind::Category {
-                return;
-            }
-        }
-    }
-
-    let mut tc: Vec<TermParam> = Vec::new();
-    let mut sp: Vec<SyntaxExpr> = Vec::new();
-    let mut next_param_id: usize = 0;
-    let mut pending_binder: Option<Ident> = None;
-
-    for item in &rule.items {
-        match item {
-            GrammarItem::Terminal(text) => {
-                sp.push(SyntaxExpr::Literal(text.clone()));
-            },
-            GrammarItem::NonTerminal { ident, kind: NonTerminalKind::Category } => {
-                let pname = Ident::new(&format!("p{}", next_param_id), Span::call_site());
-                next_param_id += 1;
-
-                if let Some(binder_cat) = pending_binder.take() {
-                    // Abstraction: binder_cat -> ident
-                    let body_pname = Ident::new(&format!("p{}", next_param_id), Span::call_site());
-                    next_param_id += 1;
-                    tc.push(TermParam::Abstraction {
-                        binder: pname.clone(),
-                        body: body_pname.clone(),
-                        ty: TypeExpr::Arrow {
-                            domain: Box::new(TypeExpr::Base(binder_cat)),
-                            codomain: Box::new(TypeExpr::Base(ident.clone())),
-                        },
-                    });
-                    // Both binder name and body appear in syntax pattern.
-                    sp.push(SyntaxExpr::Param(pname));
-                    sp.push(SyntaxExpr::Param(body_pname));
-                } else {
-                    tc.push(TermParam::Simple {
-                        name: pname.clone(),
-                        ty: TypeExpr::Base(ident.clone()),
-                    });
-                    sp.push(SyntaxExpr::Param(pname));
-                }
-            },
-            // ★ #141 G5. Non-Category NonTerminals (Var/Integer/Boolean/…) are
-            // supposed to have caused the early-return above. That is a claim
-            // about a gate twenty lines away, held by nothing, and this function
-            // returns `()` — it has no channel to refuse through. So it does what
-            // the gate would have done: LEAVES THE RULE UNCONVERTED (`return`,
-            // not `unreachable!`), which is the same outcome as the early-return
-            // the claim says already happened, and the one shape whose result is
-            // identical whether the claim holds or not.
-            GrammarItem::NonTerminal { .. } => return,
-            GrammarItem::Binder { category } => {
-                pending_binder = Some(category.clone());
-            },
-            GrammarItem::Collection {
-                coll_type,
-                element_type,
-                separator,
-                delimiters,
-            } => {
-                if let Some((open, close)) = delimiters {
-                    let elems_name = Ident::new("elems", Span::call_site());
-                    tc.push(TermParam::Simple {
-                        name: elems_name.clone(),
-                        ty: TypeExpr::Collection {
-                            coll_type: coll_type.clone(),
-                            element: Box::new(TypeExpr::Base(element_type.clone())),
-                        },
-                    });
-                    sp.push(SyntaxExpr::Literal(open.clone()));
-                    sp.push(SyntaxExpr::Op(PatternOp::Sep {
-                        collection: elems_name,
-                        separator: separator.clone(),
-                        source: None,
-                    }));
-                    sp.push(SyntaxExpr::Literal(close.clone()));
-                } else {
-                    // Sep-only collection (no delimiters): out of scope.
-                    return;
-                }
-            },
-        }
-    }
-
-    // Pending binder with no body NonTerminal: invalid grammar — defer.
-    if pending_binder.is_some() {
-        return;
-    }
-
-    // Skip pure-literal rules (no params): these are TerminalKeyword shapes
-    // handled by the atomic classifier (e.g., `PZero . Proc ::= "0" ;`).
-    if tc.is_empty() {
-        return;
-    }
-
-    rule.term_context = Some(tc);
-    rule.syntax_pattern = Some(sp);
 }
 
 /// Infer binding structure from items

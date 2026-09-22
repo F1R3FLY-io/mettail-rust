@@ -20,6 +20,7 @@ pub mod grammar_shapes;
 pub mod identity;
 pub mod language;
 pub mod language_scan;
+pub mod legacy_rule_normalization;
 pub mod manifest;
 pub mod merge;
 pub mod pattern;
