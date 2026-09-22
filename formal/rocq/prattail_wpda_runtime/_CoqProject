@@ -107,6 +107,8 @@ theories/ParikhDescriptorProjection.v
 theories/UnifiedPrefixDescriptorProjection.v
 theories/AuthoredRuleStoreProjection.v
 theories/AuthoredRuleCaptureProjection.v
+theories/AuthoredRuleTransportProjection.v
+theories/NonTerminalKindProjection.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v
