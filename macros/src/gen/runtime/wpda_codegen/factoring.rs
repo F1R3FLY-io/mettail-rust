@@ -148,6 +148,10 @@ mod prefix_member_descriptor_baselines;
 #[path = "../../../../tests/support/prefix_discovery_baselines.rs"]
 mod prefix_discovery_baselines;
 
+#[cfg(test)]
+#[path = "../../../../tests/support/mixfix_descriptor_baselines.rs"]
+mod mixfix_descriptor_baselines;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Member discovery — mirrors the `prefix.rs` unified-bucket insertion
 // conditions exactly (BinderPrefix / NullaryLiteralRun only).
