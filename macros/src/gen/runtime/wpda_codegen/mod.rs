@@ -46,6 +46,7 @@
 //! `macros/src/logic/writer.rs::spill_and_include`).
 
 pub mod auto_inject;
+pub(crate) mod authored_capture;
 pub mod binder;
 pub mod builtin_metadata;
 pub mod collection;
