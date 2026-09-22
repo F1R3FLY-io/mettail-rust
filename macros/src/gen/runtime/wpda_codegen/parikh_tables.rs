@@ -59,6 +59,10 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+#[cfg(test)]
+#[path = "../../../../tests/support/parikh_descriptor_baselines.rs"]
+mod parikh_descriptor_baselines;
+
 /// A class bitmask over the (small) Parikh alphabet.
 type Mask = u128;
 
