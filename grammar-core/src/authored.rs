@@ -34,7 +34,7 @@ authored_ids!(
     AuthoredRuleId,
 );
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthoredNodeTag {
     Name,
     Names,
@@ -153,16 +153,8 @@ pub enum AuthoredOperation<I = u32> {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AuthoredNonTerminalKind {
-    Var,
-    Integer,
-    Boolean,
-    StringLiteral,
-    FloatLiteral,
-    Ident,
-    Category,
-}
+/// Retain the authored API name for the single original classifier vocabulary.
+pub use crate::NonTerminalKind as AuthoredNonTerminalKind;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthoredLegacyItem<I = u32> {

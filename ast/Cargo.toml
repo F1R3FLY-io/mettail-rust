@@ -17,6 +17,7 @@ quote = { workspace = true }
 syn = { workspace = true }
 ascent_syntax_export = { workspace = true }
 blake3 = "1"
+mettail-grammar-core = { path = "../grammar-core" }
 
 [dev-dependencies]
 proptest = "1"

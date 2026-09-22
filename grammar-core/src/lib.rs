@@ -5,6 +5,7 @@
 //! a cache: the grammar value, not an image supplied beside it, is authoritative.
 
 mod authored;
+mod authored_capture;
 mod canonical;
 mod capability;
 mod core;
@@ -14,6 +15,7 @@ mod installed;
 mod language_core;
 mod lexical_selection;
 mod normalize;
+mod nonterminal;
 mod runtime;
 mod semantic_machine;
 mod semantic_term;
@@ -25,6 +27,7 @@ mod theory_rule;
 mod weight;
 
 pub use authored::*;
+pub use authored_capture::*;
 pub use canonical::*;
 pub use capability::*;
 pub use core::*;
@@ -34,6 +37,7 @@ pub use installed::*;
 pub use language_core::*;
 pub use lexical_selection::{visit_lexical_survivors, LexicalSelectionError};
 pub use normalize::*;
+pub use nonterminal::NonTerminalKind;
 pub use runtime::*;
 pub use semantic_machine::*;
 pub use semantic_term::*;
