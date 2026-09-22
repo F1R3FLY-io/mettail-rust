@@ -4,6 +4,7 @@
 //! that representation and may emit a verified [`ParserImageV1`]. The image is
 //! a cache: the grammar value, not an image supplied beside it, is authoritative.
 
+mod authored;
 mod canonical;
 mod capability;
 mod core;
@@ -23,6 +24,7 @@ mod theory_image_codec;
 mod theory_rule;
 mod weight;
 
+pub use authored::*;
 pub use canonical::*;
 pub use capability::*;
 pub use core::*;

@@ -16,6 +16,7 @@
 use crate::binding_power::{Associativity, InfixRuleInfo, MixfixPart, MixfixRep};
 
 pub mod atomic;
+pub mod authored;
 pub mod binder;
 pub mod census;
 pub mod collection;
