@@ -8,6 +8,7 @@ use crate::{
 };
 use mettail_grammar_core as core;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 impl LanguageSpec {
     /// Project this compile-time specification into the same semantic IR used
@@ -28,6 +29,22 @@ impl LanguageSpec {
 
         stage!("initialize.start");
         let mut output = core::GrammarCoreV1::new(self.name.clone());
+        let mut authored_owner: Option<&Arc<core::AuthoredRuleStore>> = None;
+        for rule in &self.rules {
+            if let Some(authored) = &rule.authored {
+                match authored_owner {
+                    None => authored_owner = Some(&authored.store),
+                    Some(owner) if Arc::ptr_eq(owner, &authored.store) => {},
+                    Some(_) => {
+                        return Err(format!(
+                            "rule `{}` uses a different authored store; merging or rebasing stores is unsupported",
+                            rule.label
+                        ));
+                    },
+                }
+            }
+        }
+        output.authored = authored_owner.map(|store| store.as_ref().clone());
         output.provenance.frontend = "language!-compile-time".into();
         output.categories = self
             .types
@@ -164,6 +181,7 @@ impl LanguageSpec {
                     )));
             }
             output.productions.push(core::Production {
+                authored: rule.authored.as_ref().map(|authored| authored.rule),
                 id: core::ProductionId(index as u32),
                 constructor,
                 label: rule.label.clone(),
@@ -851,6 +869,7 @@ mod tests {
                 has_var: true,
             }],
             vec![RuleSpecInput {
+                authored: None,
                 label: "Zero".into(),
                 category: "Expr".into(),
                 syntax: vec![SyntaxItemSpec::Terminal("0".into())],
@@ -880,6 +899,7 @@ mod tests {
                 has_var: false,
             }],
             vec![RuleSpecInput {
+                authored: None,
                 label: "Name".into(),
                 category: "Expr".into(),
                 syntax: vec![SyntaxItemSpec::TokenKindCapture {
@@ -926,6 +946,7 @@ mod tests {
                 has_var: true,
             }],
             vec![RuleSpecInput {
+                authored: None,
                 label: "Join".into(),
                 category: "Expr".into(),
                 syntax: vec![SyntaxItemSpec::Terminal("join".into())],

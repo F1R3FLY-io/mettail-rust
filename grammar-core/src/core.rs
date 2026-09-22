@@ -1,6 +1,20 @@
-use crate::{CanonicalValue, NativeEvaluation, ReductionPlan, SemanticProgram, WeightProfile};
-use serde::{Deserialize, Serialize};
+use crate::{
+    AuthoredNode, AuthoredRuleId, AuthoredRuleStore, AuthoredStoreError, CanonicalValue,
+    NativeEvaluation, ReductionPlan, SemanticProgram, WeightProfile,
+};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+// A present null records unavailability. A missing field is an old/incomplete
+// representation and must not acquire that meaning through Serde's Option default.
+fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(deserializer)
+}
 
 macro_rules! id_type {
     ($name:ident) => {
@@ -29,7 +43,17 @@ id_type!(ConstructorId);
 
 pub const GRAMMAR_CORE_ABI_V1: u16 = 1;
 pub const GRAMMAR_CORE_ABI_V2: u16 = 2;
-pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V2;
+pub const GRAMMAR_CORE_ABI_V3: u16 = 3;
+pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V3;
+
+/// A source rule retained with its immutable arena owner during frontend
+/// transport. Arena allocation identity is deliberately distinct from equality
+/// of its contents: the bridge accepts one owner and never merges or rebases.
+#[derive(Clone, Debug)]
+pub struct AuthoredRuleRef {
+    pub store: Arc<AuthoredRuleStore>,
+    pub rule: AuthoredRuleId,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GrammarCoreV1 {
@@ -41,6 +65,9 @@ pub struct GrammarCoreV1 {
     pub tokens: Vec<TokenDefinition>,
     pub modes: Vec<LexerMode>,
     pub productions: Vec<Production>,
+    /// Authored observations, when available. Absence is not an empty source.
+    #[serde(deserialize_with = "required_option")]
+    pub authored: Option<AuthoredRuleStore>,
     pub reductions: Vec<ReductionPlan>,
     pub semantic_dependencies: Vec<Vec<ConstructorId>>,
     pub semantic_program: SemanticProgram,
@@ -71,6 +98,7 @@ impl GrammarCoreV1 {
                 raw: false,
             }],
             productions: Vec::new(),
+            authored: None,
             reductions: Vec::new(),
             semantic_dependencies: Vec::new(),
             semantic_program: SemanticProgram::default(),
@@ -86,10 +114,39 @@ impl GrammarCoreV1 {
         }
     }
 
+    fn validate_authored_association(
+        &self,
+        production: &Production,
+        rule_id: AuthoredRuleId,
+    ) -> Result<(), &'static str> {
+        let store = self.authored.as_ref().ok_or("store")?;
+        let Some(AuthoredNode::Rule(rule)) = store.get(rule_id.0) else {
+            return Err("rule");
+        };
+        let Some(AuthoredNode::Name(label)) = store.get(rule.label.0) else {
+            return Err("label");
+        };
+        if label.spelling != production.label {
+            return Err("label");
+        }
+        let Some(AuthoredNode::Name(category)) = store.get(rule.category.0) else {
+            return Err("category");
+        };
+        let declared = self
+            .categories
+            .get(production.result.0 as usize)
+            .ok_or("category")?;
+        if category.spelling != declared.name {
+            return Err("category");
+        }
+        Ok(())
+    }
+
     pub fn fingerprint(&self) -> Result<[u8; 32], postcard::Error> {
         // Provenance is diagnostic metadata, not language meaning. Two
-        // frontends that lower the same grammar must share an identity even
-        // when their source URIs, spans, or frontend names differ.
+        // frontends with identical semantic fields, including retained authored
+        // observations, share an identity even when diagnostic source URIs,
+        // spans, or frontend names differ.
         let mut semantic = self.clone();
         semantic.backend_context = None;
         semantic.documentation = None;
@@ -99,7 +156,7 @@ impl GrammarCoreV1 {
         }
         let bytes = postcard::to_allocvec(&semantic)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-grammar-core/2\0");
+        hasher.update(b"mettail-grammar-core/3\0");
         hasher.update(&bytes);
         Ok(*hasher.finalize().as_bytes())
     }
@@ -108,6 +165,11 @@ impl GrammarCoreV1 {
         let mut errors = Vec::new();
         if self.abi != GRAMMAR_CORE_ABI_CURRENT {
             errors.push(ValidationError::UnsupportedAbi(self.abi));
+        }
+        if let Some(store) = &self.authored {
+            if let Err(error) = store.validate() {
+                errors.push(ValidationError::InvalidAuthoredStore(error));
+            }
         }
         validate_dense_ids(&self.categories, |x| x.id.0, Entity::Category, &mut errors);
         validate_dense_ids(&self.tokens, |x| x.id.0, Entity::Token, &mut errors);
@@ -211,6 +273,15 @@ impl GrammarCoreV1 {
             }
         }
         for production in &self.productions {
+            if let Some(rule) = production.authored {
+                if let Err(field) = self.validate_authored_association(production, rule) {
+                    errors.push(ValidationError::InvalidAuthoredRule {
+                        production: production.id.0,
+                        rule: rule.0,
+                        field,
+                    });
+                }
+            }
             if production.result.0 >= categories {
                 errors.push(ValidationError::BadReference {
                     owner: Entity::Production,
@@ -931,6 +1002,9 @@ pub struct Production {
     pub constructor: ConstructorId,
     pub label: String,
     pub result: CategoryId,
+    /// Original authored rule, not a reconstruction from lowered syntax.
+    #[serde(deserialize_with = "required_option")]
+    pub authored: Option<AuthoredRuleId>,
     pub syntax: Vec<SyntaxItem>,
     pub precedence: Precedence,
     pub classification: ProductionClass,
@@ -1116,6 +1190,12 @@ pub enum Entity {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValidationError {
     UnsupportedAbi(u16),
+    InvalidAuthoredStore(AuthoredStoreError),
+    InvalidAuthoredRule {
+        production: u32,
+        rule: u32,
+        field: &'static str,
+    },
     NonDenseId {
         entity: Entity,
         expected: u32,
@@ -1211,12 +1291,14 @@ mod tests {
 
     #[test]
     fn stale_grammar_abi_is_rejected_before_fingerprinted_artifacts_are_admitted() {
-        let mut core = one_category_core();
-        core.abi = GRAMMAR_CORE_ABI_V1;
-        assert!(matches!(
-            core.validate(),
-            Err(errors) if errors.contains(&ValidationError::UnsupportedAbi(GRAMMAR_CORE_ABI_V1))
-        ));
+        for abi in [GRAMMAR_CORE_ABI_V1, GRAMMAR_CORE_ABI_V2] {
+            let mut core = one_category_core();
+            core.abi = abi;
+            assert!(matches!(
+                core.validate(),
+                Err(errors) if errors.contains(&ValidationError::UnsupportedAbi(abi))
+            ));
+        }
     }
 
     #[test]
@@ -1261,6 +1343,7 @@ mod tests {
             tier: None,
         });
         core.productions.push(Production {
+            authored: None,
             id: ProductionId(0),
             constructor: ConstructorId(0),
             label: "Nested".into(),

@@ -333,6 +333,7 @@ mod tests {
             item = SyntaxItem::Optional(vec![item]);
         }
         grammar.productions.push(Production {
+            authored: None,
             id: ProductionId(0),
             constructor: ConstructorId(0),
             label: "Guest".into(),

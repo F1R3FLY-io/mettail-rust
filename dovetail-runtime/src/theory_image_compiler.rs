@@ -1797,6 +1797,7 @@ mod tests {
         let input_arity = u16::try_from(fields.len()).expect("small fixture arity");
         (
             Production {
+                authored: None,
                 id: ProductionId(id),
                 constructor: ConstructorId(id),
                 label: label.into(),

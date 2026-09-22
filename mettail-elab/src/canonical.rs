@@ -1510,6 +1510,7 @@ fn presentation_to_core_legacy(
             tier: None,
         });
         output.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(index as u32),
             constructor,
             label: rule.label.clone(),

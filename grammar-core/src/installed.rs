@@ -2293,6 +2293,7 @@ mod tests {
             nested = SyntaxItem::Optional(vec![nested]);
         }
         grammar.productions.push(crate::Production {
+            authored: None,
             id: crate::ProductionId(0),
             constructor: crate::ConstructorId(0),
             label: "NestedForeign".into(),

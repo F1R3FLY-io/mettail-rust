@@ -640,6 +640,7 @@ pub fn refine(current_level: &AbstractionLevel) -> Option<AbstractionLevel> {
 /// #         has_var: true,
 /// #     }],
 /// #     vec![RuleSpecInput {
+/// #         authored: None,
 /// #         label: "NumLit".to_string(),
 /// #         category: "Expr".to_string(),
 /// #         syntax: Vec::new(),

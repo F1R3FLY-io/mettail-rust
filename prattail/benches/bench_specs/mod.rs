@@ -41,6 +41,7 @@ use mettail_prattail::{
 
 fn base_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>) -> RuleSpec {
     RuleSpec {
+        authored: None,
         label: label.to_string(),
         category: category.to_string(),
         syntax,

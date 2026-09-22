@@ -1060,6 +1060,8 @@ impl Default for CategorySpec {
 /// A grammar rule specification.
 #[derive(Debug, Clone)]
 pub struct RuleSpec {
+    /// Original authored observations, when supplied by the frontend.
+    pub authored: Option<mettail_grammar_core::AuthoredRuleRef>,
     /// Constructor label (e.g., "PPar", "Add", "PZero").
     pub label: String,
     /// Category this rule belongs to.
@@ -1219,6 +1221,8 @@ mod syntax_item;
 /// PraTTaIL derives all classification flags via [`classify::classify_rule()`].
 #[derive(Debug, Clone)]
 pub struct RuleSpecInput {
+    /// Original authored observations; `None` means unavailable, not empty.
+    pub authored: Option<mettail_grammar_core::AuthoredRuleRef>,
     /// Constructor label (e.g., "PPar", "Add", "PZero").
     pub label: String,
     /// Category this rule belongs to.
@@ -1285,6 +1289,7 @@ impl LanguageSpec {
             .map(|input| {
                 let c = classify::classify_rule(&input.syntax, &input.category, &cat_names);
                 RuleSpec {
+                    authored: input.authored,
                     label: input.label,
                     category: input.category,
                     syntax: input.syntax,
@@ -1348,6 +1353,7 @@ impl RuleSpec {
         let category = category.into();
         let c = classify::classify_rule(&syntax, &category, category_names);
         RuleSpec {
+            authored: None,
             label: label.into(),
             category,
             syntax,

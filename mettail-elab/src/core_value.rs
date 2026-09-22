@@ -16,7 +16,8 @@ pub const LANGUAGE_CORE_VALUE_SCHEMA_V1: &str = "mettail-language-core-value/1";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V2: &str = "mettail-language-core-value/2";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V3: &str = "mettail-language-core-value/3";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V4: &str = "mettail-language-core-value/4";
-pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V4;
+pub const LANGUAGE_CORE_VALUE_SCHEMA_V5: &str = "mettail-language-core-value/5";
+pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V5;
 
 /// Serde's tagged structural encoding introduces a small fixed amount of
 /// framing around each semantic node. Four times the admitted DDL depth is a
@@ -474,6 +475,7 @@ mod tests {
             },
         ];
         grammar.productions = vec![Production {
+            authored: None,
             id: ProductionId(0),
             constructor: ConstructorId(0),
             label: "PBody".into(),
@@ -551,6 +553,36 @@ mod tests {
         grammar
             .capabilities
             .insert(Capability::NativeEvaluator("urn:handler:test/1".into()));
+        let mut authored = core::AuthoredRuleStore::new();
+        let label = core::AuthoredNameId(
+            authored
+                .try_push(core::AuthoredNode::Name(core::AuthoredName {
+                    spelling: "PBody".into(),
+                    equality_class: 0,
+                }))
+                .expect("authored fixture label is retained"),
+        );
+        let category = core::AuthoredNameId(
+            authored
+                .try_push(core::AuthoredNode::Name(core::AuthoredName {
+                    spelling: "Term".into(),
+                    equality_class: 1,
+                }))
+                .expect("authored fixture category is retained"),
+        );
+        let rule = core::AuthoredRuleId(
+            authored
+                .try_push(core::AuthoredNode::Rule(core::AuthoredRule {
+                    label,
+                    category,
+                    term_context: None,
+                    syntax_pattern: None,
+                    items: Vec::new(),
+                }))
+                .expect("authored fixture rule references retained names"),
+        );
+        grammar.authored = Some(authored);
+        grammar.productions[0].authored = Some(rule);
         let language = core::LanguageCoreV1::structural(grammar);
         language.validate().expect("fixture is valid");
         language
@@ -665,11 +697,55 @@ mod tests {
     }
 
     #[test]
+    fn authored_transport_structural_arm_requires_explicit_source_availability_fields() {
+        for retained in [false, true] {
+            for remove_store in [false, true] {
+                let mut language = comprehensive_language();
+                if !retained {
+                    language.grammar.authored = None;
+                    language.grammar.productions[0].authored = None;
+                }
+                let mut value = language_core_to_value(&language).expect("valid fixture encodes");
+                let RhoValue::Map(envelope) = &mut value else {
+                    unreachable!()
+                };
+                let RhoValue::Map(language) = envelope.get_mut("core").expect("core field exists")
+                else {
+                    unreachable!()
+                };
+                let RhoValue::Map(grammar) =
+                    language.get_mut("grammar").expect("grammar field exists")
+                else {
+                    unreachable!()
+                };
+                if remove_store {
+                    assert!(grammar.remove("authored").is_some());
+                } else {
+                    let RhoValue::List(productions) = grammar
+                        .get_mut("productions")
+                        .expect("productions field exists")
+                    else {
+                        unreachable!()
+                    };
+                    let RhoValue::Map(production) = &mut productions[0] else {
+                        unreachable!()
+                    };
+                    assert!(production.remove("authored").is_some());
+                }
+                let error = decode_language_core_value(&value)
+                    .expect_err("missing authored field is rejected");
+                assert!(error.message.contains("missing field `authored`"), "{error:?}");
+            }
+        }
+    }
+
+    #[test]
     fn structural_arm_rejects_every_stale_identity_before_reinterpretation() {
         for schema in [
             LANGUAGE_CORE_VALUE_SCHEMA_V1,
             LANGUAGE_CORE_VALUE_SCHEMA_V2,
             LANGUAGE_CORE_VALUE_SCHEMA_V3,
+            LANGUAGE_CORE_VALUE_SCHEMA_V4,
         ] {
             let mut old_schema = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_schema else {
@@ -698,19 +774,21 @@ mod tests {
             assert!(error.message.contains("UnsupportedLanguageAbi"));
         }
 
-        let mut old_grammar = language_core_to_value(&comprehensive_language()).unwrap();
-        let RhoValue::Map(envelope) = &mut old_grammar else {
-            unreachable!()
-        };
-        let RhoValue::Map(language) = envelope.get_mut("core").unwrap() else {
-            unreachable!()
-        };
-        let RhoValue::Map(grammar) = language.get_mut("grammar").unwrap() else {
-            unreachable!()
-        };
-        grammar.insert("abi".into(), RhoValue::Integer(core::GRAMMAR_CORE_ABI_V1.into()));
-        let error = decode_language_core_value(&old_grammar).unwrap_err();
-        assert!(error.message.contains("UnsupportedAbi"));
+        for abi in [core::GRAMMAR_CORE_ABI_V1, core::GRAMMAR_CORE_ABI_V2] {
+            let mut old_grammar = language_core_to_value(&comprehensive_language()).unwrap();
+            let RhoValue::Map(envelope) = &mut old_grammar else {
+                unreachable!()
+            };
+            let RhoValue::Map(language) = envelope.get_mut("core").unwrap() else {
+                unreachable!()
+            };
+            let RhoValue::Map(grammar) = language.get_mut("grammar").unwrap() else {
+                unreachable!()
+            };
+            grammar.insert("abi".into(), RhoValue::Integer(abi.into()));
+            let error = decode_language_core_value(&old_grammar).unwrap_err();
+            assert!(error.message.contains("UnsupportedAbi"));
+        }
 
         for abi in [core::THEORY_CORE_ABI_V1, core::THEORY_CORE_ABI_V2, core::THEORY_CORE_ABI_V3] {
             let mut old_theory = language_core_to_value(&comprehensive_language()).unwrap();

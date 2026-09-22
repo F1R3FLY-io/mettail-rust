@@ -327,6 +327,7 @@ mod tests {
     fn deep_dynamic_syntax_reflects_on_a_small_native_stack() {
         let mut core = GrammarCoreV1::new("Deep");
         core.productions.push(Production {
+            authored: None,
             id: ProductionId(0),
             constructor: ConstructorId(0),
             label: "Node".into(),

@@ -395,6 +395,7 @@ fn test_refinement_downcast_labels_are_dead_rule_ignored() {
         ],
         vec![
             crate::RuleSpecInput {
+                authored: None,
                 label: "IntToPosInt".to_string(),
                 category: "PosInt".to_string(),
                 syntax: vec![SyntaxItemSpec::NonTerminal {
@@ -411,6 +412,7 @@ fn test_refinement_downcast_labels_are_dead_rule_ignored() {
                 is_auto_injected: false,
             },
             crate::RuleSpecInput {
+                authored: None,
                 label: "OtherToPosInt".to_string(),
                 category: "PosInt".to_string(),
                 syntax: vec![SyntaxItemSpec::NonTerminal {

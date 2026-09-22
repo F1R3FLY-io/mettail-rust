@@ -247,6 +247,7 @@ fn test_first_set_nullable() {
 /// Helper to create a minimal RuleSpec for testing FOLLOW set computation.
 fn make_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>, is_infix: bool) -> RuleSpec {
     RuleSpec {
+        authored: None,
         label: label.to_string(),
         category: category.to_string(),
         syntax,

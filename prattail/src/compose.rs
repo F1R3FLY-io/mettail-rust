@@ -297,6 +297,7 @@ fn merge_rules(
     for rule in &spec_a.rules {
         labels.insert(rule.label.clone(), rule.category.clone());
         result.push(RuleSpecInput {
+            authored: rule.authored.clone(),
             label: rule.label.clone(),
             category: rule.category.clone(),
             syntax: rule.syntax.clone(),
@@ -322,6 +323,7 @@ fn merge_rules(
         }
         labels.insert(rule.label.clone(), rule.category.clone());
         result.push(RuleSpecInput {
+            authored: rule.authored.clone(),
             label: rule.label.clone(),
             category: rule.category.clone(),
             syntax: rule.syntax.clone(),

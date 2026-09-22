@@ -159,6 +159,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
         });
         syntax.push(SyntaxItemSpec::Terminal(close));
         inputs.push(RuleSpecInput {
+            authored: None,
             label: label.to_string(),
             category: lt.name.to_string(),
             syntax,
@@ -668,6 +669,7 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> Result<RuleSpecInpu
     };
 
     Ok(RuleSpecInput {
+        authored: None,
         label: rule.label.to_string(),
         category: rule.category.to_string(),
         syntax,

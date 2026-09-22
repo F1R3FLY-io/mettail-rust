@@ -2239,6 +2239,7 @@ mod tests {
             tier: None,
         });
         grammar.productions.push(Production {
+            authored: None,
             id: ProductionId(0),
             constructor: ConstructorId(0),
             label: "Int".into(),

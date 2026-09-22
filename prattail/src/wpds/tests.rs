@@ -14,6 +14,7 @@ fn calculator_spec() -> LanguageSpec {
 
     let inputs = vec![
         RuleSpecInput {
+            authored: None,
             label: "Num".to_string(),
             category: "Expr".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("INTEGER".to_string())],
@@ -27,6 +28,7 @@ fn calculator_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "Add".to_string(),
             category: "Expr".to_string(),
             syntax: vec![
@@ -74,6 +76,7 @@ fn typed_grammar_spec() -> LanguageSpec {
 
     let inputs = vec![
         RuleSpecInput {
+            authored: None,
             label: "Num".to_string(),
             category: "Expr".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("INTEGER".to_string())],
@@ -87,6 +90,7 @@ fn typed_grammar_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "Add".to_string(),
             category: "Expr".to_string(),
             syntax: vec![
@@ -110,6 +114,7 @@ fn typed_grammar_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "Cast".to_string(),
             category: "Expr".to_string(),
             syntax: vec![
@@ -134,6 +139,7 @@ fn typed_grammar_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "IntType".to_string(),
             category: "Type".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("int".to_string())],
@@ -147,6 +153,7 @@ fn typed_grammar_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "FloatType".to_string(),
             category: "Type".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("float".to_string())],
@@ -184,6 +191,7 @@ fn nested_zip_collection_spec() -> LanguageSpec {
 
     let inputs = vec![
         RuleSpecInput {
+            authored: None,
             label: "PZero".to_string(),
             category: "Proc".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("0".to_string())],
@@ -197,6 +205,7 @@ fn nested_zip_collection_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "TaggedInputs".to_string(),
             category: "Proc".to_string(),
             syntax: vec![
@@ -241,6 +250,7 @@ fn nested_zip_collection_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "NQuote".to_string(),
             category: "Name".to_string(),
             syntax: vec![
@@ -286,6 +296,7 @@ fn orphan_grammar_spec() -> LanguageSpec {
 
     let inputs = vec![
         RuleSpecInput {
+            authored: None,
             label: "Num".to_string(),
             category: "Expr".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("INTEGER".to_string())],
@@ -299,6 +310,7 @@ fn orphan_grammar_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "OrphanRule".to_string(),
             category: "Orphan".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("orphan".to_string())],
@@ -913,6 +925,7 @@ fn mutual_recursion_spec() -> LanguageSpec {
 
     let inputs = vec![
         RuleSpecInput {
+            authored: None,
             label: "Var".to_string(),
             category: "Expr".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("x".to_string())],
@@ -926,6 +939,7 @@ fn mutual_recursion_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "LetIn".to_string(),
             category: "Expr".to_string(),
             syntax: vec![
@@ -949,6 +963,7 @@ fn mutual_recursion_spec() -> LanguageSpec {
             is_auto_injected: false,
         },
         RuleSpecInput {
+            authored: None,
             label: "LetDecl".to_string(),
             category: "Decl".to_string(),
             syntax: vec![
@@ -1363,6 +1378,7 @@ fn test_cek_bijection_rd_position_tracking() {
     }];
 
     let inputs = vec![RuleSpecInput {
+        authored: None,
         label: "LetIn".to_string(),
         category: "Expr".to_string(),
         syntax: vec![
@@ -1434,6 +1450,7 @@ fn test_cek_bijection_cross_category_nt_skipped() {
     ];
 
     let inputs = vec![RuleSpecInput {
+        authored: None,
         label: "Apply".to_string(),
         category: "Expr".to_string(),
         syntax: vec![

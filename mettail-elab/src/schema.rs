@@ -4788,6 +4788,7 @@ impl LanguageSchema {
             });
             let classification = classify_production(&syntax, &term.context);
             output.productions.push(core::Production {
+                authored: None,
                 id: core::ProductionId(index as u32),
                 constructor,
                 label: term.label.clone(),

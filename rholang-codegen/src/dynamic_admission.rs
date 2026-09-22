@@ -1366,6 +1366,7 @@ mod tests {
         ];
         core.productions = vec![
             Production {
+                authored: None,
                 id: ProductionId(0),
                 constructor: ConstructorId(0),
                 label: "Zero".into(),
@@ -1377,6 +1378,7 @@ mod tests {
                 provenance: None,
             },
             Production {
+                authored: None,
                 id: ProductionId(1),
                 constructor: ConstructorId(1),
                 label: "Wrap".into(),
@@ -1391,6 +1393,7 @@ mod tests {
                 provenance: None,
             },
             Production {
+                authored: None,
                 id: ProductionId(2),
                 constructor: ConstructorId(2),
                 label: "One".into(),

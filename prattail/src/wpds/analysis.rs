@@ -329,6 +329,7 @@ pub fn analyze_wpds_from_bundle(
     let inputs: Vec<crate::RuleSpecInput> = all_syntax
         .iter()
         .map(|(label, category, syntax)| crate::RuleSpecInput {
+            authored: None,
             label: label.clone(),
             category: category.clone(),
             syntax: syntax.clone(),

@@ -474,6 +474,7 @@ mod wfst_lexer_weight_tests {
             types,
             vec![
                 RuleSpecInput {
+                    authored: None,
                     label: "NumLit".to_string(),
                     category: "Int".to_string(),
                     syntax: vec![],
@@ -487,6 +488,7 @@ mod wfst_lexer_weight_tests {
                     is_auto_injected: false,
                 },
                 RuleSpecInput {
+                    authored: None,
                     label: "Add".to_string(),
                     category: "Int".to_string(),
                     syntax: vec![

@@ -32,6 +32,7 @@ fn make_simple_spec() -> LanguageSpec {
         }],
         rules: vec![
             RuleSpec {
+                authored: None,
                 label: "Lit".to_string(),
                 category: "Expr".to_string(),
                 syntax: vec![SyntaxItemSpec::Terminal("integer".to_string())],
@@ -59,6 +60,7 @@ fn make_simple_spec() -> LanguageSpec {
                 is_auto_injected: false,
             },
             RuleSpec {
+                authored: None,
                 label: "Add".to_string(),
                 category: "Expr".to_string(),
                 syntax: vec![

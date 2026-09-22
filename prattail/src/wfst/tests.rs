@@ -521,6 +521,7 @@ fn test_beam_width_from_language_spec() {
             has_var: true,
         }],
         vec![RuleSpecInput {
+            authored: None,
             label: "Lit".to_string(),
             category: "Expr".to_string(),
             syntax: vec![SyntaxItemSpec::Terminal("0".to_string())],

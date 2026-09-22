@@ -53,6 +53,7 @@ fn grammar(associativity: core::Associativity, power: Option<u16>) -> core::Gram
     {
         grammar.reductions.push(reduction(0, id as u32, arity));
         grammar.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(id as u32),
             constructor: core::ConstructorId(id as u32),
             label: label.into(),
@@ -143,6 +144,7 @@ fn postfix_filter_retains_independent_readings_with_exact_payload_cost_and_rank(
     for id in [6, 7] {
         before.reductions.push(reduction(0, id, 0));
         before.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(id),
             constructor: core::ConstructorId(id),
             label: format!("Independent{id}"),

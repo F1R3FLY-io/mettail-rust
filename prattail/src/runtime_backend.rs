@@ -291,6 +291,7 @@ mod tests {
         grammar.modes[0].token_ids = vec![core::TokenId(0), core::TokenId(1)];
         grammar.reductions.push(reduction(0, 0, 1));
         grammar.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(0),
             constructor: core::ConstructorId(0),
             label: "Collection".into(),
@@ -328,6 +329,7 @@ mod tests {
         grammar.reductions = vec![reduction(0, 0, 1), reduction(1, 1, 1)];
         grammar.productions = vec![
             core::Production {
+                authored: None,
                 id: core::ProductionId(0),
                 constructor: core::ConstructorId(0),
                 label: "Map".into(),
@@ -346,6 +348,7 @@ mod tests {
                 provenance: None,
             },
             core::Production {
+                authored: None,
                 id: core::ProductionId(1),
                 constructor: core::ConstructorId(1),
                 label: "Atom".into(),
@@ -406,6 +409,7 @@ mod tests {
         grammar.categories.push(category(0, "Root", true));
         grammar.reductions.push(reduction(0, 0, 1));
         grammar.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(0),
             constructor: core::ConstructorId(0),
             label: "Guest".into(),
@@ -454,6 +458,7 @@ mod tests {
         ];
         grammar.reductions.push(reduction(0, 0, 0));
         grammar.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(0),
             constructor: core::ConstructorId(0),
             label: "Enter".into(),
@@ -517,6 +522,7 @@ mod tests {
             tier: None,
         });
         grammar.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(0),
             constructor: core::ConstructorId(0),
             label: "Int".into(),
@@ -712,6 +718,7 @@ mod tests {
         grammar.modes[0].token_ids = vec![core::TokenId(0), core::TokenId(1), core::TokenId(2)];
         grammar.reductions.push(reduction(0, 0, 2));
         grammar.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(0),
             constructor: core::ConstructorId(0),
             label: "Pair".into(),
@@ -966,6 +973,7 @@ mod tests {
                 .reductions
                 .push(reduction(0, id as u32, path.len() as u16));
             grammar.productions.push(core::Production {
+                authored: None,
                 id: core::ProductionId(id as u32),
                 constructor: core::ConstructorId(id as u32),
                 label: format!("Path{id}"),
@@ -1120,6 +1128,7 @@ mod tests {
         grammar.categories.push(category(0, "Loop", true));
         grammar.reductions.push(reduction(0, 0, 1));
         grammar.productions.push(core::Production {
+            authored: None,
             id: core::ProductionId(0),
             constructor: core::ConstructorId(0),
             label: "Loop".into(),
@@ -1336,6 +1345,7 @@ mod tests {
         grammar.reductions = vec![reduction(0, 0, 2), reduction(1, 1, 0), reduction(2, 2, 0)];
         grammar.productions = vec![
             core::Production {
+                authored: None,
                 id: core::ProductionId(0),
                 constructor: core::ConstructorId(0),
                 label: "Pair".into(),
@@ -1357,6 +1367,7 @@ mod tests {
                 provenance: None,
             },
             core::Production {
+                authored: None,
                 id: core::ProductionId(1),
                 constructor: core::ConstructorId(1),
                 label: "LeftUnit".into(),
@@ -1368,6 +1379,7 @@ mod tests {
                 provenance: None,
             },
             core::Production {
+                authored: None,
                 id: core::ProductionId(2),
                 constructor: core::ConstructorId(2),
                 label: "RightUnit".into(),
