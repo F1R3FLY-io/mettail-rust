@@ -15,7 +15,107 @@
 use indexmap::IndexMap;
 use std::collections::BTreeSet;
 
-use super::binder::{lookup_src_idx, required_top_cat_after_position, BinderPosition};
+use super::binder::{
+    binder_initial_body_cat, lookup_src_idx, required_top_cat_after_position, BinderPosition,
+    BinderShape,
+};
+
+/// The four observations member discovery makes of an existing atomic classifier.
+///
+/// This is a projection of the classifier's result, not another classifier.
+/// Retain the original classifier call even for ignored result kinds; its
+/// internal callbacks and errors are part of the existing derivation boundary.
+pub enum PrefixAtomicObservation {
+    /// A cross-category prefix is handled by its own dispatch path.
+    CrossCatPrefixUnary,
+    /// The original trigger and trailing literals of a nullary run.
+    NullaryLiteralRun {
+        trigger: String,
+        trailing_literals: Vec<String>,
+    },
+    /// A cross-category projection is handled by its own dispatch path.
+    CrossCatProjection,
+    /// Continue with the existing binder classifier.
+    Other,
+}
+
+/// Discover original prefix members in rule order through borrowed rule views.
+///
+/// Atomic classification runs first. Nullary success bypasses binder and
+/// leading-literal callbacks; only a successful binder classification reads
+/// the leading literal and applies the original parenthesis exclusion.
+/// Category selection and spine items reuse the original shared helpers.
+/// `PrefixDiscoveryProjection.v` verifies this callback schedule and complete
+/// member outputs. Callers retain admission and classifier responsibilities.
+pub fn discover_prefix_members_with<R>(
+    categories: &[String],
+    category_src_idx: u16,
+    rules: &[R],
+    prefix_bp_map: &std::collections::HashMap<(u16, u16), u8>,
+    mut classify_atomic: impl FnMut(&R) -> PrefixAtomicObservation,
+    mut classify_binder: impl FnMut(&R) -> Option<BinderShape>,
+    mut leading_literal: impl for<'a> FnMut(&'a R) -> Option<&'a str>,
+) -> Vec<(String, CandidateMember)> {
+    let mut out = Vec::new();
+    for (rule_i, rule) in rules.iter().enumerate() {
+        let rule_idx = rule_i as u16;
+        match classify_atomic(rule) {
+            PrefixAtomicObservation::CrossCatPrefixUnary => continue,
+            PrefixAtomicObservation::NullaryLiteralRun { trigger, trailing_literals, .. } => {
+                let items: Vec<SpineItem> = trailing_literals
+                    .iter()
+                    .map(|text| SpineItem::Literal {
+                        text: text.clone(),
+                        required_top_cat: None,
+                    })
+                    .collect();
+                let total_positions = items.len();
+                out.push((
+                    trigger.clone(),
+                    CandidateMember {
+                        kind: MemberKind::Nullary,
+                        rule_idx,
+                        items,
+                        truncated: false,
+                        total_positions,
+                        body_src_idx: None,
+                        mixfix_coords: Vec::new(),
+                    },
+                ));
+                continue;
+            },
+            PrefixAtomicObservation::CrossCatProjection => continue,
+            _ => {},
+        }
+        let Some(shape) = classify_binder(rule) else {
+            continue;
+        };
+        let Some(trigger) = leading_literal(rule) else {
+            continue;
+        };
+        if trigger == "(" {
+            continue;
+        }
+        let body_src_idx = binder_initial_body_cat(&shape)
+            .and_then(|name| lookup_src_idx(name, categories))
+            .unwrap_or(category_src_idx);
+        let (items, truncated) =
+            binder_items(&shape.positions, category_src_idx, rule_idx, categories, prefix_bp_map);
+        out.push((
+            trigger.to_owned(),
+            CandidateMember {
+                kind: MemberKind::Binder,
+                rule_idx,
+                items,
+                truncated,
+                total_positions: shape.positions.len(),
+                body_src_idx: Some(body_src_idx),
+                mixfix_coords: Vec::new(),
+            },
+        ));
+    }
+    out
+}
 
 /// Map a binder member's `BinderShape.positions` to its mergeable
 /// [`SpineItem`] prefix. Returns `(items, truncated)`.

@@ -99,6 +99,7 @@ theories/FactoringForestWalkRelocation.v
 theories/PrefixFactoringProjection.v
 theories/ForkEmissionAccumulatorProjection.v
 theories/PrefixMemberDescriptorRelocation.v
+theories/PrefixDiscoveryProjection.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
 theories/CartesianCursor.v

@@ -6,6 +6,49 @@
 
 use mettail_ast::types::CollectionType;
 
+/// Build the original unary-prefix map over the original per-category rule rows.
+///
+/// The caller prepares the existing binding-power table once, including for
+/// empty rows. Metadata is read only after the existing unary classifier
+/// accepts a rule. This preserves owner indices, casts, insertion order and
+/// overwrite semantics; binding power still comes from
+/// [`crate::binding_power::compute_prefix_bp`], not a new formula.
+/// `PrefixDiscoveryProjection.v` models the original scheduling boundary.
+pub fn build_prefix_bp_map_with<R>(
+    per_cat: &[Vec<R>],
+    bp_table: &crate::binding_power::BindingPowerTable,
+    mut unary_eligible: impl FnMut(&R) -> bool,
+    mut prefix_metadata: impl FnMut(&R) -> (String, Option<u8>),
+) -> std::collections::HashMap<(u16, u16), u8> {
+    let mut map = std::collections::HashMap::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        for (rule_i, rule) in rules.iter().enumerate() {
+            // NOTE (measured 2026-07-24, official-Rholang `new` alignment):
+            // an explicit `prefix(N)` is NOT honoured for binder rules, and
+            // wiring it in here does not give a binder rule's trailing
+            // same-category `ParamParse` a Pratt `min_bp` floor. A trailing
+            // OPEN-ENDED body (`… "in" p` with no closing delimiter) stops at
+            // the FIRST infix operator regardless of the emitted `cur_bp` —
+            // `new x in 1 + 2` realizes `(new x in 1) + 2` at `cur_bp` 0 AND
+            // at `cur_bp` 3 alike. Reproducing official Rholang's `Proc1`-level
+            // body therefore needs real work in the walker's trailing-operand
+            // path, not a binding-power annotation; see the campaign's §17.10-B1
+            // for the scoped follow-up. Rholang's `PNew` consequently keeps a
+            // DELIMITED body (`… "in" "{" p "}"`), which needs no floor.
+            if unary_eligible(rule) {
+                let (category, explicit_prefix_bp) = prefix_metadata(rule);
+                let bp = crate::binding_power::compute_prefix_bp(
+                    &category,
+                    explicit_prefix_bp,
+                    bp_table,
+                );
+                map.insert((cat_i as u16, rule_i as u16), bp);
+            }
+        }
+    }
+    map
+}
+
 /// Classification of a multi-step rule.
 #[derive(Debug, Clone)]
 pub struct BinderShape {

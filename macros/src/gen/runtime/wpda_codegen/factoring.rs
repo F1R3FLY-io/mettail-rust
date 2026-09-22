@@ -119,23 +119,21 @@ use mettail_ast::language::LanguageDef;
 
 #[cfg(test)]
 use super::binder::BinderPosition;
-use super::binder::{
-    binder_initial_body_cat, build_prefix_bp_map, classify_binder_in, lookup_src_idx,
-};
+use super::binder::{build_prefix_bp_map, classify_binder_in};
 use super::prefix::{classify_atomic, AtomicShape};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Item model — the EMITTED-ACTION-SHAPE alphabet (plan §2 merge criterion).
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub(crate) use mettail_prattail::wpda_rule_analysis::factoring::{
-    binder_items, build_tree, flatten_forest, mixfix_spine_arm_coords, CandidateMember,
-    CategoryFactoring, GroupMember, IneligibleGroup, IneligibleReason, MemberCommit, MemberKind,
-    SingletonMember, SingletonReason, SpineItem, SpineTree, LIMIT_REFUSAL, SPINE_RULE_BASE,
-};
 #[cfg(test)]
 use mettail_prattail::wpda_rule_analysis::factoring::{
-    finalize_leaf, FactoringBucket, SpinePosMap,
+    binder_items, finalize_leaf, FactoringBucket, SpinePosMap,
+};
+pub(crate) use mettail_prattail::wpda_rule_analysis::factoring::{
+    build_tree, flatten_forest, mixfix_spine_arm_coords, CandidateMember, CategoryFactoring,
+    GroupMember, IneligibleGroup, IneligibleReason, MemberCommit, MemberKind, SingletonMember,
+    SingletonReason, SpineItem, SpineTree, LIMIT_REFUSAL, SPINE_RULE_BASE,
 };
 
 #[cfg(test)]
@@ -167,67 +165,26 @@ fn discover_members(
     rules: &[GrammarRule],
     prefix_bp_map: &std::collections::HashMap<(u16, u16), u8>,
 ) -> Vec<(String, CandidateMember)> {
-    let mut out = Vec::new();
-    for (rule_i, rule) in rules.iter().enumerate() {
-        let rule_idx = rule_i as u16;
-        match classify_atomic(rule, language) {
-            AtomicShape::CrossCatPrefixUnary { .. } => continue,
+    use mettail_prattail::wpda_rule_analysis::factoring::PrefixAtomicObservation;
+    mettail_prattail::wpda_rule_analysis::factoring::discover_prefix_members_with(
+        categories,
+        category_src_idx,
+        rules,
+        prefix_bp_map,
+        |rule| match classify_atomic(rule, language) {
+            AtomicShape::CrossCatPrefixUnary { .. } => PrefixAtomicObservation::CrossCatPrefixUnary,
             AtomicShape::NullaryLiteralRun { trigger, trailing_literals, .. } => {
-                let items: Vec<SpineItem> = trailing_literals
-                    .iter()
-                    .map(|text| SpineItem::Literal {
-                        text: text.clone(),
-                        required_top_cat: None,
-                    })
-                    .collect();
-                let total_positions = items.len();
-                out.push((
-                    trigger.clone(),
-                    CandidateMember {
-                        kind: MemberKind::Nullary,
-                        rule_idx,
-                        items,
-                        truncated: false,
-                        total_positions,
-                        body_src_idx: None,
-                        mixfix_coords: Vec::new(),
-                    },
-                ));
-                continue;
+                PrefixAtomicObservation::NullaryLiteralRun { trigger, trailing_literals }
             },
-            AtomicShape::CrossCatProjection { .. } => continue,
-            _ => {},
-        }
-        let Some(shape) = classify_binder_in(rule, language) else {
-            continue;
-        };
-        let Some(SyntaxExpr::Literal(trigger)) =
-            rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
-        else {
-            continue;
-        };
-        if trigger == "(" {
-            continue;
-        }
-        let body_src_idx = binder_initial_body_cat(&shape)
-            .and_then(|name| lookup_src_idx(name, categories))
-            .unwrap_or(category_src_idx);
-        let (items, truncated) =
-            binder_items(&shape.positions, category_src_idx, rule_idx, categories, prefix_bp_map);
-        out.push((
-            trigger.clone(),
-            CandidateMember {
-                kind: MemberKind::Binder,
-                rule_idx,
-                items,
-                truncated,
-                total_positions: shape.positions.len(),
-                body_src_idx: Some(body_src_idx),
-                mixfix_coords: Vec::new(),
-            },
-        ));
-    }
-    out
+            AtomicShape::CrossCatProjection { .. } => PrefixAtomicObservation::CrossCatProjection,
+            _ => PrefixAtomicObservation::Other,
+        },
+        |rule| classify_binder_in(rule, language),
+        |rule| match rule.syntax_pattern.as_ref().and_then(|sp| sp.first()) {
+            Some(SyntaxExpr::Literal(trigger)) => Some(trigger.as_str()),
+            _ => None,
+        },
+    )
 }
 
 #[cfg(test)]

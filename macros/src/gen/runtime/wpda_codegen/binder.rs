@@ -25,7 +25,6 @@ use mettail_ast::grammar::{DelimitedRegionKind, GrammarRule, PatternOp, SyntaxEx
 use mettail_ast::language::CollectionDelimiters;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::{CollectionType, TypeExpr};
-use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashMap;
@@ -186,28 +185,12 @@ pub(crate) fn build_prefix_bp_map(
     per_cat: &[Vec<GrammarRule>],
 ) -> HashMap<(u16, u16), u8> {
     let bp_table = super::infix::build_bp_table(language);
-    let mut map: HashMap<(u16, u16), u8> = HashMap::new();
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        for (rule_i, rule) in rules.iter().enumerate() {
-            // NOTE (measured 2026-07-24, official-Rholang `new` alignment):
-            // an explicit `prefix(N)` is NOT honoured for binder rules, and
-            // wiring it in here does not give a binder rule's trailing
-            // same-category `ParamParse` a Pratt `min_bp` floor. A trailing
-            // OPEN-ENDED body (`… "in" p` with no closing delimiter) stops at
-            // the FIRST infix operator regardless of the emitted `cur_bp` —
-            // `new x in 1 + 2` realizes `(new x in 1) + 2` at `cur_bp` 0 AND
-            // at `cur_bp` 3 alike. Reproducing official Rholang's `Proc1`-level
-            // body therefore needs real work in the walker's trailing-operand
-            // path, not a binding-power annotation; see the campaign's §17.10-B1
-            // for the scoped follow-up. Rholang's `PNew` consequently keeps a
-            // DELIMITED body (`… "in" "{" p "}"`), which needs no floor.
-            if classify_unary_prefix_shape(rule).is_some() {
-                let bp = compute_prefix_bp(&rule.category.to_string(), rule.prefix_bp, &bp_table);
-                map.insert((cat_i as u16, rule_i as u16), bp);
-            }
-        }
-    }
-    map
+    mettail_prattail::wpda_rule_analysis::binder::build_prefix_bp_map_with(
+        per_cat,
+        &bp_table,
+        |rule| classify_unary_prefix_shape(rule).is_some(),
+        |rule| (rule.category.to_string(), rule.prefix_bp),
+    )
 }
 
 #[cfg(test)]
