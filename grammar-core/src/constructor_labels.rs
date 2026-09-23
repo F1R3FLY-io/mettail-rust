@@ -6,6 +6,15 @@
 
 use crate::NativeType;
 
+/// A positive source observation, not a recovered Rust type or a cached label.
+/// Canonical opaque carriers expose no Rust wrapper spelling. Their registry
+/// identity is deliberately absent from this constructor-selection interface.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LiteralNativeObservation {
+    ExactNativeType(NativeType),
+    CanonicalOpaque,
+}
+
 /// Apply the original first-scalar uppercase rule, then construct the Var label.
 /// The constructor receives the complete uppercase prefix, without truncation.
 pub fn generate_var_label<Label>(category: &str, construct: impl FnOnce(String) -> Label) -> Label {
@@ -25,6 +34,23 @@ pub fn generate_literal_label<Label>(
     native_type: impl FnOnce() -> NativeType,
     construct: impl FnOnce(&'static str) -> Label,
 ) -> Label {
+    generate_literal_label_observed(
+        is_byte_vector,
+        || LiteralNativeObservation::ExactNativeType(native_type()),
+        construct,
+    )
+}
+
+/// Reuse the original label selector for exact native observations and an
+/// explicitly opaque canonical carrier. Byte vectors still suppress the
+/// observation callback; only the chosen constructor is invoked. Opaque means
+/// the generic literal constructor, not an inferred `NativeType::Other` string.
+/// This interface does not establish native value or decoder equivalence.
+pub fn generate_literal_label_observed<Label>(
+    is_byte_vector: impl FnOnce() -> bool,
+    native_type: impl FnOnce() -> LiteralNativeObservation,
+    construct: impl FnOnce(&'static str) -> Label,
+) -> Label {
     // ★ The BYTE carrier is asked FIRST, because `NativeType` cannot see it.
     // `NativeType::from_syn_type` classifies by the last path segment, so `Vec<u8>` and
     // `Vec<Proc>` are both `VecCollection` and would both be labelled `ListLit`. A `Vec<u8>` is
@@ -35,7 +61,10 @@ pub fn generate_literal_label<Label>(
     if is_byte_vector() {
         return construct("BytesLit");
     }
-    let nt = native_type();
+    let nt = match native_type() {
+        LiteralNativeObservation::ExactNativeType(native) => native,
+        LiteralNativeObservation::CanonicalOpaque => return construct("Lit"),
+    };
     // Group integer-like (including `CanonicalBigInt`) before narrower classifiers
     // so `is_integer()` correctly covers arbitrary-precision ints.
     if nt.is_integer() {
@@ -80,6 +109,103 @@ pub fn generate_literal_label<Label>(
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn observed_constructor_labels_preserve_every_original_native_case() {
+        use NativeType::*;
+        for (native, expected) in [
+            (Int8, "NumLit"),
+            (Int16, "NumLit"),
+            (Int32, "NumLit"),
+            (Int64, "NumLit"),
+            (Int128, "NumLit"),
+            (Isize, "NumLit"),
+            (UInt8, "NumLit"),
+            (UInt16, "NumLit"),
+            (UInt32, "NumLit"),
+            (UInt64, "NumLit"),
+            (UInt128, "NumLit"),
+            (Usize, "NumLit"),
+            (CanonicalBigInt, "NumLit"),
+            (Float32, "FloatLit"),
+            (Float64, "FloatLit"),
+            (Bool, "BoolLit"),
+            (Str, "StringLit"),
+            (CanonicalBigRat, "RatLit"),
+            (CanonicalFixedPoint, "FixedLit"),
+            (VecCollection, "ListLit"),
+            (HashBagCollection, "BagLit"),
+            (HashSetCollection, "BagLit"),
+            (HashMapLitCollection, "MapLit"),
+            (HashMapCollection, "MapLit"),
+            (Other("HashSetLit".into()), "SetLit"),
+            (Other("PathMapLit".into()), "PathmapLit"),
+            (Other("std::HashSetLit".into()), "Lit"),
+            (Other("i32".into()), "Lit"),
+            (Other("opaque".into()), "Lit"),
+        ] {
+            let trace = RefCell::new(Vec::new());
+            let actual = generate_literal_label_observed(
+                || {
+                    trace.borrow_mut().push("byte");
+                    false
+                },
+                || {
+                    trace.borrow_mut().push("native");
+                    LiteralNativeObservation::ExactNativeType(native.clone())
+                },
+                |label| {
+                    trace.borrow_mut().push("construct");
+                    label
+                },
+            );
+            assert_eq!(actual, expected, "{native:?}");
+            assert_eq!(*trace.borrow(), ["byte", "native", "construct"]);
+            assert_eq!(generate_literal_label(|| false, || native, |label| label), expected);
+        }
+    }
+
+    #[test]
+    fn observed_byte_constructor_does_not_request_native_or_opaque_observation() {
+        let calls = std::cell::Cell::new(0);
+        let result = generate_literal_label_observed(
+            || true,
+            || panic!("byte constructor must not request a native observation"),
+            |label| {
+                calls.set(calls.get() + 1);
+                Err::<(), _>(label)
+            },
+        );
+        assert_eq!(result, Err("BytesLit"));
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn canonical_opaque_constructor_keeps_order_and_exact_result() {
+        for fail in [false, true] {
+            let trace = RefCell::new(Vec::new());
+            let result = generate_literal_label_observed(
+                || {
+                    trace.borrow_mut().push("byte");
+                    false
+                },
+                || {
+                    trace.borrow_mut().push("opaque");
+                    LiteralNativeObservation::CanonicalOpaque
+                },
+                |label| {
+                    trace.borrow_mut().push(label);
+                    if fail {
+                        Err(label)
+                    } else {
+                        Ok(label)
+                    }
+                },
+            );
+            assert_eq!(result, if fail { Err("Lit") } else { Ok("Lit") });
+            assert_eq!(*trace.borrow(), ["byte", "opaque", "Lit"]);
+        }
+    }
 
     #[test]
     fn shared_constructor_label_byte_probe_suppresses_native_callback() {

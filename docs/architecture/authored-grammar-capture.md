@@ -462,6 +462,22 @@ use the first Unicode scalar's full uppercase expansion, followed by `Var`;
 they do not truncate that expansion to one byte or character. For example,
 `ßuffix` produces `SSVar`.
 
+The observation-based entrypoint distinguishes `ExactNativeType` from
+`CanonicalOpaque`. Exact observations enter the same original native match;
+the existing macro API is a wrapper around that entrypoint. A canonical
+external carrier exposes no Rust wrapper spelling, so its positive opaque
+observation selects the generic `Lit` constructor without inventing an
+`Other` string or inspecting its registry identifier. Opaque is not a synonym
+for a missing observation. The byte-vector probe still precedes and can skip
+either observation, and the selected constructor retains its result or error.
+
+The [opaque-label refinement model](../../formal/rocq/prattail_wpda_runtime/theories/CanonicalOpaqueLabelProjection.v)
+proves exact preservation for the existing native path and only label/outcome
+equivalence between opaque input and genuinely generic `Other` cases.
+`HashSetLit` and `PathMapLit` remain distinct. This interface is not yet a claim
+that runtime declaration capture supplies these observations; their retained
+metadata, admission, and versioned transport are separate integration boundaries.
+
 The [constructor-label model](../../formal/rocq/prattail_wpda_runtime/theories/ConstructorLabelProjection.v)
 preserves the lazy observation and constructor schedule. Its scope is label
 selection, not decoder equivalence, serialized native metadata, allocation
