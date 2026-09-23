@@ -2906,6 +2906,10 @@ mod native_first_descriptor_baselines;
 mod atomic_prefix_descriptor_baselines;
 
 #[cfg(test)]
+#[path = "../../../../tests/support/prefix_bucket_driver_baselines.rs"]
+mod prefix_bucket_driver_baselines;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use mettail_ast::grammar::{
