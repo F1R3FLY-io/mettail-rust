@@ -116,6 +116,7 @@ theories/RetainedFamilyScheduler.v
 theories/RetainedFamilySchedulerExamples.v
 theories/LazyPackingCursor.v
 theories/ReconstructionWorkBudget.v
+theories/AuthoredRuntimeCaptureAdmission.v
 theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.
