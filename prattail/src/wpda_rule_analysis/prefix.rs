@@ -1,16 +1,364 @@
-//! Original unified prefix bucket and initiating-row derivation.
+//! Original FIRST, unified prefix bucket, and initiating-row derivation.
 //!
 //! Token quotation stays in the macro adapter. These helpers retain the original
-//! formatter-key ordering, first payload, duplicate descriptors, lazy factoring
-//! observations, and existing fork-emission accumulator. They neither discover
-//! grammar rules nor select parse candidates.
+//! FIFO/visited traversal, formatter-key ordering, first payload, duplicate
+//! descriptors, lazy factoring observations, and existing fork-emission
+//! accumulator. They do not select parse candidates.
 //!
 //! `UnifiedPrefixDescriptorProjection.v` verifies this relocation boundary and
 //! finite call sequences. Callers still supply the original static positions;
 //! allocation and arbitrary formatter/reader lawfulness remain caller obligations.
+//! `OriginalFirstSetProjection.v` covers the FIRST source-observation boundary,
+//! not semantic FIRST completeness or native-helper correctness.
 
 use super::fork_emission::ForkEmissionOrdinalModel;
 use std::collections::BTreeMap;
+
+use super::atomic::AtomicDescriptor;
+use super::binder::optional::{BinderSyntaxObservation, BinderSyntaxReader};
+use super::binder::rule::BinderRuleReader;
+use mettail_ast::grammar::NonTerminalKind;
+
+/// Original FIRST row; token quotation belongs to the caller, not this worker.
+#[derive(Debug, Clone)]
+pub struct FirstToken<P> {
+    pub pattern: P,
+    pub extra_guard: Option<P>,
+    /// Original raw leading structural trigger, retained through deduplication.
+    /// Consumers use it to distinguish a direct structural-literal trigger from
+    /// a delegated category reading; non-Fixed rows carry no leading literal.
+    pub leading_literal: Option<String>,
+    /// True only for the original explicit or synthetic variable contribution.
+    /// Named Ident captures are authored literal syntax, not variable readings.
+    pub is_var_contribution: bool,
+}
+
+/// The eight ORIGINAL quotation construction sites, not semantic token equality.
+pub enum FirstPredicate<'text> {
+    Fixed(&'text str),
+    Ident,
+    Integer,
+    Boolean,
+    String,
+    Float,
+    CaptureName(&'text str),
+    GuestOpen(&'text str),
+}
+
+/// First legacy item, preserving its existing discriminant and borrowed name.
+pub enum FirstLegacyItem<'source, N> {
+    Terminal(&'source str),
+    NonTerminal { kind: NonTerminalKind, name: N },
+    Other,
+}
+
+/// Source context for the original FIRST loop, alongside the existing rule reader.
+///
+/// Rule/declaration order and first-match lookup are authored order. A declaration
+/// handle preserves its original role and collection opener, not facts inferred
+/// from normalized rules. Native/patterned/binder callbacks execute the existing
+/// helpers lazily; `native_first` includes the original native-presence gate and
+/// uses the original FirstSet context. No helper is re-derived here.
+///
+/// The reader/context must describe the same immutable source. `rule_at` is valid
+/// exactly below `rules_len`. Pattern rendering must preserve the original pair
+/// of formatter keys: semantic-token equality is NOT a substitute. These laws
+/// are caller obligations, modeled at the source adapter boundary in
+/// `OriginalFirstSetProjection.v`; arbitrary context implementations are not
+/// certified by that source-refinement proof.
+pub trait FirstSetContext<'source, R: BinderRuleReader<'source>> {
+    type Category: Copy;
+    type Literal;
+    type Pattern: ToString;
+
+    fn rules_len(&self) -> usize;
+    fn rule_at(&self, index: usize) -> R::Rule;
+    fn find_category(&mut self, name: &str) -> Option<Self::Category>;
+    fn is_data(&self, category: Self::Category) -> bool;
+    fn collection_open(&self, category: Self::Category) -> Option<&'source str>;
+    fn legacy_first(
+        &self,
+        rule: R::Rule,
+    ) -> Option<FirstLegacyItem<'source, <R as BinderSyntaxReader<'source>>::Name>>;
+    fn native_first(
+        &mut self,
+        category: Self::Category,
+        name: &str,
+    ) -> Vec<(Self::Pattern, Option<Self::Pattern>)>;
+    fn atomic(&mut self, rule: R::Rule) -> AtomicDescriptor<Self::Literal>;
+    fn patterned_first(
+        &mut self,
+        literal: Self::Literal,
+    ) -> Vec<(Self::Pattern, Option<Self::Pattern>)>;
+    fn binder_leading(&mut self, rule: R::Rule) -> Option<String>;
+    fn predicate_parts(
+        &mut self,
+        predicate: FirstPredicate<'_>,
+    ) -> (Self::Pattern, Option<Self::Pattern>);
+}
+
+impl<P> FirstToken<P> {
+    fn fixed_leading(sigil: &str, pattern: P, extra_guard: Option<P>) -> Self {
+        Self {
+            pattern,
+            extra_guard,
+            leading_literal: Some(sigil.to_string()),
+            is_var_contribution: false,
+        }
+    }
+}
+
+/// Original direct leading-literal set. Present empty/nonliteral syntax suppresses
+/// legacy fallback; only absent syntax consults the first legacy Terminal.
+pub fn category_leading_literals<'source, R, C>(
+    cat_name: &str,
+    reader: &R,
+    context: &C,
+) -> std::collections::BTreeSet<String>
+where
+    R: BinderRuleReader<'source>,
+    C: FirstSetContext<'source, R>,
+{
+    let mut out = std::collections::BTreeSet::new();
+    for index in 0..context.rules_len() {
+        let rule = context.rule_at(index);
+        if reader.category(rule).to_string() != cat_name {
+            continue;
+        }
+        if let Some(sp) = reader.syntax_pattern(rule) {
+            if let Some(BinderSyntaxObservation::Literal(text)) = reader.at(sp, 0) {
+                out.insert(text.to_string());
+            }
+        } else if let Some(FirstLegacyItem::Terminal(text)) = context.legacy_first(rule) {
+            out.insert(text.to_string());
+        }
+    }
+    out
+}
+
+/// Original FIFO FIRST traversal and stable formatter-key deduplication.
+/// The complete first row survives, including metadata and guard Option.
+pub fn first_set_of_category<'source, R, C>(
+    cat_name: &str,
+    reader: &R,
+    context: &mut C,
+) -> Vec<FirstToken<C::Pattern>>
+where
+    R: BinderRuleReader<'source>,
+    C: FirstSetContext<'source, R>,
+{
+    let mut acc = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    collect_first_set(cat_name, reader, context, &mut acc, &mut visited);
+    let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    acc.retain(|ft| {
+        let key = (
+            ft.pattern.to_string(),
+            ft.extra_guard
+                .as_ref()
+                .map(|g| g.to_string())
+                .unwrap_or_default(),
+        );
+        seen.insert(key)
+    });
+    acc
+}
+
+fn collect_first_set<'source, R, C>(
+    cat_name: &str,
+    reader: &R,
+    context: &mut C,
+    acc: &mut Vec<FirstToken<C::Pattern>>,
+    visited: &mut std::collections::HashSet<String>,
+) where
+    R: BinderRuleReader<'source>,
+    C: FirstSetContext<'source, R>,
+{
+    let mut pending = std::collections::VecDeque::new();
+    pending.push_back(cat_name.to_string());
+
+    while let Some(current_cat_name) = pending.pop_front() {
+        if !visited.insert(current_cat_name.clone()) {
+            continue;
+        }
+        if let Some(lang_type) = context.find_category(&current_cat_name) {
+            for (pattern, extra_guard) in context.native_first(lang_type, &current_cat_name) {
+                acc.push(FirstToken {
+                    pattern,
+                    extra_guard,
+                    leading_literal: None,
+                    is_var_contribution: false,
+                });
+            }
+        }
+        if let Some(lang_type) = context.find_category(&current_cat_name) {
+            if !context.is_data(lang_type) {
+                let has_user_var = (0..context.rules_len()).any(|index| {
+                    let rule = context.rule_at(index);
+                    reader.category(rule).to_string() == current_cat_name
+                        && matches!(
+                            context.legacy_first(rule),
+                            Some(FirstLegacyItem::NonTerminal { kind: NonTerminalKind::Var, .. })
+                        )
+                });
+                if !has_user_var {
+                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Ident);
+                    acc.push(FirstToken {
+                        pattern,
+                        extra_guard,
+                        leading_literal: None,
+                        is_var_contribution: true,
+                    });
+                }
+            }
+        }
+        if let Some(lang_type) = context.find_category(&current_cat_name) {
+            if let Some(open) = context.collection_open(lang_type) {
+                let first_open = open.trim_end_matches('(').to_string();
+                let (pattern, extra_guard) =
+                    context.predicate_parts(FirstPredicate::Fixed(&first_open));
+                acc.push(FirstToken::fixed_leading(&first_open, pattern, extra_guard));
+            }
+        }
+        for index in 0..context.rules_len() {
+            let rule = context.rule_at(index);
+            if reader.category(rule).to_string() != current_cat_name {
+                continue;
+            }
+            let shape = context.atomic(rule);
+            match shape {
+                AtomicDescriptor::LiteralPatterned(literal) => {
+                    for (pattern, extra_guard) in context.patterned_first(literal) {
+                        acc.push(FirstToken {
+                            pattern,
+                            extra_guard,
+                            leading_literal: None,
+                            is_var_contribution: false,
+                        });
+                    }
+                },
+                AtomicDescriptor::TerminalKeyword { terminal_text, .. } => {
+                    let (pattern, extra_guard) =
+                        context.predicate_parts(FirstPredicate::Fixed(&terminal_text));
+                    acc.push(FirstToken::fixed_leading(&terminal_text, pattern, extra_guard));
+                },
+                AtomicDescriptor::VarRule { .. } => {
+                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Ident);
+                    acc.push(FirstToken {
+                        pattern,
+                        extra_guard,
+                        leading_literal: None,
+                        is_var_contribution: true,
+                    });
+                },
+                AtomicDescriptor::LiteralInteger => {
+                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Integer);
+                    acc.push(FirstToken {
+                        pattern,
+                        extra_guard,
+                        leading_literal: None,
+                        is_var_contribution: false,
+                    });
+                },
+                AtomicDescriptor::LiteralBoolean => {
+                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Boolean);
+                    acc.push(FirstToken {
+                        pattern,
+                        extra_guard,
+                        leading_literal: None,
+                        is_var_contribution: false,
+                    });
+                },
+                AtomicDescriptor::LiteralString => {
+                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::String);
+                    acc.push(FirstToken {
+                        pattern,
+                        extra_guard,
+                        leading_literal: None,
+                        is_var_contribution: false,
+                    });
+                },
+                AtomicDescriptor::LiteralFloat => {
+                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Float);
+                    acc.push(FirstToken {
+                        pattern,
+                        extra_guard,
+                        leading_literal: None,
+                        is_var_contribution: false,
+                    });
+                },
+                AtomicDescriptor::CrossCatProjection { source_cat_name, .. } => {
+                    pending.push_back(source_cat_name);
+                },
+                AtomicDescriptor::CrossCatPrefixUnary { trigger, .. } => {
+                    let (pattern, extra_guard) =
+                        context.predicate_parts(FirstPredicate::Fixed(&trigger));
+                    acc.push(FirstToken::fixed_leading(&trigger, pattern, extra_guard));
+                },
+                AtomicDescriptor::PrefixOperator { trigger, .. } => {
+                    let (pattern, extra_guard) =
+                        context.predicate_parts(FirstPredicate::Fixed(&trigger));
+                    acc.push(FirstToken::fixed_leading(&trigger, pattern, extra_guard));
+                },
+                AtomicDescriptor::NullaryLiteralRun { trigger, .. } => {
+                    let (pattern, extra_guard) =
+                        context.predicate_parts(FirstPredicate::Fixed(&trigger));
+                    acc.push(FirstToken::fixed_leading(&trigger, pattern, extra_guard));
+                },
+                AtomicDescriptor::NonAtomic => {
+                    if let Some(sp) = reader.syntax_pattern(rule) {
+                        match reader.at(sp, 0) {
+                            Some(BinderSyntaxObservation::Literal(text)) => {
+                                let (pattern, extra_guard) =
+                                    context.predicate_parts(FirstPredicate::Fixed(text));
+                                acc.push(FirstToken::fixed_leading(text, pattern, extra_guard));
+                            },
+                            Some(BinderSyntaxObservation::Param(_)) => {
+                                let leading_cat = context.binder_leading(rule).or_else(|| {
+                                    match context.legacy_first(rule) {
+                                        Some(FirstLegacyItem::NonTerminal {
+                                            name,
+                                            kind: NonTerminalKind::Category,
+                                        }) => Some(name.to_string()),
+                                        _ => None,
+                                    }
+                                });
+                                if let Some(nt_cat) = leading_cat {
+                                    if nt_cat != current_cat_name {
+                                        pending.push_back(nt_cat);
+                                    }
+                                }
+                            },
+                            Some(BinderSyntaxObservation::TokenKind { name, .. }) => {
+                                let kind_name = name.to_string();
+                                let (pattern, extra_guard) = context
+                                    .predicate_parts(FirstPredicate::CaptureName(&kind_name));
+                                acc.push(FirstToken {
+                                    pattern,
+                                    extra_guard,
+                                    leading_literal: None,
+                                    is_var_contribution: false,
+                                });
+                            },
+                            Some(BinderSyntaxObservation::GuestBody { open, .. }) => {
+                                let open_kind = open.to_string();
+                                let (pattern, extra_guard) =
+                                    context.predicate_parts(FirstPredicate::GuestOpen(&open_kind));
+                                acc.push(FirstToken {
+                                    pattern,
+                                    extra_guard,
+                                    leading_literal: None,
+                                    is_var_contribution: false,
+                                });
+                            },
+                            _ => {},
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
 
 /// One original unified dispatch bucket, independent of token quotation.
 pub struct UnifiedBucket<P, D> {
@@ -98,6 +446,143 @@ pub fn record_initiating_rule_rows<'members>(
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn first_owned_handles_preserve_lookup_order_and_first_complete_payload() {
+        use crate::wpda_rule_analysis::authored::{AuthoredNameRef, AuthoredRuleReader};
+        use mettail_grammar_core::{
+            AuthoredName, AuthoredNameId, AuthoredNode, AuthoredRule, AuthoredRuleId,
+            AuthoredRuleStore, AuthoredSyntax, AuthoredSyntaxId,
+        };
+
+        struct Payload {
+            key: String,
+            origin: u32,
+        }
+        impl std::fmt::Display for Payload {
+            fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                output.write_str(&self.key)
+            }
+        }
+        struct Context {
+            rule: AuthoredRuleId,
+            events: RefCell<Vec<String>>,
+        }
+        impl<'source> FirstSetContext<'source, AuthoredRuleReader<'source>> for Context {
+            type Category = ();
+            type Literal = ();
+            type Pattern = Payload;
+            fn rules_len(&self) -> usize {
+                1
+            }
+            fn rule_at(&self, index: usize) -> AuthoredRuleId {
+                assert_eq!(index, 0);
+                self.rule
+            }
+            fn find_category(&mut self, name: &str) -> Option<()> {
+                assert_eq!(name, "A");
+                self.events.borrow_mut().push("find".into());
+                Some(())
+            }
+            fn is_data(&self, _: ()) -> bool {
+                self.events.borrow_mut().push("data".into());
+                true
+            }
+            fn collection_open(&self, _: ()) -> Option<&'source str> {
+                self.events.borrow_mut().push("collection".into());
+                Some("open((")
+            }
+            fn legacy_first(
+                &self,
+                _: AuthoredRuleId,
+            ) -> Option<FirstLegacyItem<'source, AuthoredNameRef<'source>>> {
+                panic!("present literal syntax and data role must not query legacy fallback")
+            }
+            fn native_first(&mut self, _: (), _: &str) -> Vec<(Payload, Option<Payload>)> {
+                self.events.borrow_mut().push("native".into());
+                vec![(Payload { key: "dup".into(), origin: 1 }, None)]
+            }
+            fn atomic(&mut self, rule: AuthoredRuleId) -> AtomicDescriptor<()> {
+                assert_eq!(rule, self.rule);
+                self.events.borrow_mut().push("atomic".into());
+                AtomicDescriptor::NonAtomic
+            }
+            fn patterned_first(&mut self, _: ()) -> Vec<(Payload, Option<Payload>)> {
+                panic!("non-atomic fixture must not expand patterned literals")
+            }
+            fn binder_leading(&mut self, _: AuthoredRuleId) -> Option<String> {
+                panic!("literal first syntax must not classify a binder")
+            }
+            fn predicate_parts(
+                &mut self,
+                predicate: FirstPredicate<'_>,
+            ) -> (Payload, Option<Payload>) {
+                let FirstPredicate::Fixed(text) = predicate else {
+                    panic!("fixture contributes fixed tokens only");
+                };
+                self.events.borrow_mut().push(format!("quote:{text}"));
+                (
+                    Payload { key: text.into(), origin: 2 },
+                    Some(Payload { key: String::new(), origin: 3 }),
+                )
+            }
+        }
+
+        let mut store = AuthoredRuleStore::new();
+        let name = AuthoredNameId(
+            store
+                .try_push(AuthoredNode::Name(AuthoredName {
+                    spelling: "A".into(),
+                    equality_class: 0,
+                }))
+                .expect("first authored name"),
+        );
+        let syntax = AuthoredSyntaxId(
+            store
+                .try_push(AuthoredNode::Syntax(vec![AuthoredSyntax::Literal("dup".into())]))
+                .expect("owned literal syntax"),
+        );
+        let rule = AuthoredRuleId(
+            store
+                .try_push(AuthoredNode::Rule(AuthoredRule {
+                    label: name,
+                    category: name,
+                    term_context: None,
+                    syntax_pattern: Some(syntax),
+                    items: Vec::new(),
+                }))
+                .expect("backward authored rule references"),
+        );
+        let reader = AuthoredRuleReader::new(&store).expect("representable owned FIRST source");
+        let mut context = Context { rule, events: RefCell::new(Vec::new()) };
+        assert_eq!(
+            category_leading_literals("A", &reader, &context),
+            ["dup".into()].into_iter().collect()
+        );
+        let output = first_set_of_category("A", &reader, &mut context);
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0].pattern.key, "dup");
+        assert_eq!(output[0].pattern.origin, 1);
+        assert!(output[0].extra_guard.is_none());
+        assert!(output[0].leading_literal.is_none());
+        assert!(!output[0].is_var_contribution);
+        assert_eq!(output[1].pattern.key, "open");
+        assert_eq!(output[1].leading_literal.as_deref(), Some("open"));
+        assert_eq!(
+            context.events.into_inner(),
+            [
+                "find",
+                "native",
+                "find",
+                "data",
+                "find",
+                "collection",
+                "quote:open",
+                "atomic",
+                "quote:dup",
+            ]
+        );
+    }
 
     #[test]
     fn owned_payloads_keep_first_allocation_guard_and_insertion_order() {

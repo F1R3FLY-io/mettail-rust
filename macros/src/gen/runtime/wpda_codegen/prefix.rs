@@ -259,10 +259,13 @@ pub enum AtomicShape {
 /// Handles BOTH old-style rules (populated `items`) and new-style judgement
 /// rules (`term_context` + `syntax_pattern`), since Calculator / Rholang
 /// use exclusively judgement-style.
-pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShape {
+fn classify_atomic_descriptor(
+    rule: &GrammarRule,
+    language: &LanguageDef,
+) -> mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor<AtomicShape> {
     use mettail_prattail::wpda_rule_analysis::atomic::{
-        classify_atomic as classify_shared_atomic, AtomicDescriptor, AtomicUnaryPrefix,
-        LegacyAtomicItem, LegacyAtomicKind,
+        classify_atomic as classify_shared_atomic, AtomicUnaryPrefix, LegacyAtomicItem,
+        LegacyAtomicKind,
     };
 
     let view = super::infix::project_infix_rule(rule);
@@ -286,7 +289,7 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
             _ => LegacyAtomicItem::Other,
         })
         .collect();
-    let descriptor = classify_shared_atomic(
+    classify_shared_atomic(
         &view,
         &items,
         || {
@@ -307,7 +310,12 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
             };
             classify_literal_patterned(ident, language)
         },
-    );
+    )
+}
+
+pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShape {
+    use mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor;
+    let descriptor = classify_atomic_descriptor(rule, language);
     match descriptor {
         AtomicDescriptor::LiteralInteger => AtomicShape::LiteralInteger,
         AtomicDescriptor::LiteralBoolean => AtomicShape::LiteralBoolean,
@@ -468,458 +476,178 @@ fn default_eval_body_for_native_kind(kind: &NativeKind) -> Option<TokenStream> {
 
 /// Stage 1.1: a token in a category's FIRST set, emitted as a `TokenKind`
 /// pattern fragment for use in a Rust match arm.
-#[derive(Debug, Clone)]
-pub struct FirstToken {
-    /// The token-kind pattern (e.g., `Some(TokenKind::IntegerLit(__cat))`).
-    pub pattern: TokenStream,
-    /// Optional extra guard (e.g., `__cat == "Int"`).
-    pub extra_guard: Option<TokenStream>,
-    /// AT_QUOTED_BIND_GATE (2026-07-03): the raw leading *structural literal*
-    /// text when this FIRST token is a `Fixed(σ)` derived from a rule whose
-    /// first syntax element is the literal `σ` (a sigil-led prefix rule such as
-    /// NQuoteShort `"@" p`). `None` for non-`Fixed` tokens (Ident / native
-    /// literals) and for `Fixed` tokens that are not a rule's *leading*
-    /// structural trigger. Consumed ONLY by the grammar-derived over-generation
-    /// characterisation in `emit_prefix_arms_for_category` (a cross-cat-LHS
-    /// delegate on a sigil that ALSO directly triggers a sibling rule in the
-    /// result category is redundant — see `AT_QUOTED_BIND_GATE`). Threading the
-    /// literal here keeps the gate PER-token precise without re-parsing guards.
-    pub leading_literal: Option<String>,
-    /// CROSSCAT_LEX_COMPAT_GATE (2026-07-03): `true` iff this FIRST token is a
-    /// *variable contribution* — the bare `Some(Ident)` a category acquires
-    /// from its (synthetic or user) Var rule. This is the sole provenance that
-    /// distinguishes "the source category can begin with an Ident because it
-    /// has a Var rule" (a var-contribution) from "the source category can begin
-    /// with a genuine literal/keyword token" (NOT a var-contribution). The
-    /// LITERAL-FIRST set the gate keys on is exactly `FIRST − {var-contributions}`.
-    /// A cross-cat PROJECTION delegate `source : result` on the `Ident` token is
-    /// a proven over-generation exactly when that `Ident` is ONLY a
-    /// var-contribution of `source` (the source cannot LITERALLY begin with an
-    /// Ident) AND `result` already has its own home Var reading (so a bare
-    /// Ident is covered without the cast). Set `true` at the two Var-rule sites
-    /// in `collect_first_set`; `false` at every literal/keyword/collection/
-    /// projection-recursion site. NOTE: the `Some(Ident)`-no-guard token is
-    /// produced ONLY by these two Var sites in the whole codegen, so the
-    /// `(pattern_str, guard_str)` dedup in `first_set_of_category` never merges
-    /// a var-contribution with a literal token (no literal rule yields a bare
-    /// unguarded `Some(Ident)`) — the flag survives dedup soundly.
-    pub is_var_contribution: bool,
+pub type FirstToken = mettail_prattail::wpda_rule_analysis::prefix::FirstToken<TokenStream>;
+
+struct MacroFirstSetContext<'source> {
+    language: &'source LanguageDef,
 }
 
-impl FirstToken {
-    /// Construct a `Fixed(σ)` FIRST token carrying the raw sigil `σ` as its
-    /// `leading_literal`. Used at every site where the FIRST token is a rule's
-    /// leading structural literal so the AT_QUOTED_BIND_GATE characterisation
-    /// can key on it.
-    fn fixed_leading(sigil: &str) -> Self {
-        FirstToken {
-            pattern: quote! {
-                Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+impl<'source>
+    mettail_prattail::wpda_rule_analysis::prefix::FirstSetContext<
+        'source,
+        super::binder::MacroBinderSyntaxReader,
+    > for MacroFirstSetContext<'source>
+{
+    type Category = &'source mettail_ast::language::LangType;
+    type Literal = AtomicShape;
+    type Pattern = TokenStream;
+
+    fn rules_len(&self) -> usize {
+        self.language.terms.len()
+    }
+
+    fn rule_at(&self, index: usize) -> &'source GrammarRule {
+        &self.language.terms[index]
+    }
+
+    fn find_category(&mut self, name: &str) -> Option<Self::Category> {
+        self.language
+            .types
+            .iter()
+            .find(|ty| ty.name.to_string() == name)
+    }
+
+    fn is_data(&self, category: Self::Category) -> bool {
+        category.is_data()
+    }
+
+    fn collection_open(&self, category: Self::Category) -> Option<&'source str> {
+        category
+            .collection_kind
+            .as_ref()
+            .map(|kind| kind.delimiters().open.as_str())
+    }
+
+    fn legacy_first(
+        &self,
+        rule: &'source GrammarRule,
+    ) -> Option<
+        mettail_prattail::wpda_rule_analysis::prefix::FirstLegacyItem<'source, &'source Ident>,
+    > {
+        use mettail_prattail::wpda_rule_analysis::prefix::FirstLegacyItem;
+        rule.items.first().map(|item| match item {
+            GrammarItem::Terminal(text) => FirstLegacyItem::Terminal(text),
+            GrammarItem::NonTerminal { kind, ident } => {
+                FirstLegacyItem::NonTerminal { kind: *kind, name: ident }
             },
-            extra_guard: Some(quote! { __kw == #sigil }),
-            leading_literal: Some(sigil.to_string()),
-            // A leading structural literal is a genuine literal token, never a
-            // var contribution.
-            is_var_contribution: false,
+            _ => FirstLegacyItem::Other,
+        })
+    }
+
+    fn native_first(
+        &mut self,
+        lang_type: Self::Category,
+        current_cat_name: &str,
+    ) -> Vec<(TokenStream, Option<TokenStream>)> {
+        if let Some(nt) = lang_type.native_type.as_ref() {
+            let kind = NativeKind::from_syn_type(nt);
+            // Keep the original category-aware family election, including its
+            // declared Custom literal branch and internal source lookup.
+            if let Some(family) = literal_family_for_category(current_cat_name, self.language) {
+                return literal_patterned_pattern_and_guard_for_kind(
+                    current_cat_name,
+                    family,
+                    Some(&kind),
+                    EmissionContext::FirstSet,
+                );
+            }
+        }
+        Vec::new()
+    }
+
+    fn atomic(
+        &mut self,
+        rule: &'source GrammarRule,
+    ) -> mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor<AtomicShape> {
+        classify_atomic_descriptor(rule, self.language)
+    }
+
+    fn patterned_first(&mut self, literal: AtomicShape) -> Vec<(TokenStream, Option<TokenStream>)> {
+        let AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } = literal else {
+            unreachable!("original literal resolver returns only LiteralPatterned payloads");
+        };
+        let nk = NativeKind::from_syn_type(&native_type);
+        literal_patterned_pattern_and_guard_for_kind(
+            &cat_name,
+            family,
+            Some(&nk),
+            EmissionContext::FirstSet,
+        )
+    }
+
+    fn binder_leading(&mut self, rule: &'source GrammarRule) -> Option<String> {
+        super::binder::classify_binder_in(rule, self.language)
+            .and_then(|shape| shape.leading_category)
+    }
+
+    fn predicate_parts(
+        &mut self,
+        predicate: mettail_prattail::wpda_rule_analysis::prefix::FirstPredicate<'_>,
+    ) -> (TokenStream, Option<TokenStream>) {
+        use mettail_prattail::wpda_rule_analysis::prefix::FirstPredicate;
+        match predicate {
+            FirstPredicate::Fixed(sigil) => (
+                quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
+                Some(quote! { __kw == #sigil }),
+            ),
+            FirstPredicate::Ident => {
+                (quote! { Some(mettail_prattail::automata::TokenKind::Ident) }, None)
+            },
+            FirstPredicate::Integer => {
+                (quote! { Some(mettail_prattail::automata::TokenKind::Integer) }, None)
+            },
+            FirstPredicate::Boolean => (
+                quote! {
+                    Some(mettail_prattail::automata::TokenKind::True)
+                    | Some(mettail_prattail::automata::TokenKind::False)
+                    | Some(mettail_prattail::automata::TokenKind::BooleanLit)
+                },
+                None,
+            ),
+            FirstPredicate::String => {
+                (quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)
+            },
+            FirstPredicate::Float => {
+                (quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)
+            },
+            FirstPredicate::CaptureName(kind_name) => (
+                quote! { Some(ref __kind) },
+                Some(quote! {
+                    mettail_prattail::automata::token_kind_matches_capture_name(
+                        #kind_name,
+                        __kind,
+                    )
+                }),
+            ),
+            FirstPredicate::GuestOpen(open_kind) => (
+                quote! { Some(mettail_prattail::automata::TokenKind::Custom(ref __k)) },
+                Some(quote! { __k == #open_kind }),
+            ),
         }
     }
 }
 
-/// AT_QUOTED_BIND_GATE (2026-07-03): the set of LEADING STRUCTURAL LITERALS of
-/// a category's rules — the literal `σ` at `rule.syntax_pattern[0]` /
-/// `rule.items[0]` for each rule DIRECTLY in `cat_name` whose first syntax
-/// element is a literal (a sigil-/keyword-led rule, e.g. `InputBindQuoted
-/// "@" pat "<-" n` contributes `@`). Excludes rules whose first element is a
-/// parameter (a cross-cat-LHS / whole-source rule such as `InputBind lhs "<-"
-/// n`, which contributes nothing here — its `lhs` is the delegated source).
-///
-/// This is the grammar-derived characterisation of "a direct `σ`-triggered rule
-/// exists in the result category". A cross-cat-LHS delegate `source → result`
-/// on a sigil `σ` is a proven over-generation exactly when `σ` is in this set
-/// for `result` AND in the FIRST set of `source` (the direct rule subsumes the
-/// whole-`source` reading). Kept intentionally NARROW (leading *literal* only —
-/// never a metavariable/native token) so the AT_QUOTED_BIND_GATE cannot fire on
-/// an ordinary `Ident`-led cross-cat-LHS such as `x<-c`.
+/// Direct leading literals through the original shared worker. Present syntax
+/// suppresses legacy fallback even when empty or not literal-led.
 fn category_leading_literals(
     cat_name: &str,
     language: &LanguageDef,
 ) -> std::collections::BTreeSet<String> {
-    let mut out = std::collections::BTreeSet::new();
-    for rule in &language.terms {
-        if rule.category.to_string() != cat_name {
-            continue;
-        }
-        // Prefer the judgement-style `syntax_pattern[0]`; fall back to the
-        // legacy `items[0]` Terminal for non-judgement rules.
-        if let Some(sp) = rule.syntax_pattern.as_ref() {
-            if let Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) = sp.first() {
-                out.insert(text.clone());
-            }
-        } else if let Some(mettail_ast::grammar::GrammarItem::Terminal(text)) = rule.items.first() {
-            out.insert(text.clone());
-        }
-    }
-    out
+    mettail_prattail::wpda_rule_analysis::prefix::category_leading_literals(
+        cat_name,
+        &super::binder::MacroBinderSyntaxReader,
+        &MacroFirstSetContext { language },
+    )
 }
 
-/// Stage 1.1: compute the FIRST set for a category — the set of token
-/// patterns that can begin a parse of a rule for this category. Walks
-/// the category's atomic rules + recursively their cross-cat projection
-/// sources. Used by cross-cat projection codegen to emit specific
-/// dispatch arms in the *result* category's PrefixDispatch when the
-/// peek'd token belongs to the *source* category.
+/// Compute the original FIRST descriptor rows through the shared FIFO worker.
+/// Native helper policy and token quotation remain in the source adapter.
 pub fn first_set_of_category(cat_name: &str, language: &LanguageDef) -> Vec<FirstToken> {
-    let mut acc = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-    // FIRST sets are consumed by cross-cat projection emission and other
-    // codegen paths that dispatch on tokens in OTHER categories' contexts.
-    // Pass `EmissionContext::FirstSet` so home-only bare-polymorphic arms
-    // (e.g., `CanonicalBigInt`'s bare-Integer arm) are excluded — including
-    // them here would shadow primitive-integer cross-cat projections.
-    collect_first_set(cat_name, language, &mut acc, &mut visited);
-    // B10 / Option κ Fix A (2026-05-07): dedup by `(pattern_str, guard_str)`.
-    // The synthetic-Var pre-walk in `collect_first_set` AND the per-rule
-    // VarRule pass both push `Some(Ident)`; the recursive cross-cat-projection
-    // walk re-adds entries already present. Result was a Fork emission with
-    // byte-identical Push branches, multiplying cursor count without changing
-    // outcomes. The dedup key matches the `(pat_str, guard_str)` shape used
-    // by `unified_buckets` so consumer bucket-fill stays deduplication-safe.
-    let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
-    acc.retain(|ft| {
-        let key = (
-            ft.pattern.to_string(),
-            ft.extra_guard
-                .as_ref()
-                .map(|g| g.to_string())
-                .unwrap_or_default(),
-        );
-        seen.insert(key)
-    });
-    acc
-}
-
-fn collect_first_set(
-    cat_name: &str,
-    language: &LanguageDef,
-    acc: &mut Vec<FirstToken>,
-    visited: &mut std::collections::HashSet<String>,
-) {
-    // FIRST-set construction always uses `FirstSet` context. Routed through
-    // `literal_patterned_pattern_and_guard_for_kind`'s `ctx` parameter to
-    // preserve the home-vs-cross-cat distinction for the Integer family.
-    let ctx = EmissionContext::FirstSet;
-    let mut pending = std::collections::VecDeque::new();
-    pending.push_back(cat_name.to_string());
-
-    while let Some(current_cat_name) = pending.pop_front() {
-        if !visited.insert(current_cat_name.clone()) {
-            continue;
-        }
-        // Synthetic literal rule: cat_name gets a synthesized atomic-literal
-        // rule when it has either:
-        //   (a) An explicit `literals { ... }` block — `from_literals: true` TokenDef.
-        //   (b) An implicit native_type (e.g., `![i32] as Num`) without an
-        //       explicit literals block. Stage 4 fix: this used to skip the
-        //       FIRST-set entry, so cross-cat projection rules whose source
-        //       category was native-only didn't dispatch on bare Integer
-        //       tokens (e.g., LedTest's `CastNum . a:Num |- a : Expr` failed
-        //       to fire on input `0`).
-        if let Some(lang_type) = language
-            .types
-            .iter()
-            .find(|t| t.name.to_string() == current_cat_name)
-        {
-            if let Some(nt) = lang_type.native_type.as_ref() {
-                let kind = NativeKind::from_syn_type(nt);
-                // ⚠ `literal_family_for_category`, NOT `literal_family_for`: a category that
-                // DECLARED its own literal (`LiteralFamily::Custom`) must contribute its
-                // `TokenKind::Custom(cat)` to FIRST, or every cross-cat projection that reads it
-                // — rholang's `CastBytes . b:Bytes |- b : Proc` — fails to dispatch on the
-                // literal's own token and the literal is reachable only in its home category.
-                // This call site and `classify_literal_patterned` must elect the SAME family;
-                // sharing one function is what makes that true by construction rather than by
-                // discipline.
-                if let Some(family) = literal_family_for_category(&current_cat_name, language) {
-                    for (pattern, extra_guard) in literal_patterned_pattern_and_guard_for_kind(
-                        &current_cat_name,
-                        family,
-                        Some(&kind),
-                        ctx,
-                    ) {
-                        acc.push(FirstToken {
-                            pattern,
-                            extra_guard,
-                            leading_literal: None,
-                            is_var_contribution: false,
-                        });
-                    }
-                }
-            }
-        }
-        // Synthetic Var rule: every declared category that lacks an explicit
-        // user Var rule gets a synthetic Var rule (Phase 5a in synthetic.rs).
-        // Add Ident to FIRST.
-        //
-        // Stage 3.20 / Commit 4 part 2 (Plan agent Fix A, 2026-05-06): the
-        // pre-fix gate `lang_type.native_type.is_none()` was wrong — it
-        // caused FIRST(Int) etc. to omit Ident even though `gen/types/enums.rs`
-        // unconditionally emits `Int::IVar(...)` AST variants. Now the FIRST
-        // set mirrors the AST surface for every category.
-        if let Some(lang_type) = language
-            .types
-            .iter()
-            .find(|t| t.name.to_string() == current_cat_name)
-        {
-            // Closed data categories do not receive the synthetic Var
-            // constructor, so Ident must not appear in their FIRST sets.
-            if !lang_type.is_data() {
-                // Has-user-var-rule check: if any user rule for this cat matches
-                // NonTerminal(Var), don't add (the user rule covers it).
-                let has_user_var = language.terms.iter().any(|r| {
-                    r.category.to_string() == current_cat_name
-                        && r.items
-                            .first()
-                            .map(|item| {
-                                matches!(
-                                    item,
-                                    mettail_ast::grammar::GrammarItem::NonTerminal {
-                                        kind: mettail_ast::grammar::NonTerminalKind::Var,
-                                        ..
-                                    }
-                                )
-                            })
-                            .unwrap_or(false)
-                });
-                if !has_user_var {
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::Ident)
-                        },
-                        extra_guard: None,
-                        leading_literal: None,
-                        // CROSSCAT_LEX_COMPAT_GATE: the synthetic Var rule's
-                        // `Ident` is a VAR CONTRIBUTION (the category begins
-                        // with an Ident only because it is a variable).
-                        is_var_contribution: true,
-                    });
-                }
-            }
-        }
-        // B7 Pattern 3 fix: synthetic collection-literal rules (`ListLit`,
-        // `BagLit`, `MapLit`) emitted by `synthetic.rs:118-200` are NOT in
-        // `language.terms` — they live in the macro's `per_cat` table. The
-        // walk over `language.terms` below therefore misses them, and any
-        // cross-cat projection rule whose source is a collection category
-        // (e.g. Calculator's `CastBag . b:Bag |- b : Proc;`) ends up missing
-        // `bag(`/`list(`/`map(` triggers in its FIRST set. The fix here is
-        // to inline the synthetic-collection-rule's FIRST contribution by
-        // reading `LangType::collection_kind` directly. The first-token of
-        // the open delim (after trimming a trailing `(` to match the lexer's
-        // 2-token tokenization of `list(`) is the FIRST element.
-        if let Some(lang_type) = language
-            .types
-            .iter()
-            .find(|t| t.name.to_string() == current_cat_name)
-        {
-            if let Some(coll_kind) = lang_type.collection_kind.as_ref() {
-                // Stage 2 (2026-06-27): one delimiters() accessor in place of a
-                // per-variant `match coll_kind { List(d) => d.open.clone(), ... }`.
-                let open = coll_kind.delimiters().open.clone();
-                // Mirror synthetic.rs's split-on-trailing-`(` logic so the
-                // FIRST token equals the lexer's first emitted Fixed token.
-                let first_open = open.trim_end_matches('(').to_string();
-                acc.push(FirstToken::fixed_leading(&first_open));
-            }
-        }
-        // Walk all rules where rule.category == current_cat_name.
-        for rule in &language.terms {
-            if rule.category.to_string() != current_cat_name {
-                continue;
-            }
-            let shape = classify_atomic(rule, language);
-            match shape {
-                AtomicShape::LiteralPatterned { cat_name: c, family, ref native_type, .. } => {
-                    let nk = NativeKind::from_syn_type(native_type);
-                    for (pattern, extra_guard) in
-                        literal_patterned_pattern_and_guard_for_kind(&c, family, Some(&nk), ctx)
-                    {
-                        acc.push(FirstToken {
-                            pattern,
-                            extra_guard,
-                            leading_literal: None,
-                            is_var_contribution: false,
-                        });
-                    }
-                },
-                AtomicShape::TerminalKeyword { terminal_text, .. } => {
-                    acc.push(FirstToken::fixed_leading(&terminal_text));
-                },
-                AtomicShape::VarRule { .. } => {
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::Ident)
-                        },
-                        extra_guard: None,
-                        leading_literal: None,
-                        // CROSSCAT_LEX_COMPAT_GATE: an explicit user Var rule's
-                        // `Ident` is likewise a VAR CONTRIBUTION.
-                        is_var_contribution: true,
-                    });
-                },
-                AtomicShape::LiteralInteger => {
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::Integer)
-                        },
-                        extra_guard: None,
-                        leading_literal: None,
-                        is_var_contribution: false,
-                    });
-                },
-                AtomicShape::LiteralBoolean => {
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::True)
-                            | Some(mettail_prattail::automata::TokenKind::False)
-                            | Some(mettail_prattail::automata::TokenKind::BooleanLit)
-                        },
-                        extra_guard: None,
-                        leading_literal: None,
-                        is_var_contribution: false,
-                    });
-                },
-                AtomicShape::LiteralString => {
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::StringLit)
-                        },
-                        extra_guard: None,
-                        leading_literal: None,
-                        is_var_contribution: false,
-                    });
-                },
-                AtomicShape::LiteralFloat => {
-                    acc.push(FirstToken {
-                        pattern: quote! {
-                            Some(mettail_prattail::automata::TokenKind::Float)
-                        },
-                        extra_guard: None,
-                        leading_literal: None,
-                        is_var_contribution: false,
-                    });
-                },
-                AtomicShape::CrossCatProjection { source_cat_name, .. } => {
-                    // Queue the source category's FIRST set instead of
-                    // recursing. Projection cycles are cut by `visited`.
-                    pending.push_back(source_cat_name);
-                },
-                AtomicShape::CrossCatPrefixUnary { trigger, .. } => {
-                    acc.push(FirstToken::fixed_leading(&trigger));
-                },
-                AtomicShape::PrefixOperator { trigger, .. } => {
-                    // M6c.6.4.b (2026-05-14): same-cat unary prefix uses
-                    // the trigger literal as its FIRST token, matching
-                    // the existing CrossCatPrefixUnary FIRST-set shape.
-                    acc.push(FirstToken::fixed_leading(&trigger));
-                },
-                AtomicShape::NullaryLiteralRun { trigger, .. } => {
-                    // GAP-3: the FIRST token of a nullary multi-literal keyword
-                    // run is its trigger literal (e.g. `Map`, `@`) — identical
-                    // to what the NonAtomic arm below extracted for this rule
-                    // before GAP-3 classified it (sp[0] is the trigger literal).
-                    acc.push(FirstToken::fixed_leading(&trigger));
-                },
-                AtomicShape::NonAtomic => {
-                    // Pratt prefix / collection / binder rules: their FIRST
-                    // typically starts with a literal trigger from
-                    // syntax_pattern[0]. Best-effort extract.
-                    //
-                    // H1 fix (2026-05-18 from
-                    // `~/.claude/plans/replicated-conjuring-turtle.md`): if
-                    // syntax_pattern[0] is a Param (non-terminal ref) and
-                    // rule.items[0] is a Category-kind NonTerminal whose
-                    // category differs from `cat_name`, queue that
-                    // category's FIRST set. This covers multi-Param non-
-                    // binder rules like POutput (`n:Name, q:Proc |- n "!"
-                    // "(" q ")"`) whose first syntactic item is a non-
-                    // terminal of a different cat. Pre-fix the NonAtomic
-                    // branch silently emitted no FIRST contribution for
-                    // these rules, so e.g. Proc's FIRST set was missing
-                    // Ident (via Name's synthetic Var rule), which broke
-                    // PNew-body Ident-dispatch tests like
-                    // `new x in { x!(0) }`.
-                    if let Some(sp) = rule.syntax_pattern.as_ref() {
-                        match sp.first() {
-                            Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) => {
-                                acc.push(FirstToken::fixed_leading(text));
-                            },
-                            Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
-                                // Prefer the judgement-style term context: it
-                                // remains authoritative even when `items` is
-                                // empty. Legacy BNF rules retain the items
-                                // fallback.
-                                let leading_cat = super::binder::classify_binder_in(rule, language)
-                                    .and_then(|shape| shape.leading_category)
-                                    .or_else(|| match rule.items.first() {
-                                        Some(mettail_ast::grammar::GrammarItem::NonTerminal {
-                                            ident,
-                                            kind: mettail_ast::grammar::NonTerminalKind::Category,
-                                        }) => Some(ident.to_string()),
-                                        _ => None,
-                                    });
-                                if let Some(nt_cat) = leading_cat {
-                                    if nt_cat != current_cat_name {
-                                        pending.push_back(nt_cat);
-                                    }
-                                }
-                            },
-                            // A leading named token-family capture is a real
-                            // FIRST terminal.  Home-category prefix dispatch
-                            // has always recognized this shape, but omitting it
-                            // here made the same rule unreachable whenever the
-                            // category was entered through a cross-category
-                            // infix/projection edge.  Keep the predicate shared
-                            // with the lexer and consuming walker so builtin,
-                            // custom, and future token families agree exactly.
-                            Some(mettail_ast::grammar::SyntaxExpr::TokenKind { name, .. }) => {
-                                let kind_name = name.to_string();
-                                acc.push(FirstToken {
-                                    pattern: quote! { Some(ref __kind) },
-                                    extra_guard: Some(quote! {
-                                        mettail_prattail::automata::token_kind_matches_capture_name(
-                                            #kind_name,
-                                            __kind,
-                                        )
-                                    }),
-                                    leading_literal: None,
-                                    // This is syntax supplied by the rule, not
-                                    // an automatically injected Var reading.
-                                    is_var_contribution: false,
-                                });
-                            },
-                            // A delimited guest-body capture begins with its
-                            // declared opener token.  Propagating that opener
-                            // makes FIRST complete for structural FLT rules
-                            // reached through another category while retaining
-                            // the same closed Custom-kind test as home dispatch.
-                            Some(mettail_ast::grammar::SyntaxExpr::GuestBody { open, .. }) => {
-                                let open_kind = open.to_string();
-                                acc.push(FirstToken {
-                                    pattern: quote! {
-                                        Some(mettail_prattail::automata::TokenKind::Custom(ref __k))
-                                    },
-                                    extra_guard: Some(quote! { __k == #open_kind }),
-                                    leading_literal: None,
-                                    is_var_contribution: false,
-                                });
-                            },
-                            _ => {},
-                        }
-                    }
-                },
-            }
-        }
-    }
+    mettail_prattail::wpda_rule_analysis::prefix::first_set_of_category(
+        cat_name,
+        &super::binder::MacroBinderSyntaxReader,
+        &mut MacroFirstSetContext { language },
+    )
 }
 
 /// Cross-category INFIX-operand hop for a result category `R`: the categories
