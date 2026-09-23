@@ -43,6 +43,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+#[cfg(test)]
+#[path = "../../tests/support/constructor_label_baselines.rs"]
+mod constructor_label_baselines;
+
 /// Categories exposed as independently executable terms by the generated
 /// `Language` implementation. Closed data categories remain in every parser,
 /// structural traversal, clone/hash/drop implementation, and mixed-category
