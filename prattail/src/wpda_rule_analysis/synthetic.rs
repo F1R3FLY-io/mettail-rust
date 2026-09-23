@@ -350,6 +350,9 @@ pub fn build_per_category_rules<A: SynthesisAdapter>(
 }
 
 #[cfg(test)]
+mod baseline_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
