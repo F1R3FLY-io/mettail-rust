@@ -169,6 +169,25 @@ These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared
 WPDA walker. That integration requires its own transition and consumer checks.
 
+### Atomic prefix rows
+
+The shared [atomic-prefix worker](../../prattail/src/wpda_rule_analysis/atomic_prefix.rs)
+consumes the existing atomic classifier's descriptor; it does not classify the
+rule again. Six leaf cases request the original token predicates. A patterned
+literal delegates once with the original home-category policy and retains every
+returned row, guard, duplicate, and position. Projection, prefix-unary,
+prefix-operator, multi-literal nullary, and non-atomic shapes emit no atomic rows;
+their existing dispatch paths remain responsible for them.
+
+The same module owns the original unified prefix descriptor vocabulary, with
+opaque token payloads instead of a dependency on Rust token quotation. The macro
+adapter still supplies those quotations. The shared left-binding-power lookup
+also preserves the first operator row satisfying the original label, result,
+and source-category comparisons. The
+[atomic descriptor model](../../formal/rocq/prattail_wpda_runtime/theories/AtomicPrefixDescriptorProjection.v)
+proves callback order and row/field preservation. It does not cover the surrounding
+multi-pass bucket driver or transition execution.
+
 ### Native literals, identifiers, and guest modes
 
 The shared [native-literal worker](../../prattail/src/wpda_rule_analysis/native_first.rs)
@@ -230,6 +249,12 @@ an end-to-end proof:
 - [Schema context projection](../../formal/rocq/prattail_wpda_runtime/theories/SchemaAuthoredContextProjection.v)
   preserves runtime default-key equivalence while distinguishing it from the
   macro adapter's raw optional-field contract.
+- [Extended capture composition](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredExtendedCaptureComposition.v)
+  checks the same finite-run controller with both arrow children and the
+  multi-binder child retained. Ordered declaration-name roots use that same
+  capture run and name table. This preimplementation model does not establish
+  that the Rust metadata adapters or source-to-lowered token associations are
+  already connected.
 
 Concrete source-adapter tests remain necessary to connect each frontend to these
 models. These proofs do not establish hash injectivity, arbitrary callback

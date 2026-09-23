@@ -4,6 +4,7 @@
 use super::*;
 use mettail_ast::grammar::rule_fixture;
 use mettail_prattail::binding_power::{BindingPowerTable, InfixOperator};
+use mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor;
 use proc_macro2::Span;
 use syn::parse_quote;
 
@@ -28,12 +29,12 @@ fn row_text(rows: Vec<PrefixArmDescriptor>) -> Vec<(String, Option<String>, u16,
 fn atomic_prefix_baseline_six_quotation_sites_preserve_indices() {
     for (shape, pattern, guard) in [
         (
-            AtomicShape::LiteralInteger,
+            AtomicDescriptor::LiteralInteger,
             quote! { Some(mettail_prattail::automata::TokenKind::Integer) },
             None,
         ),
         (
-            AtomicShape::LiteralBoolean,
+            AtomicDescriptor::LiteralBoolean,
             quote! {
                 Some(mettail_prattail::automata::TokenKind::True)
                 | Some(mettail_prattail::automata::TokenKind::False)
@@ -42,26 +43,26 @@ fn atomic_prefix_baseline_six_quotation_sites_preserve_indices() {
             None,
         ),
         (
-            AtomicShape::LiteralString,
+            AtomicDescriptor::LiteralString,
             quote! { Some(mettail_prattail::automata::TokenKind::StringLit) },
             None,
         ),
         (
-            AtomicShape::LiteralFloat,
+            AtomicDescriptor::LiteralFloat,
             quote! { Some(mettail_prattail::automata::TokenKind::Float) },
             None,
         ),
         (
-            AtomicShape::TerminalKeyword {
+            AtomicDescriptor::TerminalKeyword {
                 terminal_text: "a|b".into(),
-                wrapper_variant: name("UnusedWrapper"),
+                wrapper_variant: "UnusedWrapper".into(),
             },
             quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
             Some(quote! { __kw == "a|b" }),
         ),
         (
-            AtomicShape::VarRule {
-                wrapper_variant: name("UnusedVariableWrapper"),
+            AtomicDescriptor::VarRule {
+                wrapper_variant: "UnusedVariableWrapper".into(),
             },
             quote! { Some(mettail_prattail::automata::TokenKind::Ident) },
             None,
@@ -84,13 +85,13 @@ fn atomic_prefix_baseline_six_quotation_sites_preserve_indices() {
 
 #[test]
 fn atomic_prefix_baseline_patterned_uses_home_context_and_order() {
-    let shape = AtomicShape::LiteralPatterned {
+    let shape = AtomicDescriptor::LiteralPatterned(AtomicShape::LiteralPatterned {
         cat_name: "Value".into(),
         family: LiteralFamily::Integer,
         native_type: parse_quote!(CanonicalBigInt),
         wrapper_variant: name("UnusedNativeWrapper"),
         rust_code: quote! { must_not_be_evaluated(text) },
-    };
+    });
     let rows = row_text(atomic_arm_descriptors(31, 17, &shape));
     let guard = Some(quote! { __cat == "Value" }.to_string());
     assert_eq!(
@@ -123,25 +124,25 @@ fn atomic_prefix_baseline_patterned_uses_home_context_and_order() {
 #[test]
 fn atomic_prefix_baseline_all_excluded_shapes_are_empty() {
     for shape in [
-        AtomicShape::CrossCatProjection {
+        AtomicDescriptor::CrossCatProjection {
             source_cat_name: "Source".into(),
-            wrapper_variant: name("Projection"),
+            wrapper_variant: "Projection".into(),
         },
-        AtomicShape::CrossCatPrefixUnary {
+        AtomicDescriptor::CrossCatPrefixUnary {
             trigger: "start".into(),
             source_cat_name: "Source".into(),
-            wrapper_variant: name("CrossPrefix"),
+            wrapper_variant: "CrossPrefix".into(),
         },
-        AtomicShape::PrefixOperator {
+        AtomicDescriptor::PrefixOperator {
             trigger: "-".into(),
             operand_cat_name: "Value".into(),
         },
-        AtomicShape::NullaryLiteralRun {
+        AtomicDescriptor::NullaryLiteralRun {
             trigger: "Map".into(),
             trailing_literals: vec!["(".into(), ")".into()],
-            wrapper_variant: name("EmptyMap"),
+            wrapper_variant: "EmptyMap".into(),
         },
-        AtomicShape::NonAtomic,
+        AtomicDescriptor::NonAtomic,
     ] {
         assert!(atomic_arm_descriptors(12, 34, &shape).is_empty(), "excluded {shape:?}");
     }

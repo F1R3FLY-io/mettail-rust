@@ -512,46 +512,53 @@ impl<'source>
         &mut self,
         predicate: mettail_prattail::wpda_rule_analysis::prefix::FirstPredicate<'_>,
     ) -> (TokenStream, Option<TokenStream>) {
-        use mettail_prattail::wpda_rule_analysis::prefix::FirstPredicate;
-        match predicate {
-            FirstPredicate::Fixed(sigil) => (
-                quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
-                Some(quote! { __kw == #sigil }),
-            ),
-            FirstPredicate::Ident => {
-                (quote! { Some(mettail_prattail::automata::TokenKind::Ident) }, None)
+        first_predicate_parts(predicate)
+    }
+}
+
+/// Original quotation sites shared by FIRST and atomic-row adapters.
+fn first_predicate_parts(
+    predicate: mettail_prattail::wpda_rule_analysis::prefix::FirstPredicate<'_>,
+) -> (TokenStream, Option<TokenStream>) {
+    use mettail_prattail::wpda_rule_analysis::prefix::FirstPredicate;
+    match predicate {
+        FirstPredicate::Fixed(sigil) => (
+            quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
+            Some(quote! { __kw == #sigil }),
+        ),
+        FirstPredicate::Ident => {
+            (quote! { Some(mettail_prattail::automata::TokenKind::Ident) }, None)
+        },
+        FirstPredicate::Integer => {
+            (quote! { Some(mettail_prattail::automata::TokenKind::Integer) }, None)
+        },
+        FirstPredicate::Boolean => (
+            quote! {
+                Some(mettail_prattail::automata::TokenKind::True)
+                | Some(mettail_prattail::automata::TokenKind::False)
+                | Some(mettail_prattail::automata::TokenKind::BooleanLit)
             },
-            FirstPredicate::Integer => {
-                (quote! { Some(mettail_prattail::automata::TokenKind::Integer) }, None)
-            },
-            FirstPredicate::Boolean => (
-                quote! {
-                    Some(mettail_prattail::automata::TokenKind::True)
-                    | Some(mettail_prattail::automata::TokenKind::False)
-                    | Some(mettail_prattail::automata::TokenKind::BooleanLit)
-                },
-                None,
-            ),
-            FirstPredicate::String => {
-                (quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)
-            },
-            FirstPredicate::Float => {
-                (quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)
-            },
-            FirstPredicate::CaptureName(kind_name) => (
-                quote! { Some(ref __kind) },
-                Some(quote! {
-                    mettail_prattail::automata::token_kind_matches_capture_name(
-                        #kind_name,
-                        __kind,
-                    )
-                }),
-            ),
-            FirstPredicate::GuestOpen(open_kind) => (
-                quote! { Some(mettail_prattail::automata::TokenKind::Custom(ref __k)) },
-                Some(quote! { __k == #open_kind }),
-            ),
-        }
+            None,
+        ),
+        FirstPredicate::String => {
+            (quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)
+        },
+        FirstPredicate::Float => {
+            (quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)
+        },
+        FirstPredicate::CaptureName(kind_name) => (
+            quote! { Some(ref __kind) },
+            Some(quote! {
+                mettail_prattail::automata::token_kind_matches_capture_name(
+                    #kind_name,
+                    __kind,
+                )
+            }),
+        ),
+        FirstPredicate::GuestOpen(open_kind) => (
+            quote! { Some(mettail_prattail::automata::TokenKind::Custom(ref __k)) },
+            Some(quote! { __k == #open_kind }),
+        ),
     }
 }
 
@@ -1236,6 +1243,7 @@ pub fn emit_prefix_arms_for_category(
     // c{cat}_a{ord}(..)`), `helpers` are the per-arm `#[inline(never)]` body
     // methods that get emitted into the sibling inherent `impl #engine_ident`.
 ) -> (Vec<TokenStream>, TokenStream) {
+    use mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor;
     let mut arms = Vec::new();
     // Stage 1.2: cross-cat infix LHS delegation. Walk all infix rules
     // (not just rules in this category) whose result_cat == this category
@@ -1383,9 +1391,9 @@ pub fn emit_prefix_arms_for_category(
     // ambiguity until runtime evidence rejects a branch.
     let mut atomic_descriptors: Vec<PrefixArmDescriptor> = Vec::new();
     for &(rule_idx, rule) in rules_in_category {
-        let shape = classify_atomic(rule, language);
+        let shape = classify_atomic_descriptor(rule, language);
         atomic_descriptors.extend(atomic_arm_descriptors(category_src_idx, rule_idx, &shape));
-        if let AtomicShape::CrossCatPrefixUnary {
+        if let AtomicDescriptor::CrossCatPrefixUnary {
             trigger,
             source_cat_name,
             wrapper_variant: _,
@@ -1412,7 +1420,7 @@ pub fn emit_prefix_arms_for_category(
         // A UNIQUE trigger (`Map`, `Pathmap`) emits a singleton arm; a SHARED
         // trigger (`@` — co-bucketed with NQuote `@(p)` / NQuoteShort `@p`)
         // folds into a multi-descriptor Fork resolved by lex-min.
-        if let AtomicShape::NullaryLiteralRun { trigger, .. } = &shape {
+        if let AtomicDescriptor::NullaryLiteralRun { trigger, .. } = &shape {
             insert_unified_descriptor(
                 &mut unified_buckets,
                 &mut unified_order,
@@ -1422,7 +1430,7 @@ pub fn emit_prefix_arms_for_category(
             );
             continue;
         }
-        if matches!(shape, AtomicShape::CrossCatProjection { .. }) {
+        if matches!(shape, AtomicDescriptor::CrossCatProjection { .. }) {
             continue;
         }
         if let Some(shape) = super::binder::classify_binder_in(rule, language) {
@@ -1709,12 +1717,8 @@ pub fn emit_prefix_arms_for_category(
 /// The bucket-then-Fork code path activates when a future G5-style grammar
 /// introduces deliberate atomic-arm ambiguity (e.g., two rules in the same
 /// category sharing a FIRST token).
-struct PrefixArmDescriptor {
-    pattern: TokenStream,
-    extra_guard: Option<TokenStream>,
-    rule_idx: u16,
-    category_src_idx: u16,
-}
+type PrefixArmDescriptor =
+    mettail_prattail::wpda_rule_analysis::atomic_prefix::PrefixArmDescriptor<TokenStream>;
 
 /// Stage 3.16 invariant (Cluster 2, Mechanism γ, 2026-05-05) — extracts
 /// pattern/guard pairs for an atomic shape, so the caller can bucket by
@@ -1722,70 +1726,22 @@ struct PrefixArmDescriptor {
 fn atomic_arm_descriptors(
     category_src_idx: u16,
     rule_idx: u16,
-    shape: &AtomicShape,
+    shape: &mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor<AtomicShape>,
 ) -> Vec<PrefixArmDescriptor> {
-    let pattern_guards: Vec<(TokenStream, Option<TokenStream>)> = match shape {
-        AtomicShape::LiteralInteger => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Integer) }, None)]
-        },
-        AtomicShape::LiteralBoolean => vec![(
-            quote! {
-                Some(mettail_prattail::automata::TokenKind::True)
-                | Some(mettail_prattail::automata::TokenKind::False)
-                | Some(mettail_prattail::automata::TokenKind::BooleanLit)
-            },
-            None,
-        )],
-        AtomicShape::LiteralString => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)]
-        },
-        AtomicShape::LiteralFloat => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)]
-        },
-        AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } => {
+    mettail_prattail::wpda_rule_analysis::atomic_prefix::atomic_arm_descriptors(
+        category_src_idx,
+        rule_idx,
+        shape,
+        first_predicate_parts,
+        |literal, context| {
+            let AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } = literal
+            else {
+                unreachable!("original literal resolver returns only LiteralPatterned payloads");
+            };
             let nk = NativeKind::from_syn_type(native_type);
-            literal_patterned_pattern_and_guard_for_kind(
-                cat_name,
-                *family,
-                Some(&nk),
-                EmissionContext::HomeCategory,
-            )
+            literal_patterned_pattern_and_guard_for_kind(cat_name, *family, Some(&nk), context)
         },
-        AtomicShape::TerminalKeyword { terminal_text, .. } => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
-            Some(quote! { __kw == #terminal_text }),
-        )],
-        AtomicShape::VarRule { .. } => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Ident) }, None)]
-        },
-        AtomicShape::CrossCatProjection { .. } | AtomicShape::CrossCatPrefixUnary { .. } => {
-            return Vec::new()
-        },
-        // M6c.6.4.b (2026-05-14): PrefixOperator does not emit an
-        // atomic-arm descriptor — same-cat unary prefix rules are
-        // handled by the standard prefix-trigger arm (BinderRule
-        // entry), NOT by atomic-literal dispatch. The lex-Fork at
-        // PrefixDispatch separately consults `lex_alt_rules_for_prefix`
-        // to bind `Fixed(trigger)` as a Fork branch for the same rule
-        // when multi-LENGTH lex ambiguity is present.
-        AtomicShape::PrefixOperator { .. } => return Vec::new(),
-        // GAP-3: NullaryLiteralRun does NOT emit a plain atomic singleton
-        // (which would fire the action immediately, skipping the trailing
-        // `( )` / `Nil` literals). Its dispatch arm is inserted into the
-        // unified bucket below as `UnifiedDescriptor::NullaryLiteralRun`,
-        // pushing the mixfix marker + entering `MixfixLiteralRun`.
-        AtomicShape::NullaryLiteralRun { .. } => return Vec::new(),
-        AtomicShape::NonAtomic => return Vec::new(),
-    };
-    pattern_guards
-        .into_iter()
-        .map(|(pattern, extra_guard)| PrefixArmDescriptor {
-            pattern,
-            extra_guard,
-            rule_idx,
-            category_src_idx,
-        })
-        .collect()
+    )
 }
 
 /// Return the ordinary led-dispatch floor for a rule that is represented in
@@ -1798,15 +1754,11 @@ pub(crate) fn same_category_led_left_bp(
     bp_table: &mettail_prattail::binding_power::BindingPowerTable,
 ) -> Option<u8> {
     let label = rule.label.to_string();
-    bp_table
-        .operators
-        .iter()
-        .find(|operator| {
-            operator.label == label
-                && operator.result_category == result_category
-                && operator.category == operator.result_category
-        })
-        .map(|operator| operator.left_bp)
+    mettail_prattail::wpda_rule_analysis::atomic_prefix::same_category_led_left_bp(
+        &label,
+        result_category,
+        bp_table,
+    )
 }
 
 /// B7 (2026-05-07) — unified descriptor for the merged Pass 0/Pass 1
@@ -1816,93 +1768,8 @@ pub(crate) fn same_category_led_left_bp(
 /// B10 / Option κ Fix B (2026-05-07): adds `CrossCatProjection` so Pass 2a
 /// folds into the same bucket map. Closes the Pass-1/2a silent shadow
 /// twin of the Pass-0/1 bug B7 fixed.
-enum UnifiedDescriptor {
-    /// Cross-cat infix LHS delegation arm — pushes
-    /// `CategoryEntry(source_src_idx)` so the LHS sub-parses against
-    /// the source category before InfixLoop sees the cross-cat operator.
-    /// Per-tier weight: `BP_TIER_CROSSCAT_LHS = 0.05`.
-    ///
-    /// AT_QUOTED_BIND_GATE (2026-07-03): `sigil_leads_result_rule` is `true`
-    /// when this delegate's dispatch token (the bucket's leading structural
-    /// literal `σ`) is ALSO the leading literal of a SIBLING rule in the RESULT
-    /// category — i.e. a direct `σ`-triggered rule (the sigil-quoted form)
-    /// exists that subsumes the whole-`source` reading this delegate produces.
-    /// Grammar-derived at construction (`category_leading_literals`). When
-    /// `AT_QUOTED_BIND_GATE` is on AND this flag is set AND a bind-trigger is
-    /// scoped-ahead at runtime, the delegate push is SUPPRESSED (drops the
-    /// proven over-generation; see `forks::AT_QUOTED_BIND_GATE`). `false` for
-    /// every non-sigil / non-over-generating delegate ⇒ inert.
-    CrossCatLhs {
-        source_src_idx: u16,
-        sigil_leads_result_rule: bool,
-    },
-    /// Atomic-shape arm — `ConsumeAndPush(rule_at(...).Return)` for a
-    /// home-category leaf rule (literal, var, terminal-keyword, etc.).
-    /// Per-tier weight: `0.0` (atomic-home).
-    Atomic(PrefixArmDescriptor),
-    /// Literal-leading binder/prefix rule. Consumes its own trigger token,
-    /// pushes `RuleAt(slot=1)`, and enters `BinderRule`.
-    BinderPrefix { rule_idx: u16, body_src_idx: u16 },
-    /// Category-leading composite. The dispatch does not consume a token: it
-    /// replaces the requested category entry with this rule's continuation,
-    /// pushes the leading child category, and lets that child parse the same
-    /// token position.
-    ///
-    /// Same-category Pratt led rules are excluded from this descriptor and
-    /// emitted only through InfixLoop. Category-changing closed primaries stay
-    /// here because their source attachment and result continuation are
-    /// independently typed.
-    LeadingCategory { rule_idx: u16, source_src_idx: u16 },
-    /// L9-3: a rule whose FIRST syntax element is a custom-kind capture
-    /// (`b@GuestChunk …`). The prefix dispatch consumes+captures the leading
-    /// token via `GuardedConsumeTokenKindAndReplace` (gated on
-    /// `peek_kind == Custom(kind_name)`), pushes `RuleAt(slot=1)`, and enters
-    /// `BinderRule`; the mid-rule positions (slots 1..) parse the rest. The
-    /// leading capture's `ActionArg::Token` is prepended to the action args by
-    /// `classify_binder_in`.
-    LeadingTokenKindCapture {
-        rule_idx: u16,
-        body_src_idx: u16,
-        kind_name: String,
-    },
-    /// L9-4: a LEADING guest-body rule (`PFlt . |- *flt(node, open, close) :
-    /// Cat`). Mirrors `LeadingTokenKindCapture` but the emitted Fork carries
-    /// `ConsumeGuestBodyAndPush` (scan opener→body→closer, assemble the FltNode,
-    /// PUSH `RuleAt(slot=1)`, enter `BinderRule`). The assembled
-    /// `ActionArg::GuestBody` is prepended to the action args by
-    /// `classify_binder_in`'s leading-prepend.
-    LeadingGuestBody {
-        rule_idx: u16,
-        body_src_idx: u16,
-        open_kind: String,
-        nested_open_kinds: Vec<String>,
-        close_kind: String,
-    },
-    /// Cross-category prefix-unary rule. Consumes its own trigger token,
-    /// pushes the wrapper Return frame, and delegates the operand to the
-    /// source category at that source's prefix floor.
-    CrossCatPrefixUnary {
-        rule_idx: u16,
-        source_src_idx: u16,
-        operand_bp: u8,
-    },
-    /// B10 / Option κ Fix B — Pass 2a CrossCatProjection delegation arm.
-    /// Pushes `rule_at(category, rule_idx, 0).with_kind_return()` and
-    /// transitions to `CrossCatDelegate { source_src_idx, outer_bp }`.
-    /// Per-tier weight: `BP_TIER_CROSSCAT_PROJECTION = 0.025`.
-    /// Used for rules of shape `R . a:Y |- a : X` (sp.len()==1).
-    CrossCatProjection { rule_idx: u16, source_src_idx: u16 },
-    /// GAP-3 (2026-06-28): 0-operand multi-literal keyword-prefix rule
-    /// (`Map ()`, `Pathmap ()`, `@ Nil`). Consumes its own trigger token
-    /// (mirrored to the SPPF as a `TriggerTerminal` for span anchoring),
-    /// pushes `mixfix_marker(cat, rule_idx, 0, continuation_bp)`, and enters
-    /// `MixfixLiteralRun { kind: 2, completed_idx: 0 }` — whose `parts_len
-    /// == 0` arm consumes the trailing literals then pops the marker, firing
-    /// the arity-0 action. Per-tier weight `0.0` (atomic-home) so a unique
-    /// trigger emits a singleton and a shared trigger (e.g. `@`) folds into a
-    /// lex-min Fork where declaration order (lower rule_idx) wins the tie.
-    NullaryLiteralRun { rule_idx: u16 },
-}
+type UnifiedDescriptor =
+    mettail_prattail::wpda_rule_analysis::atomic_prefix::UnifiedDescriptor<TokenStream>;
 
 /// B7 (2026-05-07) — unified bucket entry. Replaces the separate
 /// LhsBucketEntry (Pass 0) and atomic bucket map (Pass 1).
