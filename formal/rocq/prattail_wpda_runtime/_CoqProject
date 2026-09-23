@@ -93,6 +93,7 @@ theories/SyntheticRuleProjection.v
 theories/CollectionClassifierProjection.v
 theories/BinderOptionalProjection.v
 theories/TermParamReaderProjection.v
+theories/TermContextItemsProjection.v
 theories/BinderRuleProjection.v
 theories/FactoringTreeRelocation.v
 theories/FactoringForestWalkRelocation.v
