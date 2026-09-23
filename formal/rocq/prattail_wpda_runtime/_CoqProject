@@ -108,10 +108,10 @@ theories/LegacyRuleNormalizationProjection.v
 theories/ParikhDescriptorProjection.v
 theories/GroupingSourceDescriptorProjection.v
 theories/OriginalFirstSetProjection.v
-theories/AtomicPrefixDescriptorProjection.v
 theories/OriginalIdentSummaryProjection.v
 theories/NativeFirstDescriptorProjection.v
 theories/NativeKindProjection.v
+theories/AtomicPrefixDescriptorProjection.v
 theories/GuestModeDescriptorProjection.v
 theories/UnifiedPrefixDescriptorProjection.v
 theories/AuthoredRuleStoreProjection.v

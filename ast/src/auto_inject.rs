@@ -63,7 +63,9 @@
 //! change in this file or downstream codegen.
 
 use crate::grammar::{GrammarRule, SyntaxExpr, TermParam};
-use crate::language::{AttributeValue, LanguageDef, NativeKind, Premise, RewriteRule};
+use crate::language::{
+    AttributeValue, LanguageDef, NativeKind, NativeKindFromSynType, Premise, RewriteRule,
+};
 use crate::pattern::{Pattern, PatternTerm};
 use crate::types::TypeExpr;
 use proc_macro2::Span;

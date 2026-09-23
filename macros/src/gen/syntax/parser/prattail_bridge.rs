@@ -19,7 +19,7 @@ use crate::gen::token_tree_walk::TokenTreeLeaves;
 use crate::gen::type_expr_walk::terminal_base;
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
-    language::{AttributeValue, LanguageDef},
+    language::{AttributeValue, LanguageDef, NativeKindFromSynType},
     types::{CollectionType, TypeExpr},
 };
 use mettail_prattail::{

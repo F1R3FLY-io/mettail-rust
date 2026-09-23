@@ -2,7 +2,8 @@
 //!
 //! `TermContextItemsProjection.v` proves finite source/accessor substitution,
 //! including constructor order and the original partial binding indices.
-//! This does not certify arbitrary cyclic readers or runtime resource admission.
+//! `ContextItemsAdmission.v` specifies the optional same-loop admission envelope.
+//! Neither model certifies arbitrary readers or physical allocator bounds.
 
 use crate::{TermParamObservation, TermParamReader};
 
@@ -33,6 +34,62 @@ pub trait ContextItemsReader<'syntax>: TermParamReader<'syntax> {
     ) -> Self::Item;
 }
 
+/// Admission sites in the original traversal. Item names remain borrowed
+/// handles: the caller can charge their actual payload before construction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContextItemsEvent<N, K> {
+    VisitParameter,
+    EnterOptional,
+    Nonterminal(N),
+    Binder(N),
+    Collection {
+        kind: K,
+        element: N,
+        separator: &'static str,
+    },
+    Binding,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContextItemsError<E> {
+    Admission(E),
+    Allocation,
+}
+
+/// Prepay and reserve before invoking the original item constructor.
+fn push_item<T, N, K, E>(
+    items: &mut Vec<T>,
+    event: ContextItemsEvent<N, K>,
+    admit: &mut impl FnMut(ContextItemsEvent<N, K>) -> Result<(), E>,
+    make: impl FnOnce() -> T,
+) -> Result<(), ContextItemsError<E>> {
+    admit(event).map_err(ContextItemsError::Admission)?;
+    items
+        .try_reserve(1)
+        .map_err(|_| ContextItemsError::Allocation)?;
+    items.push(make());
+    Ok(())
+}
+
+fn push_binding<N, K, E>(
+    bindings: &mut Vec<(usize, Vec<usize>)>,
+    binder: usize,
+    body: usize,
+    admit: &mut impl FnMut(ContextItemsEvent<N, K>) -> Result<(), E>,
+) -> Result<(), ContextItemsError<E>> {
+    admit(ContextItemsEvent::Binding).map_err(ContextItemsError::Admission)?;
+    bindings
+        .try_reserve(1)
+        .map_err(|_| ContextItemsError::Allocation)?;
+    let mut bodies = Vec::new();
+    bodies
+        .try_reserve(1)
+        .map_err(|_| ContextItemsError::Allocation)?;
+    bodies.push(body);
+    bindings.push((binder, bodies));
+    Ok(())
+}
+
 /// Execute the original outer loop and nested Optional iterator-frame loop.
 ///
 /// Each frame contains only an original list handle and its index iterator; no
@@ -42,27 +99,74 @@ pub fn convert_term_context_to_items_with<'syntax, R: ContextItemsReader<'syntax
     reader: &R,
     term_context: R::Parameters,
 ) -> (Vec<R::Item>, Vec<(usize, Vec<usize>)>) {
+    match try_convert_term_context_to_items_with(reader, term_context, |_| {
+        Ok::<_, std::convert::Infallible>(())
+    }) {
+        Ok(output) => output,
+        Err(ContextItemsError::Admission(impossible)) => match impossible {},
+        Err(ContextItemsError::Allocation) => panic!("term context output allocation failed"),
+    }
+}
+
+/// Same original loops with admission before work or growth, not a preliminary
+/// traversal. Every occurrence is charged, including repeated shared handles.
+/// On refusal private buffers are dropped and no partial output is returned.
+/// Readers must remain shallow and immutable; constructors must not perform
+/// external effects. The admission callback supplies policy, not this worker.
+pub fn try_convert_term_context_to_items_with<'syntax, R, E>(
+    reader: &R,
+    term_context: R::Parameters,
+    mut admit: impl FnMut(ContextItemsEvent<R::Name, R::CollectionKind>) -> Result<(), E>,
+) -> Result<(Vec<R::Item>, Vec<(usize, Vec<usize>)>), ContextItemsError<E>>
+where
+    R: ContextItemsReader<'syntax>,
+{
     let mut items = Vec::new();
     let mut bindings = Vec::new();
 
     for index in 0..reader.params_len(term_context) {
+        admit(ContextItemsEvent::VisitParameter).map_err(ContextItemsError::Admission)?;
         let param = reader
             .param_at(term_context, index)
             .expect("parameter index is in bounds");
         match reader.param(param) {
             TermParamObservation::Simple { ty, .. } => {
                 if let Some(type_name) = reader.base_name(ty) {
-                    items.push(reader.make_nonterminal(type_name));
+                    push_item(
+                        &mut items,
+                        ContextItemsEvent::Nonterminal(type_name),
+                        &mut admit,
+                        || reader.make_nonterminal(type_name),
+                    )?;
                 } else if let Some((coll_type, element)) = reader.collection(ty) {
                     if let Some(elem_name) = reader.base_name(element) {
-                        items.push(reader.make_collection(coll_type, elem_name, "|"));
+                        push_item(
+                            &mut items,
+                            ContextItemsEvent::Collection {
+                                kind: coll_type,
+                                element: elem_name,
+                                separator: "|",
+                            },
+                            &mut admit,
+                            || reader.make_collection(coll_type, elem_name, "|"),
+                        )?;
                     }
                 } else if let Some((key, value)) = reader.map(ty) {
                     if let (Some(k_name), Some(v_name)) =
                         (reader.base_name(key), reader.base_name(value))
                     {
                         if reader.names_equal(k_name, v_name) {
-                            items.push(reader.make_collection(reader.hash_map_kind(), v_name, ","));
+                            let kind = reader.hash_map_kind();
+                            push_item(
+                                &mut items,
+                                ContextItemsEvent::Collection {
+                                    kind,
+                                    element: v_name,
+                                    separator: ",",
+                                },
+                                &mut admit,
+                                || reader.make_collection(kind, v_name, ","),
+                            )?;
                         }
                     }
                 }
@@ -71,13 +175,23 @@ pub fn convert_term_context_to_items_with<'syntax, R: ContextItemsReader<'syntax
                 if let Some((domain, codomain)) = reader.arrow(ty) {
                     let binder_idx = items.len();
                     if let Some(binder_type) = reader.base_name(domain) {
-                        items.push(reader.make_binder(binder_type));
+                        push_item(
+                            &mut items,
+                            ContextItemsEvent::Binder(binder_type),
+                            &mut admit,
+                            || reader.make_binder(binder_type),
+                        )?;
                     }
                     let body_idx = items.len();
                     if let Some(body_type) = reader.base_name(codomain) {
-                        items.push(reader.make_nonterminal(body_type));
+                        push_item(
+                            &mut items,
+                            ContextItemsEvent::Nonterminal(body_type),
+                            &mut admit,
+                            || reader.make_nonterminal(body_type),
+                        )?;
                     }
-                    bindings.push((binder_idx, vec![body_idx]));
+                    push_binding(&mut bindings, binder_idx, body_idx, &mut admit)?;
                 }
             },
             TermParamObservation::MultiAbstraction { ty, .. } => {
@@ -85,52 +199,91 @@ pub fn convert_term_context_to_items_with<'syntax, R: ContextItemsReader<'syntax
                     let binder_idx = items.len();
                     if let Some(inner) = reader.multi_binder(domain) {
                         if let Some(binder_type) = reader.base_name(inner) {
-                            items.push(reader.make_binder(binder_type));
+                            push_item(
+                                &mut items,
+                                ContextItemsEvent::Binder(binder_type),
+                                &mut admit,
+                                || reader.make_binder(binder_type),
+                            )?;
                         }
                     }
                     let body_idx = items.len();
                     if let Some(body_type) = reader.base_name(codomain) {
-                        items.push(reader.make_nonterminal(body_type));
+                        push_item(
+                            &mut items,
+                            ContextItemsEvent::Nonterminal(body_type),
+                            &mut admit,
+                            || reader.make_nonterminal(body_type),
+                        )?;
                     }
-                    bindings.push((binder_idx, vec![body_idx]));
+                    push_binding(&mut bindings, binder_idx, body_idx, &mut admit)?;
                 }
             },
             TermParamObservation::GuardBody { .. } => {},
             TermParamObservation::Optional { params: inner } => {
-                fn flatten_optional_items<'syntax, R: ContextItemsReader<'syntax>>(
+                fn flatten_optional_items<'syntax, R: ContextItemsReader<'syntax>, E>(
                     reader: &R,
                     inner: R::Parameters,
                     items: &mut Vec<R::Item>,
-                ) {
-                    let mut frames = vec![(inner, 0..reader.params_len(inner))];
+                    admit: &mut impl FnMut(
+                        ContextItemsEvent<R::Name, R::CollectionKind>,
+                    ) -> Result<(), E>,
+                ) -> Result<(), ContextItemsError<E>> {
+                    admit(ContextItemsEvent::EnterOptional)
+                        .map_err(ContextItemsError::Admission)?;
+                    let mut frames = Vec::new();
+                    frames
+                        .try_reserve(1)
+                        .map_err(|_| ContextItemsError::Allocation)?;
+                    frames.push((inner, 0..reader.params_len(inner)));
                     while let Some((params, frame)) = frames.last_mut() {
                         let Some(index) = frame.next() else {
                             frames.pop();
                             continue;
                         };
+                        admit(ContextItemsEvent::VisitParameter)
+                            .map_err(ContextItemsError::Admission)?;
                         let p = reader
                             .param_at(*params, index)
                             .expect("parameter index is in bounds");
                         match reader.param(p) {
                             TermParamObservation::Simple { ty, .. } => {
                                 if let Some(type_name) = reader.base_name(ty) {
-                                    items.push(reader.make_nonterminal(type_name));
+                                    push_item(
+                                        items,
+                                        ContextItemsEvent::Nonterminal(type_name),
+                                        admit,
+                                        || reader.make_nonterminal(type_name),
+                                    )?;
                                 } else if let Some((coll_type, element)) = reader.collection(ty) {
                                     if let Some(elem_name) = reader.base_name(element) {
-                                        items.push(
-                                            reader.make_collection(coll_type, elem_name, "|"),
-                                        );
+                                        push_item(
+                                            items,
+                                            ContextItemsEvent::Collection {
+                                                kind: coll_type,
+                                                element: elem_name,
+                                                separator: "|",
+                                            },
+                                            admit,
+                                            || reader.make_collection(coll_type, elem_name, "|"),
+                                        )?;
                                     }
                                 } else if let Some((key, value)) = reader.map(ty) {
                                     if let (Some(k_name), Some(v_name)) =
                                         (reader.base_name(key), reader.base_name(value))
                                     {
                                         if reader.names_equal(k_name, v_name) {
-                                            items.push(reader.make_collection(
-                                                reader.hash_map_kind(),
-                                                v_name,
-                                                ",",
-                                            ));
+                                            let kind = reader.hash_map_kind();
+                                            push_item(
+                                                items,
+                                                ContextItemsEvent::Collection {
+                                                    kind,
+                                                    element: v_name,
+                                                    separator: ",",
+                                                },
+                                                admit,
+                                                || reader.make_collection(kind, v_name, ","),
+                                            )?;
                                         }
                                     }
                                 }
@@ -139,20 +292,31 @@ pub fn convert_term_context_to_items_with<'syntax, R: ContextItemsReader<'syntax
                             | TermParamObservation::MultiAbstraction { ty, .. } => {
                                 if let Some((_, codomain)) = reader.arrow(ty) {
                                     if let Some(body_type) = reader.base_name(codomain) {
-                                        items.push(reader.make_nonterminal(body_type));
+                                        push_item(
+                                            items,
+                                            ContextItemsEvent::Nonterminal(body_type),
+                                            admit,
+                                            || reader.make_nonterminal(body_type),
+                                        )?;
                                     }
                                 }
                             },
                             TermParamObservation::GuardBody { .. } => {},
                             TermParamObservation::Optional { params: nested } => {
+                                admit(ContextItemsEvent::EnterOptional)
+                                    .map_err(ContextItemsError::Admission)?;
+                                frames
+                                    .try_reserve(1)
+                                    .map_err(|_| ContextItemsError::Allocation)?;
                                 frames.push((nested, 0..reader.params_len(nested)));
                             },
                         }
                     }
+                    Ok(())
                 }
-                flatten_optional_items(reader, inner, &mut items);
+                flatten_optional_items(reader, inner, &mut items, &mut admit)?;
             },
         }
     }
-    (items, bindings)
+    Ok((items, bindings))
 }

@@ -11,7 +11,7 @@
 //! populate additional arms in the same match.
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
-use mettail_ast::language::{LanguageDef, NativeKind};
+use mettail_ast::language::{LanguageDef, NativeKind, NativeKindFromSynType};
 use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -3033,6 +3033,10 @@ mod grouping_source_descriptor_baselines;
 #[cfg(test)]
 #[path = "../../../../tests/support/native_first_descriptor_baselines.rs"]
 mod native_first_descriptor_baselines;
+
+#[cfg(test)]
+#[path = "../../../../tests/support/atomic_prefix_descriptor_baselines.rs"]
+mod atomic_prefix_descriptor_baselines;
 
 #[cfg(test)]
 mod tests {

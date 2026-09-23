@@ -2,6 +2,7 @@
 //! This pins source correspondence only, not comparator factorization.
 use super::*;
 use crate::gen::term_ops::subst::OpaqueLeafKind;
+use mettail_ast::language::NativeKindFromSynType;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 

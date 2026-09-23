@@ -12,7 +12,7 @@ use crate::gen::{
 };
 /// Generate eval() method for native types
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
-use mettail_ast::language::{LangType, LanguageDef, NativeKind};
+use mettail_ast::language::{LangType, LanguageDef, NativeKind, NativeKindFromSynType};
 use mettail_ast::types::TypeExpr;
 use std::collections::HashMap;
 

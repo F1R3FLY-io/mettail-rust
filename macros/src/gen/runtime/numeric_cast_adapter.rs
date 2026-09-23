@@ -26,7 +26,7 @@
 //! See `docs/design/made/native-types/numeric-cast-adapter-generation.md`.
 
 use mettail_ast::grammar::{GrammarRule, TermParam};
-use mettail_ast::language::{LanguageDef, NativeKind};
+use mettail_ast::language::{LanguageDef, NativeKind, NativeKindFromSynType};
 use mettail_ast::types::{EvalMode, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::quote;

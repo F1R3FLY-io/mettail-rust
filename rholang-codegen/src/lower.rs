@@ -21,7 +21,7 @@
 
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
 use mettail_ast::identity::language_definition_fingerprint;
-use mettail_ast::language::{LanguageDef, NativeKind};
+use mettail_ast::language::{LanguageDef, NativeKind, NativeKindFromSynType};
 use mettail_ast::types::TypeExpr;
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;

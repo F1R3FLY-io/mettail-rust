@@ -147,6 +147,24 @@ does not validate that every recorded index identifies an emitted item. The
 preserves these outputs and observation order. Its input reader is shared with
 the existing parameter traversal; the AST adapter is reused by macro generation.
 
+The converter's fallible entrypoint adds admission at the same loop sites; it
+does not perform a second traversal. It admits each parameter occurrence before
+reading it, each optional frame before growth, each item before construction,
+and each binding before allocation. The original AST entrypoint delegates with
+infallible admission. A runtime caller must supply a finite policy and shallow,
+immutable readers; private output is returned only on success.
+
+Charging occurrences matters even for validated backward-only arenas: two
+optional-group references can share a child, and repeated sharing can make a
+small arena describe an exponentially large traversal. Arena size alone is not
+a bound on that work. The
+[context admission model](../../formal/rocq/prattail_wpda_runtime/theories/ContextItemsAdmission.v)
+proves budget conservation, first-unpaid-event refusal, and exact successful
+publication over the original event schedule. Its trace is mathematical proof
+instrumentation, not a trace allocated by the converter. Allocation failure
+remains a separate refusal; logical charges do not establish physical memory
+usage or the lawfulness of arbitrary constructors.
+
 These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared
 WPDA walker. That integration requires its own transition and consumer checks.
@@ -164,6 +182,17 @@ The [native projection model](../../formal/rocq/prattail_wpda_runtime/theories/N
 covers lookup short-circuiting, ordered pattern/guard construction, and the
 distinct home-category and FIRST-set integer policies. It does not prove that a
 runtime decoder implements an arbitrary native carrier.
+
+`NativeKind` itself and its original ordered promotion tables live in
+[`grammar-core`](../../grammar-core/src/native_kind.rs); AST re-exports that
+same enum. The core classifier accepts an already observed last path-segment
+spelling, not Rust source. AST retains the original shallow `syn::Type` access
+through the `NativeKindFromSynType` extension trait. Rust callers of
+`NativeKind::from_syn_type` import both identifiers from `mettail_ast::language`.
+No AST dependency, type parser, or new promotion algorithm enters the core.
+The [native-kind projection model](../../formal/rocq/prattail_wpda_runtime/theories/NativeKindProjection.v)
+preserves the original classifier, tables, and queue behavior; it does not prove
+that the tables' numeric embeddings or runtime decoder implementations are valid.
 
 The prefix worker also contains the original identifier summaries: whether a
 category has a home variable reading, which categories have an identifier FIRST
