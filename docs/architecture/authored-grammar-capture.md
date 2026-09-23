@@ -151,6 +151,40 @@ These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared
 WPDA walker. That integration requires its own transition and consumer checks.
 
+### Native literals, identifiers, and guest modes
+
+The shared [native-literal worker](../../prattail/src/wpda_rule_analysis/native_first.rs)
+preserves the original category and declaration lookups. Native-type absence is
+different from a present type classified as `Other`. Built-in native families
+are selected directly; a custom family additionally requires the first eligible
+authored literal declaration with an evaluation body. Runtime adapters must not
+infer these observations from a normalized carrier or a generated token name.
+The macro adapter retains the original Rust quotations and evaluation payloads.
+The [native projection model](../../formal/rocq/prattail_wpda_runtime/theories/NativeFirstDescriptorProjection.v)
+covers lookup short-circuiting, ordered pattern/guard construction, and the
+distinct home-category and FIRST-set integer policies. It does not prove that a
+runtime decoder implements an arbitrary native carrier.
+
+The prefix worker also contains the original identifier summaries: whether a
+category has a home variable reading, which categories have an identifier FIRST
+contribution, and whether a source's identifier readings are variable-only.
+The latter uses explicit category/rule frames and the original pure-projection
+test; it is not unrestricted transitive delegation. The
+[identifier projection model](../../formal/rocq/prattail_wpda_runtime/theories/OriginalIdentSummaryProjection.v)
+preserves that existing decision procedure, including its ordered legacy-item
+reads and cycle handling. This is not a new justification for parse pruning.
+
+The shared [guest-mode worker](../../prattail/src/wpda_rule_analysis/guest.rs)
+selects the first matching opener token, then its pushed mode, then that mode's
+tokens which push the same mode. A missing push on the first matching opener
+does not cause a search for a later duplicate. Returned opener names retain
+order and duplicates. Token-name matching, mode-name equality, and output-name
+rendering remain distinct operations, as captured by the
+[guest projection model](../../formal/rocq/prattail_wpda_runtime/theories/GuestModeDescriptorProjection.v).
+For example, identical rendered mode names cannot substitute for source name
+equality. An owned adapter must retain that equality rather than strip
+qualifiers from lowered lexer names.
+
 ## Verification boundaries
 
 The Rocq models separate obligations rather than treating an interface test as

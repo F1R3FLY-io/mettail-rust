@@ -97,6 +97,252 @@ pub trait FirstSetContext<'source, R: BinderRuleReader<'source>> {
     ) -> (Self::Pattern, Option<Self::Pattern>);
 }
 
+/// Additional authored observations used by the original identifier summaries.
+/// Declaration order is unchanged; `legacy_at(rule, 0)` must agree with
+/// `legacy_first(rule)`. Every position below `legacy_len` must be present,
+/// including unsupported items represented by `Other`. Category spelling uses
+/// the original formatter, not identifier equality or a reconstructed category.
+/// `OriginalIdentSummaryProjection.v` covers this source-substitution boundary;
+/// it does not certify the summaries as complete semantic FIRST predicates.
+pub trait IdentSummaryContext<'source, R: BinderRuleReader<'source>>:
+    FirstSetContext<'source, R>
+{
+    fn categories_len(&self) -> usize;
+    fn category_at(&self, index: usize) -> Self::Category;
+    fn category_spelling(&self, category: Self::Category) -> String;
+    fn legacy_len(&self, rule: R::Rule) -> usize;
+    fn legacy_at(
+        &self,
+        rule: R::Rule,
+        index: usize,
+    ) -> Option<FirstLegacyItem<'source, <R as BinderSyntaxReader<'source>>::Name>>;
+}
+
+/// Original declaration-first home-variable predicate. An explicit first Var
+/// short-circuits the data-role read; undeclared categories refuse immediately.
+pub fn result_has_home_var_reading<'source, R, C>(
+    cat_name: &str,
+    reader: &R,
+    context: &mut C,
+) -> bool
+where
+    R: BinderRuleReader<'source>,
+    C: FirstSetContext<'source, R>,
+{
+    let Some(lang_type) = context.find_category(cat_name) else {
+        return false;
+    };
+    let has_user_var = (0..context.rules_len()).any(|index| {
+        let rule = context.rule_at(index);
+        reader.category(rule).to_string() == cat_name
+            && context
+                .legacy_first(rule)
+                .map(|item| {
+                    matches!(item, FirstLegacyItem::NonTerminal { kind: NonTerminalKind::Var, .. })
+                })
+                .unwrap_or(false)
+    });
+    has_user_var || !context.is_data(lang_type)
+}
+
+/// Original identifier closure: authored rule order, duplicate reverse edges,
+/// guard-before-format short-circuit, and HashSet seed enumeration are retained.
+pub fn ident_first_categories<'source, R, C>(
+    reader: &R,
+    context: &mut C,
+) -> std::collections::HashSet<String>
+where
+    R: BinderRuleReader<'source>,
+    C: IdentSummaryContext<'source, R>,
+{
+    let mut reached: std::collections::HashSet<String> = (0..context.categories_len())
+        .map(|index| context.category_at(index))
+        .filter(|ty| !context.is_data(*ty))
+        .map(|ty| context.category_spelling(ty))
+        .collect();
+    let mut reverse: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    for index in 0..context.rules_len() {
+        let rule = context.rule_at(index);
+        let category = reader.category(rule).to_string();
+        match context.atomic(rule) {
+            AtomicDescriptor::VarRule { .. } => {
+                reached.insert(category);
+            },
+            AtomicDescriptor::LiteralPatterned(literal) => {
+                let has_ident =
+                    context
+                        .patterned_first(literal)
+                        .into_iter()
+                        .any(|(pattern, guard)| {
+                            guard.is_none() && pattern.to_string().contains("Ident")
+                        });
+                if has_ident {
+                    reached.insert(category);
+                }
+            },
+            AtomicDescriptor::CrossCatProjection { source_cat_name, .. } => {
+                reverse.entry(source_cat_name).or_default().push(category);
+            },
+            AtomicDescriptor::NonAtomic => {
+                if matches!(
+                    reader
+                        .syntax_pattern(rule)
+                        .and_then(|pattern| reader.at(pattern, 0)),
+                    Some(BinderSyntaxObservation::Param(_))
+                ) {
+                    if let Some(FirstLegacyItem::NonTerminal {
+                        name,
+                        kind: NonTerminalKind::Category,
+                    }) = context.legacy_first(rule)
+                    {
+                        let source = name.to_string();
+                        if source != category {
+                            reverse.entry(source).or_default().push(category);
+                        }
+                    }
+                }
+            },
+            AtomicDescriptor::TerminalKeyword { .. }
+            | AtomicDescriptor::LiteralInteger
+            | AtomicDescriptor::LiteralBoolean
+            | AtomicDescriptor::LiteralString
+            | AtomicDescriptor::LiteralFloat
+            | AtomicDescriptor::CrossCatPrefixUnary { .. }
+            | AtomicDescriptor::PrefixOperator { .. }
+            | AtomicDescriptor::NullaryLiteralRun { .. } => {},
+        }
+    }
+
+    let mut pending: std::collections::VecDeque<_> = reached.iter().cloned().collect();
+    while let Some(source) = pending.pop_front() {
+        if let Some(targets) = reverse.get(&source) {
+            for target in targets {
+                if reached.insert(target.clone()) {
+                    pending.push_back(target.clone());
+                }
+            }
+        }
+    }
+    reached
+}
+
+/// Original explicit-frame var-only traversal, not a new FIRST recognizer.
+/// The closure is eager; each cursor advances before the rule is inspected.
+/// Purity retains its three separate, short-circuiting source passes.
+pub fn source_ident_first_is_var_only<'source, R, C>(
+    source_cat: &str,
+    reader: &R,
+    context: &mut C,
+) -> bool
+where
+    R: BinderRuleReader<'source>,
+    C: IdentSummaryContext<'source, R>,
+{
+    struct Frame {
+        category: String,
+        next_rule: usize,
+    }
+
+    let ident_first = ident_first_categories(reader, context);
+    let mut rules_by_category: std::collections::HashMap<String, Vec<R::Rule>> =
+        std::collections::HashMap::new();
+    for index in 0..context.rules_len() {
+        let rule = context.rule_at(index);
+        rules_by_category
+            .entry(reader.category(rule).to_string())
+            .or_default()
+            .push(rule);
+    }
+
+    let mut visited = std::collections::HashSet::from([source_cat.to_string()]);
+    let mut frames = vec![Frame {
+        category: source_cat.to_string(),
+        next_rule: 0,
+    }];
+    while let Some(frame) = frames.last_mut() {
+        let rules = rules_by_category
+            .get(&frame.category)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let Some(rule) = rules.get(frame.next_rule).copied() else {
+            frames.pop();
+            continue;
+        };
+        frame.next_rule += 1;
+
+        let is_var_rule = context
+            .legacy_first(rule)
+            .map(|item| {
+                matches!(item, FirstLegacyItem::NonTerminal { kind: NonTerminalKind::Var, .. })
+            })
+            .unwrap_or(false);
+        if is_var_rule {
+            continue;
+        }
+        match context.legacy_first(rule) {
+            Some(FirstLegacyItem::Terminal(_)) => continue,
+            Some(FirstLegacyItem::NonTerminal { name, kind: NonTerminalKind::Category }) => {
+                let nt_cat = name.to_string();
+                if nt_cat == frame.category {
+                    continue;
+                }
+                let structural_item_count = (0..context.legacy_len(rule))
+                    .filter(|index| {
+                        !matches!(
+                            context.legacy_at(rule, *index),
+                            Some(FirstLegacyItem::Terminal(_))
+                        )
+                    })
+                    .count();
+                let is_pure_projection = structural_item_count == 1
+                    && (0..context.legacy_len(rule)).all(|index| {
+                        matches!(
+                            context.legacy_at(rule, index),
+                            Some(
+                                FirstLegacyItem::NonTerminal {
+                                    kind: NonTerminalKind::Category,
+                                    ..
+                                } | FirstLegacyItem::Terminal(_)
+                            )
+                        )
+                    })
+                    && (0..context.legacy_len(rule)).all(|index| {
+                        !matches!(
+                            context.legacy_at(rule, index),
+                            Some(FirstLegacyItem::Terminal(_))
+                        )
+                    });
+                if ident_first.contains(&nt_cat) {
+                    if is_pure_projection && !visited.insert(nt_cat.clone()) {
+                        continue;
+                    }
+                    if is_pure_projection {
+                        frames.push(Frame { category: nt_cat, next_rule: 0 });
+                        continue;
+                    }
+                    return false;
+                }
+                continue;
+            },
+            Some(FirstLegacyItem::NonTerminal { kind: NonTerminalKind::Var, .. }) => continue,
+            _ => {
+                if let Some(sp) = reader.syntax_pattern(rule) {
+                    match reader.at(sp, 0) {
+                        Some(BinderSyntaxObservation::Literal(_)) => continue,
+                        Some(BinderSyntaxObservation::Param(_)) => return false,
+                        _ => return false,
+                    }
+                } else {
+                    return false;
+                }
+            },
+        }
+    }
+    true
+}
+
 impl<P> FirstToken<P> {
     fn fixed_leading(sigil: &str, pattern: P, extra_guard: Option<P>) -> Self {
         Self {

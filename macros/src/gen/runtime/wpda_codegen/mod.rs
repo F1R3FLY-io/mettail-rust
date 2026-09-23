@@ -133,26 +133,16 @@ mod guest_mode_descriptor_baselines;
 /// modes (for example nested comments) are lexical subregions and must not
 /// affect the captured region's brace depth.
 pub(crate) fn guest_body_nested_open_kinds(language: &LanguageDef, open_kind: &str) -> Vec<String> {
-    let Some(region_mode) = language
-        .token_defs
-        .iter()
-        .find(|token| token.name == open_kind)
-        .and_then(|token| token.push_mode.as_ref())
-    else {
-        return Vec::new();
-    };
-    let Some(mode) = language
-        .mode_defs
-        .iter()
-        .find(|mode| mode.name == *region_mode)
-    else {
-        return Vec::new();
-    };
-    mode.token_defs
-        .iter()
-        .filter(|token| token.push_mode.as_ref() == Some(region_mode))
-        .map(|token| token.name.to_string())
-        .collect()
+    mettail_prattail::wpda_rule_analysis::guest::guest_body_nested_open_kinds(
+        &language.token_defs,
+        &language.mode_defs,
+        open_kind,
+        |token, open| token.name == open,
+        |token| token.push_mode.as_ref(),
+        |mode| &mode.name,
+        |mode| &mode.token_defs,
+        |token| token.name.to_string(),
+    )
 }
 
 /// Generate the WPDS-runtime engine module for the given language.

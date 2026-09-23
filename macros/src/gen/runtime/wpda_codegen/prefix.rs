@@ -18,59 +18,7 @@ use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
 /// Lexer token family for a literal-patterned rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LiteralFamily {
-    /// Maps to `TokenKind::IntegerLit(cat)`. Applies to all bounded-integer
-    /// widths AND `CanonicalBigInt` (the lexer treats them uniformly — per-
-    /// category variant with category-name payload).
-    Integer,
-    /// Maps to `TokenKind::RationalLit(cat)`.
-    Rational,
-    /// Maps to `TokenKind::FixedPointLit(cat)`.
-    FixedPoint,
-    /// Maps to `TokenKind::Float`. One float category per grammar (no
-    /// payload since lexer only emits one variant).
-    Float,
-    /// Maps to `TokenKind::True | False | BooleanLit`.
-    Boolean,
-    /// Maps to `TokenKind::StringLit`.
-    String,
-    /// Maps to `TokenKind::Custom(cat)` — a category that DECLARES its own literal pattern
-    /// (`literals { Cat { pattern: …; eval: ![{ … }] } }`) but whose native carrier belongs to
-    /// no built-in token family.
-    ///
-    /// # Why this family exists at all
-    ///
-    /// The built-in families are keyed on [`NativeKind`], which knows the integer widths,
-    /// `f32`/`f64`, `bool`, `str`, and the three canonical wrappers — and nothing else. Every
-    /// other carrier resolved to `NativeKind::Other`, `literal_family_for` returned `None`, and
-    /// the category was classified [`AtomicShape::NonAtomic`]: **the declared `literals { … }`
-    /// block was silently discarded**, so the category had no literal reading and therefore no
-    /// surface form. It was constructible in Rust and unwritable and unrenderable in the
-    /// language — the exact defect measured for rholang's byte carrier
-    /// (`![Vec<u8>] as Bytes` ⇒ `Bytes::BytesLit(vec![])` displayed as `""`).
-    ///
-    /// # Why it is elected by the DECLARATION and not by the carrier
-    ///
-    /// The gate is "does this category declare a `literals { … }` block with an `eval` body?",
-    /// which is exactly the author's statement *this category has a literal surface, and here
-    /// is how to read it*. Keying on the carrier instead would need a new `NativeKind` variant
-    /// per carrier — a hand-maintained mirror of an open set — and would silently misfire on
-    /// carriers that deliberately have NO literal (rholang's `Set`, `Pathmap`, `ReadZipper` and
-    /// `WriteZipper` are all `NativeKind::Other` and declare no block, so they are untouched).
-    /// See `literal_family_for_category`, which is the single place the election happens.
-    ///
-    /// # Wire
-    ///
-    /// The lexer already routes such a category correctly with no change:
-    /// `NativeKind::Other::standard_token_variant()` is `None`, so `ast::language::parse` keeps
-    /// the CATEGORY NAME as the token name, `prattail_bridge` marks it
-    /// `is_builtin_override: false` with a `&'a str` payload, and `automata::nfa::build_nfa`
-    /// compiles its pattern to `TokenKind::Custom(cat)`. The `eval` body then runs at PARSE
-    /// time on the raw token text — identical plumbing to `Rational` / `FixedPoint`, both of
-    /// which already reach the parser as `TokenKind::Custom(cat)`.
-    Custom,
-}
+pub use mettail_prattail::wpda_rule_analysis::native_first::LiteralFamily;
 
 /// B11 fix: classifies the calling context that drives literal-pattern arm
 /// emission. The Integer family's bare-polymorphic `TokenKind::Integer` arm
@@ -81,18 +29,7 @@ pub enum LiteralFamily {
 /// consumed by other categories' cross-cat dispatch). Generalizes uniformly via
 /// `home_polymorphic_token_arm(family)` — adding a new kind to an existing
 /// family auto-inherits the correct behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EmissionContext {
-    /// Emitting arms for a rule's home category (e.g., BigInt's PrefixDispatch
-    /// arms). The bare-polymorphic `TokenKind::Integer` arm IS emitted for
-    /// non-primitive integer kinds (`CanonicalBigInt`); without it, bare
-    /// unsuffixed integers route through cross-cat to Int via heuristics.
-    HomeCategory,
-    /// Computing a FIRST set that will be consumed by cross-cat-projection
-    /// emission. The bare-polymorphic arm is suppressed to keep the FIRST set
-    /// free of home-only arms.
-    FirstSet,
-}
+pub use mettail_prattail::wpda_rule_analysis::native_first::EmissionContext;
 
 /// B11 fix: returns the bare-polymorphic-Token pattern that the lexer emits
 /// for the given family in HOME context, if any. Keyed on `LiteralFamily`
@@ -106,21 +43,12 @@ pub enum EmissionContext {
 /// suffixes/delimiters in their lexer regexes (`r` for Rational, `p` for
 /// FixedPoint, decimal/exponent for Float, quoted for String, etc.) so
 /// they have no analogous polymorphic-Token routing trap.
+#[cfg(test)]
 fn home_polymorphic_token_arm(family: LiteralFamily) -> Option<TokenStream> {
-    match family {
-        LiteralFamily::Integer => Some(quote! {
-            Some(mettail_prattail::automata::TokenKind::Integer)
-        }),
-        LiteralFamily::Rational
-        | LiteralFamily::FixedPoint
-        | LiteralFamily::Float
-        | LiteralFamily::Boolean
-        | LiteralFamily::String
-        // `Custom` has no polymorphic Token variant BY CONSTRUCTION: its token IS the
-        // per-category `TokenKind::Custom(cat)` compiled from its own declared pattern, so there
-        // is no shared family variant it could be routed through and no routing trap to gate.
-        | LiteralFamily::Custom => None,
-    }
+    mettail_prattail::wpda_rule_analysis::native_first::home_polymorphic_token_arm(
+        family,
+        &mut MacroNativeFirstConstructors,
+    )
 }
 
 /// Classification of a rule for Phase A.2 codegen.
@@ -627,6 +555,46 @@ impl<'source>
     }
 }
 
+impl<'source>
+    mettail_prattail::wpda_rule_analysis::prefix::IdentSummaryContext<
+        'source,
+        super::binder::MacroBinderSyntaxReader,
+    > for MacroFirstSetContext<'source>
+{
+    fn categories_len(&self) -> usize {
+        self.language.types.len()
+    }
+
+    fn category_at(&self, index: usize) -> Self::Category {
+        &self.language.types[index]
+    }
+
+    fn category_spelling(&self, category: Self::Category) -> String {
+        category.name.to_string()
+    }
+
+    fn legacy_len(&self, rule: &'source GrammarRule) -> usize {
+        rule.items.len()
+    }
+
+    fn legacy_at(
+        &self,
+        rule: &'source GrammarRule,
+        index: usize,
+    ) -> Option<
+        mettail_prattail::wpda_rule_analysis::prefix::FirstLegacyItem<'source, &'source Ident>,
+    > {
+        use mettail_prattail::wpda_rule_analysis::prefix::FirstLegacyItem;
+        rule.items.get(index).map(|item| match item {
+            GrammarItem::Terminal(text) => FirstLegacyItem::Terminal(text),
+            GrammarItem::NonTerminal { kind, ident } => {
+                FirstLegacyItem::NonTerminal { kind: *kind, name: ident }
+            },
+            _ => FirstLegacyItem::Other,
+        })
+    }
+}
+
 /// Direct leading literals through the original shared worker. Present syntax
 /// suppresses legacy fallback even when empty or not literal-led.
 fn category_leading_literals(
@@ -1113,14 +1081,13 @@ fn declared_literal_token_def<'a>(
     cat_name: &str,
     language: &'a LanguageDef,
 ) -> Option<&'a mettail_ast::language::TokenDef> {
-    language.token_defs.iter().find(|td| {
-        td.from_literals
-            && td.rust_code.is_some()
-            && td
-                .category
-                .as_ref()
-                .is_some_and(|c| c.to_string() == cat_name)
-    })
+    mettail_prattail::wpda_rule_analysis::native_first::declared_literal_token_def(
+        cat_name,
+        &language.token_defs,
+        |token| token.from_literals,
+        |token| token.rust_code.is_some(),
+        |token| token.category.as_ref().map(ToString::to_string),
+    )
 }
 
 /// ★ THE SINGLE ELECTION SITE for a category's [`LiteralFamily`].
@@ -1147,18 +1114,14 @@ fn declared_literal_token_def<'a>(
 /// this returns a family for the declaration rather than requiring a carrier enumeration to be
 /// kept complete by hand.
 fn literal_family_for_category(cat_name: &str, language: &LanguageDef) -> Option<LiteralFamily> {
-    let lang_type = language
-        .types
-        .iter()
-        .find(|t| t.name.to_string() == cat_name)?;
-    let native_type = lang_type.native_type.as_ref()?;
-    match literal_family_for(&NativeKind::from_syn_type(native_type)) {
-        Some(family) => Some(family),
-        None if declared_literal_token_def(cat_name, language).is_some() => {
-            Some(LiteralFamily::Custom)
-        },
-        None => None,
-    }
+    mettail_prattail::wpda_rule_analysis::native_first::literal_family_for_category(
+        cat_name,
+        &language.types,
+        |ty| ty.name.to_string(),
+        |ty| ty.native_type.as_ref(),
+        NativeKind::from_syn_type,
+        |name| declared_literal_token_def(name, language).is_some(),
+    )
 }
 
 /// Map a `NativeKind` to the lexer's `LiteralFamily`.
@@ -1166,28 +1129,9 @@ fn literal_family_for_category(cat_name: &str, language: &LanguageDef) -> Option
 /// ⚠ Callers that hold a CATEGORY should use [`literal_family_for_category`] instead: a category
 /// whose carrier has no built-in family may still have declared its own literal, and only the
 /// category-level function can see that.
+#[cfg(test)]
 fn literal_family_for(kind: &NativeKind) -> Option<LiteralFamily> {
-    match kind {
-        NativeKind::Int8
-        | NativeKind::Int16
-        | NativeKind::Int32
-        | NativeKind::Int64
-        | NativeKind::Int128
-        | NativeKind::Isize
-        | NativeKind::UInt8
-        | NativeKind::UInt16
-        | NativeKind::UInt32
-        | NativeKind::UInt64
-        | NativeKind::UInt128
-        | NativeKind::Usize
-        | NativeKind::CanonicalBigInt => Some(LiteralFamily::Integer),
-        NativeKind::CanonicalBigRat => Some(LiteralFamily::Rational),
-        NativeKind::CanonicalFixedPoint => Some(LiteralFamily::FixedPoint),
-        NativeKind::Float32 | NativeKind::Float64 => Some(LiteralFamily::Float),
-        NativeKind::Bool => Some(LiteralFamily::Boolean),
-        NativeKind::Str => Some(LiteralFamily::String),
-        NativeKind::Other => None,
-    }
+    mettail_prattail::wpda_rule_analysis::native_first::literal_family_for(kind)
 }
 
 /// Emit per-rule arms in the `PrefixDispatch` match for one category.
@@ -1205,33 +1149,11 @@ fn literal_family_for(kind: &NativeKind) -> Option<LiteralFamily> {
 /// (the source cannot begin with a LITERAL Ident) — is a proven over-generation
 /// (it duplicates the home var reading via a spurious ∅-realizing cast path).
 fn result_has_home_var_reading(cat_name: &str, language: &LanguageDef) -> bool {
-    // A category must be declared. Open categories receive a synthetic Var
-    // when they lack a user Var rule; closed data categories do not.
-    let Some(lang_type) = language
-        .types
-        .iter()
-        .find(|t| t.name.to_string() == cat_name)
-    else {
-        return false;
-    };
-    // An explicit user Var rule contributes Ident even for a closed category;
-    // otherwise only an open category receives the synthetic constructor.
-    let has_user_var = language.terms.iter().any(|r| {
-        r.category.to_string() == cat_name
-            && r.items
-                .first()
-                .map(|item| {
-                    matches!(
-                        item,
-                        mettail_ast::grammar::GrammarItem::NonTerminal {
-                            kind: mettail_ast::grammar::NonTerminalKind::Var,
-                            ..
-                        }
-                    )
-                })
-                .unwrap_or(false)
-    });
-    has_user_var || !lang_type.is_data()
+    mettail_prattail::wpda_rule_analysis::prefix::result_has_home_var_reading(
+        cat_name,
+        &super::binder::MacroBinderSyntaxReader,
+        &mut MacroFirstSetContext { language },
+    )
 }
 
 /// CROSSCAT_LEX_COMPAT_GATE (2026-07-03): is a bare `Ident` reading of the
@@ -1262,151 +1184,11 @@ fn result_has_home_var_reading(cat_name: &str, language: &LanguageDef) -> bool {
 /// with a leading `Ident`-admitting non-terminal (e.g. a Name-led `lhs:Name`)
 /// makes the source NOT var-only.
 pub fn source_ident_first_is_var_only(source_cat: &str, language: &LanguageDef) -> bool {
-    struct Frame {
-        category: String,
-        next_rule: usize,
-    }
-
-    let ident_first = ident_first_categories(language);
-    let mut rules_by_category: std::collections::HashMap<
-        String,
-        Vec<&mettail_ast::grammar::GrammarRule>,
-    > = std::collections::HashMap::new();
-    for rule in &language.terms {
-        rules_by_category
-            .entry(rule.category.to_string())
-            .or_default()
-            .push(rule);
-    }
-
-    let mut visited = std::collections::HashSet::from([source_cat.to_string()]);
-    let mut frames = vec![Frame {
-        category: source_cat.to_string(),
-        next_rule: 0,
-    }];
-    while let Some(frame) = frames.last_mut() {
-        let rules = rules_by_category
-            .get(&frame.category)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let Some(rule) = rules.get(frame.next_rule).copied() else {
-            frames.pop();
-            continue;
-        };
-        frame.next_rule += 1;
-
-        // The source's own Var rule is the allowed Ident source — skip it.
-        let is_var_rule = rule
-            .items
-            .first()
-            .map(|it| {
-                matches!(
-                    it,
-                    mettail_ast::grammar::GrammarItem::NonTerminal {
-                        kind: mettail_ast::grammar::NonTerminalKind::Var,
-                        ..
-                    }
-                )
-            })
-            .unwrap_or(false);
-        if is_var_rule {
-            continue;
-        }
-        match rule.items.first() {
-            Some(mettail_ast::grammar::GrammarItem::Terminal(_)) => {
-                // Literal-led: not Ident-first.
-                continue;
-            },
-            Some(mettail_ast::grammar::GrammarItem::NonTerminal {
-                ident: nt_ident,
-                kind: mettail_ast::grammar::NonTerminalKind::Category,
-            }) => {
-                let nt_cat = nt_ident.to_string();
-                if nt_cat == frame.category {
-                    // Same-cat leading NT (left-recursive infix/method): no new
-                    // Ident source beyond the var being folded.
-                    continue;
-                }
-                // ★ PURE-PROJECTION gate for transitivity. Count the rule's
-                // non-terminal / capture body items (a "structural" item is
-                // anything that consumes input: a NonTerminal, an IdentCapture,
-                // a Binder, a Collection, a SepList — a Terminal is a fixed
-                // literal). Transitivity ("this rule merely projects `nt_cat`'s
-                // var") is valid ONLY when the rule is a PURE PROJECTION — its
-                // ENTIRE body is exactly the single leading non-terminal with NO
-                // additional consuming items (e.g. `IntToBigInt . i:Int |- i :
-                // BigInt`). If the rule has MORE items after the leading NT
-                // (e.g. `InputBind . lhs:Name "<-" n` — a Name THEN `<-` THEN a
-                // Name), a bare Ident reaching the source through it is the START
-                // of a REAL structured term, NOT a var-projection ⇒ the source is
-                // Ident-LED and NOT var-only. Without this gate, InputBind/ForRow
-                // are mis-classified as var-only (their `lhs:Name`-led rules look
-                // like they "project Name's var") and the gate over-prunes,
-                // breaking `for(p <- …)`.
-                let structural_item_count = rule
-                    .items
-                    .iter()
-                    .filter(|it| !matches!(it, mettail_ast::grammar::GrammarItem::Terminal(_)))
-                    .count();
-                let is_pure_projection = structural_item_count == 1
-                    && rule.items.iter().all(|it| {
-                        matches!(
-                            it,
-                            mettail_ast::grammar::GrammarItem::NonTerminal {
-                                kind: mettail_ast::grammar::NonTerminalKind::Category,
-                                ..
-                            } | mettail_ast::grammar::GrammarItem::Terminal(_)
-                        )
-                    })
-                    && rule.items.iter().all(|it| {
-                        // No trailing literals either (a pure projection is a
-                        // bare `source : result` with the source non-terminal as
-                        // the sole element — token-transparent).
-                        !matches!(it, mettail_ast::grammar::GrammarItem::Terminal(_))
-                    });
-                if ident_first.contains(&nt_cat) {
-                    // The leading NT can begin with an Ident. Whether that makes
-                    // the source non-var-only depends on purity:
-                    //   - pure projection AND `nt_cat` is var-only ⇒ still var.
-                    //   - otherwise (structural rule, or `nt_cat` genuinely
-                    //     Ident-led) ⇒ source is Ident-led, NOT var-only.
-                    if is_pure_projection && !visited.insert(nt_cat.clone()) {
-                        continue;
-                    }
-                    if is_pure_projection {
-                        frames.push(Frame { category: nt_cat, next_rule: 0 });
-                        continue;
-                    }
-                    return false;
-                }
-                continue;
-            },
-            Some(mettail_ast::grammar::GrammarItem::NonTerminal {
-                kind: mettail_ast::grammar::NonTerminalKind::Var,
-                ..
-            }) => {
-                continue;
-            },
-            _ => {
-                // Binder / IdentCapture / other leading items. Resolve via the
-                // judgement-style syntax_pattern where possible; otherwise be
-                // conservative (treat as Ident-admitting ⇒ NOT var-only).
-                if let Some(sp) = rule.syntax_pattern.as_ref() {
-                    match sp.first() {
-                        Some(mettail_ast::grammar::SyntaxExpr::Literal(_)) => continue,
-                        Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => return false,
-                        _ => return false,
-                    }
-                } else {
-                    return false;
-                }
-            },
-        }
-    }
-    // Every frame completed without finding a non-Var Ident source. A repeated
-    // category was treated as true at the edge, matching the former recursive
-    // cycle cut: a pure projection cycle contributes no new literal Ident.
-    true
+    mettail_prattail::wpda_rule_analysis::prefix::source_ident_first_is_var_only(
+        source_cat,
+        &super::binder::MacroBinderSyntaxReader,
+        &mut MacroFirstSetContext { language },
+    )
 }
 
 /// Categories whose transitive FIRST set contains an unguarded `Ident` token.
@@ -1415,83 +1197,12 @@ pub fn source_ident_first_is_var_only(source_cat: &str, language: &LanguageDef) 
 /// or explicit Var contributions are seeds; cross-category projections and
 /// Param-led non-atomic rules are graph edges. Computing the closure once avoids
 /// rebuilding an entire FIRST set at every edge of the var-only traversal.
+#[cfg(test)]
 fn ident_first_categories(language: &LanguageDef) -> std::collections::HashSet<String> {
-    let mut reached: std::collections::HashSet<String> = language
-        .types
-        .iter()
-        // This seed is exactly the synthetic-Var contribution. Explicit user
-        // Var rules, including any declared on a closed data category, enter
-        // through the `AtomicShape::VarRule` arm below.
-        .filter(|ty| !ty.is_data())
-        .map(|ty| ty.name.to_string())
-        .collect();
-    let mut reverse: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-
-    for rule in &language.terms {
-        let category = rule.category.to_string();
-        match classify_atomic(rule, language) {
-            AtomicShape::VarRule { .. } => {
-                reached.insert(category);
-            },
-            AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } => {
-                let native_kind = NativeKind::from_syn_type(&native_type);
-                let has_ident = literal_patterned_pattern_and_guard_for_kind(
-                    &cat_name,
-                    family,
-                    Some(&native_kind),
-                    EmissionContext::FirstSet,
-                )
-                .into_iter()
-                .any(|(pattern, guard)| guard.is_none() && pattern.to_string().contains("Ident"));
-                if has_ident {
-                    reached.insert(category);
-                }
-            },
-            AtomicShape::CrossCatProjection { source_cat_name, .. } => {
-                reverse.entry(source_cat_name).or_default().push(category);
-            },
-            AtomicShape::NonAtomic => {
-                if matches!(
-                    rule.syntax_pattern
-                        .as_ref()
-                        .and_then(|pattern| pattern.first()),
-                    Some(mettail_ast::grammar::SyntaxExpr::Param(_))
-                ) {
-                    if let Some(mettail_ast::grammar::GrammarItem::NonTerminal {
-                        ident,
-                        kind: mettail_ast::grammar::NonTerminalKind::Category,
-                    }) = rule.items.first()
-                    {
-                        let source = ident.to_string();
-                        if source != category {
-                            reverse.entry(source).or_default().push(category);
-                        }
-                    }
-                }
-            },
-            AtomicShape::TerminalKeyword { .. }
-            | AtomicShape::LiteralInteger
-            | AtomicShape::LiteralBoolean
-            | AtomicShape::LiteralString
-            | AtomicShape::LiteralFloat
-            | AtomicShape::CrossCatPrefixUnary { .. }
-            | AtomicShape::PrefixOperator { .. }
-            | AtomicShape::NullaryLiteralRun { .. } => {},
-        }
-    }
-
-    let mut pending: std::collections::VecDeque<_> = reached.iter().cloned().collect();
-    while let Some(source) = pending.pop_front() {
-        if let Some(targets) = reverse.get(&source) {
-            for target in targets {
-                if reached.insert(target.clone()) {
-                    pending.push_back(target.clone());
-                }
-            }
-        }
-    }
-    reached
+    mettail_prattail::wpda_rule_analysis::prefix::ident_first_categories(
+        &super::binder::MacroBinderSyntaxReader,
+        &mut MacroFirstSetContext { language },
+    )
 }
 
 #[cfg(test)]
@@ -3211,6 +2922,54 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> (TokenStream, TokenS
     )
 }
 
+/// Static quotation payloads for the original shared native descriptor sites.
+struct MacroNativeFirstConstructors;
+
+impl mettail_prattail::wpda_rule_analysis::native_first::NativeFirstConstructors
+    for MacroNativeFirstConstructors
+{
+    type Pattern = TokenStream;
+
+    fn pattern(
+        &mut self,
+        site: mettail_prattail::wpda_rule_analysis::native_first::NativePatternSite,
+    ) -> TokenStream {
+        use mettail_prattail::wpda_rule_analysis::native_first::NativePatternSite;
+        match site {
+            NativePatternSite::IntegerTyped => {
+                quote! { Some(mettail_prattail::automata::TokenKind::IntegerLit(__cat)) }
+            },
+            NativePatternSite::CustomTyped => {
+                quote! { Some(mettail_prattail::automata::TokenKind::Custom(__cat)) }
+            },
+            NativePatternSite::RationalTyped => {
+                quote! { Some(mettail_prattail::automata::TokenKind::RationalLit(__cat)) }
+            },
+            NativePatternSite::FixedPointTyped => {
+                quote! { Some(mettail_prattail::automata::TokenKind::FixedPointLit(__cat)) }
+            },
+            NativePatternSite::FloatBare => {
+                quote! { Some(mettail_prattail::automata::TokenKind::Float) }
+            },
+            NativePatternSite::BooleanAlternative => quote! {
+                Some(mettail_prattail::automata::TokenKind::True)
+                | Some(mettail_prattail::automata::TokenKind::False)
+                | Some(mettail_prattail::automata::TokenKind::BooleanLit)
+            },
+            NativePatternSite::StringBare => {
+                quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }
+            },
+            NativePatternSite::IntegerBare => {
+                quote! { Some(mettail_prattail::automata::TokenKind::Integer) }
+            },
+        }
+    }
+
+    fn category_guard(&mut self, cat_name: &str) -> TokenStream {
+        quote! { __cat == #cat_name }
+    }
+}
+
 /// For a `LiteralPatterned` shape, return the `(pattern, extra_guard)` pair.
 /// The `extra_guard` is combined with the `state_cat_src_idx` check into a
 /// single Rust match guard by the caller.
@@ -3250,108 +3009,13 @@ fn literal_patterned_pattern_and_guard_for_kind(
     kind: Option<&NativeKind>,
     ctx: EmissionContext,
 ) -> Vec<(TokenStream, Option<TokenStream>)> {
-    match family {
-        LiteralFamily::Integer => {
-            let mut arms = vec![
-                // Typed payload variant emitted as IntegerLit(cat).
-                (
-                    quote! { Some(mettail_prattail::automata::TokenKind::IntegerLit(__cat)) },
-                    Some(quote! { __cat == #cat_name }),
-                ),
-                // Typed payload variant emitted as Custom(cat) due to
-                // adapter `seen` HashSet ordering.
-                (
-                    quote! { Some(mettail_prattail::automata::TokenKind::Custom(__cat)) },
-                    Some(quote! { __cat == #cat_name }),
-                ),
-            ];
-            // Bare polymorphic `TokenKind::Integer` arm. Always emitted in
-            // HomeCategory context; in FirstSet context emitted only for
-            // primitive-integer widths so `CanonicalBigInt` doesn't shadow
-            // primitive-integer cross-cat projections (see fn doc above).
-            let emit_bare_arm = match ctx {
-                EmissionContext::HomeCategory => home_polymorphic_token_arm(family).is_some(),
-                EmissionContext::FirstSet => matches!(
-                    kind,
-                    None | Some(NativeKind::Int8)
-                        | Some(NativeKind::Int16)
-                        | Some(NativeKind::Int32)
-                        | Some(NativeKind::Int64)
-                        | Some(NativeKind::Int128)
-                        | Some(NativeKind::Isize)
-                        | Some(NativeKind::UInt8)
-                        | Some(NativeKind::UInt16)
-                        | Some(NativeKind::UInt32)
-                        | Some(NativeKind::UInt64)
-                        | Some(NativeKind::UInt128)
-                        | Some(NativeKind::Usize)
-                ),
-            };
-            if emit_bare_arm {
-                if let Some(pat) = home_polymorphic_token_arm(family) {
-                    arms.push((pat, None));
-                }
-            }
-            arms
-        },
-        LiteralFamily::Rational => vec![
-            (
-                quote! { Some(mettail_prattail::automata::TokenKind::RationalLit(__cat)) },
-                Some(quote! { __cat == #cat_name }),
-            ),
-            (
-                quote! { Some(mettail_prattail::automata::TokenKind::Custom(__cat)) },
-                Some(quote! { __cat == #cat_name }),
-            ),
-            // No bare `TokenKind::Integer` arm for Rational. Stage 4 fix
-            // (2026-04-27): the default eval body for Rational
-            // (`parse_rational_lit(text)`) requires an `r` suffix, so bare
-            // integers like `"0"` fail. Allowing this arm caused Rholang's
-            // Proc dispatch to route bare integers to `CastBigRat` (the
-            // first declared cross-cat projection with Integer in its
-            // FIRST set), shadowing `CastInt`/`CastUInt32`. The lexer
-            // canonicalizes bare integers to `Token::Integer(_, _)` →
-            // `TokenKind::Integer`; rational parses are reachable only via
-            // typed `Token::BigRat(_)` → `TokenKind::RationalLit("BigRat")`
-            // which is handled by the first arm above.
-        ],
-        LiteralFamily::FixedPoint => vec![
-            (
-                quote! { Some(mettail_prattail::automata::TokenKind::FixedPointLit(__cat)) },
-                Some(quote! { __cat == #cat_name }),
-            ),
-            (
-                quote! { Some(mettail_prattail::automata::TokenKind::Custom(__cat)) },
-                Some(quote! { __cat == #cat_name }),
-            ),
-        ],
-        LiteralFamily::Float => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)]
-        },
-        LiteralFamily::Boolean => vec![(
-            quote! {
-                Some(mettail_prattail::automata::TokenKind::True)
-                | Some(mettail_prattail::automata::TokenKind::False)
-                | Some(mettail_prattail::automata::TokenKind::BooleanLit)
-            },
-            None,
-        )],
-        LiteralFamily::String => {
-            vec![(quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)]
-        },
-        // A declared-pattern category reaches the parser as ONE token kind: the per-category
-        // `TokenKind::Custom(cat)` the NFA builder compiled from its own regex
-        // (`automata::nfa::build_nfa`, the `!spec.is_builtin_override` arm). The `__cat` guard is
-        // what keeps two `Custom` categories from consuming each other's tokens — the same
-        // discipline `Rational` and `FixedPoint` use on their `Custom` arms above.
-        //
-        // No bare polymorphic arm and no typed-lit arm: there is no shared family variant for a
-        // custom literal to be spelled as, so `Custom(cat)` is the whole story.
-        LiteralFamily::Custom => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Custom(__cat)) },
-            Some(quote! { __cat == #cat_name }),
-        )],
-    }
+    mettail_prattail::wpda_rule_analysis::native_first::literal_patterned_pattern_and_guard_for_kind(
+        cat_name,
+        family,
+        kind,
+        ctx,
+        &mut MacroNativeFirstConstructors,
+    )
 }
 
 #[cfg(test)]
