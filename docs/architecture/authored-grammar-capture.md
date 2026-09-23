@@ -107,6 +107,38 @@ context-to-legacy-item conversion, remain separate inputs to that shared
 derivation. The capture worker does not recreate those algorithms or make
 their input correspondence automatic.
 
+## Shared descriptor consumers
+
+Retaining observations is useful only when both frontends can feed the original
+derivation. The shared [prefix worker](../../prattail/src/wpda_rule_analysis/prefix.rs)
+contains the original FIRST traversal: the token predicates with which a category
+can begin. It follows category projections through a FIFO queue, skips categories
+already visited, and preserves the original order of native, variable, collection,
+and declared-rule contributions. The macro adapter still supplies its original
+native helpers and Rust token quotation; an owned backend must supply corresponding
+observations and predicates, not parse those quotations.
+
+FIRST rows are deduplicated by the original rendered pattern-and-guard key. The
+first complete row survives, including its optional guard and provenance flags.
+This is preservation of the existing descriptor policy, **not** a proof of
+end-to-end ambiguity preservation or permission to truncate parse candidates.
+The [FIRST projection model](../../formal/rocq/prattail_wpda_runtime/theories/OriginalFirstSetProjection.v)
+proves the finite source-observation substitution and callback order, with the
+unfinished state preserved when proof instrumentation runs out of steps.
+
+The shared [grouping worker](../../prattail/src/wpda_rule_analysis/grouping.rs)
+likewise retains the original bounded schedule. It collects direct infix and
+projection sources, then follows one infix hop from each projection source only
+when fewer than four distinct projection sources exist. It is not a transitive
+closure. Original category ordering, first-name lookup, narrowing casts, and
+callback order remain unchanged; checked runtime index-width admission is a
+separate obligation. The [grouping projection model](../../formal/rocq/prattail_wpda_runtime/theories/GroupingSourceDescriptorProjection.v)
+covers this exact schedule, including faults and repeated observations.
+
+These workers derive descriptors. They do not recognize guest input, execute
+semantic rewrites, or establish that installed parsing already uses the shared
+WPDA walker. That integration requires its own transition and consumer checks.
+
 ## Verification boundaries
 
 The Rocq models separate obligations rather than treating an interface test as
