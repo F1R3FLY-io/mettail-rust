@@ -111,6 +111,7 @@ theories/OriginalFirstSetProjection.v
 theories/OriginalIdentSummaryProjection.v
 theories/NativeFirstDescriptorProjection.v
 theories/NativeKindProjection.v
+theories/LiteralNameProjection.v
 theories/AtomicPrefixDescriptorProjection.v
 theories/GuestModeDescriptorProjection.v
 theories/UnifiedPrefixDescriptorProjection.v
