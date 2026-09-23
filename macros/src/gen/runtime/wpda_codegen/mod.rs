@@ -121,6 +121,10 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+#[cfg(test)]
+#[path = "../../../../tests/support/guest_mode_descriptor_baselines.rs"]
+mod guest_mode_descriptor_baselines;
+
 /// Derive the structural nested-opener token kinds for a typed delimited
 /// region from the lexer-mode graph.
 ///
