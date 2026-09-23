@@ -337,6 +337,50 @@ These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared
 WPDA walker. That integration requires its own transition and consumer checks.
 
+### Collection declaration observations
+
+The shared [collection declaration helpers](../../grammar-core/src/collection_declaration.rs)
+retain the original AST selection policy. The source adapter supplies borrowed
+declarations, rules, and items, with the original name equality:
+
+1. Find the first matching category declaration. If it declares a collection,
+   return its native element probe immediately, including a `None` result.
+2. Otherwise, find only the first matching constructor rule. Return its first
+   collection item's element, or `None` if that rule has no collection item.
+   A later matching rule is not a fallback.
+
+The original shallow native probe remains in the AST library; the macro helper
+delegates to it. It observes the first generic argument of the final type path
+segment, not an inferred semantic element type. Consequently `HashMap<Key, Value>`
+selects `Key`, and a nested `Vec<Vec<Proc>>` selects `Vec`. No Rust type source is
+rendered, parsed again, or inferred from an opaque carrier name.
+
+The five original delimiter constructors and declared collection labels are
+shared without changing their fields:
+
+| Declared kind | Opening | Closing | Item separator | Key/value separator | Label |
+|---|---|---|---|---|---|
+| List | `list(` | `)` | `,` | absent | `ListLit` |
+| Bag | `bag(` | `)` | `,` | absent | `BagLit` |
+| Map | `map(` | `)` | `,` | `:` | `MapLit` |
+| Set | `Set(` | `)` | `,` | absent | `SetLit` |
+| Pathmap | `pathmap(` | `)` | `,` | `:` | `PathmapLit` |
+
+These functions do not replace explicit delimiters, fill absent schema fields,
+or erase present empty strings. For example, the original positional custom Map
+form can retain an absent key/value separator, while the dictionary `Pathmap` form
+supplies `:` when omitted. Declared collection labels are also distinct from
+native-carrier labels: the original native `HashSet` label is `BagLit`, whereas
+a declared Set uses `SetLit`. Reusing one policy as the other would change behavior.
+
+The [collection observation model](../../formal/rocq/prattail_wpda_runtime/theories/CollectionDeclarationProjection.v)
+proves ordered source/reader substitution and these refusal boundaries, reusing
+the existing synthesis materialization laws. The
+[original-source baselines](../../ast/tests/collection_category_observations.rs)
+and shared callback tests exercise the exact helper behavior. This extraction
+does not itself supply missing native observations to runtime declarations or
+establish complete native-carrier parity.
+
 ### Atomic prefix rows
 
 The shared [atomic-prefix worker](../../prattail/src/wpda_rule_analysis/atomic_prefix.rs)

@@ -44,7 +44,7 @@ struct MacroSource<'syntax> {
     reader: MacroBinderSyntaxReader,
 }
 
-fn collection_kind(kind: &CollectionType) -> CollectionKind {
+pub(super) fn collection_kind(kind: &CollectionType) -> CollectionKind {
     match kind {
         CollectionType::HashBag => CollectionKind::Bag,
         CollectionType::HashSet => CollectionKind::Set,

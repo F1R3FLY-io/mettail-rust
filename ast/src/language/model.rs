@@ -857,16 +857,7 @@ impl RewriteRule {
     }
 }
 
-/// Delimiter parameters for List/Bag/Map literal syntax (open, close, separator).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CollectionDelimiters {
-    pub open: String,
-    pub close: String,
-    pub sep: String,
-    /// Map-only separator between key and value (e.g., ":").
-    /// `None` for List/Bag, `Some` for Map.
-    pub key_val_sep: Option<String>,
-}
+pub use mettail_grammar_core::collection_declaration::CollectionDelimiters;
 
 /// Collection category kind (List, Bag, Map, Set, Pathmap) with optional delimiters.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -883,48 +874,23 @@ pub enum CollectionCategory {
 impl CollectionCategory {
     /// Default delimiters for List: `list(`, `)`, `,`
     pub fn list_defaults() -> CollectionDelimiters {
-        CollectionDelimiters {
-            open: "list(".to_string(),
-            close: ")".to_string(),
-            sep: ",".to_string(),
-            key_val_sep: None,
-        }
+        mettail_grammar_core::collection_declaration::list_defaults()
     }
     /// Default delimiters for Bag: `bag(`, `)`, `,`
     pub fn bag_defaults() -> CollectionDelimiters {
-        CollectionDelimiters {
-            open: "bag(".to_string(),
-            close: ")".to_string(),
-            sep: ",".to_string(),
-            key_val_sep: None,
-        }
+        mettail_grammar_core::collection_declaration::bag_defaults()
     }
     /// Default delimiters for Map: `map(`, `)`, `,`, `:`
     pub fn map_defaults() -> CollectionDelimiters {
-        CollectionDelimiters {
-            open: "map(".to_string(),
-            close: ")".to_string(),
-            sep: ",".to_string(),
-            key_val_sep: Some(":".to_string()),
-        }
+        mettail_grammar_core::collection_declaration::map_defaults()
     }
     /// Default delimiters for Set: `Set(`, `)`, `,`
     pub fn set_defaults() -> CollectionDelimiters {
-        CollectionDelimiters {
-            open: "Set(".to_string(),
-            close: ")".to_string(),
-            sep: ",".to_string(),
-            key_val_sep: None,
-        }
+        mettail_grammar_core::collection_declaration::set_defaults()
     }
     /// Default delimiters for Pathmap: `pathmap(`, `)`, `,`, `:`
     pub fn pathmap_defaults() -> CollectionDelimiters {
-        CollectionDelimiters {
-            open: "pathmap(".to_string(),
-            close: ")".to_string(),
-            sep: ",".to_string(),
-            key_val_sep: Some(":".to_string()),
-        }
+        mettail_grammar_core::collection_declaration::pathmap_defaults()
     }
 
     /// Accessor (Stage 2, 2026-06-27): the declared delimiters of this
@@ -1081,9 +1047,53 @@ impl NativeKindFromSynType for NativeKind {
     }
 }
 
+struct LanguageCollectionElementReader<'query> {
+    category: &'query Ident,
+}
+
+impl<'input> mettail_grammar_core::collection_declaration::CollectionElementReader<'input>
+    for LanguageCollectionElementReader<'_>
+{
+    type Declaration = LangType;
+    type Rule = GrammarRule;
+    type Item = GrammarItem;
+    type Element = Ident;
+
+    fn type_matches(&self, declaration: &'input LangType) -> bool {
+        &declaration.name == self.category
+    }
+
+    fn has_collection(&self, declaration: &'input LangType) -> bool {
+        declaration.collection_kind.is_some()
+    }
+
+    fn native_element(&self, declaration: &'input LangType) -> Option<Ident> {
+        declaration
+            .native_type
+            .as_ref()
+            .and_then(element_ident_from_native_type)
+    }
+
+    fn rule_matches(&self, rule: &'input GrammarRule) -> bool {
+        &rule.category == self.category
+    }
+
+    fn items(&self, rule: &'input GrammarRule) -> &'input [GrammarItem] {
+        &rule.items
+    }
+
+    fn item_element(&self, item: &'input GrammarItem) -> Option<Ident> {
+        if let GrammarItem::Collection { element_type, .. } = item {
+            Some(element_type.clone())
+        } else {
+            None
+        }
+    }
+}
+
 /// Extract the element type Ident from a collection native type (e.g. `Vec<Proc>` → `Proc`,
 /// `HashBag<Proc>` → `Proc`). Returns None if the native type is not a generic container.
-fn element_ident_from_native_type(native_type: &Type) -> Option<Ident> {
+pub fn element_ident_from_native_type(native_type: &Type) -> Option<Ident> {
     let path = match native_type {
         Type::Path(t) => &t.path,
         _ => return None,
@@ -1423,27 +1433,11 @@ impl LanguageDef {
     /// independent of the category's spelling; constructor-backed collections
     /// are classified from their grammar item.
     pub fn collection_element_type_for_category(&self, category: &Ident) -> Option<Ident> {
-        if let Some(lang_type) = self.get_type(category) {
-            if lang_type.collection_kind.is_some() {
-                return lang_type
-                    .native_type
-                    .as_ref()
-                    .and_then(element_ident_from_native_type);
-            }
-        }
-        // Term-based: constructor whose category matches and whose grammar has a Collection item.
-        self.terms
-            .iter()
-            .find(|r| &r.category == category)
-            .and_then(|r| {
-                r.items.iter().find_map(|i| {
-                    if let GrammarItem::Collection { element_type, .. } = i {
-                        Some(element_type.clone())
-                    } else {
-                        None
-                    }
-                })
-            })
+        mettail_grammar_core::collection_declaration::collection_element_for_category(
+            &LanguageCollectionElementReader { category },
+            &self.types,
+            &self.terms,
+        )
     }
 
     /// Type name for the List category (e.g. "List") if present.

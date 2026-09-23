@@ -18,7 +18,9 @@
 //! stays consistent.
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
-use mettail_ast::language::{CollectionCategory, LanguageDef};
+#[cfg(test)]
+use mettail_ast::language::CollectionCategory;
+use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
 use proc_macro2::Span;
 use quote::format_ident;
@@ -131,13 +133,10 @@ impl mettail_prattail::wpda_rule_analysis::synthetic::SynthesisAdapter
             .as_ref()
             .expect("collection_kind checked by shared synthesis gate");
         let d = coll_kind.delimiters();
-        let (kind, label) = match coll_kind {
-            CollectionCategory::List(_) => (CollectionType::Vec, "ListLit"),
-            CollectionCategory::Bag(_) => (CollectionType::HashBag, "BagLit"),
-            CollectionCategory::Map(_) => (CollectionType::HashMap, "MapLit"),
-            CollectionCategory::Set(_) => (CollectionType::HashSet, "SetLit"),
-            CollectionCategory::Pathmap(_) => (CollectionType::PathMap, "PathmapLit"),
-        };
+        let kind = coll_kind.coll_type();
+        let label = mettail_grammar_core::collection_declaration::declared_collection_literal_label(
+            super::authored_capture::collection_kind(&kind),
+        );
         let (open, close, separator) = (d.open.clone(), d.close.clone(), d.sep.clone());
         let element_category = self
             .language

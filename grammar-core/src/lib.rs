@@ -9,6 +9,7 @@ mod authored_bindings;
 mod authored_capture;
 mod canonical;
 mod capability;
+pub mod collection_declaration;
 pub mod constructor_labels;
 mod core;
 pub mod context_items;
