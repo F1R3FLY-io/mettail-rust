@@ -105,6 +105,7 @@ theories/CategoryCensusProjection.v
 theories/LegacyRuleNormalizationProjection.v
 theories/ParikhDescriptorProjection.v
 theories/GroupingSourceDescriptorProjection.v
+theories/OriginalFirstSetProjection.v
 theories/UnifiedPrefixDescriptorProjection.v
 theories/AuthoredRuleStoreProjection.v
 theories/AuthoredRuleCaptureProjection.v
