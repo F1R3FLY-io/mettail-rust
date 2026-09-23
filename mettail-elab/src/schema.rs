@@ -72,6 +72,9 @@ struct TypeDecl {
     carrier: core::Carrier,
     // Retain the source observation before Carrier erases scalar width.
     native: Option<core::NativeKind>,
+    // Only scalar classification is lost by Carrier. Collection keys and
+    // canonical extern opacity are observed from the renamed carrier later.
+    scalar_native: Option<core::NativeType>,
     collection: Option<CollectionDecl>,
     refinement: Option<RefinementDecl>,
     admits_variables: bool,
@@ -2344,6 +2347,7 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
             name: identifier(name, path)?,
             carrier: core::Carrier::Dynamic,
             native: None,
+            scalar_native: None,
             collection: None,
             refinement: None,
             admits_variables: true,
@@ -2374,6 +2378,14 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
         },
         _ => core::NativeKind::Other,
     });
+    let scalar_native = match values.get("carrier") {
+        Some(RhoValue::String(symbol)) => Some(match symbol.as_str() {
+            "BigRat" => core::NativeType::CanonicalBigRat,
+            "Fixed" => core::NativeType::CanonicalFixedPoint,
+            symbol => core::NativeType::from_type_str(symbol),
+        }),
+        _ => None,
+    };
     let collection = values
         .get("collection")
         .map(|value| decode_collection(value, &format!("{path}.collection")))
@@ -2394,6 +2406,7 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
         name,
         carrier,
         native,
+        scalar_native,
         collection,
         refinement,
         admits_variables,

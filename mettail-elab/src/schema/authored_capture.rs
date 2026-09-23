@@ -18,6 +18,9 @@
 //! contents in Q, plus header-row and literal-selector work in W. Rich schema
 //! carriers stay in the schema/Core; native observations are captured before
 //! lowering. This does not establish native decoder or value parity.
+//! Three additional shallow observations per category are prepaid in W.
+//! Collection element roots borrow the current renamed carrier key; their
+//! Name payload copies are paid by the existing capture source, not the header.
 
 use super::{
     BnfNode, LanguageSchema, LiteralDecl, Param, SyntaxNode, TermBody, TermDecl, TypeExpr,
@@ -182,6 +185,10 @@ impl HeaderCounts {
             mode_tokens = add(mode_tokens, mode.tokens.len())?;
         }
         let categories = schema.types.len();
+        let observation_work = categories
+            .checked_mul(3)
+            .ok_or_else(|| failure("authored native observation work overflowed"))?;
+        budget.header_content(0, 0, observation_work)?;
         let globals = add(schema.tokens.len(), schema.literals.len())?;
         let tokens = add(globals, mode_tokens)?;
         let modes = schema.modes.len();
@@ -201,6 +208,11 @@ impl HeaderCounts {
         // second lookup and not individual string-comparison instructions.
         budget.header_content(0, slots, add(add(categories, tokens)?, comparisons)?)?;
         let mut roots = add(categories, modes)?;
+        for category in &schema.types {
+            if matches!(&category.carrier, Carrier::Collection(_)) {
+                roots = add(roots, 1)?;
+            }
+        }
         roots = add(roots, add(schema.literals.len(), schema.literals.len())?)?;
         for token in schema
             .tokens
@@ -235,6 +247,36 @@ fn declaration_header<'a>(
     let mut global_tokens = reserved(counts.globals)?;
     let mut modes = reserved(counts.modes)?;
     for category in &schema.types {
+        let (byte_observation, literal_observation, element_observation) = match &category.carrier {
+            Carrier::Collection(collection) => (
+                SourceObservation::Unavailable,
+                SourceObservation::Unavailable,
+                SourceObservation::Known(Some(name(&collection.key))),
+            ),
+            Carrier::Extern { .. } => (
+                SourceObservation::Known(false),
+                SourceObservation::Known(Some(LiteralNativeObservation::CanonicalOpaque)),
+                SourceObservation::Known(None),
+            ),
+            _ => {
+                // Actual scalar decoding yields closed variants. Preserve
+                // the original string gate for any retained Other payload
+                // in a directly supplied schema fixture as well.
+                if let Some(NativeType::Other(spelling)) = &category.scalar_native {
+                    budget.string(spelling)?;
+                }
+                (
+                    SourceObservation::Known(false),
+                    SourceObservation::Known(
+                        category
+                            .scalar_native
+                            .clone()
+                            .map(LiteralNativeObservation::ExactNativeType),
+                    ),
+                    SourceObservation::Known(None),
+                )
+            },
+        };
         let collection = if let Some(collection) = &category.collection {
             for text in [
                 &collection.open,
@@ -260,6 +302,9 @@ fn declaration_header<'a>(
         categories.push(AuthoredCategoryDeclaration {
             name: name(&category.name),
             native: category.native,
+            byte_observation,
+            literal_observation,
+            element_observation,
             collection,
         });
     }
@@ -808,6 +853,7 @@ mod tests {
                 name: "Expr".into(),
                 carrier: Carrier::Dynamic,
                 native: None,
+                scalar_native: None,
                 collection: None,
                 refinement: None,
                 admits_variables: true,
@@ -816,6 +862,7 @@ mod tests {
                 name: "Number".into(),
                 carrier: Carrier::Builtin(BuiltinCarrier::Integer),
                 native: Some(NativeKind::Int32),
+                scalar_native: Some(NativeType::Int32),
                 collection: None,
                 refinement: None,
                 admits_variables: true,
@@ -828,6 +875,7 @@ mod tests {
                     value: None,
                 }),
                 native: Some(NativeKind::Other),
+                scalar_native: None,
                 collection: Some(super::super::CollectionDecl {
                     kind: CollectionKind::List,
                     open: Some("[".into()),
@@ -868,6 +916,264 @@ mod tests {
             tokens: vec![token("Close", None, None), token("Item", Some("Expr"), None)],
         }];
         schema
+    }
+
+    fn observation_fixture() -> LanguageSchema {
+        let mut schema = header_fixture();
+        schema.types.clear();
+        schema.tokens.clear();
+        schema.literals.clear();
+        schema.modes.clear();
+        schema
+    }
+
+    fn observed_type(
+        name: &str,
+        carrier: RhoValue,
+        collection: Option<&str>,
+    ) -> super::super::TypeDecl {
+        let mut fields = BTreeMap::from([
+            ("name".to_owned(), RhoValue::String(name.to_owned())),
+            ("carrier".to_owned(), carrier),
+        ]);
+        if let Some(kind) = collection {
+            fields.insert(
+                "collection".to_owned(),
+                RhoValue::Map(BTreeMap::from([(
+                    "kind".to_owned(),
+                    RhoValue::String(kind.to_owned()),
+                )])),
+            );
+        }
+        super::super::decode_type(&RhoValue::Map(fields), "$.types")
+            .expect("source observation fixture uses an accepted carrier")
+    }
+
+    #[test]
+    fn schema_native_observations_keep_every_scalar_width_and_original_alias() {
+        let cases = [
+            ("i8", NativeType::Int8),
+            ("i16", NativeType::Int16),
+            ("i32", NativeType::Int32),
+            ("i64", NativeType::Int64),
+            ("i128", NativeType::Int128),
+            ("isize", NativeType::Isize),
+            ("u8", NativeType::UInt8),
+            ("u16", NativeType::UInt16),
+            ("u32", NativeType::UInt32),
+            ("u64", NativeType::UInt64),
+            ("u128", NativeType::UInt128),
+            ("usize", NativeType::Usize),
+            ("f32", NativeType::Float32),
+            ("f64", NativeType::Float64),
+            ("bool", NativeType::Bool),
+            ("str", NativeType::Str),
+            ("String", NativeType::Str),
+            ("BigInt", NativeType::CanonicalBigInt),
+            ("BigRat", NativeType::CanonicalBigRat),
+            ("Fixed", NativeType::CanonicalFixedPoint),
+        ];
+        let mut schema = observation_fixture();
+        for (index, (symbol, expected)) in cases.iter().enumerate() {
+            let declaration = observed_type(
+                &format!("Scalar{index}"),
+                RhoValue::String((*symbol).to_owned()),
+                None,
+            );
+            assert_eq!(declaration.scalar_native.as_ref(), Some(expected));
+            schema.types.push(declaration);
+        }
+        let captured = capture_language(&schema).expect("all scalar source facts capture");
+        let header = captured
+            .store
+            .declarations()
+            .expect("scalar header retained");
+        for (row, (_, expected)) in header.categories.iter().zip(&cases) {
+            assert_eq!(row.byte_observation, SourceObservation::Known(false));
+            assert_eq!(row.element_observation, SourceObservation::Known(None));
+            assert_eq!(
+                row.literal_observation,
+                SourceObservation::Known(Some(LiteralNativeObservation::ExactNativeType(
+                    expected.clone()
+                )))
+            );
+        }
+        assert_eq!(NativeType::from_type_str("BigRat"), NativeType::Other("BigRat".into()));
+        assert_eq!(NativeType::from_type_str("Fixed"), NativeType::Other("Fixed".into()));
+    }
+
+    #[test]
+    fn schema_native_observations_keep_absence_and_urn_independent_positive_opacity() {
+        let mut schema = observation_fixture();
+        schema.types.push(
+            super::super::decode_type(&RhoValue::String("Structural".into()), "$.types")
+                .expect("structural category has no native observation"),
+        );
+        for (index, urn) in ["mtl:carrier:opaque", "HashSetLit", "PathMapLit", "UserBigInt"]
+            .into_iter()
+            .enumerate()
+        {
+            let declaration = observed_type(
+                &format!("Opaque{index}"),
+                RhoValue::List(vec![
+                    RhoValue::String("extern".into()),
+                    RhoValue::String(urn.into()),
+                ]),
+                None,
+            );
+            assert_eq!(declaration.carrier, Carrier::Extern { urn: urn.into() });
+            assert_eq!(declaration.scalar_native, None);
+            schema.types.push(declaration);
+        }
+        let captured = capture_language(&schema).expect("canonical opaque observations capture");
+        let header = captured
+            .store
+            .declarations()
+            .expect("opaque header retained");
+        assert_eq!(header.categories[0].literal_observation, SourceObservation::Known(None));
+        assert_ne!(header.categories[0].literal_observation, SourceObservation::Unavailable);
+        for row in &header.categories[1..] {
+            assert_eq!(row.byte_observation, SourceObservation::Known(false));
+            assert_eq!(row.element_observation, SourceObservation::Known(None));
+            assert_eq!(
+                row.literal_observation,
+                SourceObservation::Known(Some(LiteralNativeObservation::CanonicalOpaque))
+            );
+            let SourceObservation::Known(Some(observation)) = &row.literal_observation else {
+                panic!("extern must retain positive canonical opacity");
+            };
+            assert_eq!(
+                constructor_labels::generate_literal_label_observed(
+                    || false,
+                    || observation.clone(),
+                    str::to_owned,
+                ),
+                "Lit",
+                "registry names never select a Rust wrapper or integer label"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_native_observations_borrow_renamed_first_keys_in_header_root_order() {
+        let mut schema = observation_fixture();
+        for name in ["Key", "Value"] {
+            schema.types.push(
+                super::super::decode_type(&RhoValue::String(name.into()), "$.types")
+                    .expect("collection categories are valid source names"),
+            );
+        }
+        for (index, (tag, kind, keyed)) in [
+            ("vec", "list", false),
+            ("bag", "bag", false),
+            ("set", "set", false),
+            ("map", "map", true),
+            ("pathmap", "pathmap", true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut carrier = vec![RhoValue::String(tag.into()), RhoValue::String("Key".into())];
+            if keyed {
+                carrier.push(RhoValue::String("Value".into()));
+            }
+            schema.types.push(observed_type(
+                &format!("Collection{index}"),
+                RhoValue::List(carrier),
+                Some(kind),
+            ));
+        }
+        schema.rename_category("Key", "RenamedKey");
+        let captured = capture_language(&schema).expect("renamed collection source captures");
+        let header = captured
+            .store
+            .declarations()
+            .expect("collection header retained");
+        let mut ordered = Vec::new();
+        header
+            .try_for_each_name(|id| {
+                ordered.push(named(&captured.store, id).spelling.as_str());
+                Ok::<_, ()>(())
+            })
+            .expect("all retained declaration references are valid");
+        assert_eq!(
+            ordered,
+            [
+                "RenamedKey",
+                "Value",
+                "Collection0",
+                "RenamedKey",
+                "Collection1",
+                "RenamedKey",
+                "Collection2",
+                "RenamedKey",
+                "Collection3",
+                "RenamedKey",
+                "Collection4",
+                "RenamedKey",
+            ]
+        );
+        for (index, row) in header.categories[2..].iter().enumerate() {
+            assert_eq!(row.byte_observation, SourceObservation::Unavailable);
+            assert_eq!(row.literal_observation, SourceObservation::Unavailable);
+            let SourceObservation::Known(Some(element)) = &row.element_observation else {
+                panic!("canonical collection must retain its first key name");
+            };
+            assert_eq!(named(&captured.store, *element).spelling, "RenamedKey");
+            assert_eq!(
+                named(&captured.store, *element).equality_class,
+                named(&captured.store, header.categories[0].name).equality_class,
+                "existing capture table preserves source String equality"
+            );
+            let Carrier::Collection(carrier) = &schema.types[index + 2].carrier else {
+                panic!("fixture collection carrier is retained");
+            };
+            if index >= 3 {
+                assert_eq!(carrier.value.as_deref(), Some("Value"));
+            }
+        }
+    }
+
+    #[test]
+    fn schema_native_observations_pay_before_probes_and_other_spelling_copies() {
+        let mut schema = header_fixture();
+        let mut unpaid = Budget {
+            context_work: MAX_CANONICAL_COLLECTION_ITEMS - 8,
+            ..Budget::default()
+        };
+        assert!(HeaderCounts::admit(&schema, &mut unpaid).is_err());
+        assert_eq!(
+            (unpaid.roots, unpaid.nodes, unpaid.edges, unpaid.slots, unpaid.strings),
+            (0, 0, 0, 0, 0)
+        );
+
+        // A direct fixture reaches the generic string-carrying observation;
+        // accepted scalar schema symbols themselves use closed NativeType arms.
+        schema = observation_fixture();
+        let mut category = observed_type("OpaqueSource", RhoValue::String("i32".into()), None);
+        category.scalar_native = Some(NativeType::Other("OpaqueSource".into()));
+        schema.types.push(category);
+        let mut budget = Budget::default();
+        let counts =
+            HeaderCounts::admit(&schema, &mut budget).expect("observation logical work fits");
+        assert_eq!((budget.roots, budget.context_work, budget.strings), (1, 4, 0));
+        let header = declaration_header(&schema, &counts, &mut budget)
+            .expect("Other spelling is copied after the original string gate");
+        assert_eq!(budget.strings, "OpaqueSource".len());
+        assert_eq!(budget.nodes, 0, "header has not copied any Name payload");
+        assert_eq!(header.categories.len(), 1);
+        let mut full = Budget {
+            strings: crate::canonical::MAX_CANONICAL_TOTAL_STRING_BYTES,
+            ..Budget::default()
+        };
+        let counts =
+            HeaderCounts::admit(&schema, &mut full).expect("logical work fits independently");
+        assert!(declaration_header(&schema, &counts, &mut full).is_err());
+        assert_eq!(full.nodes, 0);
+        assert_eq!(
+            full.strings,
+            crate::canonical::MAX_CANONICAL_TOTAL_STRING_BYTES + "OpaqueSource".len()
+        );
     }
 
     #[test]
@@ -957,7 +1263,7 @@ mod tests {
                 budget.context_work,
                 budget.strings
             ),
-            (14, 0, 0, 56, 15, 0)
+            (15, 0, 0, 56, 24, 0)
         );
         let header =
             declaration_header(&schema, &counts, &mut budget).expect("paid header constructs");
@@ -977,13 +1283,13 @@ mod tests {
         budget
             .context_event(ContextItemsEvent::Nonterminal(&number))
             .expect("context work adds to prepaid header work");
-        assert_eq!((budget.nodes, budget.edges, budget.slots, budget.context_work), (0, 1, 57, 16));
+        assert_eq!((budget.nodes, budget.edges, budget.slots, budget.context_work), (0, 1, 57, 25));
     }
 
     #[test]
     fn schema_header_budget_exact_boundary_and_refusal_precede_payload_copy() {
         let schema = header_fixture();
-        let total = 14 + 56 + 15;
+        let total = 15 + 56 + 24;
         let mut exact = Budget {
             context_work: MAX_CANONICAL_COLLECTION_ITEMS - total,
             ..Budget::default()

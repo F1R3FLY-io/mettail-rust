@@ -22,7 +22,8 @@ pub const LANGUAGE_CORE_ABI_V2: u16 = 2;
 pub const LANGUAGE_CORE_ABI_V3: u16 = 3;
 pub const LANGUAGE_CORE_ABI_V4: u16 = 4;
 pub const LANGUAGE_CORE_ABI_V5: u16 = 5;
-pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V5;
+pub const LANGUAGE_CORE_ABI_V6: u16 = 6;
+pub const LANGUAGE_CORE_ABI_CURRENT: u16 = LANGUAGE_CORE_ABI_V6;
 pub const THEORY_CORE_ABI_V1: u16 = 1;
 pub const THEORY_CORE_ABI_V2: u16 = 2;
 pub const THEORY_CORE_ABI_V3: u16 = 3;
@@ -57,7 +58,7 @@ impl LanguageCoreV1 {
         let grammar = self.grammar_fingerprint()?;
         let theory = self.theory_fingerprint()?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-language-core/5\0");
+        hasher.update(b"mettail-language-core/6\0");
         hasher.update(&self.abi.to_be_bytes());
         hasher.update(&grammar);
         hasher.update(&theory);

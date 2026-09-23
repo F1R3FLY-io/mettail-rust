@@ -46,7 +46,8 @@ pub const GRAMMAR_CORE_ABI_V1: u16 = 1;
 pub const GRAMMAR_CORE_ABI_V2: u16 = 2;
 pub const GRAMMAR_CORE_ABI_V3: u16 = 3;
 pub const GRAMMAR_CORE_ABI_V4: u16 = 4;
-pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V4;
+pub const GRAMMAR_CORE_ABI_V5: u16 = 5;
+pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V5;
 
 /// A source rule retained with its immutable arena owner during frontend
 /// transport. Arena allocation identity is deliberately distinct from equality
@@ -162,7 +163,7 @@ impl GrammarCoreV1 {
         }
         let bytes = postcard::to_allocvec(&semantic)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-grammar-core/4\0");
+        hasher.update(b"mettail-grammar-core/5\0");
         hasher.update(&bytes);
         Ok(*hasher.finalize().as_bytes())
     }
@@ -1316,7 +1317,12 @@ mod tests {
 
     #[test]
     fn stale_grammar_abi_is_rejected_before_fingerprinted_artifacts_are_admitted() {
-        for abi in [GRAMMAR_CORE_ABI_V1, GRAMMAR_CORE_ABI_V2] {
+        for abi in [
+            GRAMMAR_CORE_ABI_V1,
+            GRAMMAR_CORE_ABI_V2,
+            GRAMMAR_CORE_ABI_V3,
+            GRAMMAR_CORE_ABI_V4,
+        ] {
             let mut core = one_category_core();
             core.abi = abi;
             assert!(matches!(

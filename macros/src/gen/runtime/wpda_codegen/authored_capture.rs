@@ -8,6 +8,7 @@
 //! this adapter does not establish runtime resource-admission policy.
 
 use super::binder::MacroBinderSyntaxReader;
+use crate::gen::native::NativeTypeFromSynType;
 use mettail_ast::grammar::{
     AstTermParamReader, DelimitedRegionKind, GrammarItem, GrammarRule, PatternOp, SyntaxExpr,
     TermParam,
@@ -295,18 +296,51 @@ pub(crate) fn capture_rules(rules: &[GrammarRule]) -> Result<CapturedAuthoredNod
 /// Retain declarations through the same name roots and source-equality table
 /// as the rules. These are the parser's actual TokenDef names, not inferred
 /// names reconstructed from a normalized token family or native carrier.
-pub(crate) fn capture_language<'syntax>(
+pub(crate) fn capture_language(
+    language: &mettail_ast::language::LanguageDef,
+) -> Result<CapturedAuthoredNodes, String> {
+    // The original shallow probe returns an owned Ident. Keep those exact
+    // observations alive through capture, using its existing Ident equality.
+    // No source or native type is reconstructed from a rendered spelling.
+    let elements: Vec<_> = language
+        .types
+        .iter()
+        .map(|category| {
+            category
+                .native_type
+                .as_ref()
+                .and_then(mettail_ast::language::element_ident_from_native_type)
+        })
+        .collect();
+    capture_language_with_elements(language, &elements)
+}
+
+fn capture_language_with_elements<'syntax>(
     language: &'syntax mettail_ast::language::LanguageDef,
+    elements: &'syntax [Option<Ident>],
 ) -> Result<CapturedAuthoredNodes, String> {
     let categories = language
         .types
         .iter()
-        .map(|category| AuthoredCategoryDeclaration {
+        .zip(elements)
+        .map(|(category, element)| AuthoredCategoryDeclaration {
             name: name_id(&category.name),
             native: category
                 .native_type
                 .as_ref()
                 .map(mettail_ast::language::NativeKind::from_syn_type),
+            byte_observation: SourceObservation::Known(
+                category
+                    .native_type
+                    .as_ref()
+                    .is_some_and(crate::gen::native::is_byte_vector),
+            ),
+            literal_observation: SourceObservation::Known(category.native_type.as_ref().map(
+                |native| {
+                    LiteralNativeObservation::ExactNativeType(NativeType::from_syn_type(native))
+                },
+            )),
+            element_observation: SourceObservation::Known(element.as_ref().map(name_id)),
             collection: category.collection_kind.as_ref().map(|collection| {
                 let delimiters = collection.delimiters();
                 AuthoredCollectionDeclaration {
@@ -830,6 +864,87 @@ mod tests {
             panic!("retained declaration name changed its node tag");
         };
         name
+    }
+
+    #[test]
+    fn capture_native_observations_use_original_byte_type_and_element_probes() {
+        let natives: Vec<syn::Type> = vec![
+            syn::parse_quote!(i8),
+            syn::parse_quote!(i16),
+            syn::parse_quote!(i32),
+            syn::parse_quote!(i64),
+            syn::parse_quote!(i128),
+            syn::parse_quote!(isize),
+            syn::parse_quote!(u8),
+            syn::parse_quote!(u16),
+            syn::parse_quote!(u32),
+            syn::parse_quote!(u64),
+            syn::parse_quote!(u128),
+            syn::parse_quote!(usize),
+            syn::parse_quote!(f32),
+            syn::parse_quote!(f64),
+            syn::parse_quote!(bool),
+            syn::parse_quote!(String),
+            syn::parse_quote!(CanonicalBigInt),
+            syn::parse_quote!(CanonicalBigRat),
+            syn::parse_quote!(CanonicalFixedPoint),
+            syn::parse_quote!(Vec<Expr>),
+            syn::parse_quote!(Vec<u8>),
+            syn::parse_quote!(HashBag<Expr>),
+            syn::parse_quote!(HashSet<Expr>),
+            syn::parse_quote!(HashMapLit<Key, Value>),
+            syn::parse_quote!(HashMap<Key, Value>),
+            syn::parse_quote!(custom::HashSetLit<Expr>),
+            syn::parse_quote!(custom::PathMapLit<Key, Value>),
+            syn::parse_quote!(Vec<Option<Expr>>),
+            syn::parse_quote!([u8; 2]),
+            syn::parse_quote!(&str),
+        ];
+        for native in natives {
+            let mut language = declaration_language(quote! {
+                name: Observed, types { Expr }, terms { }
+            });
+            language.types[0].native_type = Some(native.clone());
+            let captured = capture_language(&language).expect("capture original source");
+            let row = &captured.store.declarations().expect("header").categories[0];
+            let byte = crate::gen::native::is_byte_vector(&native);
+            assert_eq!(row.byte_observation, SourceObservation::Known(byte));
+            assert_eq!(
+                row.literal_observation,
+                SourceObservation::Known(Some(LiteralNativeObservation::ExactNativeType(
+                    NativeType::from_syn_type(&native)
+                )))
+            );
+            let expected_element = mettail_ast::language::element_ident_from_native_type(&native);
+            let SourceObservation::Known(element) = row.element_observation else {
+                panic!("macro source probe is available");
+            };
+            assert_eq!(
+                element.map(|id| retained_name(&captured.store, id).spelling.as_str()),
+                expected_element
+                    .as_ref()
+                    .map(|id| id.to_string())
+                    .as_deref()
+            );
+            let original = crate::gen::generate_literal_label(&native).to_string();
+            let SourceObservation::Known(Some(observation)) = &row.literal_observation else {
+                panic!("source has a native type");
+            };
+            let retained = constructor_labels::generate_literal_label_observed(
+                || byte,
+                || observation.clone(),
+                str::to_owned,
+            );
+            assert_eq!(retained, original);
+        }
+        let language = declaration_language(quote! {
+            name: Absent, types { Expr }, terms { }
+        });
+        let captured = capture_language(&language).expect("capture absent native");
+        let row = &captured.store.declarations().expect("header").categories[0];
+        assert_eq!(row.byte_observation, SourceObservation::Known(false));
+        assert_eq!(row.literal_observation, SourceObservation::Known(None));
+        assert_eq!(row.element_observation, SourceObservation::Known(None));
     }
 
     #[test]

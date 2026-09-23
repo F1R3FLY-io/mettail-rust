@@ -18,7 +18,8 @@ pub const LANGUAGE_CORE_VALUE_SCHEMA_V3: &str = "mettail-language-core-value/3";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V4: &str = "mettail-language-core-value/4";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V5: &str = "mettail-language-core-value/5";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V6: &str = "mettail-language-core-value/6";
-pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V6;
+pub const LANGUAGE_CORE_VALUE_SCHEMA_V7: &str = "mettail-language-core-value/7";
+pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V7;
 
 /// Serde's tagged structural encoding introduces a small fixed amount of
 /// framing around each semantic node. Four times the admitted DDL depth is a
@@ -712,6 +713,9 @@ mod tests {
                         name: core::AuthoredNameId(1),
                         native: None,
                         collection: None,
+                        byte_observation: core::SourceObservation::Known(false),
+                        literal_observation: core::SourceObservation::Known(None),
+                        element_observation: core::SourceObservation::Known(None),
                     }],
                     tokens: vec![core::AuthoredTokenDeclaration {
                         name: core::AuthoredNameId(0),
@@ -743,7 +747,14 @@ mod tests {
             decode_language_core_data_fragment(&fragment).expect("Data decode"),
             Some(expected)
         );
-        for field in ["authored_bindings", "declarations", "typed_literal"] {
+        for field in [
+            "authored_bindings",
+            "declarations",
+            "typed_literal",
+            "byte_observation",
+            "literal_observation",
+            "element_observation",
+        ] {
             let mut value = encoded.clone();
             let RhoValue::Map(envelope) = &mut value else {
                 panic!("map envelope")
@@ -763,6 +774,24 @@ mod tests {
                         panic!("map store")
                     };
                     assert!(store.remove(field).is_some());
+                },
+                "byte_observation" | "literal_observation" | "element_observation" => {
+                    let RhoValue::Map(store) = grammar.get_mut("authored").expect("store") else {
+                        panic!("map store")
+                    };
+                    let RhoValue::Map(header) = store.get_mut("declarations").expect("header")
+                    else {
+                        panic!("map header")
+                    };
+                    let RhoValue::List(categories) =
+                        header.get_mut("categories").expect("categories")
+                    else {
+                        panic!("category list")
+                    };
+                    let RhoValue::Map(category) = &mut categories[0] else {
+                        panic!("category map")
+                    };
+                    assert!(category.remove(field).is_some());
                 },
                 _ => {
                     let RhoValue::Map(bindings) =
@@ -836,6 +865,7 @@ mod tests {
             LANGUAGE_CORE_VALUE_SCHEMA_V3,
             LANGUAGE_CORE_VALUE_SCHEMA_V4,
             LANGUAGE_CORE_VALUE_SCHEMA_V5,
+            LANGUAGE_CORE_VALUE_SCHEMA_V6,
         ] {
             let mut old_schema = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_schema else {
@@ -851,6 +881,7 @@ mod tests {
             core::LANGUAGE_CORE_ABI_V2,
             core::LANGUAGE_CORE_ABI_V3,
             core::LANGUAGE_CORE_ABI_V4,
+            core::LANGUAGE_CORE_ABI_V5,
         ] {
             let mut old_language = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_language else {
@@ -864,8 +895,12 @@ mod tests {
             assert!(error.message.contains("UnsupportedLanguageAbi"));
         }
 
-        for abi in [core::GRAMMAR_CORE_ABI_V1, core::GRAMMAR_CORE_ABI_V2, core::GRAMMAR_CORE_ABI_V3]
-        {
+        for abi in [
+            core::GRAMMAR_CORE_ABI_V1,
+            core::GRAMMAR_CORE_ABI_V2,
+            core::GRAMMAR_CORE_ABI_V3,
+            core::GRAMMAR_CORE_ABI_V4,
+        ] {
             let mut old_grammar = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_grammar else {
                 unreachable!()

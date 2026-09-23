@@ -11,7 +11,7 @@
 //! Admission budgets and the original classifiers' narrower arithmetic domains
 //! are separate checks; this store does not certify a grammar for execution.
 
-use crate::{CollectionKind, NativeKind};
+use crate::{CollectionKind, LiteralNativeObservation, NativeKind};
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Original parser's unobserved collection field for a sourced separator.
@@ -205,11 +205,23 @@ pub struct AuthoredCollectionDeclaration {
     pub key_value_separator: Option<String>,
 }
 
+/// Retained source knowledge. Unavailable is not known absence: consumers
+/// inspect availability only when the original helper reaches that probe.
+/// There is deliberately no default for omitted wire fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SourceObservation<T> {
+    Unavailable,
+    Known(T),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthoredCategoryDeclaration<I = u32> {
     pub name: AuthoredNameId<I>,
     pub native: Option<NativeKind>,
     pub collection: Option<AuthoredCollectionDeclaration>,
+    pub byte_observation: SourceObservation<bool>,
+    pub literal_observation: SourceObservation<Option<LiteralNativeObservation>>,
+    pub element_observation: SourceObservation<Option<AuthoredNameId<I>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +258,9 @@ impl<I: Copy> AuthoredDeclarations<I> {
     ) -> Result<(), E> {
         for category in &self.categories {
             visit(category.name)?;
+            if let SourceObservation::Known(Some(element)) = category.element_observation {
+                visit(element)?;
+            }
         }
         for token in &self.tokens {
             visit(token.name)?;
@@ -278,6 +293,14 @@ impl<I> AuthoredDeclarations<I> {
                     name: resolve(row.name)?,
                     native: row.native,
                     collection: row.collection,
+                    byte_observation: row.byte_observation,
+                    literal_observation: row.literal_observation,
+                    element_observation: match row.element_observation {
+                        SourceObservation::Unavailable => SourceObservation::Unavailable,
+                        SourceObservation::Known(element) => {
+                            SourceObservation::Known(element.map(&mut resolve).transpose()?)
+                        },
+                    },
                 })
             })
             .collect::<Result<_, E>>()?;
@@ -920,6 +943,11 @@ mod tests {
             categories: vec![AuthoredCategoryDeclaration {
                 name: AuthoredNameId(1),
                 native: Some(NativeKind::Bool),
+                byte_observation: SourceObservation::Known(false),
+                literal_observation: SourceObservation::Known(Some(
+                    LiteralNativeObservation::ExactNativeType(crate::NativeType::Bool),
+                )),
+                element_observation: SourceObservation::Known(Some(AuthoredNameId(0))),
                 collection: Some(AuthoredCollectionDeclaration {
                     kind: CollectionKind::PathMap,
                     open: Some(String::new()),
@@ -954,7 +982,7 @@ mod tests {
             store.clone().with_declarations(header.clone()),
             Err(AuthoredStoreError::DeclarationsAlreadyPresent)
         );
-        for which in 0..5 {
+        for which in 0..6 {
             let mut bad = header.clone();
             let target = AuthoredNameId(2); // existing Type, not Name
             match which {
@@ -962,7 +990,8 @@ mod tests {
                 1 => bad.tokens[0].name = target,
                 2 => bad.tokens[0].category = Some(target),
                 3 => bad.tokens[0].push = Some(target),
-                _ => bad.modes[0].name = target,
+                4 => bad.modes[0].name = target,
+                _ => bad.categories[0].element_observation = SourceObservation::Known(Some(target)),
             }
             assert!(matches!(
                 seed().with_declarations(bad),
@@ -985,6 +1014,138 @@ mod tests {
             postcard::from_bytes::<AuthoredRuleStore>(&old_wire).is_err(),
             "missing declarations option must not default"
         );
+    }
+
+    #[test]
+    fn native_observation_roots_remap_in_order_and_stop_on_first_failure() {
+        let row = |category, element| AuthoredCategoryDeclaration {
+            name: AuthoredNameId(category),
+            native: None,
+            collection: None,
+            byte_observation: SourceObservation::Known(false),
+            literal_observation: SourceObservation::Known(None),
+            element_observation: element,
+        };
+        let header = AuthoredDeclarations {
+            categories: vec![
+                row(1, SourceObservation::Known(Some(AuthoredNameId(0)))),
+                row(1, SourceObservation::Unavailable),
+                row(0, SourceObservation::Known(None)),
+            ],
+            tokens: vec![],
+            global_tokens: vec![],
+            modes: vec![],
+        };
+        let mut roots = vec![];
+        header
+            .try_for_each_name(|name| {
+                roots.push(name.0);
+                Ok::<_, ()>(())
+            })
+            .expect("ordered roots");
+        assert_eq!(roots, [1, 0, 1, 0]);
+        let mut mapped = vec![];
+        let actual = header
+            .clone()
+            .try_map_names(|name| {
+                mapped.push(name.0);
+                Ok::<_, ()>(AuthoredNameId(name.0 + 10))
+            })
+            .expect("same ordered resolver");
+        assert_eq!(mapped, roots);
+        assert_eq!(actual.categories[0].name, AuthoredNameId(11));
+        assert_eq!(
+            actual.categories[0].element_observation,
+            SourceObservation::Known(Some(AuthoredNameId(10)))
+        );
+        assert_eq!(actual.categories[1].element_observation, SourceObservation::Unavailable);
+        assert_eq!(actual.categories[2].element_observation, SourceObservation::Known(None));
+        for deny in 0..roots.len() {
+            let mut visited = vec![];
+            let result = header.clone().try_map_names(|name| {
+                visited.push(name.0);
+                if visited.len() - 1 == deny {
+                    Err("denied")
+                } else {
+                    Ok(name)
+                }
+            });
+            assert_eq!(result, Err("denied"));
+            assert_eq!(visited, roots[..=deny]);
+        }
+    }
+
+    #[test]
+    fn every_native_observation_round_trips_and_changes_the_commitment() {
+        use crate::{GrammarCoreV1, NativeType::*};
+        let mut observations = vec![
+            SourceObservation::Unavailable,
+            SourceObservation::Known(None),
+            SourceObservation::Known(Some(LiteralNativeObservation::CanonicalOpaque)),
+        ];
+        observations.extend(
+            [
+                Int8,
+                Int16,
+                Int32,
+                Int64,
+                Int128,
+                Isize,
+                UInt8,
+                UInt16,
+                UInt32,
+                UInt64,
+                UInt128,
+                Usize,
+                Float32,
+                Float64,
+                Bool,
+                Str,
+                CanonicalBigInt,
+                CanonicalBigRat,
+                CanonicalFixedPoint,
+                VecCollection,
+                HashBagCollection,
+                HashSetCollection,
+                HashMapLitCollection,
+                HashMapCollection,
+                Other("HashSetLit".into()),
+                Other("PathMapLit".into()),
+                Other("Opaque".into()),
+            ]
+            .into_iter()
+            .map(|native| {
+                SourceObservation::Known(Some(LiteralNativeObservation::ExactNativeType(native)))
+            }),
+        );
+        let mut fingerprints = std::collections::HashSet::new();
+        for observation in observations {
+            let header = AuthoredDeclarations {
+                categories: vec![AuthoredCategoryDeclaration {
+                    name: AuthoredNameId(1),
+                    native: None,
+                    collection: None,
+                    byte_observation: SourceObservation::Known(false),
+                    literal_observation: observation,
+                    element_observation: SourceObservation::Known(None),
+                }],
+                tokens: vec![],
+                global_tokens: vec![],
+                modes: vec![],
+            };
+            let store = seed().with_declarations(header).expect("typed header");
+            let encoded = postcard::to_allocvec(&store).expect("all variants encode");
+            assert_eq!(
+                postcard::from_bytes::<AuthoredRuleStore>(&encoded).expect("all variants decode"),
+                store
+            );
+            let mut grammar = GrammarCoreV1::new("observations");
+            grammar.authored = Some(store);
+            assert!(
+                fingerprints.insert(grammar.fingerprint().expect("commitment includes metadata")),
+                "distinct retained observations must not be erased from commitment input"
+            );
+        }
     }
 
     #[test]

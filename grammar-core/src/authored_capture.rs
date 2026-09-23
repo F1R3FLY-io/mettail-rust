@@ -519,6 +519,9 @@ mod tests {
                 name: AuthoredNameId(2),
                 native: None,
                 collection: None,
+                byte_observation: crate::SourceObservation::Unavailable,
+                literal_observation: crate::SourceObservation::Unavailable,
+                element_observation: crate::SourceObservation::Unavailable,
             }],
             tokens: vec![AuthoredTokenDeclaration {
                 name: AuthoredNameId(1),
@@ -563,6 +566,19 @@ mod tests {
         assert_ne!(
             name(header.categories[0].name).equality_class,
             name(header.tokens[0].name).equality_class
+        );
+        let mut extended = declarations();
+        extended.categories[0].element_observation =
+            crate::SourceObservation::Known(Some(AuthoredNameId(7)));
+        let mut extended_source = graph();
+        let extended =
+            capture_authored_declarations(&mut extended_source, &[], extended, |_, _| Ok(()))
+                .expect("element uses the same capture table");
+        assert_eq!(extended_source.reads, [2, 7, 1]);
+        let extended_header = extended.store.declarations().expect("extended header");
+        assert_eq!(
+            extended_header.categories[0].element_observation,
+            crate::SourceObservation::Known(Some(extended_header.modes[0].name))
         );
         let mut source = graph();
         assert!(matches!(

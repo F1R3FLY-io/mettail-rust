@@ -93,8 +93,8 @@ language commitments, including modules. The grammar projection is unchanged:
 a role change does not change the parser fingerprint.
 
 The exact canonical application binary interface (ABI) formats are
-LanguageCore ABI 5, TheoryCore ABI 4, GrammarCore ABI 4, and
-`mettail-language-core-value/6`. Older exact-format versions are rejected rather
+LanguageCore ABI 6, TheoryCore ABI 4, GrammarCore ABI 5, and
+`mettail-language-core-value/7`. Older exact-format versions are rejected rather
 than silently reinterpreted. The existing `language/2` and `language/3`
 presentations still accept omission of the optional role. Semantic images keep
 their existing structural layout and are bound to the new full-language
@@ -107,8 +107,9 @@ classifiers; it is not diagnostic provenance. An explicit `Nil` (`null` in the
 intermediate JSON representation) records unavailable authored data, whereas
 an omitted field is rejected as an incomplete exact-format value.
 The full-language commitment already includes both grammar and theory
-commitments, so this grammar representation does not alter observation-role
-semantics or require a different outer LanguageCore ABI. Parser images retain
+commitments, so retained grammar observations do not alter observation-role
+semantics. The exact outer ABI advances together with the grammar payload;
+parser images retain
 their layout and must match the resulting grammar commitment.
 The [authored-input retention design](authored-grammar-capture.md) explains the
 shared capture worklist, source adapters, admission bounds, and the distinction

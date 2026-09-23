@@ -103,8 +103,11 @@ The schema retains each scalar's native observation before lowering erases
 width information. Canonical `BigRat` and `Fixed` map to the existing canonical
 native kinds; other scalar symbols use the unchanged original classifier.
 An omitted carrier remains absent, while collection and external carriers have
-the original opaque `Other` observation. Their richer canonical `Carrier`
-values remain separate. Literal names use the original first-match selector
+the original `NativeKind::Other` observation. The independent richer literal
+observation retains exact scalar `NativeType` variants, records external
+carriers as `CanonicalOpaque`, and remains unavailable for declared collections,
+whose original synthesis branch skips native labeling. Their richer canonical
+`Carrier` values remain separate. Literal names use the original first-match selector
 once, with borrowed names until ordinary name capture copies them.
 
 The [owned declaration reader](../../prattail/src/wpda_rule_analysis/authored_declarations.rs)
@@ -184,8 +187,8 @@ instruction accounting.
 ## Commitments and trust boundaries
 
 The arena affects the grammar commitment because it contains classifier inputs.
-It is not diagnostic provenance. GrammarCore ABI 4 and the exact
-`mettail-language-core-value/6` envelope require the authored fields to be
+It is not diagnostic provenance. GrammarCore ABI 5, LanguageCore ABI 6, and the exact
+`mettail-language-core-value/7` envelope require the authored fields to be
 present. Explicit unavailability is allowed; silently missing fields are not.
 See [identity and compatibility](observation-predicate-roles.md#identity-and-compatibility).
 
@@ -333,6 +336,47 @@ admission policies covering actual copies, indexing, and construction. Logical
 admission is not a physical memory guarantee or a proof of arbitrary callback
 behavior; this adapter alone does not activate installed parser generation.
 
+### Reusing synthetic rule construction
+
+The [shared synthetic builder](../../prattail/src/wpda_rule_analysis/synthetic.rs)
+contains one scheduling implementation. Its fallible entrypoint consumes a
+`TrySynthesisAdapter`; the original macro entrypoint forwards its existing
+callbacks through an infallible adapter. User payloads need not implement
+`Clone`: the original clone callback controls their single retained copy.
+
+| Phase | Preserved behavior |
+|---|---|
+| User rules | Clone admitted categories in source order, then normalize grouped rows. Duplicate category names select the last bucket. |
+| Native literals | Preserve the original literal-block probe even when its result does not gate synthesis. Declared collections skip native labeling. |
+| Collections | Move callback-owned metadata; remove all trailing opening parentheses and insert one separate parenthesis when needed. |
+| Variables | Inspect the current bucket and stop at the first variable rule or callback error. Earlier synthesized variables remain visible. |
+| Binder applications | Preserve both declaration axes and their duplicates; emit Apply then MApply per pair. Clone the vector kind only after Apply succeeds. |
+| Lambdas | Run the original separate lambda pass after every application pair. |
+
+Admission occurs inline before each reached operation. Fixed-size rosters are
+reserved once; dynamically growing category rows retain amortized vector
+growth. Admission, callback, and reservation failures return distinct errors.
+Neither partial rows nor the consumed owner are returned on failure.
+`SyntheticRuleAdmission.v` proves concrete event-fold correspondence with the
+existing recipe driver, prefix stopping, and exact logical debit conservation.
+Its owner-projection premise remains a source-adapter obligation; the proof
+does not certify arbitrary callbacks or physical memory consumption.
+
+The owned normalization session accepts those original recipes through
+`materialize_synthetic`. It reuses the existing name index, parameter and
+syntax materializers, and checked append operation. A private category input
+distinguishes retained name handles from generated spellings. Spellings resolve
+after the parameter name—or after binder and body names—and before the existing
+type-node batch. Existing handles add no lookup or reorder normalization.
+
+The same terminal commit helper appends each present parameter/syntax sequence,
+then the rule. Absent sequences stay absent; present empty sequences remain
+present. Generated rules cannot subsequently enter the original-rule
+normalization API. Unsupported public recipe shapes return explicit errors.
+The [synthetic materialization bridge](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredSyntheticMaterialization.v)
+proves this extension and its exact existing-normalization instance. Tests use
+recipes from the original builder, not a second test implementation of it.
+
 These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared
 WPDA walker. That integration requires its own transition and consumer checks.
@@ -474,9 +518,34 @@ either observation, and the selected constructor retains its result or error.
 The [opaque-label refinement model](../../formal/rocq/prattail_wpda_runtime/theories/CanonicalOpaqueLabelProjection.v)
 proves exact preservation for the existing native path and only label/outcome
 equivalence between opaque input and genuinely generic `Other` cases.
-`HashSetLit` and `PathMapLit` remain distinct. This interface is not yet a claim
-that runtime declaration capture supplies these observations; their retained
-metadata, admission, and versioned transport are separate integration boundaries.
+`HashSetLit` and `PathMapLit` remain distinct.
+
+Each retained category carries three independent `SourceObservation` fields:
+the byte-vector predicate, the optional literal-native observation, and the
+optional native collection element. `Unavailable` differs from `Known(None)`.
+The macro captures the existing source probes directly, including the original
+clone-returning element probe; the temporary identifiers live through the same
+name-equality capture worker. No rendered native type is reparsed.
+
+The canonical schema retains scalar widths before carrier lowering erases them.
+An external carrier has a positive opaque observation regardless of its registry
+identifier. A collection retains its current renamed key category as the first
+element, not a map's value category; its native-label probes are unavailable.
+An absent carrier supplies known absence. Capture visits a known-present element
+immediately after its category name, using the existing typed name resolver and
+store validation. Original rule-root positions and final declaration bindings
+are unchanged, although additional name nodes can change arena indices.
+
+Runtime header admission prepays three shallow-observation work units per
+category and the exact extra element-root count before building the roster.
+An `Other` payload uses the existing string-copy gate; name payloads are charged
+once by ordinary capture. These are logical content bounds, not physical memory
+or instruction counts. The
+[retained-observation model](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredNativeObservationsProjection.v)
+composes the existing capture, mapping and admission laws. Source tests check
+original probe parity, renamed keys, exact wire fields and version rejection.
+This transport is input to the shared derivation, not proof that installed
+runtime parsing has already switched to that derivation.
 
 The [constructor-label model](../../formal/rocq/prattail_wpda_runtime/theories/ConstructorLabelProjection.v)
 preserves the lazy observation and constructor schedule. Its scope is label

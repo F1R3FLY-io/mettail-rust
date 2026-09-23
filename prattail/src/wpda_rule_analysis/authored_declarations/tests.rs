@@ -63,9 +63,14 @@ impl Fixture {
                 id
             },
         };
-        self.header
-            .categories
-            .push(AuthoredCategoryDeclaration { name, native, collection: None });
+        self.header.categories.push(AuthoredCategoryDeclaration {
+            name,
+            native,
+            collection: None,
+            byte_observation: SourceObservation::Unavailable,
+            literal_observation: SourceObservation::Unavailable,
+            element_observation: SourceObservation::Unavailable,
+        });
         self.bindings.categories.push(target);
         name
     }

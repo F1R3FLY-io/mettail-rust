@@ -6,6 +6,12 @@
 //! spellings and a lazily checked spelling/equality-class source profile.
 //! `AuthoredNormalizationMaterialization.v` covers this materialization boundary;
 //! the original worker's separate model covers its two scans and event order.
+//! `AuthoredSyntheticMaterialization.v` covers the additional shallow recipe
+//! bridge, using this same session and preserving optional field presence.
+
+use super::atomic::{LegacyAtomicItem, LegacyAtomicKind};
+use super::synthetic::{SyntheticParam, SyntheticRule, SyntheticType};
+use super::InfixSyntaxShape;
 
 use mettail_ast::legacy_rule_normalization::{
     try_normalize_legacy_rule_with, LegacyItemView, LegacyNormalizationError,
@@ -15,7 +21,7 @@ use mettail_grammar_core::{
     AuthoredLegacyItem, AuthoredName, AuthoredNameId, AuthoredNode, AuthoredOperation,
     AuthoredOperationId, AuthoredParam, AuthoredParamId, AuthoredParamsId, AuthoredRule,
     AuthoredRuleId, AuthoredRuleStore, AuthoredStoreError, AuthoredSyntax, AuthoredSyntaxId,
-    AuthoredType, AuthoredTypeId, CollectionKind,
+    AuthoredType, AuthoredTypeId, CollectionKind, NonTerminalKind,
 };
 use std::collections::HashMap;
 
@@ -47,6 +53,8 @@ pub enum AuthoredNormalizationError<E> {
     Store(AuthoredStoreError),
     Allocation,
     CounterOverflow,
+    UnsupportedSyntheticLegacyItem,
+    UnsupportedSyntheticSyntax,
 }
 
 type Outcome<T, E> = Result<T, AuthoredNormalizationError<E>>;
@@ -123,9 +131,7 @@ impl AuthoredNormalizationSession {
             return Ok((self, id));
         };
 
-        if self.names.is_none() {
-            self.names = Some(NameIndex::from_store(&self.store, &mut admit)?);
-        }
+        self.ensure_name_index(&mut admit)?;
         admit(Event::ParamSlots(params.len())).map_err(Error::Admission)?;
         let mut param_ids = Vec::new();
         param_ids
@@ -156,19 +162,160 @@ impl AuthoredNormalizationSession {
             admit(Event::LegacyItem(item)).map_err(Error::Admission)?;
             items.push(item.clone());
         }
-        let params = AuthoredParamsId(self.append(AuthoredNode::Params(param_ids), &mut admit)?);
-        let syntax = AuthoredSyntaxId(self.append(AuthoredNode::Syntax(syntax_items), &mut admit)?);
-        let result = self.append(
+        let result = self.commit_rule(
+            label,
+            category,
+            items,
+            Some(param_ids),
+            Some(syntax_items),
+            &mut admit,
+        )?;
+        Ok((self, result))
+    }
+
+    /// Consume an original synthetic recipe through the existing materializers.
+    /// The caller supplies admitted source names and the original worker's
+    /// recipe; this method neither synthesizes rules nor validates Rust syntax.
+    /// An error returns no session or rule handle. External descriptor metadata
+    /// retains the original synthetic defaults independently of this source arena.
+    pub fn materialize_synthetic<E>(
+        mut self,
+        rule: SyntheticRule<CollectionKind>,
+        mut admit: impl FnMut(AuthoredNormalizationEvent<'_>) -> Result<(), E>,
+    ) -> Outcome<(Self, AuthoredRuleId), E> {
+        use AuthoredNormalizationError as Error;
+        use AuthoredNormalizationEvent as Event;
+        self.ensure_name_index(&mut admit)?;
+        let category = self.intern(rule.category, &mut admit)?;
+        let params = if let Some(params) = rule.term_context {
+            admit(Event::ParamSlots(params.len())).map_err(Error::Admission)?;
+            let mut ids = Vec::new();
+            ids.try_reserve_exact(params.len())
+                .map_err(|_| Error::Allocation)?;
+            for param in params {
+                let recipe = match param {
+                    SyntheticParam::Simple { name, ty: SyntheticType::Base(category) } => {
+                        ParamRecipe::Simple {
+                            name,
+                            category: CategoryName::Spelling(category),
+                        }
+                    },
+                    SyntheticParam::Simple {
+                        name,
+                        ty: SyntheticType::Collection { kind, element },
+                    } => ParamRecipe::Collection {
+                        name,
+                        kind,
+                        element: CategoryName::Spelling(element),
+                    },
+                    SyntheticParam::Abstraction { binder, body, domain, codomain } => {
+                        ParamRecipe::Abstraction {
+                            binder,
+                            body,
+                            domain: CategoryName::Spelling(domain),
+                            codomain: CategoryName::Spelling(codomain),
+                        }
+                    },
+                };
+                ids.push(self.materialize_param(recipe, &mut admit)?);
+            }
+            Some(ids)
+        } else {
+            None
+        };
+        let label = self.intern(rule.label, &mut admit)?;
+        admit(Event::LegacyItems(rule.items.len())).map_err(Error::Admission)?;
+        let mut items = Vec::new();
+        items
+            .try_reserve_exact(rule.items.len())
+            .map_err(|_| Error::Allocation)?;
+        for item in rule.items {
+            let item = match item {
+                LegacyAtomicItem::Terminal(text) => AuthoredLegacyItem::Terminal(text),
+                LegacyAtomicItem::NonTerminal { kind, ident } => AuthoredLegacyItem::NonTerminal {
+                    ident: self.intern(ident, &mut admit)?,
+                    kind: match kind {
+                        LegacyAtomicKind::Integer => NonTerminalKind::Integer,
+                        LegacyAtomicKind::Boolean => NonTerminalKind::Boolean,
+                        LegacyAtomicKind::StringLiteral => NonTerminalKind::StringLiteral,
+                        LegacyAtomicKind::FloatLiteral => NonTerminalKind::FloatLiteral,
+                        LegacyAtomicKind::Var => NonTerminalKind::Var,
+                        LegacyAtomicKind::Ident => NonTerminalKind::Ident,
+                        LegacyAtomicKind::Category => NonTerminalKind::Category,
+                    },
+                },
+                LegacyAtomicItem::Other => return Err(Error::UnsupportedSyntheticLegacyItem),
+            };
+            admit(Event::LegacyItem(&item)).map_err(Error::Admission)?;
+            items.push(item);
+        }
+        let syntax = if let Some(syntax) = rule.syntax_pattern {
+            admit(Event::SyntaxSlots(syntax.len())).map_err(Error::Admission)?;
+            let mut output = Vec::new();
+            output
+                .try_reserve_exact(syntax.len())
+                .map_err(|_| Error::Allocation)?;
+            for item in syntax {
+                let recipe = match item {
+                    InfixSyntaxShape::Literal(text) => SyntaxRecipe::Literal(text),
+                    InfixSyntaxShape::Param(name) => SyntaxRecipe::Param(name),
+                    InfixSyntaxShape::Sep { collection, separator } => {
+                        SyntaxRecipe::Sep { name: collection, separator }
+                    },
+                    InfixSyntaxShape::Other => return Err(Error::UnsupportedSyntheticSyntax),
+                };
+                output.push(self.materialize_syntax(recipe, &mut admit)?);
+            }
+            Some(output)
+        } else {
+            None
+        };
+        let result = self.commit_rule(label, category, items, params, syntax, &mut admit)?;
+        Ok((self, result))
+    }
+
+    fn ensure_name_index<E>(
+        &mut self,
+        admit: &mut impl FnMut(AuthoredNormalizationEvent<'_>) -> Result<(), E>,
+    ) -> Outcome<(), E> {
+        if self.names.is_none() {
+            self.names = Some(NameIndex::from_store(&self.store, admit)?);
+        }
+        Ok(())
+    }
+
+    fn commit_rule<E>(
+        &mut self,
+        label: AuthoredNameId,
+        category: AuthoredNameId,
+        items: Vec<AuthoredLegacyItem>,
+        params: Option<Vec<AuthoredParamId>>,
+        syntax: Option<Vec<AuthoredSyntax>>,
+        admit: &mut impl FnMut(AuthoredNormalizationEvent<'_>) -> Result<(), E>,
+    ) -> Outcome<AuthoredRuleId, E> {
+        let term_context = params
+            .map(|ids| {
+                self.append(AuthoredNode::Params(ids), admit)
+                    .map(AuthoredParamsId)
+            })
+            .transpose()?;
+        let syntax_pattern = syntax
+            .map(|items| {
+                self.append(AuthoredNode::Syntax(items), admit)
+                    .map(AuthoredSyntaxId)
+            })
+            .transpose()?;
+        self.append(
             AuthoredNode::Rule(AuthoredRule {
                 label,
                 category,
-                term_context: Some(params),
-                syntax_pattern: Some(syntax),
+                term_context,
+                syntax_pattern,
                 items,
             }),
-            &mut admit,
-        )?;
-        Ok((self, AuthoredRuleId(result)))
+            admit,
+        )
+        .map(AuthoredRuleId)
     }
 
     fn append<E>(
@@ -234,12 +381,15 @@ impl AuthoredNormalizationSession {
         let param = match recipe {
             ParamRecipe::Simple { name, category } => {
                 let name = self.intern(name, admit)?;
+                let category = self.resolve_category(category, admit)?;
                 let ty = self.base(category, admit)?;
                 AuthoredParam::Simple { name, ty }
             },
             ParamRecipe::Abstraction { binder, body, domain, codomain } => {
                 let binder = self.intern(binder, admit)?;
                 let body = self.intern(body, admit)?;
+                let domain = self.resolve_category(domain, admit)?;
+                let codomain = self.resolve_category(codomain, admit)?;
                 let domain = self.base(domain, admit)?;
                 let codomain = self.base(codomain, admit)?;
                 let ty =
@@ -251,6 +401,7 @@ impl AuthoredNormalizationSession {
             },
             ParamRecipe::Collection { name, kind, element } => {
                 let name = self.intern(name, admit)?;
+                let element = self.resolve_category(element, admit)?;
                 let element = self.base(element, admit)?;
                 let ty = AuthoredTypeId(self.append(
                     AuthoredNode::Type(AuthoredType::Collection { kind, element }),
@@ -284,6 +435,17 @@ impl AuthoredNormalizationSession {
                 AuthoredSyntax::Op(AuthoredOperationId(id))
             },
         })
+    }
+
+    fn resolve_category<E>(
+        &mut self,
+        category: CategoryName,
+        admit: &mut impl FnMut(AuthoredNormalizationEvent<'_>) -> Result<(), E>,
+    ) -> Outcome<AuthoredNameId, E> {
+        match category {
+            CategoryName::Existing(id) => Ok(id),
+            CategoryName::Spelling(text) => self.intern(text, admit),
+        }
     }
 }
 
@@ -357,21 +519,26 @@ impl NameIndex {
 // Fixed-depth constructor recipes allow the original worker to borrow the
 // immutable source while keeping all fallible arena effects outside its total
 // callbacks. They are not a recursive AST or a second normalization pass.
+enum CategoryName {
+    Existing(AuthoredNameId),
+    Spelling(String),
+}
+
 enum ParamRecipe {
     Simple {
         name: String,
-        category: AuthoredNameId,
+        category: CategoryName,
     },
     Abstraction {
         binder: String,
         body: String,
-        domain: AuthoredNameId,
-        codomain: AuthoredNameId,
+        domain: CategoryName,
+        codomain: CategoryName,
     },
     Collection {
         name: String,
         kind: CollectionKind,
-        element: AuthoredNameId,
+        element: CategoryName,
     },
 }
 
@@ -429,7 +596,10 @@ impl<'input> LegacyRuleNormalizationAdapter<'input> for RecipeAdapter<'input> {
         "elems".to_owned()
     }
     fn make_simple(&mut self, name: String, category: AuthoredNameId) -> ParamRecipe {
-        ParamRecipe::Simple { name, category }
+        ParamRecipe::Simple {
+            name,
+            category: CategoryName::Existing(category),
+        }
     }
     fn make_abstraction(
         &mut self,
@@ -438,7 +608,12 @@ impl<'input> LegacyRuleNormalizationAdapter<'input> for RecipeAdapter<'input> {
         domain: AuthoredNameId,
         codomain: AuthoredNameId,
     ) -> ParamRecipe {
-        ParamRecipe::Abstraction { binder, body, domain, codomain }
+        ParamRecipe::Abstraction {
+            binder,
+            body,
+            domain: CategoryName::Existing(domain),
+            codomain: CategoryName::Existing(codomain),
+        }
     }
     fn make_collection(
         &mut self,
@@ -446,7 +621,11 @@ impl<'input> LegacyRuleNormalizationAdapter<'input> for RecipeAdapter<'input> {
         kind: CollectionKind,
         element: AuthoredNameId,
     ) -> ParamRecipe {
-        ParamRecipe::Collection { name, kind, element }
+        ParamRecipe::Collection {
+            name,
+            kind,
+            element: CategoryName::Existing(element),
+        }
     }
     fn make_literal(&mut self, text: String) -> SyntaxRecipe {
         SyntaxRecipe::Literal(text)
@@ -461,3 +640,6 @@ impl<'input> LegacyRuleNormalizationAdapter<'input> for RecipeAdapter<'input> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod synthetic_tests;

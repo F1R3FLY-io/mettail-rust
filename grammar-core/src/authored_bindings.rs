@@ -353,7 +353,7 @@ mod tests {
         AuthoredCategoryDeclaration, AuthoredModeDeclaration, AuthoredName, AuthoredNameId,
         AuthoredTokenDeclaration, Carrier, Category, LexerMode, ModeTransition, NativeKind,
         Reservation, TokenDecoder, TokenDefinition, TokenPattern, ValidationError,
-        GRAMMAR_CORE_ABI_V3, GRAMMAR_CORE_ABI_V4,
+        GRAMMAR_CORE_ABI_V4, GRAMMAR_CORE_ABI_V5,
     };
 
     fn fixture() -> GrammarCoreV1 {
@@ -383,6 +383,9 @@ mod tests {
                 name: category,
                 native: Some(NativeKind::Other),
                 collection: None,
+                byte_observation: crate::SourceObservation::Unavailable,
+                literal_observation: crate::SourceObservation::Unavailable,
+                element_observation: crate::SourceObservation::Unavailable,
             }],
             tokens: vec![row.clone(), row.clone(), row],
             global_tokens: vec![0, 1],
@@ -650,13 +653,13 @@ mod tests {
     #[test]
     fn authored_binding_abi_and_fingerprint_commit_the_table() {
         let core = fixture();
-        assert_eq!(core.abi, GRAMMAR_CORE_ABI_V4);
+        assert_eq!(core.abi, GRAMMAR_CORE_ABI_V5);
         let mut old = core.clone();
-        old.abi = GRAMMAR_CORE_ABI_V3;
+        old.abi = GRAMMAR_CORE_ABI_V4;
         assert!(old
             .validate()
             .expect_err("old ABI must not be silently upgraded")
-            .contains(&ValidationError::UnsupportedAbi(GRAMMAR_CORE_ABI_V3)));
+            .contains(&ValidationError::UnsupportedAbi(GRAMMAR_CORE_ABI_V4)));
         let mut changed = core.clone();
         changed
             .authored_bindings

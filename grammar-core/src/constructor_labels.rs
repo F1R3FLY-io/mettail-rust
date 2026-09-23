@@ -9,7 +9,7 @@ use crate::NativeType;
 /// A positive source observation, not a recovered Rust type or a cached label.
 /// Canonical opaque carriers expose no Rust wrapper spelling. Their registry
 /// identity is deliberately absent from this constructor-selection interface.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LiteralNativeObservation {
     ExactNativeType(NativeType),
     CanonicalOpaque,

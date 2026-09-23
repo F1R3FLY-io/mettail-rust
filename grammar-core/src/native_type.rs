@@ -6,7 +6,7 @@
 
 /// Typed representation of a native Rust type mapped to a language category.
 /// Eliminates string comparisons on type names throughout code generation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum NativeType {
     Int8,
     Int16,
