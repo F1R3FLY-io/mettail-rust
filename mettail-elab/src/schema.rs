@@ -3,6 +3,8 @@ use mettail_grammar_core as core;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod authored_capture;
+#[cfg(test)]
+mod authored_declarations_tests;
 
 const TOP_LEVEL_KEYS: &[&str] = &[
     "mettail",
@@ -68,6 +70,8 @@ struct Options {
 struct TypeDecl {
     name: String,
     carrier: core::Carrier,
+    // Retain the source observation before Carrier erases scalar width.
+    native: Option<core::NativeKind>,
     collection: Option<CollectionDecl>,
     refinement: Option<RefinementDecl>,
     admits_variables: bool,
@@ -2339,6 +2343,7 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
         return Ok(TypeDecl {
             name: identifier(name, path)?,
             carrier: core::Carrier::Dynamic,
+            native: None,
             collection: None,
             refinement: None,
             admits_variables: true,
@@ -2359,6 +2364,16 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
         .map(|value| decode_carrier(value, &format!("{path}.carrier")))
         .transpose()?
         .unwrap_or(core::Carrier::Dynamic);
+    // Carrier was validated above. This is the original classifier's shallow
+    // observation, not a replacement for the richer canonical carrier value.
+    let native = values.get("carrier").map(|value| match value {
+        RhoValue::String(symbol) => match symbol.as_str() {
+            "BigRat" => core::NativeKind::CanonicalBigRat,
+            "Fixed" => core::NativeKind::CanonicalFixedPoint,
+            symbol => core::NativeKind::from_last_path_segment(symbol),
+        },
+        _ => core::NativeKind::Other,
+    });
     let collection = values
         .get("collection")
         .map(|value| decode_collection(value, &format!("{path}.collection")))
@@ -2378,6 +2393,7 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
     Ok(TypeDecl {
         name,
         carrier,
+        native,
         collection,
         refinement,
         admits_variables,
@@ -4546,6 +4562,17 @@ impl LanguageSchema {
     }
 
     pub(crate) fn lower(&self) -> Result<core::GrammarCoreV1, ValueDecodeError> {
+        // Admit the complete retained header and pending/final binding rosters
+        // before constructing either. Capture owns the original controller.
+        let authored = authored_capture::capture_language(self)?;
+        if authored.roots.len() != self.terms.len() {
+            return error("$.terms", "authored capture root count differs from term count");
+        }
+        let header = authored.store.declarations().ok_or_else(|| {
+            ValueDecodeError::new("$", "schema capture omitted source declarations")
+        })?;
+        let mut bindings = core::AuthoredDeclarationBindingsBuilder::try_new(header)
+            .map_err(authored_binding_error)?;
         let mut output = core::GrammarCoreV1::new(&self.name);
         output.provenance.frontend = format!("rholang-{}", self.notation);
         output.backend_context = self.context.clone();
@@ -4577,14 +4604,20 @@ impl LanguageSchema {
             .types
             .iter()
             .enumerate()
-            .map(|(index, declaration)| core::Category {
-                id: core::CategoryId(index as u32),
-                name: declaration.name.clone(),
-                carrier: declaration.carrier.clone(),
-                primary: index == 0,
-                admits_variables: declaration.admits_variables,
+            .map(|(index, declaration)| {
+                let category = core::Category {
+                    id: core::CategoryId(index as u32),
+                    name: declaration.name.clone(),
+                    carrier: declaration.carrier.clone(),
+                    primary: index == 0,
+                    admits_variables: declaration.admits_variables,
+                };
+                bindings
+                    .bind_category(index, category.id)
+                    .map_err(authored_binding_error)?;
+                Ok(category)
             })
-            .collect();
+            .collect::<Result<Vec<_>, ValueDecodeError>>()?;
         let categories: BTreeMap<_, _> = output
             .categories
             .iter()
@@ -4640,24 +4673,25 @@ impl LanguageSchema {
             });
         }
 
-        output.modes = std::iter::once(core::LexerMode {
+        output.modes = std::iter::once(Ok(core::LexerMode {
             id: core::ModeId(0),
             name: "default".into(),
             token_ids: Vec::new(),
             raw: false,
-        })
-        .chain(
-            self.modes
-                .iter()
-                .enumerate()
-                .map(|(index, mode)| core::LexerMode {
-                    id: core::ModeId(index as u32 + 1),
-                    name: mode.name.clone(),
-                    token_ids: Vec::new(),
-                    raw: mode.raw,
-                }),
-        )
-        .collect();
+        }))
+        .chain(self.modes.iter().enumerate().map(|(index, mode)| {
+            let mode = core::LexerMode {
+                id: core::ModeId(index as u32 + 1),
+                name: mode.name.clone(),
+                token_ids: Vec::new(),
+                raw: mode.raw,
+            };
+            bindings
+                .bind_mode(index, mode.id)
+                .map_err(authored_binding_error)?;
+            Ok(mode)
+        }))
+        .collect::<Result<Vec<_>, ValueDecodeError>>()?;
         let mode_ids: BTreeMap<_, _> = output
             .modes
             .iter()
@@ -4695,7 +4729,7 @@ impl LanguageSchema {
                 pop: false,
                 stream: None,
             };
-            add_token(
+            let id = add_token(
                 &token,
                 core::ModeId(0),
                 &mode_ids,
@@ -4704,9 +4738,10 @@ impl LanguageSchema {
                 &mut token_ids,
                 "$.literals",
             )?;
+            bind_authored_token(&mut bindings, self.tokens.len() + index, id)?;
         }
         for (index, token) in self.tokens.iter().enumerate() {
-            add_token(
+            let id = add_token(
                 token,
                 core::ModeId(0),
                 &mode_ids,
@@ -4715,10 +4750,12 @@ impl LanguageSchema {
                 &mut token_ids,
                 &format!("$.tokens[{index}]"),
             )?;
+            bind_authored_token(&mut bindings, index, id)?;
         }
+        let mut mode_source_index = self.tokens.len() + self.literals.len();
         for (mode_index, mode) in self.modes.iter().enumerate() {
             for (token_index, token) in mode.tokens.iter().enumerate() {
-                add_token(
+                let id = add_token(
                     token,
                     core::ModeId(mode_index as u32 + 1),
                     &mode_ids,
@@ -4727,6 +4764,8 @@ impl LanguageSchema {
                     &mut token_ids,
                     &format!("$.modes[{mode_index}].tokens[{token_index}]"),
                 )?;
+                bind_authored_token(&mut bindings, mode_source_index, id)?;
+                mode_source_index += 1;
             }
         }
         let mut literal_ids = BTreeMap::new();
@@ -4753,10 +4792,6 @@ impl LanguageSchema {
             output.modes[0].token_ids.push(id);
         }
 
-        let authored = authored_capture::capture(&self.terms)?;
-        if authored.roots.len() != self.terms.len() {
-            return error("$.terms", "authored capture root count differs from term count");
-        }
         for (index, term) in self.terms.iter().enumerate() {
             let path = format!("$.terms[{index}]");
             let result = category_id(&categories, &term.category, &format!("{path}.category"))?;
@@ -4810,6 +4845,7 @@ impl LanguageSchema {
                 provenance: None,
             });
         }
+        output.authored_bindings = Some(bindings.finish(header).map_err(authored_binding_error)?);
         output.authored = Some(authored.store);
         let constructors: BTreeMap<_, _> = output
             .productions
@@ -5222,6 +5258,23 @@ enum ParameterDescriptor {
     Guard,
 }
 
+fn authored_binding_error(error: core::AuthoredBindingError) -> ValueDecodeError {
+    ValueDecodeError::new("$", format!("invalid authored declaration binding: {error}"))
+}
+
+fn bind_authored_token(
+    bindings: &mut core::AuthoredDeclarationBindingsBuilder,
+    source_index: usize,
+    target: core::TokenId,
+) -> Result<(), ValueDecodeError> {
+    bindings
+        .bind_token_direct(source_index, target)
+        .map_err(authored_binding_error)?;
+    bindings
+        .bind_token_typed_literal(source_index, None)
+        .map_err(authored_binding_error)
+}
+
 fn add_token(
     declaration: &TokenDecl,
     mode: core::ModeId,
@@ -5230,7 +5283,7 @@ fn add_token(
     output: &mut core::GrammarCoreV1,
     token_ids: &mut BTreeMap<String, core::TokenId>,
     path: &str,
-) -> Result<(), ValueDecodeError> {
+) -> Result<core::TokenId, ValueDecodeError> {
     let qualified = if mode == core::ModeId(0) {
         declaration.name.clone()
     } else {
@@ -5282,7 +5335,7 @@ fn add_token(
     if mode == core::ModeId(0) || !token_ids.contains_key(&declaration.name) {
         token_ids.insert(declaration.name.clone(), id);
     }
-    Ok(())
+    Ok(id)
 }
 
 fn register_evaluation_capability(

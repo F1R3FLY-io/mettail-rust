@@ -92,9 +92,25 @@ their recorded modes.
 This validation establishes structural associations, not decoder equivalence
 or authority. The macro bridge records original builtin-selection outcomes and
 typed-pattern insertion provenance at their existing source sites. Runtime
-declaration-header population and the installed owned-reader consumers require
-their own integration; a store with no header explicitly records unavailable
-declaration observations rather than synthesizing them.
+schema lowering also records IDs at its existing append sites. Its source
+header lists explicit global tokens, literals, then mode tokens; its execution
+order remains literals, explicit globals, then mode tokens. For example, one
+explicit token and one literal occupy source rows 0 and 1, but their direct
+IDs are 2 and 1 because the implicit `Identifier` occupies execution ID 0.
+Source rows exclude implicit identifiers and synthesized terminal tokens.
+
+The schema retains each scalar's native observation before lowering erases
+width information. Canonical `BigRat` and `Fixed` map to the existing canonical
+native kinds; other scalar symbols use the unchanged original classifier.
+An omitted carrier remains absent, while collection and external carriers have
+the original opaque `Other` observation. Their richer canonical `Carrier`
+values remain separate. Literal names use the original first-match selector
+once, with borrowed names until ordinary name capture copies them.
+
+Installed owned-reader consumers require their own integration. A store with
+no header explicitly records unavailable declaration observations rather than
+synthesizing them. Neither retained observations nor final-ID bindings establish
+native decoder, value, or arbitrary Rust-wrapper equivalence.
 
 ## Runtime admission
 
@@ -109,7 +125,7 @@ are:
 | $`E`$ | Immediate typed-reference fields, including duplicate references. |
 | $`Q`$ | Elements in retained name, parameter, syntax, and legacy-item vectors. |
 | $`B`$ | UTF-8 bytes copied into retained string payloads. |
-| $`W`$ | Original context-conversion event charges, accumulated across rules. |
+| $`W`$ | Declaration-row and literal-selector work plus original context-conversion event charges. |
 
 A reference stored in a vector contributes to both $`E`$ and $`Q`$: these count
 different dimensions. The existing node limit bounds $`N`$; the existing item
@@ -133,6 +149,17 @@ are still constructed and charged even though this retained projection keeps
 only the item roster. BNF copying and context presence are unchanged. The
 [schema converter model](../../formal/rocq/prattail_wpda_runtime/theories/SchemaContextItemsProjection.v)
 composes these checks with the original finite execution and capture bounds.
+
+Declaration capture prepays the contents of the header, its remapped row
+vectors, and the pending and finalized binding vectors. It includes every
+declaration-name occurrence in the combined root count before allocation.
+Collection-delimiter strings pass the same string gate before copying. Each
+literal prepays a category-count upper bound before calling the original
+first-match selector; context conversion adds to this work rather than resetting
+it. The [schema declaration model](../../formal/rocq/prattail_wpda_runtime/theories/SchemaDeclarationCaptureProjection.v)
+connects these counts to the actual vector phases and source/execution roster
+positions. This is conservative logical-content admission, not allocator or
+instruction accounting.
 
 ## Commitments and trust boundaries
 

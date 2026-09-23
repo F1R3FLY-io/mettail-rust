@@ -14,8 +14,14 @@
 //! Its aggregate W charges visits/frames/items once and bindings twice, so
 //! I=R+E+Q+W also bounds this finite occurrence work (not instruction count).
 //! Bounds describe logical lengths, not allocator capacities or physical RSS.
+//! Declaration capture additionally prepays header/remap and binding-builder
+//! contents in Q, plus header-row and literal-selector work in W. Rich schema
+//! carriers stay in the schema/Core; native observations are captured before
+//! lowering. This does not establish native decoder or value parity.
 
-use super::{BnfNode, Param, SyntaxNode, TermBody, TermDecl, TypeExpr};
+use super::{
+    BnfNode, LanguageSchema, LiteralDecl, Param, SyntaxNode, TermBody, TermDecl, TypeExpr,
+};
 use crate::canonical::{
     account_canonical_string, ValueDecodeError, MAX_CANONICAL_COLLECTION_ITEMS,
     MAX_CANONICAL_VALUE_NODES,
@@ -30,6 +36,10 @@ use std::cell::RefCell;
 #[derive(Clone, Copy)]
 enum Handle<'a> {
     Name(&'a String),
+    LiteralName {
+        owner: &'a LiteralDecl,
+        spelling: &'a str,
+    },
     ChainName(&'a SyntaxNode),
     Names(&'a Vec<String>),
     Type(&'a TypeExpr),
@@ -85,6 +95,27 @@ impl Budget {
         account_canonical_string(value, &mut self.strings)
     }
 
+    /// Prepaid header content is separate from observed arena nodes/edges.
+    /// W is capture-wide: subsequent context events add to these source costs.
+    fn header_content(
+        &mut self,
+        roots: usize,
+        slots: usize,
+        work: usize,
+    ) -> Result<(), ValueDecodeError> {
+        let roots = add(self.roots, roots)?;
+        let slots = add(self.slots, slots)?;
+        let work = add(self.context_work, work)?;
+        let items = add(add(add(roots, self.edges)?, slots)?, work)?;
+        if self.nodes > MAX_CANONICAL_VALUE_NODES || items > MAX_CANONICAL_COLLECTION_ITEMS {
+            return Err(failure("authored declaration content exceeds canonical item limit"));
+        }
+        self.roots = roots;
+        self.slots = slots;
+        self.context_work = work;
+        Ok(())
+    }
+
     /// Same-loop admission; generated item edges/slots are not another node.
     fn context_event(
         &mut self,
@@ -130,6 +161,156 @@ impl Budget {
         }
         Ok(())
     }
+}
+
+/// Counts only source rosters, never grammar syntax. All arithmetic is checked.
+/// Q prepays each actual vector construction: initial header H, remapped
+/// category/token/mode rows J, pending builder P, finalized P and token zip T.
+struct HeaderCounts {
+    categories: usize,
+    tokens: usize,
+    globals: usize,
+    modes: usize,
+}
+
+impl HeaderCounts {
+    fn admit(schema: &LanguageSchema, budget: &mut Budget) -> Result<Self, ValueDecodeError> {
+        // Pay the finite mode roster before inspecting nested vector lengths.
+        budget.header_content(0, 0, schema.modes.len())?;
+        let mut mode_tokens = 0;
+        for mode in &schema.modes {
+            mode_tokens = add(mode_tokens, mode.tokens.len())?;
+        }
+        let categories = schema.types.len();
+        let globals = add(schema.tokens.len(), schema.literals.len())?;
+        let tokens = add(globals, mode_tokens)?;
+        let modes = schema.modes.len();
+        for count in [categories, tokens, modes] {
+            u32::try_from(count).map_err(|_| failure("authored declaration roster exceeds u32"))?;
+        }
+        let initial = add(add(add(add(categories, tokens)?, globals)?, modes)?, mode_tokens)?;
+        let remapped = add(add(categories, tokens)?, modes)?;
+        let pending = add(add(add(categories, tokens)?, tokens)?, modes)?;
+        let finalized = add(pending, tokens)?;
+        let slots = add(add(add(initial, remapped)?, pending)?, finalized)?;
+        let comparisons = categories
+            .checked_mul(schema.literals.len())
+            .ok_or_else(|| failure("authored literal selector work overflowed"))?;
+        // Mode-row work was already paid above. This charges the upper bound
+        // for each literal's one original first-match selector call, not a
+        // second lookup and not individual string-comparison instructions.
+        budget.header_content(0, slots, add(add(categories, tokens)?, comparisons)?)?;
+        let mut roots = add(categories, modes)?;
+        roots = add(roots, add(schema.literals.len(), schema.literals.len())?)?;
+        for token in schema
+            .tokens
+            .iter()
+            .chain(schema.modes.iter().flat_map(|mode| &mode.tokens))
+        {
+            roots = add(
+                roots,
+                1 + usize::from(token.category.is_some()) + usize::from(token.push.is_some()),
+            )?;
+        }
+        budget.header_content(roots, 0, 0)?;
+        Ok(Self { categories, tokens, globals, modes })
+    }
+}
+
+fn reserved<T>(count: usize) -> Result<Vec<T>, ValueDecodeError> {
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(count)
+        .map_err(|_| failure("authored declaration allocation failed"))?;
+    Ok(values)
+}
+
+fn declaration_header<'a>(
+    schema: &'a LanguageSchema,
+    counts: &HeaderCounts,
+    budget: &mut Budget,
+) -> Result<AuthoredDeclarations<Handle<'a>>, ValueDecodeError> {
+    let mut categories = reserved(counts.categories)?;
+    let mut tokens = reserved(counts.tokens)?;
+    let mut global_tokens = reserved(counts.globals)?;
+    let mut modes = reserved(counts.modes)?;
+    for category in &schema.types {
+        let collection = if let Some(collection) = &category.collection {
+            for text in [
+                &collection.open,
+                &collection.close,
+                &collection.separator,
+                &collection.key_value_separator,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                budget.string(text)?;
+            }
+            Some(AuthoredCollectionDeclaration {
+                kind: collection.kind,
+                open: collection.open.clone(),
+                close: collection.close.clone(),
+                separator: collection.separator.clone(),
+                key_value_separator: collection.key_value_separator.clone(),
+            })
+        } else {
+            None
+        };
+        categories.push(AuthoredCategoryDeclaration {
+            name: name(&category.name),
+            native: category.native,
+            collection,
+        });
+    }
+    let explicit = |token: &'a super::TokenDecl| AuthoredTokenDeclaration {
+        name: name(&token.name),
+        category: token.category.as_ref().map(name),
+        from_literals: false,
+        has_evaluation: token.evaluation.is_some(),
+        push: token.push.as_ref().map(name),
+    };
+    // Source order matches the authored macro declaration view. The execution
+    // lowering remains literal-first and binds actual append receipts there.
+    for token in &schema.tokens {
+        global_tokens.push(source_token_index(tokens.len())?);
+        tokens.push(explicit(token));
+    }
+    for literal in &schema.literals {
+        let spelling = normalize_literal_name(
+            literal.category.as_str(),
+            &schema.types,
+            |category| category.name.as_str(),
+            |category| category.native.as_ref(),
+            |kind| *kind,
+            |variant, _| variant,
+            |_| literal.category.as_str(),
+        );
+        global_tokens.push(source_token_index(tokens.len())?);
+        tokens.push(AuthoredTokenDeclaration {
+            name: AuthoredNameId(Handle::LiteralName { owner: literal, spelling }),
+            category: Some(name(&literal.category)),
+            from_literals: true,
+            has_evaluation: true,
+            push: None,
+        });
+    }
+    for mode in &schema.modes {
+        let mut source_tokens = reserved(mode.tokens.len())?;
+        for token in &mode.tokens {
+            source_tokens.push(source_token_index(tokens.len())?);
+            tokens.push(explicit(token));
+        }
+        modes.push(AuthoredModeDeclaration {
+            name: name(&mode.name),
+            tokens: source_tokens,
+        });
+    }
+    Ok(AuthoredDeclarations { categories, tokens, global_tokens, modes })
+}
+
+fn source_token_index(index: usize) -> Result<u32, ValueDecodeError> {
+    u32::try_from(index).map_err(|_| failure("authored source token index exceeds u32"))
 }
 
 struct Source<'a, 'b> {
@@ -287,6 +468,10 @@ impl Source<'_, '_> {
                 budget.string(text)?;
                 (0, 0)
             },
+            Handle::LiteralName { spelling, .. } => {
+                budget.string(spelling)?;
+                (0, 0)
+            },
             Handle::ChainName(_) => {
                 budget.string(AUTHORED_CHAIN_COLLECTION_NAME)?;
                 (0, 0)
@@ -397,6 +582,7 @@ impl<'a> AuthoredCaptureSource for Source<'a, '_> {
             Handle::Syntax(value) => (6, std::ptr::from_ref(value) as usize),
             Handle::Operation(value) => (7, std::ptr::from_ref(value) as usize),
             Handle::Rule(value) => (8, std::ptr::from_ref(value) as usize),
+            Handle::LiteralName { owner, .. } => (9, std::ptr::from_ref(owner) as usize),
         }
     }
 
@@ -409,6 +595,10 @@ impl<'a> AuthoredCaptureSource for Source<'a, '_> {
             Handle::Name(value) => AuthoredNode::Name(AuthoredName {
                 spelling: value.clone(),
                 equality_class: value.as_str(),
+            }),
+            Handle::LiteralName { spelling, .. } => AuthoredNode::Name(AuthoredName {
+                spelling: spelling.to_owned(),
+                equality_class: spelling,
             }),
             Handle::ChainName(_) => AuthoredNode::Name(AuthoredName {
                 spelling: AUTHORED_CHAIN_COLLECTION_NAME.into(),
@@ -556,6 +746,35 @@ impl<'a> AuthoredCaptureSource for Source<'a, '_> {
     }
 }
 
+pub(super) fn capture_language(
+    schema: &LanguageSchema,
+) -> Result<CapturedAuthoredNodes, ValueDecodeError> {
+    let mut budget = Budget::roots(schema.terms.len())?;
+    let counts = HeaderCounts::admit(schema, &mut budget)?;
+    let header = declaration_header(schema, &counts, &mut budget)?;
+    let budget = RefCell::new(budget);
+    let mut roots = reserved(schema.terms.len())?;
+    roots.extend(
+        schema
+            .terms
+            .iter()
+            .map(|rule| (AuthoredNodeTag::Rule, Handle::Rule(rule))),
+    );
+    let mut source = Source { _rules: &schema.terms, budget: &budget };
+    capture_authored_declarations(&mut source, &roots, header, |phase, node| {
+        budget.borrow().phase(phase, node)
+    })
+    .map_err(capture_error)
+}
+
+fn capture_error(error: AuthoredCaptureError<ValueDecodeError>) -> ValueDecodeError {
+    match error {
+        AuthoredCaptureError::Source(error) | AuthoredCaptureError::Admission(error) => error,
+        error => ValueDecodeError::new("$.terms", format!("authored capture failed: {error:?}")),
+    }
+}
+
+#[cfg(test)]
 pub(super) fn capture(rules: &[TermDecl]) -> Result<CapturedAuthoredNodes, ValueDecodeError> {
     let budget = RefCell::new(Budget::roots(rules.len())?);
     let mut roots = Vec::new();
@@ -569,12 +788,7 @@ pub(super) fn capture(rules: &[TermDecl]) -> Result<CapturedAuthoredNodes, Value
     );
     let mut source = Source { _rules: rules, budget: &budget };
     capture_authored_nodes(&mut source, &roots, |phase, node| budget.borrow().phase(phase, node))
-        .map_err(|error| match error {
-            AuthoredCaptureError::Source(error) | AuthoredCaptureError::Admission(error) => error,
-            error => {
-                ValueDecodeError::new("$.terms", format!("authored capture failed: {error:?}"))
-            },
-        })
+        .map_err(capture_error)
 }
 
 #[cfg(test)]
@@ -582,6 +796,260 @@ mod tests {
     use super::*;
     use crate::canonical::{RhoValue, MAX_CANONICAL_STRING_BYTES};
     use std::collections::BTreeMap;
+
+    fn header_fixture() -> LanguageSchema {
+        let mut schema = super::super::decode(&RhoValue::Map(BTreeMap::from([
+            ("mettail".into(), RhoValue::String("language/2".into())),
+            ("name".into(), RhoValue::String("Header".into())),
+        ])))
+        .expect("minimal schema decodes without rule reconstruction");
+        schema.types = vec![
+            super::super::TypeDecl {
+                name: "Expr".into(),
+                carrier: Carrier::Dynamic,
+                native: None,
+                collection: None,
+                refinement: None,
+                admits_variables: true,
+            },
+            super::super::TypeDecl {
+                name: "Number".into(),
+                carrier: Carrier::Builtin(BuiltinCarrier::Integer),
+                native: Some(NativeKind::Int32),
+                collection: None,
+                refinement: None,
+                admits_variables: true,
+            },
+            super::super::TypeDecl {
+                name: "List".into(),
+                carrier: Carrier::Collection(CollectionCarrier {
+                    kind: CollectionKind::List,
+                    key: "Expr".into(),
+                    value: None,
+                }),
+                native: Some(NativeKind::Other),
+                collection: Some(super::super::CollectionDecl {
+                    kind: CollectionKind::List,
+                    open: Some("[".into()),
+                    close: None,
+                    separator: Some(",".into()),
+                    key_value_separator: Some("=>".into()),
+                }),
+                refinement: None,
+                admits_variables: false,
+            },
+        ];
+        let token =
+            |name: &str, category: Option<&str>, push: Option<&str>| super::super::TokenDecl {
+                name: name.into(),
+                pattern: "x".into(),
+                category: category.map(str::to_owned),
+                evaluation: None,
+                priority: 0,
+                push: push.map(str::to_owned),
+                pop: false,
+                stream: None,
+            };
+        schema.tokens = vec![token("Integer", Some("Number"), Some("Body"))];
+        schema.literals = ["Number", "Expr"]
+            .into_iter()
+            .map(|category| LiteralDecl {
+                category: category.into(),
+                pattern: "x".into(),
+                evaluation: NativeEvaluation::Carrier {
+                    kind: "int".into(),
+                    parameters: BTreeMap::new(),
+                },
+            })
+            .collect();
+        schema.modes = vec![super::super::ModeDecl {
+            name: "Body".into(),
+            raw: true,
+            tokens: vec![token("Close", None, None), token("Item", Some("Expr"), None)],
+        }];
+        schema
+    }
+
+    #[test]
+    fn schema_header_keeps_order_presence_literal_identity_and_partial_delimiters() {
+        let schema = header_fixture();
+        let captured = capture_language(&schema).expect("declarations capture without rules");
+        assert!(captured.roots.is_empty(), "declarations are not fabricated rule roots");
+        let header = captured
+            .store
+            .declarations()
+            .expect("header survives empty rule roster");
+        assert_eq!(header.global_tokens, [0, 1, 2]);
+        assert_eq!(header.modes[0].tokens, [3, 4]);
+        assert_eq!(named(&captured.store, header.modes[0].name).spelling, "Body");
+        assert_eq!(
+            header
+                .categories
+                .iter()
+                .map(|category| category.native)
+                .collect::<Vec<_>>(),
+            [None, Some(NativeKind::Int32), Some(NativeKind::Other)]
+        );
+        let collection = header.categories[2]
+            .collection
+            .as_ref()
+            .expect("declared collection remains present");
+        assert_eq!(collection.kind, CollectionKind::List);
+        assert_eq!(collection.open.as_deref(), Some("["));
+        assert_eq!(collection.close, None);
+        assert_eq!(collection.separator.as_deref(), Some(","));
+        assert_eq!(collection.key_value_separator.as_deref(), Some("=>"));
+        assert_eq!(
+            header
+                .tokens
+                .iter()
+                .map(|token| named(&captured.store, token.name).spelling.as_str())
+                .collect::<Vec<_>>(),
+            ["Integer", "Integer", "Expr", "Close", "Item"]
+        );
+        assert_eq!(
+            header
+                .tokens
+                .iter()
+                .map(|token| (token.from_literals, token.has_evaluation))
+                .collect::<Vec<_>>(),
+            [(false, false), (true, true), (true, true), (false, false), (false, false)]
+        );
+        assert_eq!(
+            named(
+                &captured.store,
+                header.tokens[1]
+                    .category
+                    .expect("literal source category remains present")
+            )
+            .spelling,
+            "Number"
+        );
+        assert_eq!(
+            named(&captured.store, header.tokens[0].push.expect("source push remains present"))
+                .spelling,
+            "Body"
+        );
+        assert!(header.tokens[1].push.is_none() && header.tokens[3].category.is_none());
+        assert_ne!(
+            header.tokens[0].name, header.tokens[1].name,
+            "equal names retain distinct original occurrences"
+        );
+        assert_eq!(
+            named(&captured.store, header.tokens[0].name).equality_class,
+            named(&captured.store, header.tokens[1].name).equality_class
+        );
+    }
+
+    #[test]
+    fn schema_header_pays_exact_vector_phases_roots_work_and_only_copied_bytes() {
+        let schema = header_fixture();
+        let mut budget = Budget::default();
+        let counts = HeaderCounts::admit(&schema, &mut budget).expect("header counts fit");
+        // C=3,G=1,L=2,U=2,M=1,T=5. H=14,J=9,P=14,F=19.
+        assert_eq!((counts.categories, counts.tokens, counts.globals, counts.modes), (3, 5, 3, 1));
+        assert_eq!(
+            (
+                budget.roots,
+                budget.nodes,
+                budget.edges,
+                budget.slots,
+                budget.context_work,
+                budget.strings
+            ),
+            (14, 0, 0, 56, 15, 0)
+        );
+        let header =
+            declaration_header(&schema, &counts, &mut budget).expect("paid header constructs");
+        assert_eq!(
+            budget.strings, 4,
+            "only declared collection strings copied before Name capture"
+        );
+        let mut roots = 0;
+        header
+            .try_for_each_name(|_| {
+                roots += 1;
+                Ok::<_, ()>(())
+            })
+            .expect("count header names");
+        assert_eq!(roots, budget.roots);
+        let number = "Number".to_owned();
+        budget
+            .context_event(ContextItemsEvent::Nonterminal(&number))
+            .expect("context work adds to prepaid header work");
+        assert_eq!((budget.nodes, budget.edges, budget.slots, budget.context_work), (0, 1, 57, 16));
+    }
+
+    #[test]
+    fn schema_header_budget_exact_boundary_and_refusal_precede_payload_copy() {
+        let schema = header_fixture();
+        let total = 14 + 56 + 15;
+        let mut exact = Budget {
+            context_work: MAX_CANONICAL_COLLECTION_ITEMS - total,
+            ..Budget::default()
+        };
+        HeaderCounts::admit(&schema, &mut exact)
+            .expect("all header phases exactly fit the item limit");
+        assert_eq!(
+            exact.roots + exact.edges + exact.slots + exact.context_work,
+            MAX_CANONICAL_COLLECTION_ITEMS
+        );
+        let mut short = Budget {
+            context_work: MAX_CANONICAL_COLLECTION_ITEMS - total + 1,
+            ..Budget::default()
+        };
+        assert!(HeaderCounts::admit(&schema, &mut short).is_err());
+        assert_eq!(
+            (short.nodes, short.edges, short.strings),
+            (0, 0, 0),
+            "refused header admission copied no payload or source node"
+        );
+        let mut string_full = Budget {
+            strings: crate::canonical::MAX_CANONICAL_TOTAL_STRING_BYTES,
+            ..Budget::default()
+        };
+        let counts = HeaderCounts::admit(&schema, &mut string_full)
+            .expect("logical header slots fit independently");
+        assert!(
+            declaration_header(&schema, &counts, &mut string_full).is_err(),
+            "original string gate refuses before collection copies"
+        );
+        assert_eq!(string_full.nodes, 0);
+        assert_eq!(string_full.strings, crate::canonical::MAX_CANONICAL_TOTAL_STRING_BYTES + 1);
+    }
+
+    #[test]
+    fn schema_header_shared_selector_stops_at_first_equal_and_rule_roots_stay_first() {
+        let mut schema = header_fixture();
+        // Direct source observation fixture: original first-match semantics,
+        // not a claim that duplicate declarations pass final Core validation.
+        schema.types[0].name = "Number".into();
+        schema.literals[1].category = "Missing".into();
+        schema.terms =
+            vec![term(None, TermBody::Judgement(vec![])), term(None, TermBody::Bnf(vec![]))];
+        let captured = capture_language(&schema).expect("shallow source observations capture");
+        assert_eq!(captured.roots.len(), 2);
+        assert!(rule(&captured.store, captured.roots[0])
+            .syntax_pattern
+            .is_some());
+        assert!(rule(&captured.store, captured.roots[1])
+            .syntax_pattern
+            .is_none());
+        let header = captured
+            .store
+            .declarations()
+            .expect("source header retained");
+        assert_eq!(
+            named(&captured.store, header.tokens[1].name).spelling,
+            "Number",
+            "first equal declaration without native prevents later standard variant"
+        );
+        assert_eq!(
+            named(&captured.store, header.tokens[2].name).spelling,
+            "Missing",
+            "missing declaration clones original spelling"
+        );
+    }
 
     fn term(context: Option<Vec<Param>>, body: TermBody) -> TermDecl {
         TermDecl {
