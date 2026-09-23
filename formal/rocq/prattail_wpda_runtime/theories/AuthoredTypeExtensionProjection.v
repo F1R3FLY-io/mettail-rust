@@ -6,10 +6,10 @@
     and observes MultiBinder as Other(original_handle). The context-to-items
     reader additionally needs the two shallow probes below.
 
-    Existing capture Step is concrete over the old vocabulary. Its complete
-    run theorem is NOT asserted for new payloads by this file. This file proves
-    the added edge-validation and remapping obligations which must be composed
-    with that controller when its vocabulary is extended. Rust allocation,
+    The delta embeds into the extended store/capture vocabulary below. Its
+    edge and remap laws are proved against the actual operations, not an
+    alternative capture controller. Full finite-run composition is checked in
+    AuthoredExtendedCaptureComposition. Rust allocation,
     source traversal, termination, and context occurrence budgets are outside
     these local laws. In particular, typed backward edges alone do not bound
     repeated traversal of a shared Params DAG.
@@ -52,7 +52,7 @@ Theorem multi_retains_its_immediate_child : forall inner,
 Proof. intros; split; reflexivity. Qed.
 Theorem old_arrow_reader_is_unchanged : forall original domain codomain,
   old_binder_observation original (RetainedArrow domain codomain) =
-  A.read_type original (A.Arrow codomain).
+  A.read_type original (A.Arrow domain codomain).
 Proof. reflexivity. Qed.
 Theorem old_multi_reader_keeps_original_identity : forall original inner,
   old_binder_observation original (RetainedMultiBinder inner) =
@@ -143,6 +143,32 @@ Proof.
   - destruct (@multi_remap_preserves_constructor _ _ _ H) as [target [_ ->]]; reflexivity.
 Qed.
 
+(** Exact embeddings into the actual vocabulary; no edge erasure or encoding
+    an Arrow as a Map is used to borrow a theorem about a different payload. *)
+Definition store_payload payload := match payload with
+| RetainedArrow domain codomain => A.Arrow domain codomain
+| RetainedMultiBinder inner => A.MultiBinder inner end.
+Definition source_payload payload := match payload with
+| RetainedArrow domain codomain =>
+    A.ExistingType (A.B.SArrow (A.index domain) (A.index codomain))
+| RetainedMultiBinder inner => A.ExistingMultiBinder (A.index inner) end.
+Theorem actual_store_edges_are_exact_delta_edges : forall payload,
+  A.type_edges (store_payload payload) = added_edges payload.
+Proof. destruct payload; reflexivity. Qed.
+Theorem actual_owned_payload_is_exact_delta_payload : forall payload,
+  A.own_type (source_payload payload) = store_payload payload.
+Proof. intros [ [domain] [codomain] | [inner] ]; reflexivity. Qed.
+Theorem actual_capture_remap_is_exact_delta_remap : forall resolve payload,
+  C.remap_type resolve (source_payload payload) =
+  option_map source_payload (remap_added resolve payload).
+Proof.
+  intros resolve [[domain] [codomain]|[inner]];
+    unfold C.remap_type, source_payload, remap_added, C.resolve, A.edge, A.index; cbn.
+  - destruct (resolve (A.TypeTag, domain)); cbn [C.bind]; [|reflexivity].
+    destruct (resolve (A.TypeTag, codomain)); reflexivity.
+  - destruct (resolve (A.TypeTag, inner)); reflexivity.
+Qed.
+
 Print Assumptions arrow_retains_both_ordered_children.
 Print Assumptions multi_retains_its_immediate_child.
 Print Assumptions old_arrow_reader_is_unchanged.
@@ -155,4 +181,7 @@ Print Assumptions arrow_remap_resolves_domain_before_codomain.
 Print Assumptions unresolved_domain_does_not_produce_a_partial_arrow.
 Print Assumptions multi_remap_preserves_constructor.
 Print Assumptions remapping_retains_exact_reference_field_count.
+Print Assumptions actual_store_edges_are_exact_delta_edges.
+Print Assumptions actual_owned_payload_is_exact_delta_payload.
+Print Assumptions actual_capture_remap_is_exact_delta_remap.
 End AuthoredTypeExtensionProjection.

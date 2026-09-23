@@ -18,8 +18,9 @@
 
     Capture uses the EXISTING initial/FiniteRun/Step/ReadyTyped operations.
     No second capture loop is defined. The extra roots and checked ordered
-    resolution reuse map_checked. The type extension's local obligations are
-    separate: the old concrete capture theorem is not silently generalized.
+    resolution reuse map_checked. The type extension directly extends the
+    store/capture vocabulary; AuthoredExtendedCaptureComposition composes the
+    rechecked original finite-run theorem with these declaration-root laws.
     Resource admission is still required before allocating header/name rosters;
     this model does not prove physical Vec capacity, allocation or work bounds.
 *)

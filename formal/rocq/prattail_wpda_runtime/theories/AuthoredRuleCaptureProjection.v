@@ -72,10 +72,12 @@ Definition remap_type (reader : Resolver) ty := match ty with
       Some (B.SCollection kind e)
   | B.SMapType key value => k <- resolve reader A.TypeTag key ;;
       v <- resolve reader A.TypeTag value ;; Some (B.SMapType k v)
-  | B.SArrow domain codomain => c <- resolve reader A.TypeTag codomain ;;
-      Some (B.SArrow domain c)
+  | B.SArrow domain codomain => d <- resolve reader A.TypeTag domain ;;
+      c <- resolve reader A.TypeTag codomain ;; Some (B.SArrow d c)
   | B.STypeOther tag => Some (B.STypeOther tag)
   end ;; Some (A.ExistingType mapped)
+| A.ExistingMultiBinder inner => i <- resolve reader A.TypeTag inner ;;
+    Some (A.ExistingMultiBinder i)
 | A.RuntimeKeyedPathMap key value => k <- resolve reader A.TypeTag key ;;
     v <- resolve reader A.TypeTag value ;; Some (A.RuntimeKeyedPathMap k v)
 end.
@@ -639,6 +641,7 @@ Definition type_payload ty := match ty with
   | B.SBase _ => B.SBase 0 | B.SCollection kind _ => B.SCollection kind 0
   | B.SMapType _ _ => B.SMapType 0 0 | B.SArrow _ _ => B.SArrow 0 0
   | B.STypeOther tag => B.STypeOther tag end)
+| A.ExistingMultiBinder _ => A.ExistingMultiBinder 0
 | A.RuntimeKeyedPathMap _ _ => A.RuntimeKeyedPathMap 0 0 end.
 Definition syntax_payload syntax := match syntax with
 | B.SLiteral text => B.SLiteral text | B.SParam _ => B.SParam 0
@@ -704,7 +707,7 @@ Qed.
 Lemma remap_type_payload : forall reader source mapped,
   remap_type reader source = Some mapped -> type_payload mapped = type_payload source.
 Proof.
-  intros reader [ty|key value] mapped H; [destruct ty|]; cbn [remap_type] in H;
+  intros reader [ty|inner|key value] mapped H; [destruct ty| |]; cbn [remap_type] in H;
     resolve_option_branches H; inversion H; reflexivity.
 Qed.
 Lemma remap_syntax_payload : forall reader source mapped,

@@ -16,9 +16,11 @@
 
     Reused source vocabularies: TermParamReaderProjection and
     BinderRuleProjection. Legacy payloads use SyntheticRuleProjection's complete
-    five collection kinds. Arrow domain and unsupported type interiors are not
-    owned: no existing shallow reader inspects them. Unsupported tags/identity
-    remain explicit. Runtime keyed PathMap retains BOTH children as a distinct
+    five collection kinds. Arrow domain/codomain and MultiBinder child are
+    retained for the original context-to-items reader. The original binder
+    reader still observes only Arrow codomain and treats MultiBinder as Other.
+    Unsupported type interiors are not owned; their tags/identity remain
+    explicit. Runtime keyed PathMap retains BOTH children as a distinct
     node and yields a distinct not-representable observation, never HashMap.
 
     Name occurrence, stable spelling, and equality class are separate. A source
@@ -120,19 +122,22 @@ Inductive TypePayload :=
 | Base (name : Handle NameTag)
 | Collection (kind : nat) (element : Handle TypeTag)
 | MapType (key value : Handle TypeTag)
-| Arrow (codomain : Handle TypeTag)
+| Arrow (domain codomain : Handle TypeTag)
+| MultiBinder (inner : Handle TypeTag)
 | UnsupportedType (tag : nat)
 | KeyedPathMap (key value : Handle TypeTag).
 Inductive SourceType :=
 | ExistingType (ty : B.SourceType)
+| ExistingMultiBinder (inner : nat)
 | RuntimeKeyedPathMap (key value : nat).
 Definition own_type ty := match ty with
 | ExistingType ty => match ty with
   | B.SBase name => Base (Ref name)
   | B.SCollection kind element => Collection kind (Ref element)
   | B.SMapType key value => MapType (Ref key) (Ref value)
-  | B.SArrow _ codomain => Arrow (Ref codomain)
+  | B.SArrow domain codomain => Arrow (Ref domain) (Ref codomain)
   | B.STypeOther tag => UnsupportedType tag end
+| ExistingMultiBinder inner => MultiBinder (Ref inner)
 | RuntimeKeyedPathMap key value => KeyedPathMap (Ref key) (Ref value) end.
 Inductive TypeObservation :=
 | BaseObservation (name : nat)
@@ -148,18 +153,32 @@ Definition source_type_observation original ty := match ty with
   | B.SMapType key value => MapObservation key value
   | B.SArrow _ codomain => ArrowObservation codomain
   | B.STypeOther _ => OtherTypeObservation original end
+| ExistingMultiBinder _ => OtherTypeObservation original
 | RuntimeKeyedPathMap key value => KeyedPathMapNotRepresentable key value end.
 Definition read_type original ty := match ty with
 | Base name => BaseObservation (index name)
 | Collection kind element => CollectionObservation kind (index element)
 | MapType key value => MapObservation (index key) (index value)
-| Arrow codomain => ArrowObservation (index codomain)
-| UnsupportedType _ => OtherTypeObservation original
+| Arrow _ codomain => ArrowObservation (index codomain)
+| MultiBinder _ | UnsupportedType _ => OtherTypeObservation original
 | KeyedPathMap key value => KeyedPathMapNotRepresentable (index key) (index value) end.
 Definition type_edges ty := match ty with
 | Base name => [edge name] | Collection _ element => [edge element]
 | MapType key value | KeyedPathMap key value => [edge key; edge value]
-| Arrow codomain => [edge codomain] | UnsupportedType _ => [] end.
+| Arrow domain codomain => [edge domain; edge codomain]
+| MultiBinder inner => [edge inner] | UnsupportedType _ => [] end.
+
+(** Additional shallow probes consumed by the SAME original context converter. *)
+Definition read_arrow ty := match ty with
+| Arrow domain codomain => Some (index domain, index codomain) | _ => None end.
+Definition read_multi_binder ty := match ty with
+| MultiBinder inner => Some (index inner) | _ => None end.
+Theorem owned_arrow_retains_domain_and_codomain : forall domain codomain,
+  read_arrow (own_type (ExistingType (B.SArrow domain codomain))) = Some (domain, codomain).
+Proof. reflexivity. Qed.
+Theorem owned_multi_binder_retains_child : forall inner,
+  read_multi_binder (own_type (ExistingMultiBinder inner)) = Some inner.
+Proof. reflexivity. Qed.
 
 Inductive SyntaxPayload :=
 | Literal (text : string) | ParamRef (name : Handle NameTag)
@@ -528,7 +547,7 @@ Lemma read_owned_operation : forall source original,
 Proof. destruct source; intros; cbn; try reflexivity. destruct source; reflexivity. Qed.
 Lemma read_owned_type : forall source original,
   read_type original (own_type source) = source_type_observation original source.
-Proof. intros [ty|key value] original; [destruct ty|]; reflexivity. Qed.
+Proof. intros [ty|inner|key value] original; [destruct ty| |]; reflexivity. Qed.
 Lemma read_owned_legacy : forall source, read_legacy (own_legacy source) = source.
 Proof. destruct source; reflexivity. Qed.
 Lemma read_owned_rule : forall source items, read_rule (own_rule source items) = source.
@@ -708,5 +727,7 @@ Print Assumptions independent_optional_presence.
 Print Assumptions keyed_pathmap_does_not_become_map.
 Print Assumptions original_delimiter_presence_preserved.
 Print Assumptions half_present_delimiters_not_erased.
+Print Assumptions owned_arrow_retains_domain_and_codomain.
+Print Assumptions owned_multi_binder_retains_child.
 
 End AuthoredRuleStoreProjection.
