@@ -1498,6 +1498,10 @@ fn ident_first_categories(language: &LanguageDef) -> std::collections::HashSet<S
 #[path = "../../../../tests/support/prefix_ident_recursive_oracle.rs"]
 mod ident_recursive_oracle;
 
+#[cfg(test)]
+#[path = "../../../../tests/support/prefix_ident_summary_baselines.rs"]
+mod ident_summary_baselines;
+
 pub fn emit_prefix_arms_for_category(
     language: &LanguageDef,
     category_src_idx: u16,
@@ -3361,6 +3365,10 @@ mod unified_prefix_descriptor_baselines;
 #[cfg(test)]
 #[path = "../../../../tests/support/grouping_source_descriptor_baselines.rs"]
 mod grouping_source_descriptor_baselines;
+
+#[cfg(test)]
+#[path = "../../../../tests/support/native_first_descriptor_baselines.rs"]
+mod native_first_descriptor_baselines;
 
 #[cfg(test)]
 mod tests {
