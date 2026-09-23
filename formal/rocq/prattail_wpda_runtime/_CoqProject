@@ -120,6 +120,7 @@ theories/AuthoredRuleCaptureProjection.v
 theories/AuthoredRuleTransportProjection.v
 theories/AuthoredTypeExtensionProjection.v
 theories/AuthoredDeclarationsProjection.v
+theories/AuthoredDeclarationBindingProjection.v
 theories/AuthoredExtendedCaptureComposition.v
 theories/NonTerminalKindProjection.v
 theories/CandidateContinuation.v

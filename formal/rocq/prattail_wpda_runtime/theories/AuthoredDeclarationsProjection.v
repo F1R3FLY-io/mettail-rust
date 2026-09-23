@@ -2,11 +2,12 @@
 
     Proposed Rust layout: AuthoredRuleStore owns one optional flat header.
     Category rows retain NameId, optional NativeKind, optional declared
-    collection delimiters, and the associated core category index. Source
+    collection delimiters. Source
     token rows retain raw NameId, optional category/push NameId, literal/eval
-    presence and the associated core token index. The global source roster
+    presence. The global source roster
     and each ordered mode roster contain indices into those rows. Mode rows
-    retain raw NameId and the associated core mode index. No lexer patterns,
+    retain raw NameId. A separate compact Core binding table supplies final
+    category/token/mode indices to the checks below. No lexer patterns,
     evaluator bodies, token automata or decoder implementation are copied.
 
     NativeKind and collection kind below are opaque natural-number payloads:
@@ -47,21 +48,18 @@ Record CollectionDeclaration := {
 Record CategoryDeclaration := {
   category_name : A.Handle A.NameTag;
   category_native : option nat;
-  category_collection : option CollectionDeclaration;
-  category_core_index : nat
+  category_collection : option CollectionDeclaration
 }.
 Record TokenDeclaration := {
   token_name : A.Handle A.NameTag;
   token_category : option (A.Handle A.NameTag);
   token_from_literals : bool;
   token_has_evaluation : bool;
-  token_push : option (A.Handle A.NameTag);
-  token_core_index : nat
+  token_push : option (A.Handle A.NameTag)
 }.
 Record ModeDeclaration := {
   mode_name : A.Handle A.NameTag;
-  mode_source_tokens : list nat;
-  mode_core_index : nat
+  mode_source_tokens : list nat
 }.
 Record Header := {
   categories : list CategoryDeclaration;
@@ -160,65 +158,65 @@ Qed.
 
 (** Associations are explicit; source rosters are not inferred from execution
     token order or qualified names. Many source rows may share one core token. *)
-Definition category_association arena core_names row :=
+Definition category_association arena core_names row core_index :=
   match A.name_payload arena (category_name row),
-        nth_error core_names (category_core_index row) with
+        nth_error core_names core_index with
   | Some authored, Some core_name => String.eqb (A.spelling authored) core_name
   | _, _ => false end.
-Theorem accepted_category_association_preserves_spelling : forall arena core_names row,
-  category_association arena core_names row = true ->
+Theorem accepted_category_association_preserves_spelling : forall arena core_names row core_index,
+  category_association arena core_names row core_index = true ->
   exists authored core_name,
     A.name_payload arena (category_name row) = Some authored /\
-    nth_error core_names (category_core_index row) = Some core_name /\
+    nth_error core_names core_index = Some core_name /\
     A.spelling authored = core_name.
 Proof.
-  intros arena core_names row H; unfold category_association in H.
+  intros arena core_names row core_index H; unfold category_association in H.
   destruct (A.name_payload arena (category_name row)) as [authored|] eqn:N;
     [|discriminate].
-  destruct (nth_error core_names (category_core_index row)) as [core_name|] eqn:E;
+  destruct (nth_error core_names core_index) as [core_name|] eqn:E;
     [|discriminate].
   apply String.eqb_eq in H; exists authored, core_name; auto.
 Qed.
-Definition token_association core_count row := Nat.ltb (token_core_index row) core_count.
-Theorem token_association_checks_actual_bound : forall core_count row,
-  token_association core_count row = true -> token_core_index row < core_count.
+Definition token_association core_count core_index := Nat.ltb core_index core_count.
+Theorem token_association_checks_actual_bound : forall core_count core_index,
+  token_association core_count core_index = true -> core_index < core_count.
 Proof. intros; apply Nat.ltb_lt; exact H. Qed.
-Definition roster_valid source_tokens core_members indices := forallb
-  (fun source_index => match nth_error source_tokens source_index with
+Definition roster_valid token_bindings core_members indices := forallb
+  (fun source_index => match nth_error token_bindings source_index with
     | None => false
-    | Some row => existsb (Nat.eqb (token_core_index row)) core_members
+    | Some core_index => existsb (Nat.eqb core_index) core_members
     end) indices.
 Theorem checked_mode_roster_has_actual_source_and_core_members :
-  forall source_tokens core_members indices source_index,
-  roster_valid source_tokens core_members indices = true -> In source_index indices ->
-  exists row, nth_error source_tokens source_index = Some row /\
-    In (token_core_index row) core_members.
+  forall token_bindings core_members indices source_index,
+  roster_valid token_bindings core_members indices = true -> In source_index indices ->
+  exists core_index, nth_error token_bindings source_index = Some core_index /\
+    In core_index core_members.
 Proof.
-  intros source_tokens core_members indices source_index H Member.
+  intros token_bindings core_members indices source_index H Member.
   unfold roster_valid in H; apply forallb_forall with (x := source_index) in H;
     [|exact Member].
-  destruct (nth_error source_tokens source_index) as [row|] eqn:E; [|discriminate].
-  exists row; split; [reflexivity|].
+  destruct (nth_error token_bindings source_index) as [core_index|] eqn:E; [|discriminate].
+  exists core_index; split; [reflexivity|].
   apply existsb_exists in H; destruct H as [member [Hin Equal]].
   apply Nat.eqb_eq in Equal; subst member; exact Hin.
 Qed.
-Theorem duplicate_source_rows_are_not_forbidden : forall row,
-  roster_valid [row; row] [token_core_index row] [1; 0; 1] = true.
+Theorem duplicate_source_rows_are_not_forbidden : forall core_index,
+  roster_valid [core_index; core_index] [core_index] [1; 0; 1] = true.
 Proof.
-  intros row.
-  change (((Nat.eqb (token_core_index row) (token_core_index row) || false) &&
-    ((Nat.eqb (token_core_index row) (token_core_index row) || false) &&
-    ((Nat.eqb (token_core_index row) (token_core_index row) || false) && true))) = true).
+  intros core_index.
+  change (((Nat.eqb core_index core_index || false) &&
+    ((Nat.eqb core_index core_index || false) &&
+    ((Nat.eqb core_index core_index || false) && true))) = true).
   rewrite Nat.eqb_refl; reflexivity.
 Qed.
-Definition mode_association source_tokens core_modes row :=
-  match nth_error core_modes (mode_core_index row) with
+Definition mode_association token_bindings core_modes row core_index :=
+  match nth_error core_modes core_index with
   | None => false
-  | Some members => roster_valid source_tokens members (mode_source_tokens row)
+  | Some members => roster_valid token_bindings members (mode_source_tokens row)
   end.
-Theorem missing_core_mode_is_refused : forall source_tokens core_modes row,
-  nth_error core_modes (mode_core_index row) = None ->
-  mode_association source_tokens core_modes row = false.
+Theorem missing_core_mode_is_refused : forall token_bindings core_modes row core_index,
+  nth_error core_modes core_index = None ->
+  mode_association token_bindings core_modes row core_index = false.
 Proof. intros; unfold mode_association; rewrite H; reflexivity. Qed.
 
 (** Explicit store ownership seeds the OLD owner selection loop. *)
