@@ -138,6 +138,7 @@ theories/SchemaDeclarationCaptureProjection.v
 theories/AuthoredDeclarationReaderProjection.v
 theories/ConstructorLabelProjection.v
 theories/CanonicalOpaqueLabelProjection.v
+theories/AuthoredNativeObservationsProjection.v
 theories/LegacyNormalizationAdmission.v
 theories/AuthoredNormalizationMaterialization.v
 theories/CollectionDeclarationProjection.v
