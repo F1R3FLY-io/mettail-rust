@@ -14,6 +14,10 @@
 use crate::CollectionKind;
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// Original parser's unobserved collection field for a sourced separator.
+/// This is a parser convention, not an inferred collection name.
+pub const AUTHORED_CHAIN_COLLECTION_NAME: &str = "__chain__";
+
 macro_rules! authored_ids {
     ($($name:ident),+ $(,)?) => {$(
         /// A typed arena reference. The default is the checked owned index;

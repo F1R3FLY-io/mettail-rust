@@ -2374,7 +2374,10 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
                                 source: None,
                             },
                             PatternOp::Map { .. } | PatternOp::Zip { .. } => PatternOp::Sep {
-                                collection: Ident::new("__chain__", proc_macro2::Span::call_site()),
+                                collection: Ident::new(
+                                    mettail_grammar_core::AUTHORED_CHAIN_COLLECTION_NAME,
+                                    proc_macro2::Span::call_site(),
+                                ),
                                 separator,
                                 source: Some(Box::new(receiver)),
                             },

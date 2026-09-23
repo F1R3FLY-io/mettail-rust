@@ -44,6 +44,14 @@ The source adapter preserves distinctions that classifiers observe:
 | Legacy items | Nonterminal kinds, binder categories, separators, and independently optional delimiters remain explicit. |
 | Unsupported observations | A typed unsupported node permits the original classifier to refuse the shape; it does not invent semantics. |
 
+Availability refers to the frontend's model, not to raw optional map keys.
+The runtime value schema defaults an omitted term context to `[]`. Both spellings
+therefore give a judgement rule a present context, matching the original macro
+parser. Ordinary BNF rules have no context; accepted runtime BNF declarations
+with nonempty contexts retain and validate those parameters. The macro adapter
+separately preserves the actual AST's optional fields, including programmatically
+constructed combinations. It does not impose runtime schema defaults on them.
+
 Source identities are temporary memoization keys and are not serialized. Name
 equality classes are assigned in deterministic traversal order. In particular,
 hash-table iteration order does not select the serialized node or class order.
@@ -94,6 +102,10 @@ and every redundant lowered syntax, classification, or reduction field. Installe
 dispatch must consume the shared original derivation as its authority, or check
 that correspondence before trusting redundant fields. Retention and transport
 alone do not establish runtime parser equivalence or authorize installation.
+Declared category and native-literal metadata, and the original
+context-to-legacy-item conversion, remain separate inputs to that shared
+derivation. The capture worker does not recreate those algorithms or make
+their input correspondence automatic.
 
 ## Verification boundaries
 
@@ -108,6 +120,9 @@ an end-to-end proof:
   specifies owner association, field forwarding, and exact-format commitments.
 - [Runtime admission](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredRuntimeCaptureAdmission.v)
   derives logical-size bounds using the existing work-budget and capture models.
+- [Schema context projection](../../formal/rocq/prattail_wpda_runtime/theories/SchemaAuthoredContextProjection.v)
+  preserves runtime default-key equivalence while distinguishing it from the
+  macro adapter's raw optional-field contract.
 
 Concrete source-adapter tests remain necessary to connect each frontend to these
 models. These proofs do not establish hash injectivity, arbitrary callback

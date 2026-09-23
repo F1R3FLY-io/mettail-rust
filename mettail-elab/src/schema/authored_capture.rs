@@ -1,0 +1,949 @@
+//! Borrow the decoded, renamed schema before its lossy parser projection.
+//!
+//! The core capture worker owns traversal and identity/equality assignment.
+//! This adapter only supplies the existing eight shallow observations. Sourced
+//! separators use the original parser's `__chain__` convention: correspondence
+//! is with classifier observations, not arbitrary programmatic AST identity.
+//!
+//! Admission follows AuthoredRuntimeCaptureAdmission: N first observations,
+//! E typed reference fields, Q vector elements, R ordered roots, B string bytes.
+//! I=R+E+Q uses the existing canonical item cap. This conservative retained
+//! domain is not claimed identical to canonical input admission. Copies are
+//! prepaid; Finish moves strings/remaps IDs without charging content again.
+//! Bounds describe logical lengths, not allocator capacities or physical RSS.
+
+use super::{BnfNode, Param, SyntaxNode, TermBody, TermDecl, TypeExpr};
+use crate::canonical::{
+    account_canonical_string, ValueDecodeError, MAX_CANONICAL_COLLECTION_ITEMS,
+    MAX_CANONICAL_VALUE_NODES,
+};
+use mettail_grammar_core::*;
+use std::cell::RefCell;
+
+#[derive(Clone, Copy)]
+enum Handle<'a> {
+    Name(&'a String),
+    ChainName(&'a SyntaxNode),
+    Names(&'a Vec<String>),
+    Type(&'a TypeExpr),
+    Param(&'a Param),
+    Params(&'a Vec<Param>),
+    Syntax(&'a Vec<SyntaxNode>),
+    Operation(&'a SyntaxNode),
+    Rule(&'a TermDecl),
+}
+
+fn failure(message: &str) -> ValueDecodeError {
+    ValueDecodeError::new("$.terms", message)
+}
+
+fn add(left: usize, right: usize) -> Result<usize, ValueDecodeError> {
+    left.checked_add(right)
+        .ok_or_else(|| failure("authored capture logical size overflowed"))
+}
+
+#[derive(Default)]
+struct Budget {
+    roots: usize,
+    nodes: usize,
+    edges: usize,
+    slots: usize,
+    strings: usize,
+}
+
+impl Budget {
+    fn roots(roots: usize) -> Result<Self, ValueDecodeError> {
+        if roots > MAX_CANONICAL_COLLECTION_ITEMS {
+            return Err(failure("authored capture root roster exceeds canonical item limit"));
+        }
+        Ok(Self { roots, ..Self::default() })
+    }
+
+    fn observe(&mut self, edges: usize, slots: usize) -> Result<(), ValueDecodeError> {
+        let nodes = add(self.nodes, 1)?;
+        let edges = add(self.edges, edges)?;
+        let slots = add(self.slots, slots)?;
+        let items = add(add(self.roots, edges)?, slots)?;
+        if nodes > MAX_CANONICAL_VALUE_NODES || items > MAX_CANONICAL_COLLECTION_ITEMS {
+            return Err(failure("authored capture exceeds canonical node/item limits"));
+        }
+        self.nodes = nodes;
+        self.edges = edges;
+        self.slots = slots;
+        Ok(())
+    }
+
+    fn string(&mut self, value: &str) -> Result<(), ValueDecodeError> {
+        account_canonical_string(value, &mut self.strings)
+    }
+
+    fn phase<H, K>(
+        &self,
+        phase: AuthoredCaptureAdmission,
+        node: &AuthoredNode<H, K>,
+    ) -> Result<(), ValueDecodeError> {
+        let entering = usize::from(phase.phase == AuthoredCapturePhase::Enter);
+        let finishing = usize::from(phase.phase == AuthoredCapturePhase::Finish);
+        let new_class = usize::from(finishing == 1 && matches!(node, AuthoredNode::Name(_)));
+        let frames = add(add(self.roots, self.nodes)?, self.edges)?;
+        if add(phase.memoized_nodes, entering)? > self.nodes
+            || add(phase.stored_nodes, finishing)? > self.nodes
+            || add(phase.name_classes, new_class)? > self.nodes
+            || phase.scheduled_frames > frames
+        {
+            return Err(failure("authored capture occupancy exceeds admitted logical content"));
+        }
+        Ok(())
+    }
+}
+
+struct Source<'a, 'b> {
+    _rules: &'a [TermDecl],
+    budget: &'b RefCell<Budget>,
+}
+
+fn name(value: &String) -> AuthoredNameId<Handle<'_>> {
+    AuthoredNameId(Handle::Name(value))
+}
+
+/// FIPS decode_terms already defaults the runtime key to []. Judgement
+/// syntax has Some(context), like the original judgement parser. Ordinary
+/// empty BNF has None; runtime-only nonempty BNF parameters remain retained.
+/// This does not rewrite the macro adapter's actual AST Option.
+fn context(rule: &TermDecl) -> Option<&Vec<Param>> {
+    match &rule.body {
+        TermBody::Judgement(_) => Some(&rule.context),
+        TermBody::Bnf(_) if rule.context.is_empty() => None,
+        TermBody::Bnf(_) => Some(&rule.context),
+    }
+}
+
+impl Source<'_, '_> {
+    /// No temporary edge roster or owned payload is constructed in this pass.
+    fn precharge(&self, handle: Handle<'_>) -> Result<(), ValueDecodeError> {
+        let mut budget = self.budget.borrow_mut();
+        let (edges, slots) = match handle {
+            Handle::Name(text) => {
+                budget.string(text)?;
+                (0, 0)
+            },
+            Handle::ChainName(_) => {
+                budget.string(AUTHORED_CHAIN_COLLECTION_NAME)?;
+                (0, 0)
+            },
+            Handle::Names(values) => (values.len(), values.len()),
+            Handle::Params(values) => (values.len(), values.len()),
+            Handle::Type(ty) => (
+                match ty {
+                    TypeExpr::Base(_) | TypeExpr::Arrow(_, _) => 1,
+                    TypeExpr::Multi(_) => 0,
+                    TypeExpr::Collection(_, _, value) => 1 + usize::from(value.is_some()),
+                },
+                0,
+            ),
+            Handle::Param(param) => (
+                match param {
+                    Param::Plain { .. } => 2,
+                    Param::Binder { .. } => 3,
+                    Param::Guard(_) | Param::Optional(_) => 1,
+                },
+                0,
+            ),
+            Handle::Syntax(values) => {
+                let mut edges = 0;
+                for value in values {
+                    let count = match value {
+                        SyntaxNode::Literal(text) => {
+                            budget.string(text)?;
+                            0
+                        },
+                        SyntaxNode::Token { binding, .. } => 1 + usize::from(binding.is_some()),
+                        SyntaxNode::ForeignLanguage { .. } => 3,
+                        _ => 1,
+                    };
+                    edges = add(edges, count)?;
+                }
+                (edges, values.len())
+            },
+            Handle::Operation(value) => (
+                match value {
+                    SyntaxNode::Separated(source, separator) => {
+                        budget.string(separator)?;
+                        if matches!(source.as_ref(), SyntaxNode::Reference(_)) {
+                            1
+                        } else {
+                            2
+                        }
+                    },
+                    SyntaxNode::Map { .. } => 3,
+                    SyntaxNode::Zip(_, _) => 2,
+                    SyntaxNode::Optional(_) => 1,
+                    _ => 0,
+                },
+                0,
+            ),
+            Handle::Rule(rule) => {
+                let mut edges = 2 + usize::from(context(rule).is_some());
+                let slots = match &rule.body {
+                    TermBody::Judgement(_) => {
+                        edges = add(edges, 1)?;
+                        0
+                    },
+                    TermBody::Bnf(items) => {
+                        for item in items {
+                            match item {
+                                BnfNode::Literal(text) => budget.string(text)?,
+                                BnfNode::Nonterminal(_) | BnfNode::Binding(_) => {
+                                    edges = add(edges, 1)?
+                                },
+                                BnfNode::Collection { separator, open, close, .. } => {
+                                    edges = add(edges, 1)?;
+                                    budget.string(separator)?;
+                                    if let Some(open) = open {
+                                        budget.string(open)?;
+                                    }
+                                    if let Some(close) = close {
+                                        budget.string(close)?;
+                                    }
+                                },
+                            }
+                        }
+                        items.len()
+                    },
+                };
+                (edges, slots)
+            },
+        };
+        budget.observe(edges, slots)
+    }
+}
+
+impl<'a> AuthoredCaptureSource for Source<'a, '_> {
+    type Handle = Handle<'a>;
+    type Identity = (u8, usize);
+    type NameKey = &'a str;
+    type Error = ValueDecodeError;
+
+    fn identity(&self, handle: Self::Handle) -> Self::Identity {
+        // Vec object addresses preserve distinct empty source occurrences too.
+        // ChainName is an occurrence of its owning Sep, not one global name ID.
+        match handle {
+            Handle::Name(value) => (0, std::ptr::from_ref(value) as usize),
+            Handle::ChainName(value) => (1, std::ptr::from_ref(value) as usize),
+            Handle::Names(value) => (2, std::ptr::from_ref(value) as usize),
+            Handle::Type(value) => (3, std::ptr::from_ref(value) as usize),
+            Handle::Param(value) => (4, std::ptr::from_ref(value) as usize),
+            Handle::Params(value) => (5, std::ptr::from_ref(value) as usize),
+            Handle::Syntax(value) => (6, std::ptr::from_ref(value) as usize),
+            Handle::Operation(value) => (7, std::ptr::from_ref(value) as usize),
+            Handle::Rule(value) => (8, std::ptr::from_ref(value) as usize),
+        }
+    }
+
+    fn shallow(
+        &mut self,
+        handle: Self::Handle,
+    ) -> Result<AuthoredNode<Self::Handle, Self::NameKey>, Self::Error> {
+        self.precharge(handle)?;
+        Ok(match handle {
+            Handle::Name(value) => AuthoredNode::Name(AuthoredName {
+                spelling: value.clone(),
+                equality_class: value.as_str(),
+            }),
+            Handle::ChainName(_) => AuthoredNode::Name(AuthoredName {
+                spelling: AUTHORED_CHAIN_COLLECTION_NAME.into(),
+                equality_class: AUTHORED_CHAIN_COLLECTION_NAME,
+            }),
+            Handle::Names(values) => AuthoredNode::Names(values.iter().map(name).collect()),
+            Handle::Params(values) => AuthoredNode::Params(
+                values
+                    .iter()
+                    .map(|value| AuthoredParamId(Handle::Param(value)))
+                    .collect(),
+            ),
+            Handle::Type(ty) => AuthoredNode::Type(match ty {
+                TypeExpr::Base(value) => AuthoredType::Base(name(value)),
+                TypeExpr::Arrow(_, codomain) => AuthoredType::Arrow {
+                    codomain: AuthoredTypeId(Handle::Type(codomain)),
+                },
+                TypeExpr::Multi(_) => AuthoredType::Unsupported { tag: 0 },
+                TypeExpr::Collection(kind, key, value) => match (kind, value) {
+                    (CollectionKind::Map, Some(value)) => AuthoredType::Map {
+                        key: AuthoredTypeId(Handle::Type(key)),
+                        value: AuthoredTypeId(Handle::Type(value)),
+                    },
+                    (CollectionKind::PathMap, Some(value)) => AuthoredType::KeyedPathMap {
+                        key: AuthoredTypeId(Handle::Type(key)),
+                        value: AuthoredTypeId(Handle::Type(value)),
+                    },
+                    (_, None) => AuthoredType::Collection {
+                        kind: *kind,
+                        element: AuthoredTypeId(Handle::Type(key)),
+                    },
+                    (_, Some(_)) => {
+                        return Err(failure("unexpected keyed collection in decoded schema"))
+                    },
+                },
+            }),
+            Handle::Param(param) => AuthoredNode::Param(match param {
+                Param::Plain { name: value, ty } => AuthoredParam::Simple {
+                    name: name(value),
+                    ty: AuthoredTypeId(Handle::Type(ty)),
+                },
+                Param::Guard(value) => AuthoredParam::GuardBody { name: name(value) },
+                Param::Optional(values) => AuthoredParam::Optional {
+                    params: AuthoredParamsId(Handle::Params(values)),
+                },
+                Param::Binder { binder, body, ty, multiple: false } => AuthoredParam::Abstraction {
+                    binder: name(binder),
+                    body: name(body),
+                    ty: AuthoredTypeId(Handle::Type(ty)),
+                },
+                Param::Binder { binder, body, ty, multiple: true } => {
+                    AuthoredParam::MultiAbstraction {
+                        binder: name(binder),
+                        body: name(body),
+                        ty: AuthoredTypeId(Handle::Type(ty)),
+                    }
+                },
+            }),
+            Handle::Syntax(values) => AuthoredNode::Syntax(
+                values
+                    .iter()
+                    .map(|value| match value {
+                        SyntaxNode::Reference(value) => AuthoredSyntax::Param(name(value)),
+                        SyntaxNode::Literal(value) => AuthoredSyntax::Literal(value.clone()),
+                        SyntaxNode::Token { name: value, binding } => AuthoredSyntax::TokenKind {
+                            name: name(value),
+                            bind: binding.as_ref().map(name),
+                        },
+                        SyntaxNode::ForeignLanguage { binding, open, close } => {
+                            AuthoredSyntax::GuestBody {
+                                open: name(open),
+                                close: name(close),
+                                bind: name(binding),
+                                kind: AuthoredDelimitedRegionKind::Flt,
+                            }
+                        },
+                        _ => AuthoredSyntax::Op(AuthoredOperationId(Handle::Operation(value))),
+                    })
+                    .collect(),
+            ),
+            Handle::Operation(value) => AuthoredNode::Operation(match value {
+                SyntaxNode::Separated(source, separator) => match source.as_ref() {
+                    SyntaxNode::Reference(collection) => AuthoredOperation::Sep {
+                        collection: name(collection),
+                        separator: separator.clone(),
+                        source: None,
+                    },
+                    _ => AuthoredOperation::Sep {
+                        collection: AuthoredNameId(Handle::ChainName(value)),
+                        separator: separator.clone(),
+                        source: Some(AuthoredOperationId(Handle::Operation(source))),
+                    },
+                },
+                SyntaxNode::Map { source, bindings, body } => AuthoredOperation::Map {
+                    source: AuthoredOperationId(Handle::Operation(source)),
+                    params: AuthoredNamesId(Handle::Names(bindings)),
+                    body: AuthoredSyntaxId(Handle::Syntax(body)),
+                },
+                SyntaxNode::Zip(left, right) => {
+                    AuthoredOperation::Zip { left: name(left), right: name(right) }
+                },
+                SyntaxNode::Optional(inner) => AuthoredOperation::Opt {
+                    inner: AuthoredSyntaxId(Handle::Syntax(inner)),
+                },
+                _ => AuthoredOperation::Unsupported { tag: 0 },
+            }),
+            Handle::Rule(rule) => AuthoredNode::Rule(AuthoredRule {
+                label: name(&rule.label),
+                category: name(&rule.category),
+                term_context: context(rule).map(|params| AuthoredParamsId(Handle::Params(params))),
+                syntax_pattern: match &rule.body {
+                    TermBody::Judgement(values) => Some(AuthoredSyntaxId(Handle::Syntax(values))),
+                    TermBody::Bnf(_) => None,
+                },
+                items: match &rule.body {
+                    TermBody::Judgement(_) => Vec::new(),
+                    TermBody::Bnf(items) => items
+                        .iter()
+                        .map(|item| match item {
+                            BnfNode::Literal(value) => AuthoredLegacyItem::Terminal(value.clone()),
+                            BnfNode::Nonterminal(value) => AuthoredLegacyItem::NonTerminal {
+                                ident: name(value),
+                                kind: NonTerminalKind::classify(value),
+                            },
+                            BnfNode::Binding(value) => {
+                                AuthoredLegacyItem::Binder { category: name(value) }
+                            },
+                            BnfNode::Collection { kind, element, separator, open, close } => {
+                                AuthoredLegacyItem::Collection {
+                                    kind: *kind,
+                                    element: name(element),
+                                    separator: separator.clone(),
+                                    open: open.clone(),
+                                    close: close.clone(),
+                                }
+                            },
+                        })
+                        .collect(),
+                },
+            }),
+        })
+    }
+}
+
+pub(super) fn capture(rules: &[TermDecl]) -> Result<CapturedAuthoredNodes, ValueDecodeError> {
+    let budget = RefCell::new(Budget::roots(rules.len())?);
+    let mut roots = Vec::new();
+    roots
+        .try_reserve(rules.len())
+        .map_err(|_| failure("authored capture root allocation failed"))?;
+    roots.extend(
+        rules
+            .iter()
+            .map(|rule| (AuthoredNodeTag::Rule, Handle::Rule(rule))),
+    );
+    let mut source = Source { _rules: rules, budget: &budget };
+    capture_authored_nodes(&mut source, &roots, |phase, node| budget.borrow().phase(phase, node))
+        .map_err(|error| match error {
+            AuthoredCaptureError::Source(error) | AuthoredCaptureError::Admission(error) => error,
+            error => {
+                ValueDecodeError::new("$.terms", format!("authored capture failed: {error:?}"))
+            },
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canonical::{RhoValue, MAX_CANONICAL_STRING_BYTES};
+    use std::collections::BTreeMap;
+
+    fn term(context: Option<Vec<Param>>, body: TermBody) -> TermDecl {
+        TermDecl {
+            label: "Rule".into(),
+            category: "Expr".into(),
+            context: context.unwrap_or_default(),
+            body,
+            evaluation: None,
+            mode: None,
+            associativity: Associativity::Left,
+            prefix_binding_power: None,
+            shares_previous_level: false,
+            tier: None,
+        }
+    }
+
+    fn node(store: &AuthoredRuleStore, id: u32) -> &AuthoredNode {
+        store
+            .get(id)
+            .expect("authored capture fixture must be valid")
+    }
+    fn rule(store: &AuthoredRuleStore, id: u32) -> &AuthoredRule {
+        let AuthoredNode::Rule(rule) = node(store, id) else {
+            panic!("rule")
+        };
+        rule
+    }
+    fn named(store: &AuthoredRuleStore, id: AuthoredNameId) -> &AuthoredName {
+        let AuthoredNode::Name(name) = node(store, id.0) else {
+            panic!("name")
+        };
+        name
+    }
+    fn syntax(store: &AuthoredRuleStore, rule_id: u32) -> &[AuthoredSyntax] {
+        let id = rule(store, rule_id)
+            .syntax_pattern
+            .expect("authored capture fixture must be valid");
+        let AuthoredNode::Syntax(syntax) = node(store, id.0) else {
+            panic!("syntax")
+        };
+        syntax
+    }
+
+    #[test]
+    fn retains_normalized_contexts_and_ordered_roots() {
+        let rules = [
+            term(None, TermBody::Judgement(vec![])),
+            term(Some(vec![]), TermBody::Judgement(vec![])),
+            term(None, TermBody::Bnf(vec![])),
+        ];
+        let captured = capture(&rules).expect("authored capture fixture must be valid");
+        let rs: Vec<_> = captured
+            .roots
+            .iter()
+            .map(|id| rule(&captured.store, *id))
+            .collect();
+        assert!(rs[0].term_context.is_some());
+        assert!(rs[1].term_context.is_some());
+        assert!(rs[0].syntax_pattern.is_some() && rs[1].syntax_pattern.is_some());
+        assert!(rs[2].syntax_pattern.is_none());
+        assert!(captured.roots.windows(2).all(|ids| ids[0] < ids[1]));
+        assert_ne!(rs[0].label, rs[1].label);
+        assert_eq!(
+            named(&captured.store, rs[0].label).equality_class,
+            named(&captured.store, rs[1].label).equality_class
+        );
+    }
+
+    #[test]
+    fn preserves_ordered_duplicate_params_full_types_and_keyed_pathmap() {
+        let rules = [term(
+            Some(vec![
+                Param::Plain {
+                    name: "dup".into(),
+                    ty: TypeExpr::Base("Expr".into()),
+                },
+                Param::Plain {
+                    name: "dup".into(),
+                    ty: TypeExpr::Collection(
+                        CollectionKind::PathMap,
+                        Box::new(TypeExpr::Base("Key".into())),
+                        Some(Box::new(TypeExpr::Base("Value".into()))),
+                    ),
+                },
+                Param::Binder {
+                    binder: "b".into(),
+                    body: "body".into(),
+                    multiple: true,
+                    ty: TypeExpr::Arrow(
+                        Box::new(TypeExpr::Base("Domain".into())),
+                        Box::new(TypeExpr::Base("Result".into())),
+                    ),
+                },
+                Param::Optional(vec![
+                    Param::Guard("guard".into()),
+                    Param::Plain {
+                        name: "multi".into(),
+                        ty: TypeExpr::Multi(Box::new(TypeExpr::Base("Hidden".into()))),
+                    },
+                ]),
+            ]),
+            TermBody::Judgement(vec![]),
+        )];
+        let c = capture(&rules).expect("authored capture fixture must be valid");
+        let context = rule(&c.store, c.roots[0])
+            .term_context
+            .expect("authored capture fixture must be valid");
+        let AuthoredNode::Params(params) = node(&c.store, context.0) else {
+            panic!("unexpected retained observation variant in source fixture")
+        };
+        assert_eq!(params.len(), 4);
+        let AuthoredNode::Param(AuthoredParam::Simple { name: left, .. }) =
+            node(&c.store, params[0].0)
+        else {
+            panic!("unexpected retained observation variant in source fixture")
+        };
+        let AuthoredNode::Param(AuthoredParam::Simple { name: right, ty }) =
+            node(&c.store, params[1].0)
+        else {
+            panic!("unexpected retained observation variant in source fixture")
+        };
+        assert_ne!(left, right);
+        assert_eq!(named(&c.store, *left).equality_class, named(&c.store, *right).equality_class);
+        let AuthoredNode::Type(AuthoredType::KeyedPathMap { key, value }) = node(&c.store, ty.0)
+        else {
+            panic!("unexpected retained observation variant in source fixture")
+        };
+        assert_ne!(key, value);
+        for (id, expected) in [(*key, "Key"), (*value, "Value")] {
+            let AuthoredNode::Type(AuthoredType::Base(name)) = node(&c.store, id.0) else {
+                panic!("unexpected retained observation variant in source fixture")
+            };
+            assert_eq!(named(&c.store, *name).spelling, expected);
+        }
+        let AuthoredNode::Param(AuthoredParam::MultiAbstraction { binder, body, ty }) =
+            node(&c.store, params[2].0)
+        else {
+            panic!("unexpected retained observation variant in source fixture")
+        };
+        assert_eq!(named(&c.store, *binder).spelling, "b");
+        assert_eq!(named(&c.store, *body).spelling, "body");
+        assert!(matches!(node(&c.store, ty.0), AuthoredNode::Type(AuthoredType::Arrow { .. })));
+        assert!((0..c.store.len() as u32).any(|id| matches!(
+            node(&c.store, id),
+            AuthoredNode::Type(AuthoredType::Unsupported { tag: 0 })
+        )));
+        assert!(!(0..c.store.len() as u32).any(|id| matches!(node(&c.store, id), AuthoredNode::Name(name) if name.spelling == "Domain" || name.spelling == "Hidden")));
+    }
+
+    #[test]
+    fn sourced_separators_keep_distinct_occurrences_and_original_convention() {
+        let make_chain = || {
+            SyntaxNode::Separated(
+                Box::new(SyntaxNode::Map {
+                    source: Box::new(SyntaxNode::Zip("left".into(), "right".into())),
+                    bindings: vec!["x".into(), "x".into()],
+                    body: vec![SyntaxNode::Reference("x".into())],
+                }),
+                ",".into(),
+            )
+        };
+        let rules = [term(
+            None,
+            TermBody::Judgement(vec![
+                make_chain(),
+                make_chain(),
+                SyntaxNode::Separated(Box::new(SyntaxNode::Reference("plain".into())), ";".into()),
+                SyntaxNode::Separated(
+                    Box::new(SyntaxNode::Literal("runtime-only".into())),
+                    "!".into(),
+                ),
+            ]),
+        )];
+        let c = capture(&rules).expect("authored capture fixture must be valid");
+        let mut chains = Vec::new();
+        for (index, expr) in syntax(&c.store, c.roots[0]).iter().enumerate() {
+            let AuthoredSyntax::Op(id) = expr else {
+                panic!("unexpected retained observation variant in source fixture")
+            };
+            let AuthoredNode::Operation(AuthoredOperation::Sep { collection, separator, source }) =
+                node(&c.store, id.0)
+            else {
+                panic!("unexpected retained observation variant in source fixture")
+            };
+            if index == 2 {
+                assert!(source.is_none());
+                assert_eq!(separator, ";");
+                assert_eq!(named(&c.store, *collection).spelling, "plain");
+            } else {
+                assert_eq!(named(&c.store, *collection).spelling, AUTHORED_CHAIN_COLLECTION_NAME);
+                if index < 2 {
+                    chains.push((
+                        *collection,
+                        source.expect("authored capture fixture must be valid"),
+                    ));
+                    let AuthoredNode::Operation(AuthoredOperation::Map { source, params, body }) =
+                        node(&c.store, source.expect("authored capture fixture must be valid").0)
+                    else {
+                        panic!("unexpected retained observation variant in source fixture")
+                    };
+                    assert!(matches!(
+                        node(&c.store, source.0),
+                        AuthoredNode::Operation(AuthoredOperation::Zip { .. })
+                    ));
+                    let AuthoredNode::Names(names) = node(&c.store, params.0) else {
+                        panic!("unexpected retained observation variant in source fixture")
+                    };
+                    assert_eq!(names.len(), 2);
+                    assert_ne!(names[0], names[1]);
+                    assert_eq!(
+                        named(&c.store, names[0]).equality_class,
+                        named(&c.store, names[1]).equality_class
+                    );
+                    assert!(
+                        matches!(node(&c.store, body.0), AuthoredNode::Syntax(values) if values.len() == 1)
+                    );
+                } else {
+                    assert!(matches!(
+                        node(&c.store, source.expect("authored capture fixture must be valid").0),
+                        AuthoredNode::Operation(AuthoredOperation::Unsupported { tag: 0 })
+                    ));
+                }
+            }
+        }
+        assert_ne!(chains[0].0, chains[1].0);
+        assert_ne!(chains[0].1, chains[1].1);
+        assert_eq!(
+            named(&c.store, chains[0].0).equality_class,
+            named(&c.store, chains[1].0).equality_class
+        );
+    }
+
+    #[test]
+    fn legacy_observations_preserve_original_classifier_and_half_delimiters() {
+        let rules = [term(
+            None,
+            TermBody::Bnf(vec![
+                BnfNode::Literal("(".into()),
+                BnfNode::Nonterminal("Ident".into()),
+                BnfNode::Binding("Expr".into()),
+                BnfNode::Collection {
+                    kind: CollectionKind::List,
+                    element: "Expr".into(),
+                    separator: ",".into(),
+                    open: Some("[".into()),
+                    close: None,
+                },
+            ]),
+        )];
+        let c = capture(&rules).expect("authored capture fixture must be valid");
+        let items = &rule(&c.store, c.roots[0]).items;
+        assert!(matches!(&items[0], AuthoredLegacyItem::Terminal(text) if text == "("));
+        assert!(
+            matches!(&items[1], AuthoredLegacyItem::NonTerminal { kind, .. } if *kind == NonTerminalKind::classify("Ident"))
+        );
+        assert!(matches!(&items[2], AuthoredLegacyItem::Binder { .. }));
+        assert!(
+            matches!(&items[3], AuthoredLegacyItem::Collection { open: Some(open), close: None, separator, .. } if open == "[" && separator == ",")
+        );
+    }
+
+    #[test]
+    fn prepaid_counts_equal_owned_observations_without_finish_recharge() {
+        let rules = [term(
+            Some(vec![Param::Optional(vec![Param::Guard("g".into())])]),
+            TermBody::Judgement(vec![
+                SyntaxNode::Literal("lit".into()),
+                SyntaxNode::Token {
+                    name: "token".into(),
+                    binding: Some("bind".into()),
+                },
+                SyntaxNode::ForeignLanguage {
+                    binding: "flt".into(),
+                    open: "open".into(),
+                    close: "close".into(),
+                },
+                SyntaxNode::Optional(vec![]),
+            ]),
+        )];
+        let budget =
+            RefCell::new(Budget::roots(1).expect("authored capture fixture must be valid"));
+        let mut source = Source { _rules: &rules, budget: &budget };
+        let roots = [(AuthoredNodeTag::Rule, Handle::Rule(&rules[0]))];
+        let c = capture_authored_nodes(&mut source, &roots, |phase, node| {
+            budget.borrow().phase(phase, node)
+        })
+        .expect("authored capture fixture must be valid");
+        let (mut edges, mut slots, mut strings) = (0, 0, 0);
+        for id in 0..c.store.len() as u32 {
+            let value = node(&c.store, id);
+            value
+                .try_for_each_reference(|_, _| {
+                    edges += 1;
+                    Ok::<_, ()>(())
+                })
+                .expect("authored capture fixture must be valid");
+            match value {
+                AuthoredNode::Name(name) => strings += name.spelling.len(),
+                AuthoredNode::Names(values) => slots += values.len(),
+                AuthoredNode::Params(values) => slots += values.len(),
+                AuthoredNode::Syntax(values) => {
+                    slots += values.len();
+                    for value in values {
+                        if let AuthoredSyntax::Literal(value) = value {
+                            strings += value.len();
+                        }
+                    }
+                },
+                AuthoredNode::Rule(rule) => slots += rule.items.len(),
+                _ => {},
+            }
+        }
+        let budget = budget.borrow();
+        assert_eq!(
+            (budget.nodes, budget.edges, budget.slots, budget.strings),
+            (c.store.len(), edges, slots, strings)
+        );
+    }
+
+    #[test]
+    fn source_copy_and_root_admission_refuse_before_producing_owned_recipes() {
+        assert!(Budget::roots(MAX_CANONICAL_COLLECTION_ITEMS + 1).is_err());
+        let value = "x".repeat(MAX_CANONICAL_STRING_BYTES + 1);
+        let budget = RefCell::new(Budget::default());
+        let mut source = Source { _rules: &[], budget: &budget };
+        assert!(source.shallow(Handle::Name(&value)).is_err());
+        assert_eq!(budget.borrow().nodes, 0);
+        budget.borrow_mut().nodes = MAX_CANONICAL_VALUE_NODES;
+        assert!(source
+            .shallow(Handle::ChainName(&SyntaxNode::Literal(String::new())))
+            .is_err());
+        assert_eq!(budget.borrow().nodes, MAX_CANONICAL_VALUE_NODES);
+    }
+
+    #[test]
+    fn retained_caps_are_exact_logical_sizes_not_finish_allocation_counts() {
+        let mut budget = Budget {
+            nodes: MAX_CANONICAL_VALUE_NODES - 1,
+            ..Budget::default()
+        };
+        budget
+            .observe(0, 0)
+            .expect("exact retained node limit fits");
+        assert!(budget.observe(0, 0).is_err());
+        let mut budget = Budget {
+            roots: 1,
+            edges: MAX_CANONICAL_COLLECTION_ITEMS - 2,
+            ..Budget::default()
+        };
+        budget
+            .observe(0, 1)
+            .expect("root plus edges plus payload slots exactly fits");
+        assert!(budget.observe(0, 1).is_err());
+        let mut budget = Budget {
+            strings: crate::canonical::MAX_CANONICAL_TOTAL_STRING_BYTES,
+            ..Budget::default()
+        };
+        budget
+            .string("")
+            .expect("zero bytes do not consume more content");
+        assert!(budget.string("x").is_err());
+    }
+
+    #[test]
+    fn phase_refuses_unadmitted_map_store_class_or_frame_growth() {
+        let budget = Budget {
+            roots: 1,
+            nodes: 2,
+            edges: 3,
+            ..Budget::default()
+        };
+        let name: AuthoredNode =
+            AuthoredNode::Name(AuthoredName { spelling: "n".into(), equality_class: 0 });
+        let allowed = AuthoredCaptureAdmission {
+            phase: AuthoredCapturePhase::Enter,
+            memoized_nodes: 1,
+            stored_nodes: 1,
+            name_classes: 1,
+            scheduled_frames: 6,
+        };
+        budget
+            .phase(allowed, &name)
+            .expect("derived frame ceiling and node occupancies fit");
+        assert!(budget
+            .phase(AuthoredCaptureAdmission { memoized_nodes: 2, ..allowed }, &name)
+            .is_err());
+        assert!(budget
+            .phase(
+                AuthoredCaptureAdmission {
+                    phase: AuthoredCapturePhase::Finish,
+                    stored_nodes: 2,
+                    ..allowed
+                },
+                &name
+            )
+            .is_err());
+        assert!(budget
+            .phase(
+                AuthoredCaptureAdmission {
+                    phase: AuthoredCapturePhase::Finish,
+                    name_classes: 2,
+                    ..allowed
+                },
+                &name
+            )
+            .is_err());
+        assert!(budget
+            .phase(AuthoredCaptureAdmission { scheduled_frames: 7, ..allowed }, &name)
+            .is_err());
+    }
+
+    #[test]
+    fn deep_source_capture_and_flat_store_lifecycle_use_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(|| {
+                let mut param = Param::Guard("leaf".into());
+                for _ in 0..4000 {
+                    param = Param::Optional(vec![param]);
+                }
+                let rules = [term(Some(vec![param]), TermBody::Judgement(vec![]))];
+                let c = capture(&rules).expect("deep source capture must use the core worklist");
+                assert!(c.store.len() > 8000);
+                c.store
+                    .validate()
+                    .expect("deep captured store validates iteratively");
+                drop(c.store.clone());
+                drop(c);
+                drop(rules);
+            })
+            .expect("small stack test thread starts")
+            .join()
+            .expect("flat lifecycle stays on heap worklists");
+    }
+
+    #[test]
+    fn runtime_bnf_defaults_agree_and_nonempty_context_is_retained_and_validated() {
+        let s = |text: &str| RhoValue::String(text.into());
+        let make = |context: Option<RhoValue>| {
+            let mut fields = BTreeMap::from([
+                ("label".into(), s("Bnf")),
+                ("category".into(), s("Expr")),
+                ("items".into(), RhoValue::List(vec![RhoValue::List(vec![s("lit"), s("b")])])),
+            ]);
+            if let Some(context) = context {
+                fields.insert("context".into(), context);
+            }
+            RhoValue::Map(BTreeMap::from([
+                ("mettail".into(), s("language/2")),
+                ("name".into(), s("BnfContexts")),
+                ("types".into(), RhoValue::List(vec![s("Expr")])),
+                ("terms".into(), RhoValue::List(vec![RhoValue::Map(fields)])),
+            ]))
+        };
+        let absent =
+            crate::canonical::value_to_core(&make(None)).expect("absent BNF context lowers");
+        let empty = crate::canonical::value_to_core(&make(Some(RhoValue::List(vec![]))))
+            .expect("empty BNF context lowers");
+        assert_eq!(absent, empty);
+        assert_eq!(
+            absent.fingerprint().expect("absent BNF fingerprint"),
+            empty.fingerprint().expect("empty BNF fingerprint")
+        );
+        let nonempty = make(Some(RhoValue::List(vec![RhoValue::List(vec![
+            s("param"),
+            s("unused"),
+            s("Expr"),
+        ])])));
+        let retained = crate::canonical::value_to_core(&nonempty)
+            .expect("unused valid BNF parameter remains accepted");
+        let store = retained.authored.as_ref().expect("BNF source is retained");
+        let source = rule(store, retained.productions[0].authored.expect("BNF source root").0);
+        assert!(source.syntax_pattern.is_none());
+        let params = source
+            .term_context
+            .expect("nonempty BNF context is not discarded");
+        assert!(matches!(node(store, params.0), AuthoredNode::Params(params) if params.len() == 1));
+        let invalid = make(Some(RhoValue::List(vec![RhoValue::List(vec![
+            s("param"),
+            s("unused"),
+            s("Missing"),
+        ])])));
+        assert!(
+            crate::canonical::value_to_core(&invalid).is_err(),
+            "original parameter validation still runs for BNF"
+        );
+    }
+
+    #[test]
+    fn actual_value_lowering_attaches_one_store_and_normalizes_judgement_context() {
+        let s = |value: &str| RhoValue::String(value.into());
+        let make = |label: &str, context: bool| {
+            let mut fields = BTreeMap::from([
+                ("label".into(), s(label)),
+                ("category".into(), s("Expr")),
+                ("syntax".into(), RhoValue::List(vec![RhoValue::List(vec![s("lit"), s(label)])])),
+            ]);
+            if context {
+                fields.insert("context".into(), RhoValue::List(vec![]));
+            }
+            RhoValue::Map(fields)
+        };
+        let value = RhoValue::Map(BTreeMap::from([
+            ("mettail".into(), s("language/2")),
+            ("name".into(), s("Retained")),
+            ("types".into(), RhoValue::List(vec![s("Expr")])),
+            ("terms".into(), RhoValue::List(vec![make("Absent", false), make("Empty", true)])),
+        ]));
+        let core = crate::canonical::value_to_core(&value)
+            .expect("authored capture fixture must be valid");
+        let store = core
+            .authored
+            .as_ref()
+            .expect("authored capture fixture must be valid");
+        assert_eq!(core.productions.len(), 2);
+        for production in &core.productions {
+            let rule = rule(
+                store,
+                production
+                    .authored
+                    .expect("authored capture fixture must be valid")
+                    .0,
+            );
+            assert_eq!(named(store, rule.label).spelling, production.label);
+            assert!(rule.term_context.is_some());
+        }
+    }
+}

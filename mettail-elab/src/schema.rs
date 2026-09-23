@@ -2,6 +2,8 @@ use crate::canonical::{RhoValue, ValueDecodeError};
 use mettail_grammar_core as core;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod authored_capture;
+
 const TOP_LEVEL_KEYS: &[&str] = &[
     "mettail",
     "name",
@@ -4751,6 +4753,10 @@ impl LanguageSchema {
             output.modes[0].token_ids.push(id);
         }
 
+        let authored = authored_capture::capture(&self.terms)?;
+        if authored.roots.len() != self.terms.len() {
+            return error("$.terms", "authored capture root count differs from term count");
+        }
         for (index, term) in self.terms.iter().enumerate() {
             let path = format!("$.terms[{index}]");
             let result = category_id(&categories, &term.category, &format!("{path}.category"))?;
@@ -4788,7 +4794,7 @@ impl LanguageSchema {
             });
             let classification = classify_production(&syntax, &term.context);
             output.productions.push(core::Production {
-                authored: None,
+                authored: Some(core::AuthoredRuleId(authored.roots[index])),
                 id: core::ProductionId(index as u32),
                 constructor,
                 label: term.label.clone(),
@@ -4804,6 +4810,7 @@ impl LanguageSchema {
                 provenance: None,
             });
         }
+        output.authored = Some(authored.store);
         let constructors: BTreeMap<_, _> = output
             .productions
             .iter()

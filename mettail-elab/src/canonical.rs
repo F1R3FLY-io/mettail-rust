@@ -384,7 +384,7 @@ fn account_canonical_bytes(
     Ok(())
 }
 
-fn account_canonical_string(
+pub(crate) fn account_canonical_string(
     value: &str,
     total_string_bytes: &mut usize,
 ) -> Result<(), ValueDecodeError> {
