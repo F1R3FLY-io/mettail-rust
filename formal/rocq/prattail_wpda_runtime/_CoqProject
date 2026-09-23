@@ -138,6 +138,7 @@ theories/SchemaDeclarationCaptureProjection.v
 theories/AuthoredDeclarationReaderProjection.v
 theories/ConstructorLabelProjection.v
 theories/LegacyNormalizationAdmission.v
+theories/AuthoredNormalizationMaterialization.v
 theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.
