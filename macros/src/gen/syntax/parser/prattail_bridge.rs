@@ -10,6 +10,7 @@
 //! via `LanguageSpec::new()`.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::gen::native::native_type_to_full_string;
 use crate::gen::runtime::wpda_codegen::collection::kv_sep_for;
@@ -63,10 +64,27 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
 
     let cat_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
 
+    // Retain the original observations before either syntax conversion below
+    // loses binder, operation, or legacy-item structure. The shared capture
+    // worker proves ordered root correspondence; transport preserves each ID.
+    let captured =
+        crate::gen::runtime::wpda_codegen::authored_capture::capture_rules(&language.terms)?;
+    if captured.roots.len() != language.terms.len() {
+        return Err("authored capture returned a different rule roster length".into());
+    }
+    let authored_store = Arc::new(captured.store);
     let mut inputs: Vec<RuleSpecInput> = language
         .terms
         .iter()
-        .map(|rule| convert_rule(rule, &cat_names))
+        .zip(captured.roots)
+        .map(|(rule, root)| -> Result<RuleSpecInput, String> {
+            let mut input = convert_rule(rule, &cat_names)?;
+            input.authored = Some(mettail_grammar_core::AuthoredRuleRef {
+                store: Arc::clone(&authored_store),
+                rule: mettail_grammar_core::AuthoredRuleId(root),
+            });
+            Ok(input)
+        })
         .collect::<Result<_, _>>()?;
 
     // PIECE 3 (keyword reservation): collect the *ident-shaped* collection-open
@@ -1487,6 +1505,104 @@ mod collection_projection_tests {
         specification
             .to_grammar_core()
             .expect("the nested descriptor must name a real GrammarCore category");
+    }
+
+    #[test]
+    fn authored_bridge_retains_original_rules_under_one_owner_before_lowering() {
+        use mettail_grammar_core::{AuthoredNode, AuthoredOperation};
+        let language = parse_language(quote! {
+            name: AuthoredBridge,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types { Proc },
+            terms {
+                PZero . |- "0" : Proc;
+                ChooseMaybe . value:Proc, *opt(items:Vec(Proc))
+                    |- "choose" value *opt("with" "(" items.*sep("|") ")") : Proc;
+            },
+        });
+        let specification = language_def_to_spec(&language).expect("project original rules");
+        let owner = &specification.rules[0]
+            .authored
+            .as_ref()
+            .expect("original rule retained")
+            .store;
+        for (source, projected) in language.terms.iter().zip(&specification.rules) {
+            let reference = projected
+                .authored
+                .as_ref()
+                .expect("every original rule retained");
+            assert!(Arc::ptr_eq(owner, &reference.store));
+            let Some(AuthoredNode::Rule(retained)) = owner.get(reference.rule.0) else {
+                panic!("production points to retained Rule");
+            };
+            let Some(AuthoredNode::Name(label)) = owner.get(retained.label.0) else {
+                panic!("retained label points to Name");
+            };
+            assert_eq!(label.spelling, source.label.to_string());
+            assert_eq!(retained.term_context.is_some(), source.term_context.is_some());
+            assert_eq!(retained.syntax_pattern.is_some(), source.syntax_pattern.is_some());
+        }
+        assert!(!owner.is_empty());
+        assert!(
+            (0..owner.len()).any(|index| matches!(
+                owner.get(index as u32),
+                Some(AuthoredNode::Operation(AuthoredOperation::Opt { .. }))
+            )),
+            "optional source operation survives lowered syntax"
+        );
+        let core = specification
+            .to_grammar_core()
+            .expect("validate retained rule associations");
+        assert_eq!(core.authored.as_ref(), Some(owner.as_ref()));
+        assert_eq!(core.productions.len(), specification.rules.len());
+        for (production, rule) in core.productions.iter().zip(&specification.rules) {
+            assert_eq!(production.authored, rule.authored.as_ref().map(|value| value.rule));
+        }
+    }
+
+    #[test]
+    fn authored_bridge_does_not_fabricate_source_for_synthetic_collection_rules() {
+        let language = parse_language(quote! {
+            name: SyntheticAuthoredBridge,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types {
+                Proc
+                ![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap {
+                    open_parts: ["{|"], close_parts: ["|}"], sep: ",",
+                }
+            },
+            terms { PZero . |- "0" : Proc; },
+        });
+        let specification = language_def_to_spec(&language).expect("project synthetic collection");
+        let original = specification
+            .rules
+            .iter()
+            .find(|rule| rule.label == "PZero")
+            .expect("original PZero");
+        let generated = specification
+            .rules
+            .iter()
+            .find(|rule| rule.label == "PathmapLit")
+            .expect("generated collection rule");
+        assert!(original.authored.is_some());
+        assert!(generated.authored.is_none());
+        let core = specification
+            .to_grammar_core()
+            .expect("project mixed authored availability");
+        assert!(core
+            .productions
+            .iter()
+            .find(|rule| rule.label == "PZero")
+            .expect("original core rule")
+            .authored
+            .is_some());
+        assert!(core
+            .productions
+            .iter()
+            .find(|rule| rule.label == "PathmapLit")
+            .expect("generated core rule")
+            .authored
+            .is_none());
     }
 }
 
