@@ -3664,8 +3664,16 @@ fn literal_patterned_pattern_and_guard_for_kind(
 }
 
 #[cfg(test)]
+#[path = "../../../../tests/support/prefix_first_set_baselines.rs"]
+mod prefix_first_set_baselines;
+
+#[cfg(test)]
 #[path = "../../../../tests/support/unified_prefix_descriptor_baselines.rs"]
 mod unified_prefix_descriptor_baselines;
+
+#[cfg(test)]
+#[path = "../../../../tests/support/grouping_source_descriptor_baselines.rs"]
+mod grouping_source_descriptor_baselines;
 
 #[cfg(test)]
 mod tests {
