@@ -2,7 +2,10 @@ use syn::{parse::ParseStream, Ident, Result as SynResult, Token};
 
 use super::types::{CollectionType, EvalMode, RustCodeBlock, TypeExpr};
 
+mod context_items_adapter;
 mod legacy_normalization_adapter;
+
+pub use context_items_adapter::AstTermParamReader;
 
 pub use mettail_grammar_core::NonTerminalKind;
 
@@ -2459,164 +2462,10 @@ fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
 pub fn convert_term_context_to_items(
     term_context: &[TermParam],
 ) -> (Vec<GrammarItem>, Vec<(usize, Vec<usize>)>) {
-    let mut items = Vec::new();
-    let mut bindings = Vec::new();
-
-    for param in term_context {
-        match param {
-            TermParam::Simple { ty, .. } => {
-                // Simple param becomes NonTerminal with the base type name
-                if let TypeExpr::Base(type_name) = ty {
-                    items.push(GrammarItem::non_terminal(type_name.clone()));
-                } else if let TypeExpr::Collection { coll_type, element } = ty {
-                    // Collection type
-                    if let TypeExpr::Base(elem_name) = element.as_ref() {
-                        items.push(GrammarItem::Collection {
-                            coll_type: coll_type.clone(),
-                            element_type: elem_name.clone(),
-                            separator: "|".to_string(), // Default, should be specified in syntax
-                            delimiters: None,
-                        });
-                    }
-                } else if let TypeExpr::Map { key, value } = ty {
-                    // Phase 4 #5b (2026-05-12): `HashMap(K, V)` Map type
-                    // in a Class-2 binder slot. The downstream codegen
-                    // (term_gen/random.rs) checks `rule.items` for
-                    // `GrammarItem::Collection` to decide whether a rule
-                    // has a collection field; without this case it would
-                    // miss HashMap slots and emit a variant constructor
-                    // with the wrong arity. Lower to
-                    // `GrammarItem::Collection { coll_type: HashMap,
-                    // element_type: value }` mirroring the K==V invariant
-                    // enforced by `classify_binder`.
-                    if let (TypeExpr::Base(k_name), TypeExpr::Base(v_name)) =
-                        (key.as_ref(), value.as_ref())
-                    {
-                        if k_name == v_name {
-                            items.push(GrammarItem::Collection {
-                                coll_type: CollectionType::HashMap,
-                                element_type: v_name.clone(),
-                                separator: ",".to_string(),
-                                delimiters: None,
-                            });
-                        }
-                    }
-                }
-            },
-            TermParam::Abstraction { ty, .. } => {
-                // Abstraction: ^x.p:[Name -> Proc]
-                // This becomes: Binder for Name, NonTerminal for Proc
-                if let TypeExpr::Arrow { domain, codomain } = ty {
-                    let binder_idx = items.len();
-
-                    if let TypeExpr::Base(binder_type) = domain.as_ref() {
-                        items.push(GrammarItem::Binder { category: binder_type.clone() });
-                    }
-
-                    let body_idx = items.len();
-                    if let TypeExpr::Base(body_type) = codomain.as_ref() {
-                        items.push(GrammarItem::non_terminal(body_type.clone()));
-                    }
-
-                    bindings.push((binder_idx, vec![body_idx]));
-                }
-            },
-            TermParam::MultiAbstraction { ty, .. } => {
-                // Multi-abstraction: ^[xs].p:[Name* -> Proc]
-                // This needs special handling for multiple binders
-                if let TypeExpr::Arrow { domain, codomain } = ty {
-                    let binder_idx = items.len();
-
-                    if let TypeExpr::MultiBinder(inner) = domain.as_ref() {
-                        if let TypeExpr::Base(binder_type) = inner.as_ref() {
-                            // Represent the multi-binder domain by its binder category.
-                            items.push(GrammarItem::Binder { category: binder_type.clone() });
-                        }
-                    }
-
-                    let body_idx = items.len();
-                    if let TypeExpr::Base(body_type) = codomain.as_ref() {
-                        items.push(GrammarItem::non_terminal(body_type.clone()));
-                    }
-
-                    bindings.push((binder_idx, vec![body_idx]));
-                }
-            },
-            TermParam::GuardBody { .. } => {
-                // Guard bodies are evaluated by the behavioral guard evaluator
-                // and do not produce traditional grammar items or bindings.
-            },
-            TermParam::Optional { params: inner } => {
-                // Opt-Group (2026-04-29 update): the runtime variant emits
-                // ONE field per inner Simple/Abstraction (wrapped in
-                // `Option<Box<T>>`). Downstream emitters that walk
-                // `rule.items` (Ascent subterm pools, fold-rule generators,
-                // pool-arm constructor patterns) need a matching item per
-                // inner param so the destructure pattern length equals the
-                // variant arity. Recursively flatten and emit synthetic
-                // items mirroring the inner types.
-                fn flatten_optional_items(inner: &[TermParam], items: &mut Vec<GrammarItem>) {
-                    let mut frames = vec![inner.iter()];
-                    while let Some(frame) = frames.last_mut() {
-                        let Some(p) = frame.next() else {
-                            frames.pop();
-                            continue;
-                        };
-                        match p {
-                            TermParam::Simple { ty, .. } => {
-                                if let TypeExpr::Base(type_name) = ty {
-                                    items.push(GrammarItem::non_terminal(type_name.clone()));
-                                } else if let TypeExpr::Collection { coll_type, element } = ty {
-                                    if let TypeExpr::Base(elem_name) = element.as_ref() {
-                                        items.push(GrammarItem::Collection {
-                                            coll_type: coll_type.clone(),
-                                            element_type: elem_name.clone(),
-                                            separator: "|".to_string(),
-                                            delimiters: None,
-                                        });
-                                    }
-                                } else if let TypeExpr::Map { key, value } = ty {
-                                    // Phase 4 #5b (2026-05-12): HashMap(K, V)
-                                    // inside *opt(...). Mirror the outer
-                                    // Simple-param handling: lower to
-                                    // GrammarItem::Collection {
-                                    // coll_type: HashMap, element_type: V }
-                                    // when K == V.
-                                    if let (TypeExpr::Base(k_name), TypeExpr::Base(v_name)) =
-                                        (key.as_ref(), value.as_ref())
-                                    {
-                                        if k_name == v_name {
-                                            items.push(GrammarItem::Collection {
-                                                coll_type: CollectionType::HashMap,
-                                                element_type: v_name.clone(),
-                                                separator: ",".to_string(),
-                                                delimiters: None,
-                                            });
-                                        }
-                                    }
-                                }
-                            },
-                            TermParam::Abstraction { ty, .. }
-                            | TermParam::MultiAbstraction { ty, .. } => {
-                                if let TypeExpr::Arrow { codomain, .. } = ty {
-                                    if let TypeExpr::Base(body_type) = codomain.as_ref() {
-                                        items.push(GrammarItem::non_terminal(body_type.clone()));
-                                    }
-                                }
-                            },
-                            TermParam::GuardBody { .. } => {},
-                            TermParam::Optional { params: nested } => {
-                                frames.push(nested.iter());
-                            },
-                        }
-                    }
-                }
-                flatten_optional_items(inner, &mut items);
-            },
-        }
-    }
-
-    (items, bindings)
+    mettail_grammar_core::context_items::convert_term_context_to_items_with(
+        &AstTermParamReader,
+        term_context,
+    )
 }
 
 /// F1 follow-up Plan 3 / Ambient cluster (2026-05-10): inverse of

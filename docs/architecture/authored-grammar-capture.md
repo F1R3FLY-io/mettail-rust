@@ -135,6 +135,18 @@ callback order remain unchanged; checked runtime index-width admission is a
 separate obligation. The [grouping projection model](../../formal/rocq/prattail_wpda_runtime/theories/GroupingSourceDescriptorProjection.v)
 covers this exact schedule, including faults and repeated observations.
 
+The original [context-to-items converter](../../grammar-core/src/context_items.rs)
+is also shared. It derives the legacy grammar-item roster still observed by the
+original classifiers; it does not parse source or infer a context from lowered
+syntax. Its outer loop and heap-backed optional-group iterator frames preserve
+the original distinction: top-level abstractions emit binder/body items and
+binding indices, while abstractions inside optional groups emit only body items.
+Partial arrow types retain the original index behavior; this conversion alone
+does not validate that every recorded index identifies an emitted item. The
+[context projection proof](../../formal/rocq/prattail_wpda_runtime/theories/TermContextItemsProjection.v)
+preserves these outputs and observation order. Its input reader is shared with
+the existing parameter traversal; the AST adapter is reused by macro generation.
+
 These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared
 WPDA walker. That integration requires its own transition and consumer checks.

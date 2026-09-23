@@ -7,40 +7,7 @@ pub(crate) type TermParamLeafKind<'a> =
     shared::TermParamLeafKind<&'a TermParam, &'a Ident, &'a TypeExpr>;
 pub(crate) type TermParamLeaf<'a> = shared::TermParamLeaf<&'a TermParam, &'a Ident, &'a TypeExpr>;
 
-/// Shallow macro-AST access for the shared original declaration worklist.
-pub(crate) struct MacroTermParamReader;
-
-impl<'syntax> shared::TermParamReader<'syntax> for MacroTermParamReader {
-    type Parameters = &'syntax [TermParam];
-    type Param = &'syntax TermParam;
-    type Name = &'syntax Ident;
-    type Type = &'syntax TypeExpr;
-
-    fn params_len(&self, params: Self::Parameters) -> usize {
-        params.len()
-    }
-
-    fn param_at(&self, params: Self::Parameters, index: usize) -> Option<Self::Param> {
-        params.get(index)
-    }
-
-    fn param(
-        &self,
-        param: Self::Param,
-    ) -> shared::TermParamObservation<Self::Name, Self::Parameters, Self::Type> {
-        match param {
-            TermParam::Simple { name, ty } => shared::TermParamObservation::Simple { name, ty },
-            TermParam::GuardBody { name } => shared::TermParamObservation::GuardBody { name },
-            TermParam::Abstraction { binder, body, ty } => {
-                shared::TermParamObservation::Abstraction { binder, body, ty }
-            },
-            TermParam::MultiAbstraction { binder, body, ty } => {
-                shared::TermParamObservation::MultiAbstraction { binder, body, ty }
-            },
-            TermParam::Optional { params } => shared::TermParamObservation::Optional { params },
-        }
-    }
-}
+pub(crate) use mettail_ast::grammar::AstTermParamReader as MacroTermParamReader;
 
 /// Keep the macro-facing iterator API while executing the shared worklist.
 pub(crate) struct TermParamLeaves<'a> {
