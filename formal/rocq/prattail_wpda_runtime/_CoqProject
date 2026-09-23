@@ -109,6 +109,7 @@ theories/GroupingSourceDescriptorProjection.v
 theories/OriginalFirstSetProjection.v
 theories/OriginalIdentSummaryProjection.v
 theories/NativeFirstDescriptorProjection.v
+theories/NativeKindProjection.v
 theories/GuestModeDescriptorProjection.v
 theories/UnifiedPrefixDescriptorProjection.v
 theories/AuthoredRuleStoreProjection.v
