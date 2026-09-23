@@ -62,6 +62,40 @@ source reference. The incoming roster may itself contain rules synthesized by
 earlier passes: an authored reference describes retained input, not a claim of
 human authorship.
 
+### Source declarations and final lexer bindings
+
+The optional `AuthoredDeclarations` header retains category names, original
+`NativeKind` observations, collection delimiters, token declarations, and named
+mode rosters. Token rows are ordered global declarations first, then each mode's
+declarations. Concatenating those rosters must give every source token position
+exactly once. Duplicate declaration payloads remain distinct positions.
+
+[`capture_authored_declarations`](../../grammar-core/src/authored_capture.rs)
+appends category, token, and mode name occurrences after the rule roots and
+invokes the same capture controller once. These names therefore share the
+rule capture's identity memo and source-equality classes. The returned rule
+positions do not change, and a zero-rule language can still retain declarations.
+An explicit `LanguageSpec` owner preserves that zero-rule case through the
+macro bridge; present rule owners must agree with it.
+
+Source positions are not lexer token IDs. For example, several integer
+declarations can share one built-in token; a rational declaration can produce
+both a custom token and a typed-literal token. The separate
+[`AuthoredDeclarationBindings`](../../grammar-core/src/authored_bindings.rs)
+table records these actual lowering results. It never guesses them from token
+names or normalized native carriers. Its private builder accepts each assignment
+once; an explicitly absent auxiliary route is distinct from an unfinished slot.
+Publication requires exact source/table cardinalities, matching category
+spellings, valid token and mode IDs, and membership of both token routes in
+their recorded modes.
+
+This validation establishes structural associations, not decoder equivalence
+or authority. The macro bridge records original builtin-selection outcomes and
+typed-pattern insertion provenance at their existing source sites. Runtime
+declaration-header population and the installed owned-reader consumers require
+their own integration; a store with no header explicitly records unavailable
+declaration observations rather than synthesizing them.
+
 ## Runtime admission
 
 Untrusted runtime capture reuses the canonical limits and original string-charge
@@ -75,10 +109,11 @@ are:
 | $`E`$ | Immediate typed-reference fields, including duplicate references. |
 | $`Q`$ | Elements in retained name, parameter, syntax, and legacy-item vectors. |
 | $`B`$ | UTF-8 bytes copied into retained string payloads. |
+| $`W`$ | Original context-conversion event charges, accumulated across rules. |
 
 A reference stored in a vector contributes to both $`E`$ and $`Q`$: these count
 different dimensions. The existing node limit bounds $`N`$; the existing item
-limit bounds $`R+E+Q`$. Per-string and aggregate string limits bound copied
+limit bounds $`R+E+Q+W`$. Per-string and aggregate string limits bound copied
 payloads. These are conservative retained-content limits, not a claim that
 capture accepts exactly the same domain as canonical value admission.
 
@@ -88,11 +123,22 @@ moves string payloads and remaps references; it does not charge their content
 again. All counter arithmetic is checked. These bounds concern logical lengths,
 not allocator capacities, physical bytes, or resident memory.
 
+For judgement rules, the schema adapter invokes the original context converter
+once after precharging the rule node. Parameter visits, optional frames, and
+item construction each add one unit to $`W`$; each binding adds two. A generated
+legacy item adds one reference to $`E`$ and one vector element to $`Q`$, but no
+new rule node. Names remain borrowed until ordinary name capture; actual
+separator copies pass the original string gate before construction. Bindings
+are still constructed and charged even though this retained projection keeps
+only the item roster. BNF copying and context presence are unchanged. The
+[schema converter model](../../formal/rocq/prattail_wpda_runtime/theories/SchemaContextItemsProjection.v)
+composes these checks with the original finite execution and capture bounds.
+
 ## Commitments and trust boundaries
 
 The arena affects the grammar commitment because it contains classifier inputs.
-It is not diagnostic provenance. GrammarCore ABI 3 and the exact
-`mettail-language-core-value/5` envelope require the authored fields to be
+It is not diagnostic provenance. GrammarCore ABI 4 and the exact
+`mettail-language-core-value/6` envelope require the authored fields to be
 present. Explicit unavailability is allowed; silently missing fields are not.
 See [identity and compatibility](observation-predicate-roles.md#identity-and-compatibility).
 
@@ -188,6 +234,17 @@ and source-category comparisons. The
 proves callback order and row/field preservation. It does not cover the surrounding
 multi-pass bucket driver or transition execution.
 
+The surrounding [prefix-bucket driver](../../prattail/src/wpda_rule_analysis/prefix_bucket.rs)
+is shared separately. It preserves the original schedule: cross-category
+sources, first local classification pass, delayed atomic-row insertion, then
+the second local classification pass. Global authored rules and indexed local
+rules remain separate rosters; the latter can contain synthesized rules.
+Classification is repeated at the original second-pass sites, not cached.
+The existing lexical-compatibility checks retain their per-row short-circuit
+order. The [driver projection model](../../formal/rocq/prattail_wpda_runtime/theories/OriginalPrefixBucketDriverProjection.v)
+proves finite callback and descriptor correspondence. Rust transition emission
+remains in the original backend and is outside this model's claim.
+
 ### Native literals, identifiers, and guest modes
 
 The shared [native-literal worker](../../prattail/src/wpda_rule_analysis/native_first.rs)
@@ -262,9 +319,12 @@ an end-to-end proof:
 - [Extended capture composition](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredExtendedCaptureComposition.v)
   checks the same finite-run controller with both arrow children and the
   multi-binder child retained. Ordered declaration-name roots use that same
-  capture run and name table. This preimplementation model does not establish
-  that the Rust metadata adapters or source-to-lowered token associations are
-  already connected.
+  capture run and name table. Concrete adapters must separately establish their
+  correspondence to those source observations.
+- [Declaration binding](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredDeclarationBindingProjection.v)
+  separates immutable source rows from write-once final-ID association and
+  checks complete token-roster coverage before publication. It does not infer
+  the provenance of an arbitrary supplied ID.
 
 Concrete source-adapter tests remain necessary to connect each frontend to these
 models. These proofs do not establish hash injectivity, arbitrary callback

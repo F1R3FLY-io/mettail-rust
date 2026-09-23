@@ -17,7 +17,8 @@ pub const LANGUAGE_CORE_VALUE_SCHEMA_V2: &str = "mettail-language-core-value/2";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V3: &str = "mettail-language-core-value/3";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V4: &str = "mettail-language-core-value/4";
 pub const LANGUAGE_CORE_VALUE_SCHEMA_V5: &str = "mettail-language-core-value/5";
-pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V5;
+pub const LANGUAGE_CORE_VALUE_SCHEMA_V6: &str = "mettail-language-core-value/6";
+pub const LANGUAGE_CORE_VALUE_SCHEMA_CURRENT: &str = LANGUAGE_CORE_VALUE_SCHEMA_V6;
 
 /// Serde's tagged structural encoding introduces a small fixed amount of
 /// framing around each semantic node. Four times the admitted DDL depth is a
@@ -697,6 +698,94 @@ mod tests {
     }
 
     #[test]
+    fn declaration_header_and_bindings_round_trip_and_require_explicit_options() {
+        let mut expected = comprehensive_language();
+        let store = expected
+            .grammar
+            .authored
+            .take()
+            .expect("fixture retains source nodes");
+        expected.grammar.authored = Some(
+            store
+                .with_declarations(core::AuthoredDeclarations {
+                    categories: vec![core::AuthoredCategoryDeclaration {
+                        name: core::AuthoredNameId(1),
+                        native: None,
+                        collection: None,
+                    }],
+                    tokens: vec![core::AuthoredTokenDeclaration {
+                        name: core::AuthoredNameId(0),
+                        category: Some(core::AuthoredNameId(1)),
+                        from_literals: false,
+                        has_evaluation: false,
+                        push: None,
+                    }],
+                    global_tokens: vec![0],
+                    modes: vec![],
+                })
+                .expect("fixture header names are typed"),
+        );
+        expected.grammar.authored_bindings = Some(core::AuthoredDeclarationBindings {
+            categories: vec![CategoryId(0)],
+            tokens: vec![core::AuthoredTokenBinding { direct: TokenId(0), typed_literal: None }],
+            modes: vec![],
+        });
+        expected
+            .validate()
+            .expect("complete declaration transport fixture");
+        let encoded = language_core_to_value(&expected).expect("exact declaration envelope");
+        assert_eq!(
+            decode_language_core_value(&encoded).expect("exact declaration decode"),
+            Some(expected.clone())
+        );
+        let fragment = language_core_to_data_fragment(&expected).expect("exact declaration Data");
+        assert_eq!(
+            decode_language_core_data_fragment(&fragment).expect("Data decode"),
+            Some(expected)
+        );
+        for field in ["authored_bindings", "declarations", "typed_literal"] {
+            let mut value = encoded.clone();
+            let RhoValue::Map(envelope) = &mut value else {
+                panic!("map envelope")
+            };
+            let RhoValue::Map(language) = envelope.get_mut("core").expect("core") else {
+                panic!("map core")
+            };
+            let RhoValue::Map(grammar) = language.get_mut("grammar").expect("grammar") else {
+                panic!("map grammar")
+            };
+            match field {
+                "authored_bindings" => {
+                    assert!(grammar.remove(field).is_some());
+                },
+                "declarations" => {
+                    let RhoValue::Map(store) = grammar.get_mut("authored").expect("store") else {
+                        panic!("map store")
+                    };
+                    assert!(store.remove(field).is_some());
+                },
+                _ => {
+                    let RhoValue::Map(bindings) =
+                        grammar.get_mut("authored_bindings").expect("bindings")
+                    else {
+                        panic!("map bindings")
+                    };
+                    let RhoValue::List(tokens) = bindings.get_mut("tokens").expect("tokens") else {
+                        panic!("token list")
+                    };
+                    let RhoValue::Map(token) = &mut tokens[0] else {
+                        panic!("token map")
+                    };
+                    assert!(token.remove(field).is_some());
+                },
+            }
+            let error =
+                decode_language_core_value(&value).expect_err("missing required option must fail");
+            assert!(error.message.contains(&format!("missing field `{field}`")), "{error:?}");
+        }
+    }
+
+    #[test]
     fn authored_transport_structural_arm_requires_explicit_source_availability_fields() {
         for retained in [false, true] {
             for remove_store in [false, true] {
@@ -746,6 +835,7 @@ mod tests {
             LANGUAGE_CORE_VALUE_SCHEMA_V2,
             LANGUAGE_CORE_VALUE_SCHEMA_V3,
             LANGUAGE_CORE_VALUE_SCHEMA_V4,
+            LANGUAGE_CORE_VALUE_SCHEMA_V5,
         ] {
             let mut old_schema = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_schema else {
@@ -774,7 +864,8 @@ mod tests {
             assert!(error.message.contains("UnsupportedLanguageAbi"));
         }
 
-        for abi in [core::GRAMMAR_CORE_ABI_V1, core::GRAMMAR_CORE_ABI_V2] {
+        for abi in [core::GRAMMAR_CORE_ABI_V1, core::GRAMMAR_CORE_ABI_V2, core::GRAMMAR_CORE_ABI_V3]
+        {
             let mut old_grammar = language_core_to_value(&comprehensive_language()).unwrap();
             let RhoValue::Map(envelope) = &mut old_grammar else {
                 unreachable!()

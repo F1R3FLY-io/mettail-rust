@@ -10,12 +10,19 @@
 //! I=R+E+Q uses the existing canonical item cap. This conservative retained
 //! domain is not claimed identical to canonical input admission. Copies are
 //! prepaid; Finish moves strings/remaps IDs without charging content again.
+//! Judgement compatibility items use the original shared context converter.
+//! Its aggregate W charges visits/frames/items once and bindings twice, so
+//! I=R+E+Q+W also bounds this finite occurrence work (not instruction count).
 //! Bounds describe logical lengths, not allocator capacities or physical RSS.
 
 use super::{BnfNode, Param, SyntaxNode, TermBody, TermDecl, TypeExpr};
 use crate::canonical::{
     account_canonical_string, ValueDecodeError, MAX_CANONICAL_COLLECTION_ITEMS,
     MAX_CANONICAL_VALUE_NODES,
+};
+use mettail_grammar_core::context_items::{
+    try_convert_term_context_to_items_with, ContextItemsError, ContextItemsEvent,
+    ContextItemsReader,
 };
 use mettail_grammar_core::*;
 use std::cell::RefCell;
@@ -49,6 +56,7 @@ struct Budget {
     edges: usize,
     slots: usize,
     strings: usize,
+    context_work: usize,
 }
 
 impl Budget {
@@ -63,7 +71,7 @@ impl Budget {
         let nodes = add(self.nodes, 1)?;
         let edges = add(self.edges, edges)?;
         let slots = add(self.slots, slots)?;
-        let items = add(add(self.roots, edges)?, slots)?;
+        let items = add(add(add(self.roots, edges)?, slots)?, self.context_work)?;
         if nodes > MAX_CANONICAL_VALUE_NODES || items > MAX_CANONICAL_COLLECTION_ITEMS {
             return Err(failure("authored capture exceeds canonical node/item limits"));
         }
@@ -75,6 +83,33 @@ impl Budget {
 
     fn string(&mut self, value: &str) -> Result<(), ValueDecodeError> {
         account_canonical_string(value, &mut self.strings)
+    }
+
+    /// Same-loop admission; generated item edges/slots are not another node.
+    fn context_event(
+        &mut self,
+        event: ContextItemsEvent<&String, CollectionKind>,
+    ) -> Result<(), ValueDecodeError> {
+        let (work, item, separator) = match event {
+            ContextItemsEvent::VisitParameter | ContextItemsEvent::EnterOptional => (1, 0, None),
+            ContextItemsEvent::Nonterminal(_) | ContextItemsEvent::Binder(_) => (1, 1, None),
+            ContextItemsEvent::Collection { separator, .. } => (1, 1, Some(separator)),
+            ContextItemsEvent::Binding => (2, 0, None),
+        };
+        let work = add(self.context_work, work)?;
+        let edges = add(self.edges, item)?;
+        let slots = add(self.slots, item)?;
+        let items = add(add(add(self.roots, edges)?, slots)?, work)?;
+        if self.nodes > MAX_CANONICAL_VALUE_NODES || items > MAX_CANONICAL_COLLECTION_ITEMS {
+            return Err(failure("authored context conversion exceeds canonical node/item limits"));
+        }
+        if let Some(separator) = separator {
+            self.string(separator)?;
+        }
+        self.context_work = work;
+        self.edges = edges;
+        self.slots = slots;
+        Ok(())
     }
 
     fn phase<H, K>(
@@ -118,7 +153,132 @@ fn context(rule: &TermDecl) -> Option<&Vec<Param>> {
     }
 }
 
+/// Shallow observations of decoded schema values for the ORIGINAL converter.
+/// Name equality is schema string equality; no identifier reconstruction.
+struct SchemaContextItemsReader;
+
+impl<'a> TermParamReader<'a> for SchemaContextItemsReader {
+    type Parameters = &'a [Param];
+    type Param = &'a Param;
+    type Name = &'a String;
+    type Type = &'a TypeExpr;
+
+    fn params_len(&self, params: Self::Parameters) -> usize {
+        params.len()
+    }
+
+    fn param_at(&self, params: Self::Parameters, index: usize) -> Option<Self::Param> {
+        params.get(index)
+    }
+
+    fn param(
+        &self,
+        param: Self::Param,
+    ) -> TermParamObservation<Self::Name, Self::Parameters, Self::Type> {
+        match param {
+            Param::Plain { name, ty } => TermParamObservation::Simple { name, ty },
+            Param::Guard(name) => TermParamObservation::GuardBody { name },
+            Param::Optional(params) => TermParamObservation::Optional { params },
+            Param::Binder { binder, body, ty, multiple: false } => {
+                TermParamObservation::Abstraction { binder, body, ty }
+            },
+            Param::Binder { binder, body, ty, multiple: true } => {
+                TermParamObservation::MultiAbstraction { binder, body, ty }
+            },
+        }
+    }
+}
+
+impl<'a> ContextItemsReader<'a> for SchemaContextItemsReader {
+    type CollectionKind = CollectionKind;
+    type Item = AuthoredLegacyItem<Handle<'a>>;
+
+    fn base_name(&self, ty: Self::Type) -> Option<Self::Name> {
+        match ty {
+            TypeExpr::Base(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn collection(&self, ty: Self::Type) -> Option<(Self::CollectionKind, Self::Type)> {
+        match ty {
+            TypeExpr::Collection(kind, element, None) => Some((*kind, element)),
+            _ => None,
+        }
+    }
+
+    fn map(&self, ty: Self::Type) -> Option<(Self::Type, Self::Type)> {
+        match ty {
+            TypeExpr::Collection(CollectionKind::Map, key, Some(value)) => Some((key, value)),
+            _ => None,
+        }
+    }
+
+    fn arrow(&self, ty: Self::Type) -> Option<(Self::Type, Self::Type)> {
+        match ty {
+            TypeExpr::Arrow(domain, codomain) => Some((domain, codomain)),
+            _ => None,
+        }
+    }
+
+    fn multi_binder(&self, ty: Self::Type) -> Option<Self::Type> {
+        match ty {
+            TypeExpr::Multi(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    fn names_equal(&self, left: Self::Name, right: Self::Name) -> bool {
+        left == right
+    }
+    fn hash_map_kind(&self) -> Self::CollectionKind {
+        CollectionKind::Map
+    }
+    fn make_nonterminal(&self, value: Self::Name) -> Self::Item {
+        AuthoredLegacyItem::NonTerminal {
+            ident: name(value),
+            kind: NonTerminalKind::classify(value),
+        }
+    }
+    fn make_binder(&self, value: Self::Name) -> Self::Item {
+        AuthoredLegacyItem::Binder { category: name(value) }
+    }
+    fn make_collection(
+        &self,
+        kind: Self::CollectionKind,
+        element: Self::Name,
+        separator: &'static str,
+    ) -> Self::Item {
+        AuthoredLegacyItem::Collection {
+            kind,
+            element: name(element),
+            separator: separator.to_owned(),
+            open: None,
+            close: None,
+        }
+    }
+}
+
 impl Source<'_, '_> {
+    fn context_items<'a>(
+        &self,
+        params: &'a [Param],
+    ) -> Result<Vec<AuthoredLegacyItem<Handle<'a>>>, ValueDecodeError> {
+        let (items, _bindings) =
+            try_convert_term_context_to_items_with(&SchemaContextItemsReader, params, |event| {
+                self.budget.borrow_mut().context_event(event)
+            })
+            .map_err(|error| match error {
+                ContextItemsError::Admission(error) => error,
+                ContextItemsError::Allocation => {
+                    failure("authored context conversion allocation failed")
+                },
+            })?;
+        // Bindings are constructed and paid at the original callback sites.
+        // This capture projection retains only items, not GrammarRule.bindings.
+        Ok(items)
+    }
+
     /// No temporary edge roster or owned payload is constructed in this pass.
     fn precharge(&self, handle: Handle<'_>) -> Result<(), ValueDecodeError> {
         let mut budget = self.budget.borrow_mut();
@@ -135,8 +295,8 @@ impl Source<'_, '_> {
             Handle::Params(values) => (values.len(), values.len()),
             Handle::Type(ty) => (
                 match ty {
-                    TypeExpr::Base(_) | TypeExpr::Arrow(_, _) => 1,
-                    TypeExpr::Multi(_) => 0,
+                    TypeExpr::Base(_) | TypeExpr::Multi(_) => 1,
+                    TypeExpr::Arrow(_, _) => 2,
                     TypeExpr::Collection(_, _, value) => 1 + usize::from(value.is_some()),
                 },
                 0,
@@ -263,10 +423,13 @@ impl<'a> AuthoredCaptureSource for Source<'a, '_> {
             ),
             Handle::Type(ty) => AuthoredNode::Type(match ty {
                 TypeExpr::Base(value) => AuthoredType::Base(name(value)),
-                TypeExpr::Arrow(_, codomain) => AuthoredType::Arrow {
+                TypeExpr::Arrow(domain, codomain) => AuthoredType::Arrow {
+                    domain: AuthoredTypeId(Handle::Type(domain)),
                     codomain: AuthoredTypeId(Handle::Type(codomain)),
                 },
-                TypeExpr::Multi(_) => AuthoredType::Unsupported { tag: 0 },
+                TypeExpr::Multi(inner) => AuthoredType::MultiBinder {
+                    inner: AuthoredTypeId(Handle::Type(inner)),
+                },
                 TypeExpr::Collection(kind, key, value) => match (kind, value) {
                     (CollectionKind::Map, Some(value)) => AuthoredType::Map {
                         key: AuthoredTypeId(Handle::Type(key)),
@@ -364,7 +527,7 @@ impl<'a> AuthoredCaptureSource for Source<'a, '_> {
                     TermBody::Bnf(_) => None,
                 },
                 items: match &rule.body {
-                    TermBody::Judgement(_) => Vec::new(),
+                    TermBody::Judgement(_) => self.context_items(&rule.context)?,
                     TermBody::Bnf(items) => items
                         .iter()
                         .map(|item| match item {
@@ -451,6 +614,246 @@ mod tests {
             panic!("name")
         };
         name
+    }
+
+    fn base(value: &str) -> TypeExpr {
+        TypeExpr::Base(value.to_owned())
+    }
+
+    fn plain(ty: TypeExpr) -> Param {
+        Param::Plain { name: "value".into(), ty }
+    }
+
+    fn binder(domain: TypeExpr, body_type: TypeExpr, multiple: bool) -> Param {
+        Param::Binder {
+            binder: "binder".into(),
+            body: "body".into(),
+            ty: TypeExpr::Arrow(Box::new(domain), Box::new(body_type)),
+            multiple,
+        }
+    }
+
+    fn borrowed_name<'a>(id: &AuthoredNameId<Handle<'a>>) -> &'a str {
+        let Handle::Name(value) = id.0 else {
+            panic!("context items retain their original borrowed name")
+        };
+        value
+    }
+
+    #[test]
+    fn context_items_use_original_top_level_optional_map_and_binding_rules() {
+        let params = vec![
+            plain(base("Var")),
+            plain(TypeExpr::Collection(CollectionKind::Bag, Box::new(base("Elem")), None)),
+            plain(TypeExpr::Collection(
+                CollectionKind::Map,
+                Box::new(base("Elem")),
+                Some(Box::new(base("Elem"))),
+            )),
+            plain(TypeExpr::Collection(
+                CollectionKind::Map,
+                Box::new(base("Elem")),
+                Some(Box::new(base("Other"))),
+            )),
+            binder(base("Domain"), base("Result"), false),
+            binder(TypeExpr::Multi(Box::new(base("Many"))), base("MultiResult"), true),
+            binder(
+                TypeExpr::Multi(Box::new(base("NotBase"))),
+                TypeExpr::Multi(Box::new(base("NotBody"))),
+                false,
+            ),
+            Param::Optional(vec![
+                binder(base("IgnoredDomain"), base("OptionalResult"), false),
+                binder(base("NotMulti"), base("OptionalMultiResult"), true),
+                Param::Optional(vec![Param::Guard("guard".into()), plain(base("Ident"))]),
+            ]),
+        ];
+        let budget = RefCell::new(Budget::default());
+        let mut events = Vec::new();
+        let (items, bindings) =
+            try_convert_term_context_to_items_with(&SchemaContextItemsReader, &params, |event| {
+                events.push(match event {
+                    ContextItemsEvent::VisitParameter => "visit",
+                    ContextItemsEvent::EnterOptional => "optional",
+                    ContextItemsEvent::Binding => "binding",
+                    _ => "item",
+                });
+                budget.borrow_mut().context_event(event)
+            })
+            .expect("original context conversion accepts supported shallow schema observations");
+        let observations: Vec<_> = items
+            .iter()
+            .map(|item| match item {
+                AuthoredLegacyItem::NonTerminal { ident, .. } => ("nt", borrowed_name(ident)),
+                AuthoredLegacyItem::Binder { category } => ("binder", borrowed_name(category)),
+                AuthoredLegacyItem::Collection { element, .. } => {
+                    ("collection", borrowed_name(element))
+                },
+                AuthoredLegacyItem::Terminal(_) => {
+                    panic!("context converter never invents terminals")
+                },
+            })
+            .collect();
+        assert_eq!(
+            observations,
+            [
+                ("nt", "Var"),
+                ("collection", "Elem"),
+                ("collection", "Elem"),
+                ("binder", "Domain"),
+                ("nt", "Result"),
+                ("binder", "Many"),
+                ("nt", "MultiResult"),
+                ("nt", "OptionalResult"),
+                ("nt", "OptionalMultiResult"),
+                ("nt", "Ident"),
+            ]
+        );
+        assert!(matches!(
+            items[0],
+            AuthoredLegacyItem::NonTerminal { kind: NonTerminalKind::Var, .. }
+        ));
+        assert!(matches!(
+            items[9],
+            AuthoredLegacyItem::NonTerminal { kind: NonTerminalKind::Ident, .. }
+        ));
+        for (index, kind, expected) in
+            [(1, CollectionKind::Bag, "|"), (2, CollectionKind::Map, ",")]
+        {
+            assert!(matches!(&items[index],
+                AuthoredLegacyItem::Collection { kind: actual, separator, open: None, close: None, .. }
+                    if *actual == kind && separator == expected));
+        }
+        assert_eq!(bindings, [(3, vec![4]), (5, vec![6]), (7, vec![7])]);
+        assert_eq!(events.iter().filter(|&&event| event == "binding").count(), 3);
+        assert_eq!(events.iter().filter(|&&event| event == "optional").count(), 2);
+        let budget = budget.borrow();
+        assert_eq!((budget.nodes, budget.edges, budget.slots, budget.strings), (0, 10, 10, 2));
+        assert_eq!(
+            budget.context_work,
+            events.len() + 3,
+            "each binding costs two, all other callbacks one"
+        );
+    }
+
+    #[test]
+    fn context_items_admission_counts_exact_content_and_aggregate_occurrences() {
+        let original = "Original".to_owned();
+        let mut budget = Budget {
+            nodes: 9,
+            context_work: MAX_CANONICAL_COLLECTION_ITEMS - 3,
+            ..Budget::default()
+        };
+        budget
+            .context_event(ContextItemsEvent::Nonterminal(&original))
+            .expect("one item edge, slot and event exactly fit");
+        assert_eq!((budget.nodes, budget.edges, budget.slots, budget.strings), (9, 1, 1, 0));
+        assert!(budget
+            .context_event(ContextItemsEvent::VisitParameter)
+            .is_err());
+        assert_eq!(budget.context_work, MAX_CANONICAL_COLLECTION_ITEMS - 2);
+
+        let budget = RefCell::new(Budget {
+            context_work: MAX_CANONICAL_COLLECTION_ITEMS - 2,
+            ..Budget::default()
+        });
+        let source = Source { _rules: &[], budget: &budget };
+        let params = [Param::Guard("g".into())];
+        assert!(source
+            .context_items(&params)
+            .expect("first rule visit fits")
+            .is_empty());
+        assert!(source
+            .context_items(&params)
+            .expect("second rule visit fits")
+            .is_empty());
+        assert!(
+            source.context_items(&params).is_err(),
+            "third rule does not reset aggregate work"
+        );
+        assert_eq!(budget.borrow().context_work, MAX_CANONICAL_COLLECTION_ITEMS);
+    }
+
+    #[test]
+    fn context_items_separator_refusal_stops_before_item_and_suffix() {
+        let params = [
+            plain(TypeExpr::Collection(CollectionKind::List, Box::new(base("Elem")), None)),
+            plain(base("NeverVisited")),
+        ];
+        let budget = RefCell::new(Budget {
+            strings: crate::canonical::MAX_CANONICAL_TOTAL_STRING_BYTES,
+            ..Budget::default()
+        });
+        let mut callbacks = 0;
+        let result =
+            try_convert_term_context_to_items_with(&SchemaContextItemsReader, &params, |event| {
+                callbacks += 1;
+                budget.borrow_mut().context_event(event)
+            });
+        assert!(matches!(result, Err(ContextItemsError::Admission(_))));
+        assert_eq!(callbacks, 2, "visit then collection refusal, no later parameter");
+        let budget = budget.borrow();
+        assert_eq!((budget.nodes, budget.edges, budget.slots, budget.context_work), (0, 0, 0, 1));
+        assert_eq!(
+            budget.strings,
+            crate::canonical::MAX_CANONICAL_TOTAL_STRING_BYTES + 1,
+            "original string helper retains its private aggregate assignment on refusal"
+        );
+    }
+
+    #[test]
+    fn judgement_items_derive_once_but_bnf_items_and_presence_are_unchanged() {
+        let rules = [
+            term(Some(vec![plain(base("Ident"))]), TermBody::Judgement(vec![])),
+            term(
+                Some(vec![plain(base("IgnoredContextItem"))]),
+                TermBody::Bnf(vec![BnfNode::Literal("bnf".into())]),
+            ),
+            term(None, TermBody::Judgement(vec![])),
+            term(None, TermBody::Bnf(vec![])),
+        ];
+        let captured =
+            capture(&rules).expect("original body-form context observations remain capturable");
+        let first = rule(&captured.store, captured.roots[0]);
+        assert_eq!(first.items.len(), 1);
+        let AuthoredLegacyItem::NonTerminal { ident, kind } = &first.items[0] else {
+            panic!("judgement context emits the original nonterminal item")
+        };
+        assert_eq!(
+            (*kind, named(&captured.store, *ident).spelling.as_str()),
+            (NonTerminalKind::Ident, "Ident")
+        );
+        let bnf = rule(&captured.store, captured.roots[1]);
+        assert!(bnf.term_context.is_some());
+        assert!(matches!(&bnf.items[..], [AuthoredLegacyItem::Terminal(text)] if text == "bnf"));
+        assert!(rule(&captured.store, captured.roots[2])
+            .term_context
+            .is_some());
+        assert!(rule(&captured.store, captured.roots[2]).items.is_empty());
+        assert!(rule(&captured.store, captured.roots[3])
+            .term_context
+            .is_none());
+    }
+
+    #[test]
+    fn context_items_deep_optional_conversion_and_capture_use_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                let mut nested = plain(base("Leaf"));
+                for _ in 0..10_000 {
+                    nested = Param::Optional(vec![nested]);
+                }
+                let rules = [term(Some(vec![nested]), TermBody::Judgement(vec![]))];
+                let captured = capture(&rules)
+                    .expect("original optional frame loop and capture remain stack safe");
+                assert_eq!(rule(&captured.store, captured.roots[0]).items.len(), 1);
+                drop(captured);
+                drop(rules);
+            })
+            .expect("spawn small-stack schema context test")
+            .join()
+            .expect("context conversion and source/capture cleanup remain stack safe");
     }
     fn syntax(store: &AuthoredRuleStore, rule_id: u32) -> &[AuthoredSyntax] {
         let id = rule(store, rule_id)
@@ -560,12 +963,22 @@ mod tests {
         };
         assert_eq!(named(&c.store, *binder).spelling, "b");
         assert_eq!(named(&c.store, *body).spelling, "body");
-        assert!(matches!(node(&c.store, ty.0), AuthoredNode::Type(AuthoredType::Arrow { .. })));
+        let AuthoredNode::Type(AuthoredType::Arrow { domain, codomain }) = node(&c.store, ty.0)
+        else {
+            panic!("the original arrow retains both children")
+        };
+        for (id, expected) in [(*domain, "Domain"), (*codomain, "Result")] {
+            let AuthoredNode::Type(AuthoredType::Base(name)) = node(&c.store, id.0) else {
+                panic!("arrow child retains its original base observation")
+            };
+            assert_eq!(named(&c.store, *name).spelling, expected);
+        }
         assert!((0..c.store.len() as u32).any(|id| matches!(
             node(&c.store, id),
-            AuthoredNode::Type(AuthoredType::Unsupported { tag: 0 })
+            AuthoredNode::Type(AuthoredType::MultiBinder { inner })
+                if matches!(node(&c.store, inner.0), AuthoredNode::Type(AuthoredType::Base(name))
+                    if named(&c.store, *name).spelling == "Hidden")
         )));
-        assert!(!(0..c.store.len() as u32).any(|id| matches!(node(&c.store, id), AuthoredNode::Name(name) if name.spelling == "Domain" || name.spelling == "Hidden")));
     }
 
     #[test]
@@ -683,7 +1096,16 @@ mod tests {
     #[test]
     fn prepaid_counts_equal_owned_observations_without_finish_recharge() {
         let rules = [term(
-            Some(vec![Param::Optional(vec![Param::Guard("g".into())])]),
+            Some(vec![Param::Optional(vec![
+                Param::Guard("g".into()),
+                Param::Plain {
+                    name: "function".into(),
+                    ty: TypeExpr::Arrow(
+                        Box::new(TypeExpr::Multi(Box::new(TypeExpr::Base("Domain".into())))),
+                        Box::new(TypeExpr::Base("Result".into())),
+                    ),
+                },
+            ])]),
             TermBody::Judgement(vec![
                 SyntaxNode::Literal("lit".into()),
                 SyntaxNode::Token {
@@ -727,7 +1149,17 @@ mod tests {
                         }
                     }
                 },
-                AuthoredNode::Rule(rule) => slots += rule.items.len(),
+                AuthoredNode::Rule(rule) => {
+                    slots += rule.items.len();
+                    for item in &rule.items {
+                        if let AuthoredLegacyItem::Collection { separator, open, close, .. } = item
+                        {
+                            strings += separator.len();
+                            strings += open.as_ref().map_or(0, String::len);
+                            strings += close.as_ref().map_or(0, String::len);
+                        }
+                    }
+                },
                 _ => {},
             }
         }

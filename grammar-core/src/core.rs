@@ -1,6 +1,7 @@
 use crate::{
-    AuthoredNode, AuthoredRuleId, AuthoredRuleStore, AuthoredStoreError, CanonicalValue,
-    NativeEvaluation, ReductionPlan, SemanticProgram, WeightProfile,
+    AuthoredBindingError, AuthoredDeclarationBindings, AuthoredNode, AuthoredRuleId,
+    AuthoredRuleStore, AuthoredStoreError, CanonicalValue, NativeEvaluation, ReductionPlan,
+    SemanticProgram, WeightProfile,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,7 +9,7 @@ use std::sync::Arc;
 
 // A present null records unavailability. A missing field is an old/incomplete
 // representation and must not acquire that meaning through Serde's Option default.
-fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(crate) fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
@@ -44,7 +45,8 @@ id_type!(ConstructorId);
 pub const GRAMMAR_CORE_ABI_V1: u16 = 1;
 pub const GRAMMAR_CORE_ABI_V2: u16 = 2;
 pub const GRAMMAR_CORE_ABI_V3: u16 = 3;
-pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V3;
+pub const GRAMMAR_CORE_ABI_V4: u16 = 4;
+pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V4;
 
 /// A source rule retained with its immutable arena owner during frontend
 /// transport. Arena allocation identity is deliberately distinct from equality
@@ -68,6 +70,9 @@ pub struct GrammarCoreV1 {
     /// Authored observations, when available. Absence is not an empty source.
     #[serde(deserialize_with = "required_option")]
     pub authored: Option<AuthoredRuleStore>,
+    /// Final execution IDs for the immutable source declaration header.
+    #[serde(deserialize_with = "required_option")]
+    pub authored_bindings: Option<AuthoredDeclarationBindings>,
     pub reductions: Vec<ReductionPlan>,
     pub semantic_dependencies: Vec<Vec<ConstructorId>>,
     pub semantic_program: SemanticProgram,
@@ -99,6 +104,7 @@ impl GrammarCoreV1 {
             }],
             productions: Vec::new(),
             authored: None,
+            authored_bindings: None,
             reductions: Vec::new(),
             semantic_dependencies: Vec::new(),
             semantic_program: SemanticProgram::default(),
@@ -156,7 +162,7 @@ impl GrammarCoreV1 {
         }
         let bytes = postcard::to_allocvec(&semantic)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-grammar-core/3\0");
+        hasher.update(b"mettail-grammar-core/4\0");
         hasher.update(&bytes);
         Ok(*hasher.finalize().as_bytes())
     }
@@ -170,6 +176,24 @@ impl GrammarCoreV1 {
             if let Err(error) = store.validate() {
                 errors.push(ValidationError::InvalidAuthoredStore(error));
             }
+        }
+        match (
+            self.authored
+                .as_ref()
+                .and_then(AuthoredRuleStore::declarations),
+            self.authored_bindings.as_ref(),
+        ) {
+            (None, None) => {},
+            (Some(_), Some(bindings)) => {
+                if let Some(store) = self.authored.as_ref() {
+                    if let Err(error) = bindings.validate(store, self) {
+                        errors.push(ValidationError::InvalidAuthoredBindings(error));
+                    }
+                }
+            },
+            _ => errors.push(ValidationError::InvalidAuthoredBindings(
+                AuthoredBindingError::PresenceMismatch,
+            )),
         }
         validate_dense_ids(&self.categories, |x| x.id.0, Entity::Category, &mut errors);
         validate_dense_ids(&self.tokens, |x| x.id.0, Entity::Token, &mut errors);
@@ -1191,6 +1215,7 @@ pub enum Entity {
 pub enum ValidationError {
     UnsupportedAbi(u16),
     InvalidAuthoredStore(AuthoredStoreError),
+    InvalidAuthoredBindings(AuthoredBindingError),
     InvalidAuthoredRule {
         production: u32,
         rule: u32,

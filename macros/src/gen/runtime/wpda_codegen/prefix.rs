@@ -12,7 +12,6 @@
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
 use mettail_ast::language::{LanguageDef, NativeKind, NativeKindFromSynType};
-use mettail_prattail::binding_power::compute_prefix_bp;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, Type};
@@ -602,8 +601,52 @@ impl<'source>
     }
 }
 
+impl<'source>
+    mettail_prattail::wpda_rule_analysis::prefix_bucket::PrefixBucketContext<
+        'source,
+        super::binder::MacroBinderSyntaxReader,
+    > for MacroFirstSetContext<'source>
+{
+    fn infix(
+        &mut self,
+        rule: &'source GrammarRule,
+    ) -> Option<mettail_prattail::binding_power::InfixRuleInfo> {
+        super::infix::classify_rule_public(rule)
+    }
+
+    fn category_names(&mut self) -> Vec<String> {
+        super::collect_category_names_with_literals(self.language)
+    }
+
+    fn binding_power_table(&mut self) -> mettail_prattail::binding_power::BindingPowerTable {
+        super::infix::build_bp_table(self.language)
+    }
+
+    fn explicit_prefix_bp(&self, rule: &'source GrammarRule) -> Option<u8> {
+        rule.prefix_bp
+    }
+
+    fn binder_shape(&mut self, rule: &'source GrammarRule) -> Option<super::binder::BinderShape> {
+        super::binder::classify_binder_in(rule, self.language)
+    }
+
+    fn atomic_rows(
+        &mut self,
+        category_src_idx: u16,
+        rule_idx: u16,
+        shape: &mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor<AtomicShape>,
+    ) -> Vec<PrefixArmDescriptor> {
+        atomic_arm_descriptors(category_src_idx, rule_idx, shape)
+    }
+
+    fn nested_guest_openers(&mut self, open: &str) -> Vec<String> {
+        super::guest_body_nested_open_kinds(self.language, open)
+    }
+}
+
 /// Direct leading literals through the original shared worker. Present syntax
 /// suppresses legacy fallback even when empty or not literal-led.
+#[cfg(test)]
 fn category_leading_literals(
     cat_name: &str,
     language: &LanguageDef,
@@ -1155,6 +1198,7 @@ fn literal_family_for(kind: &NativeKind) -> Option<LiteralFamily> {
 /// `Ident` token — where the `Ident` is ONLY a var-contribution of `source`
 /// (the source cannot begin with a LITERAL Ident) — is a proven over-generation
 /// (it duplicates the home var reading via a spurious ∅-realizing cast path).
+#[cfg(test)]
 fn result_has_home_var_reading(cat_name: &str, language: &LanguageDef) -> bool {
     mettail_prattail::wpda_rule_analysis::prefix::result_has_home_var_reading(
         cat_name,
@@ -1243,386 +1287,16 @@ pub fn emit_prefix_arms_for_category(
     // c{cat}_a{ord}(..)`), `helpers` are the per-arm `#[inline(never)]` body
     // methods that get emitted into the sibling inherent `impl #engine_ident`.
 ) -> (Vec<TokenStream>, TokenStream) {
-    use mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor;
     let mut arms = Vec::new();
-    // Stage 1.2: cross-cat infix LHS delegation. Walk all infix rules
-    // (not just rules in this category) whose result_cat == this category
-    // and operand_cat ≠ this category. For each, emit FIRST(operand_cat)
-    // arms in this category's PrefixDispatch that push CategoryEntry(operand_cat)
-    // for the LHS sub-parse. After the LHS Int returns, InfixLoop on operand
-    // sees the operator + cross-cat infix, ConsumeAndPush(Return for cross-cat
-    // rule) → CrossCatDelegate for the RHS.
-    let mut cross_cat_infix_sources: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-    for rule in &language.terms {
-        if rule.category.to_string() != category_name {
-            continue;
-        }
-        if let Some(info) = super::infix::classify_rule_public(rule) {
-            if info.is_cross_category && info.category != info.result_category {
-                cross_cat_infix_sources.insert(info.category.clone());
-            }
-        }
-    }
-    let categories = super::collect_category_names_with_literals(language);
-    let bp_table = super::infix::build_bp_table(language);
-    // B4 fix (2026-05-07): cross-cat infix LHS delegation with
-    // bucket-then-Fork emission. Pre-fix the per-source loop emitted
-    // duplicate Rust match arms with identical (pat, guard) keys when
-    // multiple source categories shared a FIRST token (e.g.
-    // `TokenKind::Ident` from auto-injected Var rules in
-    // Bool/Fixed/Float/Int/Str). Rust's first-match-wins meant only the
-    // alphabetically-first source's arm fired; arms for other sources
-    // were dead code. For shipped Calculator with cross-cat-Ident
-    // delegation across 4+ sources, this trapped the LHS sub-parse in
-    // the FIRST source's grammar regardless of which the input intended,
-    // cascading via Commit D's recovery rewire into "winner committed
-    // but builder result was empty" failures (58 Calculator tests).
-    //
-    // Fix: bucket by (pat, guard) and emit:
-    //   - Single-source bucket → Push (byte-identical to pre-fix).
-    //   - Multi-source bucket → Fork over branches with one source each,
-    //     using lex_w(0.0, category, src_idx) so
-    //     source-order tiebreak (rule_idx slot = src_idx) selects deterministically
-    //     while genuine forward-progress lex-min selects the live cursor
-    //     across the parse — per `feedback_use_wpds_disambiguation_not_heuristics.md`.
-    //
-    // The per-cursor sub-parse fanout is bounded: only the cursor whose
-    // source category actually matches the input survives; siblings die
-    // via PrefixDispatch dead-end (their guarded recovery is bounded by
-    // Commit D's max_recovery_depth + visited_recovery checks).
-    // B7 (2026-05-07): unified bucket for cross-cat-LHS (Pass 0) +
-    // atomic-shape (Pass 1) descriptors. Keying on `(pat, guard)`, a
-    // bucket may contain a mix of CrossCatLhs and Atomic descriptors.
-    // Singleton buckets emit byte-identical to the pre-B7 path; mixed
-    // buckets emit a Fork with weights:
-    //   - Atomic-home tier=0.0
-    //   - Cross-cat-LHS tier=BP_TIER_CROSSCAT_LHS (0.05)
-    // so lex-min picks atomic-home on parse-success ties and cross-cat
-    // when only that branch survives. Per
-    // `feedback_use_wpds_disambiguation_not_heuristics.md`. Eliminates
-    // the silent-shadowing bug where Pass 0's cross-cat-LHS arm killed
-    // Pass 1's home-cat atomic arm by Rust's first-match-wins semantics
-    // when both shared a (pat, guard) key (e.g. `Some(Ident) if state==Proc`
-    // shared by POutput's Name LHS delegation and PVar's atomic arm).
-    let mut sorted_sources: Vec<&String> = cross_cat_infix_sources.iter().collect();
-    sorted_sources.sort();
-    let mut unified_buckets: std::collections::BTreeMap<(String, String), UnifiedBucket> =
-        std::collections::BTreeMap::new();
-    let mut unified_order: Vec<(String, String)> = Vec::new();
-    // AT_QUOTED_BIND_GATE (2026-07-03): leading structural literals of THIS
-    // (result) category's rules — the direct sigil-/keyword-triggered rules.
-    // A cross-cat-LHS delegate on a sigil that is ALSO in this set is the
-    // proven over-generation (a direct sigil-rule subsumes it). Computed once.
-    let result_leading_literals = category_leading_literals(category_name, language);
-    for source_cat_name in &sorted_sources {
-        let source_src_idx = categories
-            .iter()
-            .position(|c| c == *source_cat_name)
-            .map(|i| i as u16)
-            .unwrap_or(0);
-        let first_set = first_set_of_category(source_cat_name, language);
-        for ft in first_set {
-            // AT_QUOTED_BIND_GATE: this delegate's dispatch token is a leading
-            // structural literal `σ` (Some) that ALSO directly triggers a
-            // sibling rule in the result category ⇒ over-generation. `None`
-            // (Ident / native-literal FIRST tokens) ⇒ never over-generating.
-            let sigil_leads_result_rule = ft
-                .leading_literal
-                .as_ref()
-                .map(|lit| result_leading_literals.contains(lit))
-                .unwrap_or(false);
-            let pat_str = ft.pattern.to_string();
-            let guard_str = ft
-                .extra_guard
-                .as_ref()
-                .map(|g| g.to_string())
-                .unwrap_or_default();
-            let key = (pat_str, guard_str);
-            if !unified_buckets.contains_key(&key) {
-                unified_order.push(key.clone());
-            }
-            let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
-                pat: ft.pattern.clone(),
-                extra_guard: ft.extra_guard.clone(),
-                descs: Vec::new(),
-            });
-            entry
-                .descs
-                .push(UnifiedDescriptor::CrossCatLhs { source_src_idx, sigil_leads_result_rule });
-        }
-    }
-    // B11 fix (2026-04-28): two-pass emission. Pass 1 emits ALL atomic-shape
-    // arms across all rules; Pass 2 emits ALL cross-cat-projection arms.
-    // The previous interleaved per-rule emission (atomic + cross-cat together,
-    // in source order) caused IntToBigInt's bare-Integer cross-cat arm
-    // (rule_idx=1 in BigInt) to fire BEFORE NumLit's bare-Integer atomic arm
-    // (synthetic rule_idx=9), routing unsuffixed integers through Int via
-    // cross-cat instead of letting BigInt's NumLit consume them directly.
-    // With two passes, atomic arms always precede cross-cat arms in the
-    // generated match, so the home-category bare-Integer arm wins by
-    // first-match-wins semantics. Rule_idx is preserved (no per_cat
-    // reordering), so generated WPDA_RULES tables and stack-symbol payloads
-    // remain unchanged.
-    //
-    // F8 fix (2026-04-28): cross-cat projection emission was per-rule with
-    // an `IntSuffix::from_text` runtime guard heuristic. Post-B11 (which
-    // excludes bare-Integer arms from FirstSet ctx), the `is_bare_integer`
-    // branch became dead code. F8 replaces it with bucket-then-Fork: collect
-    // all projections, bucket by (pattern, extra_guard), emit Push for
-    // single-projection buckets, Fork for multi-projection buckets. Cross-cat
-    // ambiguity (e.g., ProcInt + ProcBigInt both accepting `IntegerLit("Int")`
-    // via BigInt's transitive FIRST chain) is resolved by lex-min over
-    // `from_cost(0.0, src, rule_idx)` — preserves source-order tiebreak.
-
-    // B7 (2026-05-07): home prefix descriptors fold into the SAME unified
-    // bucket map as cross-cat-LHS sources above. When a (pat, guard) key
-    // appears in BOTH cross-cat-LHS and a home prefix alternative, the bucket
-    // emits a Fork mixing both branch kinds with the per-tier weights
-    // documented above. When only one kind appears, emission is byte-identical
-    // to pre-B7.
-    //
-    // G-PREFIX-AMB (2026-06-19): same-category binder/prefix rules are part of
-    // this same bucket. They used to be emitted by `binder.rs` before
-    // `all_prefix_arms`, which made Rust first-match-wins discard transparent
-    // projection alternatives sharing the same trigger (for example
-    // `UInt32::BitNotUInt32` shadowing `UInt32::BoolToUInt32` on `bitnot`).
-    // Keeping every literal-start alternative in one bucket preserves the
-    // ambiguity until runtime evidence rejects a branch.
-    let mut atomic_descriptors: Vec<PrefixArmDescriptor> = Vec::new();
-    for &(rule_idx, rule) in rules_in_category {
-        let shape = classify_atomic_descriptor(rule, language);
-        atomic_descriptors.extend(atomic_arm_descriptors(category_src_idx, rule_idx, &shape));
-        if let AtomicDescriptor::CrossCatPrefixUnary {
-            trigger,
-            source_cat_name,
-            wrapper_variant: _,
-        } = &shape
-        {
-            let source_src_idx = categories
-                .iter()
-                .position(|c| c == source_cat_name)
-                .map(|i| i as u16)
-                .unwrap_or(category_src_idx);
-            let operand_bp = compute_prefix_bp(source_cat_name, rule.prefix_bp, &bp_table);
-            insert_unified_descriptor(
-                &mut unified_buckets,
-                &mut unified_order,
-                quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
-                Some(quote! { __kw == #trigger }),
-                UnifiedDescriptor::CrossCatPrefixUnary { rule_idx, source_src_idx, operand_bp },
-            );
-            continue;
-        }
-        // GAP-3 (2026-06-28): 0-operand multi-literal keyword-prefix rule.
-        // Insert a Fixed(trigger) descriptor into the SAME unified bucket as
-        // every other trigger alternative (mirror CrossCatPrefixUnary above).
-        // A UNIQUE trigger (`Map`, `Pathmap`) emits a singleton arm; a SHARED
-        // trigger (`@` — co-bucketed with NQuote `@(p)` / NQuoteShort `@p`)
-        // folds into a multi-descriptor Fork resolved by lex-min.
-        if let AtomicDescriptor::NullaryLiteralRun { trigger, .. } = &shape {
-            insert_unified_descriptor(
-                &mut unified_buckets,
-                &mut unified_order,
-                quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
-                Some(quote! { __kw == #trigger }),
-                UnifiedDescriptor::NullaryLiteralRun { rule_idx },
-            );
-            continue;
-        }
-        if matches!(shape, AtomicDescriptor::CrossCatProjection { .. }) {
-            continue;
-        }
-        if let Some(shape) = super::binder::classify_binder_in(rule, language) {
-            let body_src_idx = super::binder::binder_initial_body_cat(&shape)
-                .and_then(|name| categories.iter().position(|c| c == name).map(|i| i as u16))
-                .unwrap_or(category_src_idx);
-            match rule.syntax_pattern.as_ref().and_then(|sp| sp.first()) {
-                Some(mettail_ast::grammar::SyntaxExpr::Literal(trigger)) => {
-                    if trigger == "(" {
-                        continue;
-                    }
-                    insert_unified_descriptor(
-                        &mut unified_buckets,
-                        &mut unified_order,
-                        quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
-                        Some(quote! { __kw == #trigger }),
-                        UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx },
-                    );
-                },
-                // L9-3: a LEADING builtin/custom token-family capture. Dispatch
-                // through the shared runtime predicate so this path and the
-                // consuming walker agree on the named family.
-                Some(mettail_ast::grammar::SyntaxExpr::TokenKind { name, .. }) => {
-                    let kind_name = name.to_string();
-                    insert_unified_descriptor(
-                        &mut unified_buckets,
-                        &mut unified_order,
-                        quote! { Some(ref __kind) },
-                        Some(quote! {
-                            mettail_prattail::automata::token_kind_matches_capture_name(
-                                #kind_name,
-                                __kind,
-                            )
-                        }),
-                        UnifiedDescriptor::LeadingTokenKindCapture {
-                            rule_idx,
-                            body_src_idx,
-                            kind_name,
-                        },
-                    );
-                },
-                // L9-4: a LEADING guest body (`*flt(node, open, close)`) — the
-                // opener kind IS the trigger; dispatch on it (guard-based, like
-                // the TokenKind path) into a `LeadingGuestBody` descriptor whose
-                // emission PUSHES the RuleAt frame + assembles the FltNode.
-                Some(mettail_ast::grammar::SyntaxExpr::GuestBody { open, close, .. }) => {
-                    let open_kind = open.to_string();
-                    let nested_open_kinds =
-                        super::guest_body_nested_open_kinds(language, &open_kind);
-                    let close_kind = close.to_string();
-                    insert_unified_descriptor(
-                        &mut unified_buckets,
-                        &mut unified_order,
-                        quote! { Some(mettail_prattail::automata::TokenKind::Custom(ref __k)) },
-                        Some(quote! { __k == #open_kind }),
-                        UnifiedDescriptor::LeadingGuestBody {
-                            rule_idx,
-                            body_src_idx,
-                            open_kind,
-                            nested_open_kinds,
-                            close_kind,
-                        },
-                    );
-                },
-                Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
-                    if shape.leading_ident_capture.is_some() {
-                        insert_unified_descriptor(
-                            &mut unified_buckets,
-                            &mut unified_order,
-                            quote! {
-                                Some(mettail_prattail::automata::TokenKind::Ident)
-                            },
-                            None,
-                            UnifiedDescriptor::LeadingTokenKindCapture {
-                                rule_idx,
-                                body_src_idx,
-                                kind_name: "Ident".to_string(),
-                            },
-                        );
-                        continue;
-                    }
-                    let Some(source_cat_name) = shape.leading_category.as_deref() else {
-                        continue;
-                    };
-                    let Some(source_src_idx) = categories
-                        .iter()
-                        .position(|category| category == source_cat_name)
-                        .map(|index| index as u16)
-                    else {
-                        continue;
-                    };
-                    // Same-category led rules belong exclusively to
-                    // InfixLoop. Routing one through the generic
-                    // category-leading continuation would parse its right
-                    // operand at the prefix floor and bypass `right_bp`.
-                    if same_category_led_left_bp(rule, category_name, &bp_table).is_some() {
-                        continue;
-                    }
-                    for first in first_set_of_category(source_cat_name, language) {
-                        insert_unified_descriptor(
-                            &mut unified_buckets,
-                            &mut unified_order,
-                            first.pattern,
-                            first.extra_guard,
-                            UnifiedDescriptor::LeadingCategory { rule_idx, source_src_idx },
-                        );
-                    }
-                },
-                _ => continue,
-            }
-        }
-    }
-    for desc in atomic_descriptors {
-        insert_unified_descriptor(
-            &mut unified_buckets,
-            &mut unified_order,
-            desc.pattern.clone(),
-            desc.extra_guard.clone(),
-            UnifiedDescriptor::Atomic(desc),
+    let (mut unified_buckets, unified_order) =
+        mettail_prattail::wpda_rule_analysis::prefix_bucket::derive_prefix_buckets(
+            &super::binder::MacroBinderSyntaxReader,
+            &mut MacroFirstSetContext { language },
+            category_src_idx,
+            category_name,
+            rules_in_category,
+            super::forks::CROSSCAT_LEX_COMPAT_GATE,
         );
-    }
-    // B10 / Option κ Fix B (2026-05-07): fold Pass 2a CrossCatProjection
-    // arms into the SAME unified_buckets so collisions with Pass 0/1
-    // entries on the same `(pat, guard)` key emit a Fork mixing all
-    // three kinds (atomic-home + cross-cat-LHS + cross-cat-projection).
-    // Replaces the prior separate `emit_cross_cat_projection_arms_bucketed`
-    // call which emitted projection arms AFTER the unified arms — Rust
-    // first-match-wins dead-coded any projection arm whose `(pat, guard)`
-    // was already taken by a Pass-1 atomic arm. Same SHAPE class as the
-    // Pass-0/1 silent-shadow bug B7 closed.
-    for &(rule_idx, rule) in rules_in_category {
-        if let AtomicShape::CrossCatProjection { source_cat_name, .. } =
-            classify_atomic(rule, language)
-        {
-            let source_src_idx = categories
-                .iter()
-                .position(|c| c == &source_cat_name)
-                .map(|i| i as u16)
-                .unwrap_or(0);
-            for ft in first_set_of_category(&source_cat_name, language) {
-                // ── CROSSCAT_LEX_COMPAT_GATE (A) — general first-token lexical
-                // compatibility prune at cross-cat PROJECTION emission ──────────
-                // A projection delegate `source : result` dispatches on every
-                // token in FIRST(source). When that token is ONLY a
-                // var-contribution of `source` (an `Ident` the source acquires
-                // from its Var rule — the source cannot begin with a LITERAL
-                // Ident) AND `result` already has its own home Var reading, the
-                // delegate is a PROVEN over-generation: it packs the SAME bare-
-                // Ident reading the home Var rule already produces, via a cast
-                // path that realizes ∅ on a genuine Ident (measured alts=1 —
-                // zz_inner_proc_w_enum). Pruning it removes the branch at Fork
-                // CREATION (before any cursor/edge-stack/ProjDescriptorKey `W`
-                // forms), which is what LINEARIZES the `.*sep`-repetition
-                // frontier (a87574eb T-LinearIffWBounded: reducing #{W} is the
-                // sole lever). This is SOUND FIRST-set FILTERING (removed set is
-                // ∅-realizing ⇒ realized readings UNCHANGED — one-sided monotone
-                // refinement), NOT the forbidden FIRST-set TIEBREAK. When the
-                // kill-switch const is `false` (baseline) the conjunct is never
-                // evaluated and NO token is skipped → generated wpda.rs is
-                // BYTE-IDENTICAL. Grammar-derived (no language hardcode): fires
-                // for EVERY category's var-contribution, inert where the source
-                // has a literal first-token or the result lacks a home var.
-                //
-                // ★ SOUNDNESS DISCRIMINATOR (source_ident_first_is_var_only):
-                // fire ONLY when the SOURCE category's bare-Ident reading is
-                // EXCLUSIVELY its own variable — i.e. the source has NO non-Var
-                // rule that can begin with an Ident. This holds for LEAF value
-                // sources (BigInt/List/Map/…: only their synthetic Var is
-                // Ident-first) but is FALSE for STRUCTURAL sources whose rules
-                // are Ident-led (`InputBind . lhs:Name "<-" n`; `ForRow .
-                // b:InputBind`). Without this conjunct the gate over-pruned the
-                // `InputBind : ForRow` (ForRowSingleNoWhere) projection and broke
-                // `for(p <- …)` (a genuine, non-∅ reading) — that projection is
-                // the ONLY path to dispatch an Ident-led InputBind row. WITH it,
-                // only the ∅-realizing numeric/collection casts are pruned.
-                if super::forks::CROSSCAT_LEX_COMPAT_GATE
-                    && ft.is_var_contribution
-                    && source_ident_first_is_var_only(&source_cat_name, language)
-                    && result_has_home_var_reading(category_name, language)
-                {
-                    continue;
-                }
-                insert_unified_descriptor(
-                    &mut unified_buckets,
-                    &mut unified_order,
-                    ft.pattern.clone(),
-                    ft.extra_guard.clone(),
-                    UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx },
-                );
-            }
-        }
-    }
     // Pass 2c intentionally does NOT emit source-FIRST delegates for
     // terminal-bearing wrappers such as `BoolToInt . a:Bool |- "int" "(" a
     // ")" : Int`. Those wrappers are not span-transparent projections: they
@@ -1776,6 +1450,7 @@ type UnifiedDescriptor =
 type UnifiedBucket =
     mettail_prattail::wpda_rule_analysis::prefix::UnifiedBucket<TokenStream, UnifiedDescriptor>;
 
+#[cfg(test)]
 use mettail_prattail::wpda_rule_analysis::prefix::insert_unified_descriptor;
 
 /// B7 (2026-05-07) — emit a unified bucket as either a singleton arm
@@ -2912,6 +2587,10 @@ mod prefix_bucket_driver_baselines;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod bucket_driver_shared {
+        include!("../../../../tests/support/prefix_bucket_shared.rs");
+    }
     use mettail_ast::grammar::{
         rule_fixture, DelimitedRegionKind, GrammarItem, SyntaxExpr, TermParam,
     };

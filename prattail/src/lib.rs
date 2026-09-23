@@ -59,11 +59,11 @@ mod graph_algorithms;
 
 pub mod automata;
 pub mod binding_power;
-pub mod wpda_rule_analysis;
 pub mod classify;
 /// ★ The cross-category projection-boundary walk's per-hop decision, factored out so its
 /// verified Rocq model can be executed against it (`tests/crosscat_boundary_oracle.rs`).
 pub mod crosscat_boundary;
+pub mod wpda_rule_analysis;
 // Stage 10.5b conclusion (2026-05-05): `pub mod dispatch` DELETED (file deleted,
 // ~1,940 LoC). Trampoline-side cross-category dispatch emitter; data types
 // (CastRule, CrossCategoryRule) migrated to grammar::ir.
@@ -901,6 +901,10 @@ impl ReservationPolicy {
 /// this from the `LanguageDef` and passes it to `generate_parser()`.
 #[derive(Debug, Clone)]
 pub struct LanguageSpec {
+    /// Explicit source owner also preserves declarations for zero-rule grammars.
+    pub authored: Option<std::sync::Arc<mettail_grammar_core::AuthoredRuleStore>>,
+    /// Source-site results of original token lowering; not inferred from names.
+    pub authored_token_origins: AuthoredTokenOrigins,
     /// Language name.
     pub name: String,
     /// All type/category declarations.
@@ -1319,6 +1323,8 @@ impl LanguageSpec {
             })
             .collect();
         LanguageSpec {
+            authored: None,
+            authored_token_origins: AuthoredTokenOrigins::default(),
             name,
             types,
             rules,
@@ -1336,6 +1342,16 @@ impl LanguageSpec {
             reservation_policy: ReservationPolicy::default(),
         }
     }
+}
+
+/// Ephemeral bridge provenance. Source token rows remain immutable in the
+/// authored store; this records the original classifier's routing decisions.
+#[derive(Debug, Clone, Default)]
+pub struct AuthoredTokenOrigins {
+    /// One entry per global source token, containing its selected builtin family.
+    pub builtin_overrides: Vec<Option<&'static str>>,
+    /// The winning source occurrence at each original typed-pattern map insert.
+    pub typed_literals: std::collections::BTreeMap<(String, String), usize>,
 }
 
 impl RuleSpec {

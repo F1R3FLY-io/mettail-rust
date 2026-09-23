@@ -29,7 +29,7 @@ impl LanguageSpec {
 
         stage!("initialize.start");
         let mut output = core::GrammarCoreV1::new(self.name.clone());
-        let mut authored_owner: Option<&Arc<core::AuthoredRuleStore>> = None;
+        let mut authored_owner: Option<&Arc<core::AuthoredRuleStore>> = self.authored.as_ref();
         for rule in &self.rules {
             if let Some(authored) = &rule.authored {
                 match authored_owner {
@@ -45,6 +45,25 @@ impl LanguageSpec {
             }
         }
         output.authored = authored_owner.map(|store| store.as_ref().clone());
+        let header = authored_owner.and_then(|store| store.declarations());
+        let mut bindings = header
+            .map(core::AuthoredDeclarationBindingsBuilder::try_new)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        if let Some(header) = header {
+            if header.categories.len() != self.types.len()
+                || header.global_tokens.len() != self.custom_tokens.len()
+                || header.modes.len() != self.modes.len()
+                || self.authored_token_origins.builtin_overrides.len() != self.custom_tokens.len()
+                || header
+                    .modes
+                    .iter()
+                    .zip(&self.modes)
+                    .any(|(source, mode)| source.tokens.len() != mode.token_specs.len())
+            {
+                return Err("authored declaration and lowered source rosters differ".into());
+            }
+        }
         output.provenance.frontend = "language!-compile-time".into();
         output.categories = self
             .types
@@ -62,6 +81,13 @@ impl LanguageSpec {
                 admits_variables: category.has_var,
             })
             .collect();
+        if let Some(bindings) = &mut bindings {
+            for (index, category) in output.categories.iter().enumerate() {
+                bindings
+                    .bind_category(index, category.id)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
         let categories: BTreeMap<String, core::CategoryId> = output
             .categories
             .iter()
@@ -106,17 +132,61 @@ impl LanguageSpec {
         stage!("tokens.start");
         let mode_names = lower_modes(self, &mut output)?;
         let mut token_ids = BTreeMap::new();
-        add_builtin_tokens(self, &mut output, &mut token_ids);
-        for token in &self.custom_tokens {
-            if !token.is_builtin_override {
-                add_custom_token(token, core::ModeId(0), &mode_names, &mut output, &mut token_ids)?;
+        let typed_routes = add_builtin_tokens(self, &mut output, &mut token_ids)?;
+        for (index, token) in self.custom_tokens.iter().enumerate() {
+            let direct = if !token.is_builtin_override {
+                Some(add_custom_token(
+                    token,
+                    core::ModeId(0),
+                    &mode_names,
+                    &mut output,
+                    &mut token_ids,
+                )?)
+            } else if bindings.is_some() {
+                let family = self.authored_token_origins.builtin_overrides[index]
+                    .ok_or("missing original builtin token route")?;
+                Some(
+                    *token_ids
+                        .get(family)
+                        .ok_or("original builtin token route has no final token")?,
+                )
+            } else {
+                None
+            };
+            if let (Some(bindings), Some(header), Some(direct)) = (&mut bindings, header, direct) {
+                let source = header.global_tokens[index] as usize;
+                bindings
+                    .bind_token_direct(source, direct)
+                    .map_err(|error| error.to_string())?;
+                bindings
+                    .bind_token_typed_literal(source, typed_routes.get(&index).copied())
+                    .map_err(|error| error.to_string())?;
             }
         }
         for (mode_index, mode) in self.modes.iter().enumerate() {
             let mode_id = core::ModeId(mode_index as u32 + 1);
-            for token in &mode.token_specs {
-                add_custom_token(token, mode_id, &mode_names, &mut output, &mut token_ids)?;
+            if let Some(bindings) = &mut bindings {
+                bindings
+                    .bind_mode(mode_index, mode_id)
+                    .map_err(|error| error.to_string())?;
             }
+            for (token_index, token) in mode.token_specs.iter().enumerate() {
+                let direct =
+                    add_custom_token(token, mode_id, &mode_names, &mut output, &mut token_ids)?;
+                if let (Some(bindings), Some(header)) = (&mut bindings, header) {
+                    let source = header.modes[mode_index].tokens[token_index] as usize;
+                    bindings
+                        .bind_token_direct(source, direct)
+                        .map_err(|error| error.to_string())?;
+                    bindings
+                        .bind_token_typed_literal(source, None)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        if let (Some(bindings), Some(header)) = (bindings, header) {
+            output.authored_bindings =
+                Some(bindings.finish(header).map_err(|error| error.to_string())?);
         }
         let mut literal_ids = BTreeMap::new();
         for terminal in literal_terminals {
@@ -340,7 +410,8 @@ fn add_builtin_tokens(
     spec: &LanguageSpec,
     output: &mut core::GrammarCoreV1,
     token_ids: &mut BTreeMap<String, core::TokenId>,
-) {
+) -> Result<BTreeMap<usize, core::TokenId>, String> {
+    let mut typed_routes = BTreeMap::new();
     let definitions = [
         ("Identifier", spec.literal_patterns.ident.clone(), core::TokenDecoder::Text),
         (
@@ -431,8 +502,21 @@ fn add_builtin_tokens(
             });
             output.modes[0].token_ids.push(id);
             token_ids.insert(name, id);
+            if let Some(&source) = spec
+                .authored_token_origins
+                .typed_literals
+                .get(&(family.into(), category.clone()))
+            {
+                if source >= spec.custom_tokens.len() || typed_routes.insert(source, id).is_some() {
+                    return Err("original source token has invalid or duplicate typed route".into());
+                }
+            }
         }
     }
+    if typed_routes.len() != spec.authored_token_origins.typed_literals.len() {
+        return Err("original typed token provenance has no matching pattern row".into());
+    }
+    Ok(typed_routes)
 }
 
 fn add_custom_token(
@@ -441,7 +525,7 @@ fn add_custom_token(
     mode_names: &BTreeMap<String, core::ModeId>,
     output: &mut core::GrammarCoreV1,
     token_ids: &mut BTreeMap<String, core::TokenId>,
-) -> Result<(), String> {
+) -> Result<core::TokenId, String> {
     let id = core::TokenId(output.tokens.len() as u32);
     let qualified_name = if mode == core::ModeId(0) {
         token.name.clone()
@@ -490,7 +574,7 @@ fn add_custom_token(
     if mode == core::ModeId(0) {
         token_ids.insert(token.name.clone(), id);
     }
-    Ok(())
+    Ok(id)
 }
 
 fn lower_terminal_reservation(spec: &LanguageSpec, terminal: &str) -> core::Reservation {

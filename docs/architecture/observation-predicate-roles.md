@@ -93,8 +93,8 @@ language commitments, including modules. The grammar projection is unchanged:
 a role change does not change the parser fingerprint.
 
 The exact canonical application binary interface (ABI) formats are
-LanguageCore ABI 5, TheoryCore ABI 4, GrammarCore ABI 3, and
-`mettail-language-core-value/5`. Older exact-format versions are rejected rather
+LanguageCore ABI 5, TheoryCore ABI 4, GrammarCore ABI 4, and
+`mettail-language-core-value/6`. Older exact-format versions are rejected rather
 than silently reinterpreted. The existing `language/2` and `language/3`
 presentations still accept omission of the optional role. Semantic images keep
 their existing structural layout and are bound to the new full-language

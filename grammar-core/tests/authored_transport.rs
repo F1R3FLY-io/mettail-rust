@@ -197,7 +197,7 @@ fn authored_transport_binary_roundtrip_retains_store_and_references() {
         .validate()
         .expect("authored transport fixture is valid");
     assert_eq!(grammar, decoded);
-    for old_abi in [GRAMMAR_CORE_ABI_V1, GRAMMAR_CORE_ABI_V2] {
+    for old_abi in [GRAMMAR_CORE_ABI_V1, GRAMMAR_CORE_ABI_V2, GRAMMAR_CORE_ABI_V3] {
         let mut old = grammar.clone();
         old.abi = old_abi;
         let bytes = postcard::to_allocvec(&old).expect("transport fixture encodes");

@@ -270,12 +270,12 @@ impl<'store> BinderRuleReader<'store> for AuthoredRuleReader<'store> {
             Some(AuthoredNode::Type(AuthoredType::Map { key, value })) => {
                 BinderTypeObservation::Map { key: *key, value: *value }
             },
-            Some(AuthoredNode::Type(AuthoredType::Arrow { codomain })) => {
+            Some(AuthoredNode::Type(AuthoredType::Arrow { codomain, .. })) => {
                 BinderTypeObservation::Arrow { codomain: *codomain }
             },
-            Some(AuthoredNode::Type(AuthoredType::Unsupported { .. })) => {
-                BinderTypeObservation::Other(ty)
-            },
+            Some(AuthoredNode::Type(
+                AuthoredType::Unsupported { .. } | AuthoredType::MultiBinder { .. },
+            )) => BinderTypeObservation::Other(ty),
             Some(AuthoredNode::Type(AuthoredType::KeyedPathMap { .. })) => {
                 unreachable!("keyed PathMap is rejected before reader construction")
             },
@@ -598,7 +598,7 @@ mod tests {
         let base = AuthoredTypeId(push(&mut store, AuthoredNode::Type(AuthoredType::Base(cat))));
         let arrow = AuthoredTypeId(push(
             &mut store,
-            AuthoredNode::Type(AuthoredType::Arrow { codomain: base }),
+            AuthoredNode::Type(AuthoredType::Arrow { domain: base, codomain: base }),
         ));
         let map = AuthoredTypeId(push(
             &mut store,
@@ -607,6 +607,10 @@ mod tests {
         let unsupported = AuthoredTypeId(push(
             &mut store,
             AuthoredNode::Type(AuthoredType::Unsupported { tag: 67 }),
+        ));
+        let multi = AuthoredTypeId(push(
+            &mut store,
+            AuthoredNode::Type(AuthoredType::MultiBinder { inner: arrow }),
         ));
         let mut collections = Vec::new();
         for kind in [
@@ -635,6 +639,9 @@ mod tests {
             );
             assert!(
                 matches!(reader.ty(unsupported), BinderTypeObservation::Other(original) if original == unsupported)
+            );
+            assert!(
+                matches!(reader.ty(multi), BinderTypeObservation::Other(original) if original == multi)
             );
             for (id, kind) in collections {
                 assert!(

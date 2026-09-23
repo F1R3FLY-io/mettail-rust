@@ -631,6 +631,8 @@ mod tests {
     fn calculator_spec() -> LanguageSpec {
         let cat_names = vec!["Expr".to_string()];
         LanguageSpec {
+            authored: None,
+            authored_token_origins: Default::default(),
             name: "Calc".to_string(),
             types: vec![CategorySpec {
                 name: "Expr".to_string(),

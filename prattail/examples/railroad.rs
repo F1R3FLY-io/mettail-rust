@@ -23,6 +23,8 @@ use mettail_prattail::{
 /// Build a minimal two-rule `Expr` grammar: integer literals plus `+`.
 fn make_simple_spec() -> LanguageSpec {
     LanguageSpec {
+        authored: None,
+        authored_token_origins: Default::default(),
         name: "Calc".to_string(),
         types: vec![CategorySpec {
             name: "Expr".to_string(),

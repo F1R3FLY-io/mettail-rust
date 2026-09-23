@@ -29,6 +29,7 @@ pub mod mixfix;
 pub mod native_first;
 pub mod parikh;
 pub mod prefix;
+pub mod prefix_bucket;
 pub mod synthetic;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.

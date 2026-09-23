@@ -11,7 +11,7 @@
 //! Admission budgets and the original classifiers' narrower arithmetic domains
 //! are separate checks; this store does not certify a grammar for execution.
 
-use crate::CollectionKind;
+use crate::{CollectionKind, NativeKind};
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Original parser's unobserved collection field for a sourced separator.
@@ -58,8 +58,9 @@ pub struct AuthoredName<K = u32> {
     pub equality_class: K,
 }
 
-/// Exactly the type observations read by the original classifiers.
-/// Arrow domains and unsupported interiors are not classifier inputs.
+/// Type observations read by the original classifiers and context converter.
+/// Binder classification still ignores arrow domains and multi-binder interiors;
+/// the context converter observes them through its separate shallow probes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthoredType<I = u32> {
     Base(AuthoredNameId<I>),
@@ -72,7 +73,11 @@ pub enum AuthoredType<I = u32> {
         value: AuthoredTypeId<I>,
     },
     Arrow {
+        domain: AuthoredTypeId<I>,
         codomain: AuthoredTypeId<I>,
+    },
+    MultiBinder {
+        inner: AuthoredTypeId<I>,
     },
     Unsupported {
         tag: u32,
@@ -190,6 +195,152 @@ pub struct AuthoredRule<I = u32> {
     pub items: Vec<AuthoredLegacyItem<I>>,
 }
 
+/// Source collection declarations retain independent optional delimiters.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoredCollectionDeclaration {
+    pub kind: CollectionKind,
+    pub open: Option<String>,
+    pub close: Option<String>,
+    pub separator: Option<String>,
+    pub key_value_separator: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoredCategoryDeclaration<I = u32> {
+    pub name: AuthoredNameId<I>,
+    pub native: Option<NativeKind>,
+    pub collection: Option<AuthoredCollectionDeclaration>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoredTokenDeclaration<I = u32> {
+    pub name: AuthoredNameId<I>,
+    pub category: Option<AuthoredNameId<I>>,
+    pub from_literals: bool,
+    pub has_evaluation: bool,
+    pub push: Option<AuthoredNameId<I>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoredModeDeclaration<I = u32> {
+    pub name: AuthoredNameId<I>,
+    /// Indices into the source token roster, not final lexer token IDs.
+    pub tokens: Vec<u32>,
+}
+
+/// Immutable source observations. Final lexer/category/mode bindings are
+/// stored separately: lowering can coalesce rows or give a row two routes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoredDeclarations<I = u32> {
+    pub categories: Vec<AuthoredCategoryDeclaration<I>>,
+    pub tokens: Vec<AuthoredTokenDeclaration<I>>,
+    pub global_tokens: Vec<u32>,
+    pub modes: Vec<AuthoredModeDeclaration<I>>,
+}
+
+impl<I: Copy> AuthoredDeclarations<I> {
+    /// Extra capture roots, after rules, in original declaration field order.
+    pub fn try_for_each_name<E>(
+        &self,
+        mut visit: impl FnMut(AuthoredNameId<I>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        for category in &self.categories {
+            visit(category.name)?;
+        }
+        for token in &self.tokens {
+            visit(token.name)?;
+            if let Some(category) = token.category {
+                visit(category)?;
+            }
+            if let Some(push) = token.push {
+                visit(push)?;
+            }
+        }
+        for mode in &self.modes {
+            visit(mode.name)?;
+        }
+        Ok(())
+    }
+}
+
+impl<I> AuthoredDeclarations<I> {
+    /// Resolve the same ordered name occurrences without touching payloads,
+    /// source token positions, duplicates, or optional presence.
+    pub fn try_map_names<J, E>(
+        self,
+        mut resolve: impl FnMut(AuthoredNameId<I>) -> Result<AuthoredNameId<J>, E>,
+    ) -> Result<AuthoredDeclarations<J>, E> {
+        let categories = self
+            .categories
+            .into_iter()
+            .map(|row| {
+                Ok(AuthoredCategoryDeclaration {
+                    name: resolve(row.name)?,
+                    native: row.native,
+                    collection: row.collection,
+                })
+            })
+            .collect::<Result<_, E>>()?;
+        let tokens = self
+            .tokens
+            .into_iter()
+            .map(|row| {
+                Ok(AuthoredTokenDeclaration {
+                    name: resolve(row.name)?,
+                    category: row.category.map(&mut resolve).transpose()?,
+                    from_literals: row.from_literals,
+                    has_evaluation: row.has_evaluation,
+                    push: row.push.map(&mut resolve).transpose()?,
+                })
+            })
+            .collect::<Result<_, E>>()?;
+        let modes = self
+            .modes
+            .into_iter()
+            .map(|row| {
+                Ok(AuthoredModeDeclaration {
+                    name: resolve(row.name)?,
+                    tokens: row.tokens,
+                })
+            })
+            .collect::<Result<_, E>>()?;
+        Ok(AuthoredDeclarations {
+            categories,
+            tokens,
+            global_tokens: self.global_tokens,
+            modes,
+        })
+    }
+
+    /// Capture order is global tokens followed by each ordered mode roster.
+    /// Check that exact partition without allocating a visited-token set.
+    fn validate_source_rosters(&self) -> Result<(), AuthoredStoreError> {
+        let mut expected = 0usize;
+        for &actual in self
+            .global_tokens
+            .iter()
+            .chain(self.modes.iter().flat_map(|mode| &mode.tokens))
+        {
+            if expected >= self.tokens.len() || usize::try_from(actual).ok() != Some(expected) {
+                return Err(AuthoredStoreError::InvalidSourceTokenRoster {
+                    position: expected,
+                    actual: Some(actual),
+                });
+            }
+            expected = expected
+                .checked_add(1)
+                .ok_or(AuthoredStoreError::IndexOverflow)?;
+        }
+        if expected != self.tokens.len() {
+            return Err(AuthoredStoreError::InvalidSourceTokenRoster {
+                position: expected,
+                actual: None,
+            });
+        }
+        Ok(())
+    }
+}
+
 /// One vocabulary for owned nodes and shallow capture recipes. Neither generic
 /// parameter introduces recursive ownership; children are always references.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,7 +393,11 @@ impl<I: Copy, K> AuthoredNode<I, K> {
                     visit(Tag::Type, key.0)?;
                     visit(Tag::Type, value.0)?;
                 },
-                AuthoredType::Arrow { codomain } => visit(Tag::Type, codomain.0)?,
+                AuthoredType::Arrow { domain, codomain } => {
+                    visit(Tag::Type, domain.0)?;
+                    visit(Tag::Type, codomain.0)?;
+                },
+                AuthoredType::MultiBinder { inner } => visit(Tag::Type, inner.0)?,
                 AuthoredType::Unsupported { .. } => {},
             },
             Self::Param(param) => match param {
@@ -330,6 +485,15 @@ impl<I: Copy, K> AuthoredNode<I, K> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthoredStoreError {
+    DeclarationsAlreadyPresent,
+    InvalidDeclarationName {
+        target: u32,
+        actual: Option<AuthoredNodeTag>,
+    },
+    InvalidSourceTokenRoster {
+        position: usize,
+        actual: Option<u32>,
+    },
     IndexOverflow,
     InvalidReference {
         owner: u32,
@@ -342,6 +506,16 @@ pub enum AuthoredStoreError {
 impl std::fmt::Display for AuthoredStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DeclarationsAlreadyPresent => {
+                write!(f, "authored declarations are already installed")
+            },
+            Self::InvalidDeclarationName { target, actual } => {
+                write!(f, "authored declaration requires Name node {target}, found {actual:?}")
+            },
+            Self::InvalidSourceTokenRoster { position, actual } => write!(
+                f,
+                "authored source token roster requires position {position}, found {actual:?}"
+            ),
             Self::IndexOverflow => write!(f, "authored-rule arena index exceeds u32"),
             Self::InvalidReference { owner, target, expected, actual } => write!(
                 f,
@@ -357,9 +531,9 @@ impl std::error::Error for AuthoredStoreError {}
 /// checked append. Deserialization also checks every node against its prefix.
 /// Source/byte/allocation budgets must be enforced by the caller before decoding.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
 pub struct AuthoredRuleStore {
     nodes: Vec<AuthoredNode>,
+    declarations: Option<AuthoredDeclarations>,
 }
 
 impl AuthoredRuleStore {
@@ -379,6 +553,39 @@ impl AuthoredRuleStore {
         self.nodes.get(index as usize)
     }
 
+    pub fn declarations(&self) -> Option<&AuthoredDeclarations> {
+        self.declarations.as_ref()
+    }
+
+    /// Publish a header only after all its captured names and source rosters
+    /// validate. Existing immutable source declarations cannot be replaced.
+    pub fn with_declarations(
+        mut self,
+        declarations: AuthoredDeclarations,
+    ) -> Result<Self, AuthoredStoreError> {
+        if self.declarations.is_some() {
+            return Err(AuthoredStoreError::DeclarationsAlreadyPresent);
+        }
+        self.validate_declarations(&declarations)?;
+        self.declarations = Some(declarations);
+        Ok(self)
+    }
+
+    fn validate_declarations(
+        &self,
+        declarations: &AuthoredDeclarations,
+    ) -> Result<(), AuthoredStoreError> {
+        declarations.try_for_each_name(|name| {
+            let actual = self.get(name.0).map(AuthoredNode::tag);
+            if actual == Some(AuthoredNodeTag::Name) {
+                Ok(())
+            } else {
+                Err(AuthoredStoreError::InvalidDeclarationName { target: name.0, actual })
+            }
+        })?;
+        declarations.validate_source_rosters()
+    }
+
     /// Append once only after the complete shallow reference check succeeds.
     /// Rejection leaves all previously retained nodes and handles unchanged.
     pub fn try_push(&mut self, node: AuthoredNode) -> Result<u32, AuthoredStoreError> {
@@ -390,7 +597,7 @@ impl AuthoredRuleStore {
 
     /// Admit an already owned roster without cloning, reordering or repairing it.
     pub fn from_nodes(nodes: Vec<AuthoredNode>) -> Result<Self, AuthoredStoreError> {
-        let store = Self { nodes };
+        let store = Self { nodes, declarations: None };
         store.validate()?;
         Ok(store)
     }
@@ -398,6 +605,9 @@ impl AuthoredRuleStore {
     pub fn validate(&self) -> Result<(), AuthoredStoreError> {
         for (index, node) in self.nodes.iter().enumerate() {
             validate_node(&self.nodes[..index], checked_index(index)?, node)?;
+        }
+        if let Some(declarations) = &self.declarations {
+            self.validate_declarations(declarations)?;
         }
         Ok(())
     }
@@ -424,8 +634,19 @@ fn validate_node(
 
 impl<'de> Deserialize<'de> for AuthoredRuleStore {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let nodes = Vec::<AuthoredNode>::deserialize(deserializer)?;
-        Self::from_nodes(nodes).map_err(serde::de::Error::custom)
+        #[derive(Deserialize)]
+        struct Wire {
+            nodes: Vec<AuthoredNode>,
+            #[serde(deserialize_with = "crate::core::required_option")]
+            declarations: Option<AuthoredDeclarations>,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        let store = Self {
+            nodes: wire.nodes,
+            declarations: wire.declarations,
+        };
+        store.validate().map_err(serde::de::Error::custom)?;
+        Ok(store)
     }
 }
 
@@ -496,7 +717,23 @@ mod tests {
                 Tag::Type,
                 1,
             ),
-            (Node::Type(AuthoredType::Arrow { codomain: AuthoredTypeId(0) }), Tag::Type, 0),
+            (
+                Node::Type(AuthoredType::Arrow {
+                    domain: AuthoredTypeId(0),
+                    codomain: AuthoredTypeId(2),
+                }),
+                Tag::Type,
+                0,
+            ),
+            (
+                Node::Type(AuthoredType::Arrow {
+                    domain: AuthoredTypeId(2),
+                    codomain: AuthoredTypeId(1),
+                }),
+                Tag::Type,
+                1,
+            ),
+            (Node::Type(AuthoredType::MultiBinder { inner: AuthoredTypeId(0) }), Tag::Type, 0),
             (
                 Node::Param(AuthoredParam::Simple {
                     name: AuthoredNameId(2),
@@ -649,7 +886,11 @@ mod tests {
             ],
             vec![name("n", 0), AuthoredNode::Params(vec![AuthoredParamId(0)])],
         ] {
-            let wire = postcard::to_allocvec(&nodes).expect("encode raw test roster");
+            let wire = postcard::to_allocvec(&AuthoredRuleStore {
+                nodes: nodes.clone(),
+                declarations: None,
+            })
+            .expect("encode invalid store in current wire format");
             assert!(AuthoredRuleStore::from_nodes(nodes).is_err());
             assert!(postcard::from_bytes::<AuthoredRuleStore>(&wire).is_err());
         }
@@ -661,6 +902,79 @@ mod tests {
             ))
             .is_err());
         assert_eq!(store, before);
+    }
+
+    #[test]
+    fn declarations_preserve_payloads_and_validate_every_name_and_source_position() {
+        let header = AuthoredDeclarations {
+            categories: vec![AuthoredCategoryDeclaration {
+                name: AuthoredNameId(1),
+                native: Some(NativeKind::Bool),
+                collection: Some(AuthoredCollectionDeclaration {
+                    kind: CollectionKind::PathMap,
+                    open: Some(String::new()),
+                    close: None,
+                    separator: Some("|".into()),
+                    key_value_separator: Some(":".into()),
+                }),
+            }],
+            tokens: vec![
+                AuthoredTokenDeclaration {
+                    name: AuthoredNameId(0),
+                    category: Some(AuthoredNameId(1)),
+                    from_literals: true,
+                    has_evaluation: false,
+                    push: Some(AuthoredNameId(0)),
+                };
+                2
+            ],
+            global_tokens: vec![0],
+            modes: vec![AuthoredModeDeclaration { name: AuthoredNameId(0), tokens: vec![1] }],
+        };
+        let store = seed()
+            .with_declarations(header.clone())
+            .expect("complete source header");
+        assert_eq!(store.declarations(), Some(&header));
+        let encoded = postcard::to_allocvec(&store).expect("header encode");
+        assert_eq!(
+            postcard::from_bytes::<AuthoredRuleStore>(&encoded).expect("header decode"),
+            store
+        );
+        assert_eq!(
+            store.clone().with_declarations(header.clone()),
+            Err(AuthoredStoreError::DeclarationsAlreadyPresent)
+        );
+        for which in 0..5 {
+            let mut bad = header.clone();
+            let target = AuthoredNameId(2); // existing Type, not Name
+            match which {
+                0 => bad.categories[0].name = target,
+                1 => bad.tokens[0].name = target,
+                2 => bad.tokens[0].category = Some(target),
+                3 => bad.tokens[0].push = Some(target),
+                _ => bad.modes[0].name = target,
+            }
+            assert!(matches!(
+                seed().with_declarations(bad),
+                Err(AuthoredStoreError::InvalidDeclarationName { target: 2, .. })
+            ));
+        }
+        for roster in [vec![], vec![0], vec![2], vec![1, 1]] {
+            let mut bad = header.clone();
+            bad.modes[0].tokens = roster;
+            assert!(matches!(
+                seed().with_declarations(bad),
+                Err(AuthoredStoreError::InvalidSourceTokenRoster { .. })
+            ));
+        }
+        let mut bad = header;
+        bad.global_tokens = vec![1];
+        assert!(seed().with_declarations(bad).is_err());
+        let old_wire = postcard::to_allocvec(&seed().nodes).expect("legacy node-only format");
+        assert!(
+            postcard::from_bytes::<AuthoredRuleStore>(&old_wire).is_err(),
+            "missing declarations option must not default"
+        );
     }
 
     #[test]

@@ -598,6 +598,8 @@ pub fn composition_summary(
 pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<CompositionError>> {
     if specs.is_empty() {
         return Ok(LanguageSpec {
+            authored: None,
+            authored_token_origins: Default::default(),
             name: "empty".to_string(),
             types: Vec::new(),
             rules: Vec::new(),
@@ -1122,6 +1124,8 @@ mod tests {
             .collect();
 
         LanguageSpec {
+            authored: None,
+            authored_token_origins: Default::default(),
             name: name.to_string(),
             types,
             rules: rule_specs,
@@ -1256,6 +1260,8 @@ mod tests {
             &cat_names_b,
         )];
         let spec_b = LanguageSpec {
+            authored: None,
+            authored_token_origins: Default::default(),
             name: "B".to_string(),
             types: types_b,
             rules: rules_b,
@@ -1487,6 +1493,8 @@ mod tests {
         );
 
         let spec_b = LanguageSpec {
+            authored: None,
+            authored_token_origins: Default::default(),
             name: "B".to_string(),
             types: vec![CategorySpec {
                 name: "Expr".to_string(),
@@ -1596,6 +1604,8 @@ mod tests {
                 &cat_names,
             )];
             let mut spec = LanguageSpec {
+                authored: None,
+                authored_token_origins: Default::default(),
                 name: "A".to_string(),
                 types,
                 rules,
@@ -1639,6 +1649,8 @@ mod tests {
                 &cat_names,
             )];
             let mut spec = LanguageSpec {
+                authored: None,
+                authored_token_origins: Default::default(),
                 name: "B".to_string(),
                 types,
                 rules,
@@ -1695,6 +1707,8 @@ mod tests {
                 &cat_names,
             )];
             let mut spec = LanguageSpec {
+                authored: None,
+                authored_token_origins: Default::default(),
                 name: "A".to_string(),
                 types,
                 rules,
@@ -1736,6 +1750,8 @@ mod tests {
                 &cat_names,
             )];
             let mut spec = LanguageSpec {
+                authored: None,
+                authored_token_origins: Default::default(),
                 name: "B".to_string(),
                 types,
                 rules,

@@ -5,6 +5,7 @@
 //! a cache: the grammar value, not an image supplied beside it, is authoritative.
 
 mod authored;
+mod authored_bindings;
 mod authored_capture;
 mod canonical;
 mod capability;
@@ -31,6 +32,7 @@ mod theory_rule;
 mod weight;
 
 pub use authored::*;
+pub use authored_bindings::*;
 pub use authored_capture::*;
 pub use canonical::*;
 pub use capability::*;

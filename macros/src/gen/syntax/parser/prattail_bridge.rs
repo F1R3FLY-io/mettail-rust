@@ -67,8 +67,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
     // Retain the original observations before either syntax conversion below
     // loses binder, operation, or legacy-item structure. The shared capture
     // worker proves ordered root correspondence; transport preserves each ID.
-    let captured =
-        crate::gen::runtime::wpda_codegen::authored_capture::capture_rules(&language.terms)?;
+    let captured = crate::gen::runtime::wpda_codegen::authored_capture::capture_language(language)?;
     if captured.roots.len() != language.terms.len() {
         return Err("authored capture returned a different rule roster length".into());
     }
@@ -282,10 +281,12 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
     // Convert token definitions to CustomTokenSpec
     let mut literal_patterns = LiteralPatterns::default();
     let mut integer_alternatives: Vec<String> = Vec::new();
+    let mut authored_token_origins = mettail_prattail::AuthoredTokenOrigins::default();
     let custom_tokens: Vec<CustomTokenSpec> = language
         .token_defs
         .iter()
-        .map(|td| {
+        .enumerate()
+        .map(|(source_index, td)| {
             let name = td.name.to_string();
 
             // Resolve the NativeKind for this token's category so all
@@ -304,9 +305,11 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
             // standard Token variant family (Integer, Float, Boolean,
             // StringLit). Every non-None return from standard_token_variant()
             // IS a builtin family — no string comparison needed.
-            let is_builtin = native_kind
-                .and_then(|k| k.standard_token_variant())
-                .is_some();
+            let builtin_family = native_kind.and_then(|kind| kind.standard_token_variant());
+            let is_builtin = builtin_family.is_some();
+            authored_token_origins
+                .builtin_overrides
+                .push(builtin_family);
 
             // Update LiteralPatterns from the resolved NativeKind.
             // Multiple literals can share a built-in token family (e.g.
@@ -340,11 +343,17 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
                             literal_patterns
                                 .rational_by_category
                                 .insert(name.clone(), td.pattern.clone());
+                            authored_token_origins
+                                .typed_literals
+                                .insert(("Rational".into(), name.clone()), source_index);
                         },
                         mettail_ast::language::NativeKind::CanonicalFixedPoint => {
                             literal_patterns
                                 .fixed_by_category
                                 .insert(name.clone(), td.pattern.clone());
+                            authored_token_origins
+                                .typed_literals
+                                .insert(("FixedPoint".into(), name.clone()), source_index);
                         },
                         _ => {},
                     }
@@ -494,6 +503,8 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
         literal_patterns,
     );
     spec.semantic_dependency_groups = semantic_dependency_groups;
+    spec.authored = Some(authored_store);
+    spec.authored_token_origins = authored_token_origins;
     spec.custom_tokens = custom_tokens;
     spec.modes = modes;
     spec.sync = sync;

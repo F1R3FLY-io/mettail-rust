@@ -9,9 +9,12 @@
 
 use super::binder::MacroBinderSyntaxReader;
 use mettail_ast::grammar::{
-    DelimitedRegionKind, GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam,
+    AstTermParamReader, DelimitedRegionKind, GrammarItem, GrammarRule, PatternOp, SyntaxExpr,
+    TermParam,
 };
+use mettail_ast::language::NativeKindFromSynType;
 use mettail_ast::types::{CollectionType, TypeExpr};
+use mettail_grammar_core::context_items::ContextItemsReader;
 use mettail_grammar_core::*;
 use mettail_prattail::wpda_rule_analysis::binder::optional::{
     BinderSyntaxObservation, BinderSyntaxReader, OptionalOperationObservation,
@@ -136,10 +139,21 @@ impl<'syntax> AuthoredCaptureSource for MacroSource<'syntax> {
                     key: AuthoredTypeId(Handle::Type(key)),
                     value: AuthoredTypeId(Handle::Type(value)),
                 },
-                BinderTypeObservation::Arrow { codomain } => AuthoredType::Arrow {
-                    codomain: AuthoredTypeId(Handle::Type(codomain)),
+                BinderTypeObservation::Arrow { codomain } => {
+                    let (domain, _) = AstTermParamReader
+                        .arrow(ty)
+                        .expect("the original arrow observation has its original domain");
+                    AuthoredType::Arrow {
+                        domain: AuthoredTypeId(Handle::Type(domain)),
+                        codomain: AuthoredTypeId(Handle::Type(codomain)),
+                    }
                 },
-                BinderTypeObservation::Other(_) => AuthoredType::Unsupported { tag: 0 },
+                BinderTypeObservation::Other(_) => match AstTermParamReader.multi_binder(ty) {
+                    Some(inner) => AuthoredType::MultiBinder {
+                        inner: AuthoredTypeId(Handle::Type(inner)),
+                    },
+                    None => AuthoredType::Unsupported { tag: 0 },
+                },
             }),
             Handle::Param(param) => AuthoredNode::Param(match reader.param(param) {
                 TermParamObservation::Simple { name, ty } => AuthoredParam::Simple {
@@ -264,6 +278,7 @@ impl<'syntax> AuthoredCaptureSource for MacroSource<'syntax> {
 
 /// Retain one complete macro rule roster before its syntax is lowered. The
 /// frontend transport integration is separate; this function changes no rule.
+#[cfg(test)]
 pub(crate) fn capture_rules(rules: &[GrammarRule]) -> Result<CapturedAuthoredNodes, String> {
     let mut source = MacroSource {
         _rules: rules,
@@ -277,6 +292,85 @@ pub(crate) fn capture_rules(rules: &[GrammarRule]) -> Result<CapturedAuthoredNod
         .map_err(|error| format!("cannot retain macro authored rules: {error:?}"))
 }
 
+/// Retain declarations through the same name roots and source-equality table
+/// as the rules. These are the parser's actual TokenDef names, not inferred
+/// names reconstructed from a normalized token family or native carrier.
+pub(crate) fn capture_language<'syntax>(
+    language: &'syntax mettail_ast::language::LanguageDef,
+) -> Result<CapturedAuthoredNodes, String> {
+    let categories = language
+        .types
+        .iter()
+        .map(|category| AuthoredCategoryDeclaration {
+            name: name_id(&category.name),
+            native: category
+                .native_type
+                .as_ref()
+                .map(mettail_ast::language::NativeKind::from_syn_type),
+            collection: category.collection_kind.as_ref().map(|collection| {
+                let delimiters = collection.delimiters();
+                AuthoredCollectionDeclaration {
+                    kind: collection_kind(&collection.coll_type()),
+                    open: Some(delimiters.open.clone()),
+                    close: Some(delimiters.close.clone()),
+                    separator: Some(delimiters.sep.clone()),
+                    key_value_separator: delimiters.key_val_sep.clone(),
+                }
+            }),
+        })
+        .collect();
+    let count = language
+        .mode_defs
+        .iter()
+        .try_fold(language.token_defs.len(), |count, mode| {
+            count.checked_add(mode.token_defs.len())
+        })
+        .ok_or("source token count overflow")?;
+    let mut tokens = Vec::with_capacity(count);
+    let mut append = |token: &'syntax mettail_ast::language::TokenDef| -> Result<u32, String> {
+        let index = u32::try_from(tokens.len()).map_err(|_| "source token index overflow")?;
+        tokens.push(AuthoredTokenDeclaration {
+            name: name_id(&token.name),
+            category: token.category.as_ref().map(name_id),
+            from_literals: token.from_literals,
+            has_evaluation: token.rust_code.is_some(),
+            push: token.push_mode.as_ref().map(name_id),
+        });
+        Ok(index)
+    };
+    let global_tokens = language
+        .token_defs
+        .iter()
+        .map(&mut append)
+        .collect::<Result<_, _>>()?;
+    let modes = language
+        .mode_defs
+        .iter()
+        .map(|mode| {
+            Ok(AuthoredModeDeclaration {
+                name: name_id(&mode.name),
+                tokens: mode
+                    .token_defs
+                    .iter()
+                    .map(&mut append)
+                    .collect::<Result<_, String>>()?,
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    let declarations = AuthoredDeclarations { categories, tokens, global_tokens, modes };
+    let roots: Vec<_> = language
+        .terms
+        .iter()
+        .map(|rule| (AuthoredNodeTag::Rule, Handle::Rule(rule)))
+        .collect();
+    let mut source = MacroSource {
+        _rules: &language.terms,
+        reader: MacroBinderSyntaxReader,
+    };
+    capture_authored_declarations(&mut source, &roots, declarations, |_, _| Ok::<_, String>(()))
+        .map_err(|error| format!("cannot retain macro authored declarations: {error:?}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +378,7 @@ mod tests {
     use mettail_prattail::wpda_rule_analysis::authored::AuthoredRuleReader;
     use mettail_prattail::wpda_rule_analysis::binder::rule::classify_binder_in;
     use proc_macro2::Span;
+    use quote::quote;
     use std::cell::RefCell;
 
     fn id(name: &str) -> Ident {
@@ -666,6 +761,7 @@ mod tests {
         let captured = capture_rules(std::slice::from_ref(&fixture))
             .expect("unsupported reader observations must remain capturable");
         let mut unsupported_types = Vec::new();
+        let mut multi_types = Vec::new();
         let mut unsupported_operations = Vec::new();
         let mut names = Vec::new();
         let mut saw_abstraction = false;
@@ -681,6 +777,7 @@ mod tests {
                     assert_eq!(*tag, 0);
                     unsupported_types.push(index);
                 },
+                AuthoredNode::Type(AuthoredType::MultiBinder { .. }) => multi_types.push(index),
                 AuthoredNode::Operation(AuthoredOperation::Unsupported { tag }) => {
                     assert_eq!(*tag, 0);
                     unsupported_operations.push(index);
@@ -690,25 +787,24 @@ mod tests {
                 _ => {},
             }
         }
-        assert_eq!(unsupported_types.len(), 2);
+        assert_eq!(unsupported_types.len(), 1);
+        assert_eq!(multi_types.len(), 1);
         assert_eq!(unsupported_operations.len(), 2);
         assert!(saw_abstraction && saw_optional);
         for hidden in [
             "HiddenRefinedVar",
             "HiddenRefinedBase",
-            "HiddenMulti",
-            "HiddenDomain",
             "HiddenOperation",
             "AnotherHiddenOperation",
         ] {
             assert!(!names.contains(&hidden), "must not descend into unobserved {hidden}");
         }
-        for visible in ["Expr", "Open", "Close", "guest"] {
+        for visible in ["Expr", "Open", "Close", "guest", "HiddenMulti", "HiddenDomain"] {
             assert!(names.contains(&visible));
         }
         let reader = AuthoredRuleReader::new(&captured.store)
             .expect("unsupported opaque handles must admit the original reader");
-        for index in unsupported_types {
+        for index in unsupported_types.into_iter().chain(multi_types) {
             assert!(
                 matches!(reader.ty(AuthoredTypeId(index as u32)), BinderTypeObservation::Other(id) if id.0 == index as u32)
             );
@@ -718,5 +814,278 @@ mod tests {
                 matches!(reader.map_zip_operation(AuthoredOperationId(index as u32)), MapZipObservation::Other(id) if id.0 == index as u32)
             );
         }
+    }
+
+    fn declaration_language(
+        source: proc_macro2::TokenStream,
+    ) -> mettail_ast::language::LanguageDef {
+        syn::parse2(source).expect("original authored declaration fixture parses")
+    }
+
+    fn retained_name(store: &AuthoredRuleStore, id: AuthoredNameId) -> &AuthoredName {
+        let AuthoredNode::Name(name) = store
+            .get(id.0)
+            .expect("retained name belongs to this store")
+        else {
+            panic!("retained declaration name changed its node tag");
+        };
+        name
+    }
+
+    #[test]
+    fn capture_macro_declaration_zero_rules_keep_native_delimiters_and_name_equality() {
+        // Reuse the original AST declaration-observation source forms. Capture
+        // is checked independently from final lexer/category association.
+        let language = declaration_language(quote! {
+            name: Retained,
+            types {
+                Plain ![UserPayload] as Wrapped ![i8] as Tiny ![u32] as Wide
+                ![UserPayload] as Map ["map-open", "map-close", ";", "=>"]
+                ![UserPayload] as List ["", "]", "|"]
+            },
+            literals {
+                Tiny { pattern: "tiny"; eval: ![tiny_eval(text)]; }
+                Wide { pattern: "wide"; eval: ![wide_eval(text)]; }
+            },
+            terms { }
+        });
+        assert!(language.terms.is_empty());
+        let captured = capture_language(&language).expect("declaration-only source captures");
+        assert!(captured.roots.is_empty(), "declaration names are not rule roots");
+        let header = captured
+            .store
+            .declarations()
+            .expect("zero-rule capture retains its header");
+        assert_eq!(header.categories.len(), 6);
+        assert_eq!(
+            header
+                .categories
+                .iter()
+                .map(|category| category.native)
+                .collect::<Vec<_>>(),
+            [
+                None,
+                Some(NativeKind::Other),
+                Some(NativeKind::Int8),
+                Some(NativeKind::UInt32),
+                Some(NativeKind::Other),
+                Some(NativeKind::Other),
+            ]
+        );
+        assert_eq!(
+            header.categories[4].collection,
+            Some(AuthoredCollectionDeclaration {
+                kind: CollectionKind::Map,
+                open: Some("map-open".into()),
+                close: Some("map-close".into()),
+                separator: Some(";".into()),
+                key_value_separator: Some("=>".into()),
+            })
+        );
+        assert_eq!(
+            header.categories[5].collection,
+            Some(AuthoredCollectionDeclaration {
+                kind: CollectionKind::List,
+                open: Some(String::new()),
+                close: Some("]".into()),
+                separator: Some("|".into()),
+                key_value_separator: None,
+            })
+        );
+        assert_eq!(header.global_tokens, [0, 1]);
+        let mut names: Vec<_> = language
+            .types
+            .iter()
+            .zip(&header.categories)
+            .map(|(source, retained)| (&source.name, retained.name))
+            .collect();
+        for (source, retained) in language.token_defs.iter().zip(&header.tokens) {
+            names.push((&source.name, retained.name));
+            assert_eq!(retained.from_literals, source.from_literals);
+            assert_eq!(retained.has_evaluation, source.rust_code.is_some());
+            assert_eq!(retained.category.is_some(), source.category.is_some());
+            if let (Some(source), Some(retained)) = (&source.category, retained.category) {
+                names.push((source, retained));
+            }
+        }
+        for (original, retained) in &names {
+            assert_eq!(retained_name(&captured.store, *retained).spelling, original.to_string());
+            for (other_original, other_retained) in &names {
+                assert_eq!(
+                    retained_name(&captured.store, *retained).equality_class
+                        == retained_name(&captured.store, *other_retained).equality_class,
+                    original == other_original,
+                    "retained equality must follow original Ident equality, not occurrence IDs",
+                );
+            }
+        }
+        assert_ne!(header.tokens[0].name, header.tokens[1].name);
+        assert_eq!(retained_name(&captured.store, header.tokens[0].name).spelling, "Integer");
+        assert_eq!(
+            retained_name(&captured.store, header.tokens[0].name).equality_class,
+            retained_name(&captured.store, header.tokens[1].name).equality_class,
+        );
+    }
+
+    #[test]
+    fn capture_macro_declaration_zero_rule_owner_survives_actual_core_bridge() {
+        let language = declaration_language(quote! {
+            name: EmptyRetained,
+            types { Plain data Closed },
+            terms { }
+        });
+        let spec = crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(&language)
+            .expect("zero-rule language uses the original specification bridge");
+        assert!(spec.rules.is_empty());
+        let owner = spec
+            .authored
+            .as_ref()
+            .expect("declarations retain an owner without rules");
+        let core = spec
+            .to_grammar_core()
+            .expect("declaration-only specification lowers to Core");
+        assert!(core.productions.is_empty());
+        assert_eq!(core.authored.as_ref(), Some(owner.as_ref()));
+        let bindings = core
+            .authored_bindings
+            .as_ref()
+            .expect("retained declarations have final bindings");
+        assert_eq!(bindings.categories, [CategoryId(0), CategoryId(1)]);
+        assert!(bindings.tokens.is_empty() && bindings.modes.is_empty());
+        assert!(core.categories[0].admits_variables);
+        assert!(!core.categories[1].admits_variables);
+        core.validate()
+            .expect("zero-rule owner and associations validate");
+    }
+
+    #[test]
+    fn capture_macro_declaration_bridge_preserves_coalesced_and_dual_token_routes() {
+        let language = declaration_language(quote! {
+            name: LiteralRoutes,
+            types { ![i8] as Tiny ![u32] as Wide ![CanonicalBigRat] as Rat },
+            literals {
+                Tiny { pattern: "tiny"; eval: ![tiny_eval(text)]; }
+                Wide { pattern: "wide"; eval: ![wide_eval(text)]; }
+                Rat { pattern: "ratio"; eval: ![ratio_eval(text)]; }
+            },
+            terms { }
+        });
+        let spec = crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(&language)
+            .expect("literal routes use original lowering and family classification");
+        let core = spec
+            .to_grammar_core()
+            .expect("actual token append and coalescing sites bind rows");
+        let store = core
+            .authored
+            .as_ref()
+            .expect("literal source owner survives");
+        let header = store
+            .declarations()
+            .expect("literal source header survives");
+        let bindings = core
+            .authored_bindings
+            .as_ref()
+            .expect("actual bridge completed associations");
+        assert_eq!(header.global_tokens, [0, 1, 2]);
+        assert_eq!(bindings.tokens.len(), 3);
+        let tiny = &bindings.tokens[0];
+        let wide = &bindings.tokens[1];
+        let rational = &bindings.tokens[2];
+        assert_eq!(tiny.direct, wide.direct, "two source declarations share one builtin family");
+        assert_eq!(core.tokens[tiny.direct.0 as usize].name, "Integer");
+        assert!(tiny.typed_literal.is_none() && wide.typed_literal.is_none());
+        let typed = rational
+            .typed_literal
+            .expect("original BigRat lowering emits a typed route");
+        assert_ne!(typed, rational.direct, "direct and typed routes must not be conflated");
+        assert_eq!(core.tokens[rational.direct.0 as usize].name, "Rat");
+        assert_eq!(core.tokens[typed.0 as usize].name, "Rational/Rat");
+        assert_eq!(retained_name(store, header.tokens[2].name).spelling, "Rat");
+        assert_eq!(
+            core.tokens
+                .iter()
+                .filter(|token| token.name == "Integer")
+                .count(),
+            1
+        );
+        for route in [tiny.direct, wide.direct, rational.direct, typed] {
+            assert!(core.modes[0].token_ids.contains(&route));
+        }
+        core.validate()
+            .expect("coalesced and dual final routes validate");
+    }
+
+    #[test]
+    fn capture_macro_declaration_bridge_qualifies_modes_without_rewriting_source_names() {
+        let language = declaration_language(quote! {
+            name: ModeRoutes,
+            types { Proc },
+            tokens {
+                Open = "open" push(body);
+                raw mode body {
+                    Chunk = "chunk";
+                    Nested = "nested" push(body);
+                    Leave = "leave" pop;
+                }
+                mode other { Chunk = "other" push(body); }
+            },
+            terms { }
+        });
+        let spec = crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(&language)
+            .expect("mode source uses the original specification bridge");
+        let core = spec
+            .to_grammar_core()
+            .expect("mode token append sites produce their real IDs");
+        let store = core.authored.as_ref().expect("mode source owner survives");
+        let header = store.declarations().expect("mode source header survives");
+        let bindings = core
+            .authored_bindings
+            .as_ref()
+            .expect("mode associations finished");
+        assert_eq!(header.global_tokens, [0]);
+        assert_eq!(header.modes[0].tokens, [1, 2, 3]);
+        assert_eq!(header.modes[1].tokens, [4]);
+        assert_eq!(bindings.modes, [ModeId(1), ModeId(2)]);
+        let expected = ["Open", "body/Chunk", "body/Nested", "body/Leave", "other/Chunk"];
+        for (index, expected) in expected.into_iter().enumerate() {
+            let binding = &bindings.tokens[index];
+            assert!(binding.typed_literal.is_none());
+            let token = &core.tokens[binding.direct.0 as usize];
+            assert_eq!(token.name, expected);
+            assert!(core.modes[token.mode.0 as usize]
+                .token_ids
+                .contains(&token.id));
+        }
+        assert_ne!(bindings.tokens[1].direct, bindings.tokens[4].direct);
+        assert_eq!(retained_name(store, header.tokens[1].name).spelling, "Chunk");
+        assert_eq!(retained_name(store, header.tokens[4].name).spelling, "Chunk");
+        assert_eq!(
+            retained_name(store, header.tokens[1].name).equality_class,
+            retained_name(store, header.tokens[4].name).equality_class
+        );
+        for source in [0, 2, 4] {
+            let push = header.tokens[source]
+                .push
+                .expect("source token retains its push target");
+            assert_eq!(
+                retained_name(store, push).equality_class,
+                retained_name(store, header.modes[0].name).equality_class
+            );
+            assert_eq!(
+                core.tokens[bindings.tokens[source].direct.0 as usize]
+                    .transition
+                    .push,
+                Some(bindings.modes[0])
+            );
+        }
+        assert!(
+            core.tokens[bindings.tokens[3].direct.0 as usize]
+                .transition
+                .pop
+        );
+        assert!(core.modes[bindings.modes[0].0 as usize].raw);
+        assert!(!core.modes[bindings.modes[1].0 as usize].raw);
+        core.validate()
+            .expect("source mode names and final qualified memberships validate");
     }
 }

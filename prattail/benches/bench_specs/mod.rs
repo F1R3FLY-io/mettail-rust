@@ -234,6 +234,8 @@ fn collection_rule(
 /// Minimal language (~Lambda calculus): 1 category, 3 rules.
 pub fn minimal_spec() -> LanguageSpec {
     LanguageSpec {
+        authored: None,
+        authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Lambda".to_string(),
         types: vec![CategorySpec {
@@ -280,6 +282,8 @@ pub fn minimal_spec() -> LanguageSpec {
 /// Small language (~Calculator): 3 categories, 12 rules.
 pub fn small_spec() -> LanguageSpec {
     LanguageSpec {
+        authored: None,
+        authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Calculator".to_string(),
         types: vec![
@@ -337,6 +341,8 @@ pub fn small_spec() -> LanguageSpec {
 /// Medium language (~Ambient calculus): 2 categories, 7 rules.
 pub fn medium_spec() -> LanguageSpec {
     LanguageSpec {
+        authored: None,
+        authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Ambient".to_string(),
         types: vec![
@@ -391,6 +397,8 @@ pub fn medium_spec() -> LanguageSpec {
 /// Complex language (~Rholang): 3 categories, 10 rules.
 pub fn complex_spec() -> LanguageSpec {
     LanguageSpec {
+        authored: None,
+        authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Rholang".to_string(),
         types: vec![
@@ -491,6 +499,8 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
     }
 
     LanguageSpec {
+        authored: None,
+        authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Synthetic".to_string(),
         types: vec![CategorySpec {

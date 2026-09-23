@@ -21,6 +21,8 @@ fn calculator_spec() -> LanguageSpec {
     let cat_names = category_names(&types);
 
     LanguageSpec {
+        authored: None,
+        authored_token_origins: Default::default(),
         name: "Calculator".to_string(),
         types,
         rules: vec![
@@ -802,6 +804,8 @@ mod wfst_lexer_weight_tests {
         let cat_names = category_names(&types);
 
         let spec = LanguageSpec {
+            authored: None,
+            authored_token_origins: Default::default(),
             name: "Arith".to_string(),
             types,
             rules: vec![

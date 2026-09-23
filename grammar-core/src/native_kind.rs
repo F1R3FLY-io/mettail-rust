@@ -15,7 +15,7 @@
 ///
 /// String comparisons are confined to the single `from_last_path_segment` constructor;
 /// all downstream dispatch is by typed `match`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum NativeKind {
     Int8,
     Int16,

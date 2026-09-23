@@ -83,6 +83,48 @@ enum Frame<H, K, I> {
     Finish((AuthoredNodeTag, I), AuthoredNode<H, K>),
 }
 
+/// Append declaration name roots to the caller-admitted rule roster and run
+/// the original capture controller once. Names share its identity memo and
+/// source-equality classes, including in languages with no rules. The returned
+/// root roster still contains only the original rule roots in their positions.
+/// Callers must admit header payloads and the combined root count beforehand.
+pub fn capture_authored_declarations<S: AuthoredCaptureSource>(
+    source: &mut S,
+    rules: &[(AuthoredNodeTag, S::Handle)],
+    declarations: AuthoredDeclarations<S::Handle>,
+    admit: impl FnMut(
+        AuthoredCaptureAdmission,
+        &AuthoredNode<S::Handle, S::NameKey>,
+    ) -> Result<(), S::Error>,
+) -> Result<CapturedAuthoredNodes, AuthoredCaptureError<S::Error>> {
+    use AuthoredCaptureError as Error;
+    let mut count = rules.len();
+    declarations.try_for_each_name(|_| {
+        count = count.checked_add(1).ok_or(Error::IndexOverflow)?;
+        Ok(())
+    })?;
+    let mut roots = Vec::new();
+    roots.try_reserve(count).map_err(|_| Error::Allocation)?;
+    roots.extend_from_slice(rules);
+    declarations.try_for_each_name(|name| {
+        roots.push((AuthoredNodeTag::Name, name.0));
+        Ok::<_, Error<S::Error>>(())
+    })?;
+    let mut captured = capture_authored_nodes(source, &roots, admit)?;
+    let mut names = captured.roots[rules.len()..].iter().copied();
+    let declarations = declarations
+        .try_map_names(|_| names.next().map(AuthoredNameId).ok_or(Error::RootNotReady))?;
+    if names.next().is_some() {
+        return Err(Error::RootNotReady);
+    }
+    captured.store = captured
+        .store
+        .with_declarations(declarations)
+        .map_err(Error::Store)?;
+    captured.roots.truncate(rules.len());
+    Ok(captured)
+}
+
 /// Capture an ordered root roster with an explicit heap worklist. Completed
 /// shared nodes are reused, but duplicate roots retain their positions.
 /// No store escapes on any error, including admission refusal or a cycle.
@@ -247,8 +289,12 @@ impl<I, K> AuthoredNode<I, K> {
                     key: reference!(Type, AuthoredTypeId, key),
                     value: reference!(Type, AuthoredTypeId, value),
                 },
-                AuthoredType::Arrow { codomain } => AuthoredType::Arrow {
+                AuthoredType::Arrow { domain, codomain } => AuthoredType::Arrow {
+                    domain: reference!(Type, AuthoredTypeId, domain),
                     codomain: reference!(Type, AuthoredTypeId, codomain),
+                },
+                AuthoredType::MultiBinder { inner } => AuthoredType::MultiBinder {
+                    inner: reference!(Type, AuthoredTypeId, inner),
                 },
                 AuthoredType::Unsupported { tag } => AuthoredType::Unsupported { tag },
                 AuthoredType::KeyedPathMap { key, value } => AuthoredType::KeyedPathMap {
@@ -467,6 +513,65 @@ mod tests {
     }
 
     #[test]
+    fn declarations_use_one_capture_memo_and_keep_original_rule_roots() {
+        let declarations = || AuthoredDeclarations {
+            categories: vec![AuthoredCategoryDeclaration {
+                name: AuthoredNameId(2),
+                native: None,
+                collection: None,
+            }],
+            tokens: vec![AuthoredTokenDeclaration {
+                name: AuthoredNameId(1),
+                category: Some(AuthoredNameId(2)),
+                from_literals: false,
+                has_evaluation: true,
+                push: Some(AuthoredNameId(7)),
+            }],
+            global_tokens: vec![0],
+            modes: vec![AuthoredModeDeclaration { name: AuthoredNameId(7), tokens: vec![] }],
+        };
+        let mut source = graph();
+        let mut old_source = graph();
+        let roots = [(AuthoredNodeTag::Rule, 0), (AuthoredNodeTag::Rule, 0)];
+        let baseline = capture_authored_nodes(&mut old_source, &roots, |_, _| Ok(()))
+            .expect("original rule capture");
+        let captured =
+            capture_authored_declarations(&mut source, &roots, declarations(), |_, _| Ok(()))
+                .expect("same controller with header");
+        assert_eq!(captured.roots, baseline.roots);
+        assert_eq!(source.reads, old_source.reads, "all declaration names were already memoized");
+        assert_eq!(captured.store.len(), baseline.store.len());
+        let header = captured.store.declarations().expect("retained header");
+        assert_eq!(header.categories[0].name, header.tokens[0].category.expect("source category"));
+        assert_eq!(header.modes[0].name, header.tokens[0].push.expect("source push"));
+        let mut source = graph();
+        let captured =
+            capture_authored_declarations(&mut source, &[], declarations(), |_, _| Ok(()))
+                .expect("zero-rule language capture");
+        assert!(captured.roots.is_empty());
+        assert_eq!(source.reads, [2, 1, 7], "declaration field order with shared identities");
+        assert_eq!(captured.store.len(), 3);
+        let header = captured.store.declarations().expect("zero-rule header");
+        let name = |id: AuthoredNameId| match captured.store.get(id.0).expect("retained name") {
+            AuthoredNode::Name(name) => name,
+            _ => panic!("header name changed tag"),
+        };
+        assert_eq!(
+            name(header.tokens[0].name).equality_class,
+            name(header.modes[0].name).equality_class
+        );
+        assert_ne!(
+            name(header.categories[0].name).equality_class,
+            name(header.tokens[0].name).equality_class
+        );
+        let mut source = graph();
+        assert!(matches!(
+            capture_authored_declarations(&mut source, &[], declarations(), |_, _| Err("refused")),
+            Err(AuthoredCaptureError::Admission("refused"))
+        ));
+    }
+
+    #[test]
     fn capture_preserves_aliases_source_equality_and_ordered_roots() {
         let mut graph = graph();
         let mut phases = Vec::new();
@@ -535,7 +640,10 @@ mod tests {
     #[test]
     fn capture_refuses_cycles_wrong_tags_missing_source_and_admission() {
         let mut cycle = Graph {
-            nodes: vec![AuthoredNode::Type(AuthoredType::Arrow { codomain: AuthoredTypeId(0) })],
+            nodes: vec![AuthoredNode::Type(AuthoredType::Arrow {
+                domain: AuthoredTypeId(0),
+                codomain: AuthoredTypeId(0),
+            })],
             reads: vec![],
         };
         assert_eq!(
@@ -690,7 +798,11 @@ mod tests {
                 key: AuthoredTypeId(1),
                 value: AuthoredTypeId(2),
             }),
-            N::Type(AuthoredType::Arrow { codomain: AuthoredTypeId(2) }),
+            N::Type(AuthoredType::Arrow {
+                domain: AuthoredTypeId(1),
+                codomain: AuthoredTypeId(2),
+            }),
+            N::Type(AuthoredType::MultiBinder { inner: AuthoredTypeId(2) }),
             N::Type(AuthoredType::Unsupported { tag: 99 }),
             N::Param(AuthoredParam::Simple {
                 name: AuthoredNameId(1),
@@ -836,9 +948,14 @@ mod tests {
                     AuthoredNode::Type(AuthoredType::Base(AuthoredNameId(0))),
                 ];
                 for child in 1..20_001 {
-                    nodes.push(AuthoredNode::Type(AuthoredType::Arrow {
-                        codomain: AuthoredTypeId(child),
-                    }));
+                    let ty = match child % 2 {
+                        0 => AuthoredType::MultiBinder { inner: AuthoredTypeId(child) },
+                        _ => AuthoredType::Arrow {
+                            domain: AuthoredTypeId(1),
+                            codomain: AuthoredTypeId(child),
+                        },
+                    };
+                    nodes.push(AuthoredNode::Type(ty));
                 }
                 let root = nodes.len() - 1;
                 let mut graph = Graph { nodes, reads: vec![] };
