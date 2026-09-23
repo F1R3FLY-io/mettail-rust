@@ -107,10 +107,30 @@ the original opaque `Other` observation. Their richer canonical `Carrier`
 values remain separate. Literal names use the original first-match selector
 once, with borrowed names until ordinary name capture copies them.
 
-Installed owned-reader consumers require their own integration. A store with
-no header explicitly records unavailable declaration observations rather than
-synthesizing them. Neither retained observations nor final-ID bindings establish
-native decoder, value, or arbitrary Rust-wrapper equivalence.
+The [owned declaration reader](../../prattail/src/wpda_rule_analysis/authored_declarations.rs)
+requires the store, declaration header, and binding table, then applies the
+existing full GrammarCore validator and authored-rule reader checks. A missing
+header is unavailable input, not an empty declaration roster. The reader borrows
+the immutable owner; it does not reconstruct a source AST or confer installed
+language authority. Installed-parser integration remains a separate obligation.
+Neither retained observations nor final-ID bindings establish native decoder,
+value, or arbitrary Rust-wrapper equivalence.
+
+The reader feeds these retained fields directly to the existing category census,
+native-literal selectors, and guest-mode worker. An external rule roster is
+checked completely before census dispatch; its order and duplicate entries are
+passed through unchanged. The caller must supply the original source roster,
+not add later synthetic rules. Literal selection returns a source position;
+looking up its binding is a separate operation. Guest opener matching uses the
+retained spelling, while pushed-mode matching uses retained name-equality
+classes. Thus `r#Open` is not silently treated as `Open`, and matching displayed
+mode names do not override the source's equality relation.
+
+Category roles use the existing producer relation
+`admits_variables = !is_data` through the checked category binding. Missing
+source rows return no role rather than guessing. The low-level census callbacks,
+like the original rule-reader callbacks, require handles from the validated
+owner; the checked census entrypoint validates externally supplied rule IDs.
 
 ## Runtime admission
 
@@ -352,6 +372,13 @@ an end-to-end proof:
   separates immutable source rows from write-once final-ID association and
   checks complete token-roster coverage before publication. It does not infer
   the provenance of an arbitrary supplied ID.
+- [Declaration reader](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredDeclarationReaderProjection.v)
+  composes existing validation results with ordered rule checks, original
+  census/native/guest worker substitution, source-position lookup, and the
+  category-role producer relation. It does not reprove the Core validator or
+  establish runtime resource admission. The [reader tests](../../prattail/src/wpda_rule_analysis/authored_declarations/tests.rs)
+  exercise these boundaries with validated fixtures, nonidentity final token
+  bindings, duplicate source rows, raw names, and rejection cases.
 
 Concrete source-adapter tests remain necessary to connect each frontend to these
 models. These proofs do not establish hash injectivity, arbitrary callback

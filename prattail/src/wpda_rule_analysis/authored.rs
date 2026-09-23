@@ -30,6 +30,12 @@ use std::fmt;
 #[derive(Clone, Copy, Debug)]
 pub struct AuthoredNameRef<'store>(&'store AuthoredName);
 
+impl<'store> AuthoredNameRef<'store> {
+    pub(super) fn payload(self) -> &'store AuthoredName {
+        self.0
+    }
+}
+
 impl fmt::Display for AuthoredNameRef<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0.spelling)
@@ -80,7 +86,7 @@ impl<'store> AuthoredRuleReader<'store> {
         Ok(Self { store })
     }
 
-    fn name(&self, id: AuthoredNameId) -> AuthoredNameRef<'store> {
+    pub(super) fn name(&self, id: AuthoredNameId) -> AuthoredNameRef<'store> {
         match self.store.get(id.0) {
             Some(AuthoredNode::Name(name)) => AuthoredNameRef(name),
             _ => panic!("authored name handle must belong to this validated reader"),
@@ -108,7 +114,7 @@ impl<'store> AuthoredRuleReader<'store> {
         }
     }
 
-    fn rule(&self, id: AuthoredRuleId) -> &'store AuthoredRule {
+    pub(super) fn rule(&self, id: AuthoredRuleId) -> &'store AuthoredRule {
         match self.store.get(id.0) {
             Some(AuthoredNode::Rule(rule)) => rule,
             _ => panic!("authored rule handle must belong to this validated reader"),
