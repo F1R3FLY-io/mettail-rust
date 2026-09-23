@@ -110,6 +110,9 @@ The full-language commitment already includes both grammar and theory
 commitments, so this grammar representation does not alter observation-role
 semantics or require a different outer LanguageCore ABI. Parser images retain
 their layout and must match the resulting grammar commitment.
+The [authored-input retention design](authored-grammar-capture.md) explains the
+shared capture worklist, source adapters, admission bounds, and the distinction
+between transport validation and authoritative parser derivation.
 
 ## Verification scope
 
