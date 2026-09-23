@@ -284,8 +284,54 @@ for arbitrary adapters. The [admission model](../../formal/rocq/prattail_wpda_ru
 composes the original normalization proof with checked debit and prefix laws.
 The [adapter tests](../../ast/tests/legacy_rule_normalization_adapter.rs) check
 the original output/callback fixtures and denial before each of 40 reached sites
-in a mixed binder, literal, and collection fixture. Owned arena materialization
-and its generated-name equality policy remain separate adapter obligations.
+in a mixed binder, literal, and collection fixture.
+
+The [owned normalization adapter](../../prattail/src/wpda_rule_analysis/authored_normalization.rs)
+consumes one validated `AuthoredRuleStore` in constant time. It records the
+original arena length and accepts only original rule handles during that
+session. It calls the shared normalizer once. Its constructor callbacks stage
+fixed-depth parameter and syntax recipes, keeping fallible arena effects outside
+those callbacks. A semantic refusal returns the original handle without building
+a name index. An error consumes the private session and returns no partial store.
+
+On successful normalization, the adapter lazily indexes source names. This
+adapter supports the original producers' profile: equal spellings correspond
+exactly to equal source classes. It checks both directions without strengthening
+the generic arena invariant or renumbering existing classes. Original names and
+nodes remain untouched. Generated `p0`, `p1`, and `elems` spellings reuse an
+existing representative when present; otherwise a checked class above the
+current maximum is added. Raw `r#p0` remains distinct from `p0`. A hit at the
+maximum class succeeds; only a required extension can overflow. Hash-table
+iteration never determines node IDs, representatives, or class numbers.
+
+Materialization proceeds as follows:
+
+1. Admit and reserve each known-length output roster once.
+2. Resolve generated names and append the original constructors' shallow child
+   nodes before their owners: base/arrow/collection types and parameters, or
+   source-free separator operations. Every collection kind retains the original
+   single-element `Collection` representation, including Map and PathMap.
+3. Admit each original legacy-item payload before copying it.
+4. Append complete parameter and syntax rosters, then one new rule retaining the
+   original label, category, and legacy items. Publish the session and new handle
+   together. Existing rules and the declaration header are never overwritten.
+
+Independently optional collection delimiters are checked at the reached original
+preflight item. A half-present pair is unsupported; both absent retain the
+original semantic refusal, and present empty strings remain present. Existing
+context/syntax presence gates run first. There is no preliminary grammar scan
+that changes this refusal order.
+
+The [materialization model](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredNormalizationMaterialization.v)
+connects the concrete recipes, name-index reads and class extension, checked
+append, original-handle boundary, and final publication. Derived name IDs may
+reuse representatives: the claim is spelling/equality and reader correspondence,
+not identical occurrence IDs or serialized bytes from a separately recaptured
+AST. The [adapter tests](../../prattail/src/wpda_rule_analysis/authored_normalization/tests.rs)
+exercise these positive and refusal boundaries. Callers still supply finite
+admission policies covering actual copies, indexing, and construction. Logical
+admission is not a physical memory guarantee or a proof of arbitrary callback
+behavior; this adapter alone does not activate installed parser generation.
 
 These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared

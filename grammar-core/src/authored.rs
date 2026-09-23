@@ -595,6 +595,16 @@ impl AuthoredRuleStore {
         Ok(index)
     }
 
+    /// Reserve append capacity without changing any node, handle or declaration.
+    /// Callers admit the requested allocation before invoking this operation;
+    /// checked append remains responsible for index and reference validation.
+    pub fn try_reserve(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        self.nodes.try_reserve(additional)
+    }
+
     /// Admit an already owned roster without cloning, reordering or repairing it.
     pub fn from_nodes(nodes: Vec<AuthoredNode>) -> Result<Self, AuthoredStoreError> {
         let store = Self { nodes, declarations: None };
