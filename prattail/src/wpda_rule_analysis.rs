@@ -22,6 +22,7 @@ pub mod census;
 pub mod collection;
 pub mod factoring;
 pub mod fork_emission;
+pub mod grouping;
 pub mod mixfix;
 pub mod parikh;
 pub mod prefix;

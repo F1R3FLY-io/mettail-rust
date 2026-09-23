@@ -927,28 +927,23 @@ fn collect_first_set(
 /// `S` becomes the infix's left operand, e.g. `EqInt: Int "==" Int : Bool` ⇒
 /// `Int` is an infix-hop source of `Bool`). Excludes `R`. This is the edge type
 /// that REQUIRES the grouped operand to open as `S` (a bare `S` could not become
-/// the infix's operand of a DIFFERENT category), so it is followed TRANSITIVELY.
+/// the infix's operand of a DIFFERENT category). The shared driver retains the
+/// original bounded schedule rather than computing a transitive closure.
+#[cfg(test)]
 fn grouping_source_infix_hop(
     categories: &[String],
     language: &mettail_ast::language::LanguageDef,
     result_idx: usize,
     out: &mut std::collections::BTreeSet<u16>,
 ) {
-    let result_cat_name = &categories[result_idx];
-    for rule in &language.terms {
-        if rule.category.to_string() != *result_cat_name {
-            continue;
-        }
-        if let Some(info) = super::infix::classify_rule_public(rule) {
-            if info.is_cross_category && info.category != info.result_category {
-                if let Some(source_idx) = categories.iter().position(|c| c == &info.category) {
-                    if source_idx != result_idx {
-                        out.insert(source_idx as u16);
-                    }
-                }
-            }
-        }
-    }
+    mettail_prattail::wpda_rule_analysis::grouping::grouping_source_infix_hop(
+        categories,
+        &language.terms,
+        result_idx,
+        out,
+        &mut |rule| rule.category.to_string(),
+        &mut super::infix::classify_rule_public,
+    );
 }
 
 /// Cross-category PROJECTION hop for a result category `R`: the categories `S`
@@ -960,9 +955,10 @@ fn grouping_source_infix_hop(
 /// transitively, which would otherwise pull the entire cast lattice into every
 /// group-open (e.g. rholang `Proc` has `CastX : Proc` for ~15 numeric/collection
 /// `X`, and chaining their projections back through each other's casts explodes
-/// the group-open fan-out → deep-paren fork blow-up). The infix hop IS still
-/// followed transitively FROM these first-level projection sources, which is
+/// the group-open fan-out → deep-paren fork blow-up). One infix hop is still
+/// followed FROM these first-level sources below the hub threshold, which is
 /// what M4 needs (`UInt32 →proj→ Bool →infix→ Int`).
+#[cfg(test)]
 fn grouping_source_projection_hop(
     language: &mettail_ast::language::LanguageDef,
     per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
@@ -970,25 +966,21 @@ fn grouping_source_projection_hop(
     result_idx: usize,
     out: &mut std::collections::BTreeSet<u16>,
 ) {
-    if let Some(rules) = per_cat.get(result_idx) {
-        for rule in rules {
-            if let AtomicShape::CrossCatProjection { source_cat_name, .. } =
-                classify_atomic(rule, language)
-            {
-                if let Some(source_idx) = categories.iter().position(|c| c == &source_cat_name) {
-                    if source_idx != result_idx {
-                        out.insert(source_idx as u16);
-                    }
-                }
-            }
-        }
-    }
+    mettail_prattail::wpda_rule_analysis::grouping::grouping_source_projection_hop(
+        per_cat,
+        categories,
+        result_idx,
+        out,
+        &mut |rule| match classify_atomic(rule, language) {
+            AtomicShape::CrossCatProjection { source_cat_name, .. } => Some(source_cat_name),
+            _ => None,
+        },
+    );
 }
 
 /// The categories a `(`-group may open as when the enclosing requested category
-/// is `result_idx` — a BOUNDED transitive closure over the two grouping-source
-/// edge types (see [`grouping_source_infix_hop`] and
-/// [`grouping_source_projection_hop`]).
+/// is `result_idx` — the original bounded two-level derivation shared through
+/// `mettail_prattail::wpda_rule_analysis::grouping`.
 ///
 /// One-hop was insufficient for chained cross-category continuations. Example
 /// (calculator, reconnection residual M4): parsing `(1) == 4` under a `UInt32`
@@ -1002,8 +994,8 @@ fn grouping_source_projection_hop(
 /// `1==4` and `(1==4)` succeeded). Bare operands already worked (prefix-dispatch
 /// chains the projections directly); grouping needed the same reachability.
 ///
-/// BOUND (perf): the closure follows the INFIX-operand relation TRANSITIVELY
-/// (that edge genuinely forces the operand's category) but includes PROJECTION
+/// BOUND (perf): one INFIX-operand hop is taken from each first-level projection
+/// source only below the four-source hub threshold. It includes PROJECTION
 /// sources only at the FIRST level (level 0 = `result_idx`), NOT compounding them
 /// through further projections. Rationale: a projection `X : R` means a bare `X`
 /// already IS an `R`, so a grouped `(X)` grows into `R` directly — chaining
@@ -1021,51 +1013,18 @@ fn grouping_source_categories_for_result(
     per_cat: &[Vec<mettail_ast::grammar::GrammarRule>],
     result_idx: usize,
 ) -> Vec<u16> {
-    let result_src_idx = result_idx as u16;
-    let mut closure: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
-    let mut visited: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
-    visited.insert(result_src_idx);
-    // Level 0: BOTH edge types from `result_idx` (projections included ONCE).
-    let mut seed: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
-    grouping_source_infix_hop(categories, language, result_idx, &mut seed);
-    grouping_source_projection_hop(language, per_cat, categories, result_idx, &mut seed);
-    // BOUND (perf, 2026-07-01): the chained-operand expansion (M4:
-    // `R →proj→ P →infix→ Q` needs `Q` in R's group-open) is applied ONLY when
-    // `R` has FEW projection sources — a proxy for "narrow numeric-tower
-    // category" (calculator `UInt32`/`Int`/…: 1-3 projection sources) versus a
-    // "hub" category with a large cast lattice (rholang `Proc`: ~15 `CastX`
-    // sources, whose infix expansion pulls in the whole comparison-operand set
-    // and blows the `(` group-open fan-out to 18 → deep-paren fork explosion,
-    // timing out `proc_display`). Threshold 4: keeps M4 (UInt32 has 1 projection
-    // source, Bool) and never triggers for the Proc hub. Proc/hub categories
-    // fall back to the level-0 seed only (their prior one-hop behavior), so a
-    // grouped Proc operand still relies on the projection/bare path (unchanged),
-    // while the narrow numeric categories gain the chained-infix operand needed
-    // for `(1)==4`-style cross-cat comparisons.
-    const HUB_PROJECTION_THRESHOLD: usize = 4;
-    let projection_sources: Vec<usize> = {
-        let mut pv: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
-        grouping_source_projection_hop(language, per_cat, categories, result_idx, &mut pv);
-        pv.into_iter().map(|c| c as usize).collect()
-    };
-    for src in seed {
-        closure.insert(src);
-        visited.insert(src);
-    }
-    if projection_sources.len() < HUB_PROJECTION_THRESHOLD {
-        for p in projection_sources {
-            let mut hop: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
-            grouping_source_infix_hop(categories, language, p, &mut hop);
-            for src in hop {
-                closure.insert(src);
-                visited.insert(src);
-            }
-        }
-    }
-    let mut sources = Vec::with_capacity(closure.len() + 1);
-    sources.push(result_src_idx);
-    sources.extend(closure);
-    sources
+    mettail_prattail::wpda_rule_analysis::grouping::grouping_source_categories_for_result(
+        categories,
+        &language.terms,
+        per_cat,
+        result_idx,
+        |rule| rule.category.to_string(),
+        super::infix::classify_rule_public,
+        |rule| match classify_atomic(rule, language) {
+            AtomicShape::CrossCatProjection { source_cat_name, .. } => Some(source_cat_name),
+            _ => None,
+        },
+    )
 }
 
 /// Stage 3.20 / Commit 4 part 2 (Plan agent Fix, 2026-05-06): emit `(`-trigger

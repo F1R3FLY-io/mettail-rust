@@ -169,3 +169,116 @@ fn original_grouping_sources_cast_before_ordering_and_second_hop_lookup() {
         "65536 casts to zero; the second hop therefore reads R, not P, and does not add Q"
     );
 }
+
+#[test]
+fn shared_grouping_sources_preserve_original_classifier_callbacks_and_order() {
+    use mettail_prattail::wpda_rule_analysis::grouping;
+    use std::cell::RefCell;
+
+    let cats = categories(&["R", "P", "Q", "D"]);
+    let mut direct = infix("R", "D");
+    direct.label = ident("Direct");
+    let mut via = infix("P", "Q");
+    via.label = ident("Via");
+    let mut other = infix("Other", "Q");
+    other.label = ident("Other");
+    let language = language(vec![direct, via, other]);
+    // The original projection hop trusts its row; it does not add the infix
+    // hop's rule-category filter. Preserve that distinction in the adapter.
+    let mut projected = projection("Other", "P");
+    projected.label = ident("Projected");
+    let keyword = GrammarRule {
+        term_context: Some(vec![]),
+        syntax_pattern: Some(vec![SyntaxExpr::Literal("word".into())]),
+        ..rule_fixture(ident("Keyword"), ident("R"))
+    };
+    let mut missing = projection("R", "Missing");
+    missing.label = ident("Missing");
+    let mut same = projection("R", "R");
+    same.label = ident("Same");
+    let per_cat = vec![vec![projected, keyword, missing, same]];
+    let original_projection_observations: Vec<_> = per_cat[0]
+        .iter()
+        .map(|rule| match classify_atomic(rule, &language) {
+            AtomicShape::CrossCatProjection { source_cat_name, .. } => Some(source_cat_name),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        original_projection_observations,
+        vec![Some("P".into()), None, Some("Missing".into()), None]
+    );
+
+    let trace = RefCell::new(Vec::new());
+    let actual = grouping::grouping_source_categories_for_result(
+        &cats,
+        &language.terms,
+        &per_cat,
+        0,
+        |rule| {
+            trace.borrow_mut().push(format!("category:{}", rule.label));
+            rule.category.to_string()
+        },
+        |rule| {
+            trace.borrow_mut().push(format!("infix:{}", rule.label));
+            super::super::infix::classify_rule_public(rule)
+        },
+        |rule| {
+            trace.borrow_mut().push(format!("atomic:{}", rule.label));
+            match classify_atomic(rule, &language) {
+                AtomicShape::CrossCatProjection { source_cat_name, .. } => Some(source_cat_name),
+                _ => None,
+            }
+        },
+    );
+    assert_eq!(actual, vec![0, 1, 2, 3]);
+    assert_eq!(actual, grouping_source_categories_for_result(&cats, &language, &per_cat, 0));
+    assert_eq!(
+        trace.into_inner(),
+        [
+            "category:Direct",
+            "infix:Direct",
+            "category:Via",
+            "category:Other",
+            "atomic:Projected",
+            "atomic:Keyword",
+            "atomic:Missing",
+            "atomic:Same",
+            "atomic:Projected",
+            "atomic:Keyword",
+            "atomic:Missing",
+            "atomic:Same",
+            "category:Direct",
+            "category:Via",
+            "infix:Via",
+            "category:Other",
+        ]
+    );
+}
+
+#[test]
+fn shared_grouping_sources_accept_neutral_handles_to_the_same_original_classifiers() {
+    use mettail_prattail::wpda_rule_analysis::grouping;
+
+    let cats = categories(&["R", "P", "Q", "D"]);
+    let bank = [infix("R", "D"), infix("P", "Q"), projection("R", "P")];
+    let language = language(vec![bank[0].clone(), bank[1].clone()]);
+    let per_cat = vec![vec![bank[2].clone()]];
+    let original = grouping_source_categories_for_result(&cats, &language, &per_cat, 0);
+    let handles = [0usize, 1];
+    let rows = vec![vec![2usize]];
+    let shared = grouping::grouping_source_categories_for_result(
+        &cats,
+        &handles,
+        &rows,
+        0,
+        |handle| bank[*handle].category.to_string(),
+        |handle| super::super::infix::classify_rule_public(&bank[*handle]),
+        |handle| match classify_atomic(&bank[*handle], &language) {
+            AtomicShape::CrossCatProjection { source_cat_name, .. } => Some(source_cat_name),
+            _ => None,
+        },
+    );
+    assert_eq!(shared, original);
+    assert_eq!(shared, vec![0, 1, 2, 3]);
+}
