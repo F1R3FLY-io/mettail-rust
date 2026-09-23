@@ -108,6 +108,7 @@ theories/LegacyRuleNormalizationProjection.v
 theories/ParikhDescriptorProjection.v
 theories/GroupingSourceDescriptorProjection.v
 theories/OriginalFirstSetProjection.v
+theories/AtomicPrefixDescriptorProjection.v
 theories/OriginalIdentSummaryProjection.v
 theories/NativeFirstDescriptorProjection.v
 theories/NativeKindProjection.v
@@ -116,6 +117,8 @@ theories/UnifiedPrefixDescriptorProjection.v
 theories/AuthoredRuleStoreProjection.v
 theories/AuthoredRuleCaptureProjection.v
 theories/AuthoredRuleTransportProjection.v
+theories/AuthoredTypeExtensionProjection.v
+theories/AuthoredDeclarationsProjection.v
 theories/NonTerminalKindProjection.v
 theories/CandidateContinuation.v
 theories/CartesianSuccessorReachability.v
