@@ -213,6 +213,16 @@ The [native-kind projection model](../../formal/rocq/prattail_wpda_runtime/theor
 preserves the original classifier, tables, and queue behavior; it does not prove
 that the tables' numeric embeddings or runtime decoder implementations are valid.
 
+The original [literal-name selector](../../grammar-core/src/literal_name.rs)
+also uses the shared native-kind table. It inspects only the first category
+equal to the original literal name, even if that category has no native type.
+A standard token variant is constructed with the original literal occurrence's
+span; otherwise the original name is cloned. The AST keeps those constructors,
+its surrounding declaration validation, and its token metadata moves. The
+[literal-name model](../../formal/rocq/prattail_wpda_runtime/theories/LiteralNameProjection.v)
+preserves this lazy lookup and constructor schedule without assuming that name
+equality is spelling equality or defining a new runtime carrier policy.
+
 The prefix worker also contains the original identifier summaries: whether a
 category has a home variable reading, which categories have an identifier FIRST
 contribution, and whether a source's identifier readings are variable-only.

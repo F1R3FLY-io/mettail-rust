@@ -136,13 +136,15 @@ impl Parse for LanguageDef {
             .into_iter()
             .map(|ld| {
                 let original = ld.name.clone();
-                let mapped_name = types
-                    .iter()
-                    .find(|t| t.name == original)
-                    .and_then(|t| t.native_type.as_ref())
-                    .and_then(|nt| NativeKind::from_syn_type(nt).standard_token_variant())
-                    .map(|s| Ident::new(s, original.span()))
-                    .unwrap_or_else(|| original.clone());
+                let mapped_name = mettail_grammar_core::normalize_literal_name(
+                    &original,
+                    &types,
+                    |t| &t.name,
+                    |t| t.native_type.as_ref(),
+                    NativeKind::from_syn_type,
+                    |s, original| Ident::new(s, original.span()),
+                    |original| original.clone(),
+                );
                 TokenDef {
                     name: mapped_name,
                     pattern: ld.pattern,
