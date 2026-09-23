@@ -5,6 +5,7 @@
 //! codegen-owned scalar invocation payloads. Runtime-facing crates normalize
 //! those payloads through `mettail-rho-runtime`.
 
+use crate::gen::native::NativeTypeFromSynType;
 use std::collections::{BTreeMap, BTreeSet};
 
 use mettail_ast::grammar::{NonTerminalKind, TermParam};

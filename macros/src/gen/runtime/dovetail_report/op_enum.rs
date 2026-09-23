@@ -30,6 +30,7 @@
 //! op-enum payloads match the AST variant field types exactly; a divergence is a build error
 //! at the Step-C lowering site, never silent.
 
+use crate::gen::native::NativeTypeFromSynType;
 use mettail_ast::language::{CollectionCategory, LanguageDef};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};

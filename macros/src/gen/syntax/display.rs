@@ -14,6 +14,7 @@
 
 use crate::gen::capture::{field_layout, FieldSlotSource};
 use crate::gen::native::has_native_type;
+use crate::gen::native::NativeTypeFromSynType;
 use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
 use crate::gen::term_ops::subst::collect_category_variants;
 use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};

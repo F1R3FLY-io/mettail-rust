@@ -1,7 +1,7 @@
 #![allow(clippy::single_match)]
 
 use crate::gen::capture::{field_layout, FieldSlotSource};
-use crate::gen::native::NativeType;
+use crate::gen::native::{NativeType, NativeTypeFromSynType};
 use crate::gen::{
     category_emits_implicit_var, generate_literal_label, generate_var_label, is_literal_rule,
     is_var_rule,

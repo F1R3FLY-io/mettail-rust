@@ -11,7 +11,7 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::gen::native::NativeType;
+use crate::gen::native::{NativeType, NativeTypeFromSynType};
 use crate::gen::term_gen::{
     count_optional_positions, is_ident_position, is_lang_type, random_ident_expr,
     CaptureSamplingContext,

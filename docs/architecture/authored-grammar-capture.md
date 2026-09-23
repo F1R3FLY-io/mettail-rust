@@ -327,6 +327,30 @@ its surrounding declaration validation, and its token metadata moves. The
 preserves this lazy lookup and constructor schedule without assuming that name
 equality is spelling equality or defining a new runtime carrier policy.
 
+Constructor labels use a different existing classification:
+[`NativeType`](../../grammar-core/src/native_type.rs) retains all 25 original
+code-generation variants, including collection wrappers and `Other(String)`.
+It is not a replacement for `NativeKind`. The macro keeps its shallow
+`syn::Type` probes through `NativeTypeFromSynType`; the shared core receives
+their observations rather than parsing or reconstructing Rust types.
+
+The shared [label helpers](../../grammar-core/src/constructor_labels.rs) keep
+the byte-vector probe first. A byte-vector result selects `BytesLit` without
+calling native classification. Otherwise the original integer test and native
+match select the label, including the ordered `HashSetLit` and `PathMapLit`
+opaque-name cases. The selected constructor is called once. Variable labels
+use the first Unicode scalar's full uppercase expansion, followed by `Var`;
+they do not truncate that expansion to one byte or character. For example,
+`ßuffix` produces `SSVar`.
+
+The [constructor-label model](../../formal/rocq/prattail_wpda_runtime/theories/ConstructorLabelProjection.v)
+preserves the lazy observation and constructor schedule. Its scope is label
+selection, not decoder equivalence, serialized native metadata, allocation
+failure, or arbitrary callback correctness. The
+[original-behavior fixtures](../../macros/tests/support/constructor_label_baselines.rs)
+check the actual macro helpers, including qualified types, unsupported shapes,
+byte-vector argument gates, raw identifiers, and Unicode expansion.
+
 The prefix worker also contains the original identifier summaries: whether a
 category has a home variable reading, which categories have an identifier FIRST
 contribution, and whether a source's identifier readings are variable-only.

@@ -19,7 +19,7 @@ use super::collection::{classify_collection, CollectionShape};
 use super::infix;
 use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
 use super::refinement::lookup_refinement_type;
-use crate::gen::native::NativeType;
+use crate::gen::native::{NativeType, NativeTypeFromSynType};
 
 fn collect_action_arms_by_category(
     language: &LanguageDef,

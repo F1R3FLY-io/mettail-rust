@@ -67,6 +67,7 @@
 //! - `semantic_hash_iterative<H: Hasher>(&mut Vec<SemanticHashTask>, &mut H)`
 //! - `impl Cat { pub fn semantic_hash<H>(&self, &mut H) }` for each category
 
+use crate::gen::native::NativeTypeFromSynType;
 use crate::gen::runtime::wpda_codegen::builtin_metadata::{
     classify_fold_alias_send_shape, classify_fold_alias_shape, classify_simple_projection_shape,
 };

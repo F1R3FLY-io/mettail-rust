@@ -12,6 +12,7 @@
 //! flag on `InfixRuleInfo` drives Fork-based selection at runtime when a
 //! token has multiple candidate result categories.
 
+use crate::gen::native::NativeTypeFromSynType;
 use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;

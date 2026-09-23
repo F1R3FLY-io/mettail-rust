@@ -46,7 +46,7 @@
 //! - `impl Drop for Cat`: orchestrates the iterative drop for each category
 
 use crate::gen::generate_var_label;
-use crate::gen::native::NativeType;
+use crate::gen::native::{NativeType, NativeTypeFromSynType};
 use crate::gen::term_ops::collection_walk::{
     for_each_owned_subterm, plan_for, CollectionPlan, OrderSensitivity,
 };

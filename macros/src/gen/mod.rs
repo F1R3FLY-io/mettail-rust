@@ -37,6 +37,7 @@ pub(crate) mod token_tree_walk;
 pub(crate) mod type_expr_walk;
 pub mod types;
 
+use crate::gen::native::NativeTypeFromSynType;
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind};
 use mettail_ast::language::{CategoryCapability, LangType, LanguageDef};
 use proc_macro2::TokenStream;
@@ -3022,13 +3023,9 @@ pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<NonTerminalKind> {
 /// Examples: Proc -> PVar, Name -> NVar, Int -> IVar
 pub fn generate_var_label(category: &Ident) -> Ident {
     let cat_str = category.to_string();
-    let first_letter = cat_str
-        .chars()
-        .next()
-        .unwrap_or('V')
-        .to_uppercase()
-        .collect::<String>();
-    quote::format_ident!("{}Var", first_letter)
+    mettail_grammar_core::constructor_labels::generate_var_label(&cat_str, |first_letter| {
+        quote::format_ident!("{}Var", first_letter)
+    })
 }
 
 /// Generate the literal variant label for a category with native type.
@@ -3045,60 +3042,11 @@ pub fn generate_var_label(category: &Ident) -> Ident {
 ///
 /// Used for auto-generated literal constructor variants.
 pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
-    use native::NativeType;
-    // ★ The BYTE carrier is asked FIRST, because `NativeType` cannot see it.
-    // `NativeType::from_syn_type` classifies by the last path segment, so `Vec<u8>` and
-    // `Vec<Proc>` are both `VecCollection` and would both be labelled `ListLit`. A `Vec<u8>` is
-    // not a collection of terms (see `native::is_byte_vector` for the full argument): its
-    // surface is ONE literal, `b"deadbeef"`, and `u8` is not a category. Labelling it `ListLit`
-    // put a scalar value into the collection Display path, which wrapped it in the EMPTY
-    // delimiters a non-`as List` category declares — the measured `Bytes::…(vec![])` ⇒ `""`.
-    if native::is_byte_vector(native_type) {
-        return quote::format_ident!("BytesLit");
-    }
-    let nt = NativeType::from_syn_type(native_type);
-    // Group integer-like (including `CanonicalBigInt`) before narrower classifiers
-    // so `is_integer()` correctly covers arbitrary-precision ints.
-    if nt.is_integer() {
-        return quote::format_ident!("NumLit");
-    }
-    match nt {
-        NativeType::Float32 | NativeType::Float64 => quote::format_ident!("FloatLit"),
-        NativeType::Bool => quote::format_ident!("BoolLit"),
-        NativeType::Str => quote::format_ident!("StringLit"),
-        NativeType::CanonicalBigRat => quote::format_ident!("RatLit"),
-        NativeType::CanonicalFixedPoint => quote::format_ident!("FixedLit"),
-        // Collection wrappers: the variant label matches the collection's
-        // surface kind. `Vec` is the list backing, `HashBag` the bag backing,
-        // `HashMap`/`HashMapLit` the map backing.
-        NativeType::VecCollection => quote::format_ident!("ListLit"),
-        NativeType::HashBagCollection | NativeType::HashSetCollection => {
-            quote::format_ident!("BagLit")
-        },
-        NativeType::HashMapLitCollection | NativeType::HashMapCollection => {
-            quote::format_ident!("MapLit")
-        },
-        // Rholang 1.4 (main) collection wrappers — distinct surface kinds whose
-        // variant labels must match enums.rs (CollectionCategory::Set/Pathmap →
-        // "SetLit"/"PathmapLit"). These wrappers parse as `NativeType::Other`.
-        NativeType::Other(ref s) if s == "HashSetLit" => quote::format_ident!("SetLit"),
-        NativeType::Other(ref s) if s == "PathMapLit" => quote::format_ident!("PathmapLit"),
-        NativeType::Other(_) => quote::format_ident!("Lit"), // Generic fallback
-        // Unreachable: `is_integer()` above already returned for these.
-        NativeType::Int8
-        | NativeType::Int16
-        | NativeType::Int32
-        | NativeType::Int64
-        | NativeType::Int128
-        | NativeType::Isize
-        | NativeType::UInt8
-        | NativeType::UInt16
-        | NativeType::UInt32
-        | NativeType::UInt64
-        | NativeType::UInt128
-        | NativeType::Usize
-        | NativeType::CanonicalBigInt => quote::format_ident!("NumLit"),
-    }
+    mettail_grammar_core::constructor_labels::generate_literal_label(
+        || native::is_byte_vector(native_type),
+        || native::NativeType::from_syn_type(native_type),
+        |label| quote::format_ident!("{}", label),
+    )
 }
 
 /// A `compile_error!` for a rule whose AST SHAPE contradicts what the parser and

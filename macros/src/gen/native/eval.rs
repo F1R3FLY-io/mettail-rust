@@ -1,3 +1,4 @@
+use crate::gen::native::NativeTypeFromSynType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 

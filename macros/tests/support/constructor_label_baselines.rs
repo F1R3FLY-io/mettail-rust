@@ -1,6 +1,8 @@
 //! Frozen observations of the original constructor-label helpers, before relocation.
 
-use crate::gen::native::{is_byte_vector, native_type_to_string, NativeType};
+use crate::gen::native::{
+    is_byte_vector, native_type_to_string, NativeType, NativeTypeFromSynType,
+};
 use crate::gen::{generate_literal_label, generate_var_label};
 
 fn native(source: &str) -> syn::Type {
