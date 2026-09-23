@@ -258,6 +258,35 @@ instrumentation, not a trace allocated by the converter. Allocation failure
 remains a separate refusal; logical charges do not establish physical memory
 usage or the lawfulness of arbitrary constructors.
 
+### Legacy rule normalization
+
+The original [legacy rule normalizer](../../ast/src/legacy_rule_normalization.rs)
+converts supported BNF item rosters into a term context and syntax pattern. It
+first refuses rules that already have either field, then scans for unsupported
+nonterminal kinds before its original forward construction pass. Pending
+binders, generated parameter names, fixed collection names, and every original
+semantic refusal retain their existing order. It does not parse source or
+reconstruct a Rust AST.
+
+`try_normalize_legacy_rule_with` adds admission inside those same two loops.
+It checks each item visit before reading the item, and each construction site
+before argument clones, string copies, output reservation, or construction.
+The original static entrypoint delegates with an always-accepting policy.
+No extra scan or runtime event log is allocated. Output vectors reserve their
+next slot fallibly; the fresh-name counter is checked before its constructor.
+The policy must separately cover the actual shallow adapter costs.
+
+`Ok(None)` means the original normalizer refused the shape; it is not a resource
+error. Admission, reservation, and counter failures return distinct errors.
+Neither refusal nor error returns a partial context/syntax pair. Constructors
+must stage any effects privately; this interface alone cannot enforce that law
+for arbitrary adapters. The [admission model](../../formal/rocq/prattail_wpda_runtime/theories/LegacyNormalizationAdmission.v)
+composes the original normalization proof with checked debit and prefix laws.
+The [adapter tests](../../ast/tests/legacy_rule_normalization_adapter.rs) check
+the original output/callback fixtures and denial before each of 40 reached sites
+in a mixed binder, literal, and collection fixture. Owned arena materialization
+and its generated-name equality policy remain separate adapter obligations.
+
 These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared
 WPDA walker. That integration requires its own transition and consumer checks.
