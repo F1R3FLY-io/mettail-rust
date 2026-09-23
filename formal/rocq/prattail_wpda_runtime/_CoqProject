@@ -115,6 +115,7 @@ theories/LiteralNameProjection.v
 theories/AtomicPrefixDescriptorProjection.v
 theories/GuestModeDescriptorProjection.v
 theories/UnifiedPrefixDescriptorProjection.v
+theories/OriginalPrefixBucketDriverProjection.v
 theories/AuthoredRuleStoreProjection.v
 theories/AuthoredRuleCaptureProjection.v
 theories/AuthoredRuleTransportProjection.v
