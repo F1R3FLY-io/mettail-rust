@@ -146,6 +146,7 @@ theories/AuthoredNormalizationMaterialization.v
 theories/AuthoredSyntheticMaterialization.v
 theories/CollectionDeclarationProjection.v
 theories/SyntheticRuleAdmission.v
+theories/AuthoredSynthesisComposition.v
 theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.
