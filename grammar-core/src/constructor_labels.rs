@@ -51,6 +51,30 @@ pub fn generate_literal_label_observed<Label>(
     native_type: impl FnOnce() -> LiteralNativeObservation,
     construct: impl FnOnce(&'static str) -> Label,
 ) -> Label {
+    let result: Result<Label, std::convert::Infallible> = try_generate_literal_label_observed(
+        || Ok(is_byte_vector()),
+        || Ok(native_type()),
+        |label| Ok(construct(label)),
+    );
+    match result {
+        Ok(label) => label,
+        Err(impossible) => match impossible {},
+    }
+}
+
+/// Fallible observations at the original lazy selection sites.
+///
+/// A failed byte probe skips native observation and construction. A true byte
+/// result skips native observation even if that metadata is unavailable.
+/// Otherwise the native observation must succeed before the selected constructor
+/// runs. This is the same selector used by the total APIs; neither missing
+/// metadata nor a constructor error is converted into a fallback label.
+/// `FallibleConstructorLabelProjection.v` verifies this callback boundary.
+pub fn try_generate_literal_label_observed<Label, Error>(
+    is_byte_vector: impl FnOnce() -> Result<bool, Error>,
+    native_type: impl FnOnce() -> Result<LiteralNativeObservation, Error>,
+    construct: impl FnOnce(&'static str) -> Result<Label, Error>,
+) -> Result<Label, Error> {
     // ★ The BYTE carrier is asked FIRST, because `NativeType` cannot see it.
     // `NativeType::from_syn_type` classifies by the last path segment, so `Vec<u8>` and
     // `Vec<Proc>` are both `VecCollection` and would both be labelled `ListLit`. A `Vec<u8>` is
@@ -58,10 +82,10 @@ pub fn generate_literal_label_observed<Label>(
     // surface is ONE literal, `b"deadbeef"`, and `u8` is not a category. Labelling it `ListLit`
     // put a scalar value into the collection Display path, which wrapped it in the EMPTY
     // delimiters a non-`as List` category declares — the measured `Bytes::…(vec![])` ⇒ `""`.
-    if is_byte_vector() {
+    if is_byte_vector()? {
         return construct("BytesLit");
     }
-    let nt = match native_type() {
+    let nt = match native_type()? {
         LiteralNativeObservation::ExactNativeType(native) => native,
         LiteralNativeObservation::CanonicalOpaque => return construct("Lit"),
     };
@@ -161,8 +185,107 @@ mod tests {
             );
             assert_eq!(actual, expected, "{native:?}");
             assert_eq!(*trace.borrow(), ["byte", "native", "construct"]);
+            for fail in [false, true] {
+                trace.borrow_mut().clear();
+                let result = try_generate_literal_label_observed(
+                    || {
+                        trace.borrow_mut().push("byte");
+                        Ok(false)
+                    },
+                    || {
+                        trace.borrow_mut().push("native");
+                        Ok(LiteralNativeObservation::ExactNativeType(native.clone()))
+                    },
+                    |label| {
+                        trace.borrow_mut().push("construct");
+                        if fail {
+                            Err(label)
+                        } else {
+                            Ok(label)
+                        }
+                    },
+                );
+                assert_eq!(result, if fail { Err(expected) } else { Ok(expected) });
+                assert_eq!(*trace.borrow(), ["byte", "native", "construct"]);
+            }
             assert_eq!(generate_literal_label(|| false, || native, |label| label), expected);
         }
+    }
+
+    #[test]
+    fn fallible_literal_probes_stop_at_the_exact_failed_callback() {
+        for failed_site in 0..3 {
+            let trace = RefCell::new(Vec::new());
+            let result = try_generate_literal_label_observed(
+                || {
+                    trace.borrow_mut().push("byte");
+                    if failed_site == 0 {
+                        Err("byte-error")
+                    } else {
+                        Ok(false)
+                    }
+                },
+                || {
+                    trace.borrow_mut().push("native");
+                    if failed_site == 1 {
+                        Err("native-error")
+                    } else {
+                        Ok(LiteralNativeObservation::CanonicalOpaque)
+                    }
+                },
+                |label| {
+                    trace.borrow_mut().push("construct");
+                    assert_eq!(label, "Lit");
+                    Err::<(), _>("constructor-error")
+                },
+            );
+            assert_eq!(
+                result,
+                Err(["byte-error", "native-error", "constructor-error"][failed_site])
+            );
+            assert_eq!(*trace.borrow(), ["byte", "native", "construct"][..=failed_site]);
+        }
+    }
+
+    #[test]
+    fn fallible_byte_label_skips_native_on_constructor_success_and_failure() {
+        for fail in [false, true] {
+            let trace = RefCell::new(Vec::new());
+            let result = try_generate_literal_label_observed(
+                || {
+                    trace.borrow_mut().push("byte");
+                    Ok(true)
+                },
+                || panic!("a byte label must not request unavailable native metadata"),
+                |label| {
+                    trace.borrow_mut().push("construct");
+                    if fail {
+                        Err(label)
+                    } else {
+                        Ok(label)
+                    }
+                },
+            );
+            assert_eq!(
+                result,
+                if fail {
+                    Err("BytesLit")
+                } else {
+                    Ok("BytesLit")
+                }
+            );
+            assert_eq!(*trace.borrow(), ["byte", "construct"]);
+        }
+    }
+
+    #[test]
+    fn total_label_wrapper_keeps_result_as_opaque_payload() {
+        let result = generate_literal_label_observed(
+            || false,
+            || LiteralNativeObservation::CanonicalOpaque,
+            |label| Ok::<_, ()>(Err::<(), _>(label)),
+        );
+        assert_eq!(result, Ok(Err("Lit")));
     }
 
     #[test]

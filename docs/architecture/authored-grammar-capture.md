@@ -520,6 +520,19 @@ proves exact preservation for the existing native path and only label/outcome
 equivalence between opaque input and genuinely generic `Other` cases.
 `HashSetLit` and `PathMapLit` remain distinct.
 
+`try_generate_literal_label_observed` adds typed callback failure to that same
+selector. Its byte probe, native observation, and constructor each return a
+`Result`; the first error returns immediately without invoking later callbacks.
+For example, a true byte probe still constructs `BytesLit` when native metadata
+is unavailable, because the native callback is never reached. A false byte probe
+requires a successful native observation; unavailable data must not be converted
+to `CanonicalOpaque`. The total APIs forward through infallible wrappers, so
+their generic return value remains unchanged even when it is itself a `Result`.
+The [fallible-label model](../../formal/rocq/prattail_wpda_runtime/theories/FallibleConstructorLabelProjection.v)
+proves the callback order, exact error propagation, and preservation of the
+existing state, result, and trace for total observations. These interface laws
+do not establish decoder equivalence or installed-parser integration.
+
 Each retained category carries three independent `SourceObservation` fields:
 the byte-vector predicate, the optional literal-native observation, and the
 optional native collection element. `Unavailable` differs from `Known(None)`.
