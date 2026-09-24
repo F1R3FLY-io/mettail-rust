@@ -741,8 +741,47 @@ order, and [failure-injection tests](../../macros/tests/support/prefix_fallible_
 exercise every reached callback position across all 23 context methods. They
 compare complete successful outputs with the infallible wrappers, while the
 existing original-behavior fixtures remain the independent baseline. These
-checks do not establish the owned compilation context or installed-parser
-cutover, which require their own integration evidence.
+checks do not establish installed-parser cutover, which requires its own
+integration evidence.
+
+### Owned prefix compilation
+
+The [owned prefix context](../../prattail/src/wpda_rule_analysis/authored_prefix.rs)
+feeds captured grammar data into that same checked driver. It keeps three
+rosters separate: original authored occurrences for FIRST and identifier
+analysis, normalized original occurrences for infix and binding-power analysis,
+and category-local normalized or synthetic rules for indexed prefix branches.
+Each rule carries its occurrence identity, so repeated references to one arena
+handle do not overwrite precedence metadata or lose source positions.
+
+The caller admits the whole operation before validation, staging, classification
+and copying. The context checks source-store compatibility, occurrence mappings
+and representable indices, and rejects unavailable retained observations. A
+test's infallible admission callback is not a production resource policy.
+
+[Neutral pattern constructors](../../prattail/src/wpda_rule_analysis/prefix_pattern.rs)
+replace Rust quotations with typed payloads at the existing constructor sites.
+They preserve quotation-key equality, not merely token-matching equivalence:
+the guest `Custom(ref __k)` and native `Custom(__cat)` patterns stay distinct,
+whereas the shared integer pattern stays identical across its original sites.
+Bucket traversal follows the separate insertion-order roster; enum ordering
+does not stand in for Rust quotation ordering. The
+[key model](../../formal/rocq/prattail_wpda_runtime/theories/PrefixKeyObservation.v)
+proves preservation of complete first payloads and ordered descriptor insertion
+under equality-reflecting keys. Constructor differentials supply the concrete
+quotation correspondence.
+
+The [literal eligibility helper](../../prattail/src/wpda_rule_analysis/native_literal.rs)
+is also shared with the macro backend. It retains the first name-identity
+lookup, native presence, family lookup, label generation, and explicit-before-
+default evaluation eligibility. Its [source model](../../formal/rocq/prattail_wpda_runtime/theories/NativeLiteralEligibility.v)
+preserves this order. Prefix construction needs evaluation presence, not an
+executable evaluator; decoder and evaluation provenance remain in the existing
+Core token bindings. Neither a bucket nor a native-kind tag grants authority.
+
+This artifact supplies ordered prefix descriptors. Transition execution, owned
+engine metadata and installed-parser activation are separate consumers; producing
+the artifact does not by itself demonstrate parsing through the original walker.
 
 ### Native literals, identifiers, and guest modes
 

@@ -20,6 +20,7 @@ use super::binder::rule::BinderRuleReader;
 use mettail_ast::grammar::NonTerminalKind;
 
 mod fallible;
+pub use super::prefix_pattern::PrefixPatternObservation;
 pub use fallible::{TryFirstSetContext, TryIdentSummaryContext};
 
 /// Original FIRST row; token quotation belongs to the caller, not this worker.
@@ -214,13 +215,10 @@ where
                 reached.insert(category);
             },
             AtomicDescriptor::LiteralPatterned(literal) => {
-                let has_ident =
-                    context
-                        .try_patterned_first(literal)?
-                        .into_iter()
-                        .any(|(pattern, guard)| {
-                            guard.is_none() && pattern.to_string().contains("Ident")
-                        });
+                let has_ident = context
+                    .try_patterned_first(literal)?
+                    .into_iter()
+                    .any(|(pattern, guard)| guard.is_none() && pattern.mentions_ident());
                 if has_ident {
                     reached.insert(category);
                 }
@@ -501,15 +499,9 @@ where
     let mut acc = Vec::new();
     let mut visited = std::collections::HashSet::new();
     try_collect_first_set(cat_name, reader, context, &mut acc, &mut visited)?;
-    let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::new();
     acc.retain(|ft| {
-        let key = (
-            ft.pattern.to_string(),
-            ft.extra_guard
-                .as_ref()
-                .map(|g| g.to_string())
-                .unwrap_or_default(),
-        );
+        let key = (ft.pattern.key(), ft.extra_guard.as_ref().map(|g| g.key()).unwrap_or_default());
         seen.insert(key)
     });
     Ok(acc)
@@ -742,11 +734,19 @@ pub fn insert_unified_descriptor<P: ToString, D>(
     extra_guard: Option<P>,
     desc: D,
 ) {
-    let pat_str = pattern.to_string();
-    let guard_str = extra_guard
-        .as_ref()
-        .map(|g| g.to_string())
-        .unwrap_or_default();
+    insert_keyed_unified_descriptor(unified_buckets, unified_order, pattern, extra_guard, desc);
+}
+
+/// Same insertion body with explicit observation keys; no semantic deduplication.
+pub fn insert_keyed_unified_descriptor<P: PrefixPatternObservation, D>(
+    unified_buckets: &mut BTreeMap<(P::Key, P::Key), UnifiedBucket<P, D>>,
+    unified_order: &mut Vec<(P::Key, P::Key)>,
+    pattern: P,
+    extra_guard: Option<P>,
+    desc: D,
+) {
+    let pat_str = pattern.key();
+    let guard_str = extra_guard.as_ref().map(|g| g.key()).unwrap_or_default();
     let key = (pat_str, guard_str);
     if !unified_buckets.contains_key(&key) {
         unified_order.push(key.clone());

@@ -55,6 +55,30 @@ mod owned_atomic_reuse {
     }
 
     #[test]
+    fn owned_atomic_propagates_literal_error_without_reclassifying_it() {
+        use mettail_prattail::wpda_rule_analysis::authored_atomic::{
+            try_derive_authored_atomic, AuthoredAtomicError,
+        };
+        let rule = category_rule("Literal", "Int", "Int");
+        let mut language = empty_lang();
+        language.terms = vec![rule];
+        let captured = capture_language(&language).expect("capture singleton Category rule");
+        let reader = AuthoredRuleReader::new(&captured.store).expect("valid retained source");
+        let result = try_derive_authored_atomic(
+            &reader,
+            AuthoredRuleId(captured.roots[0]),
+            Associativity::Left,
+            false,
+            |_, _| Ok::<_, Infallible>(()),
+            |_| Err::<Option<()>, _>("retained literal observation unavailable"),
+        );
+        assert_eq!(
+            result,
+            Err(AuthoredAtomicError::Literal("retained literal observation unavailable",))
+        );
+    }
+
+    #[test]
     fn owned_atomic_preserves_unsupported_legacy_positions() {
         let language = empty_lang();
         for other in [

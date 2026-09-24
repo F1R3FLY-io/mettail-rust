@@ -9,7 +9,9 @@
 use super::super::atomic::AtomicDescriptor;
 use super::super::binder::optional::BinderSyntaxReader;
 use super::super::binder::rule::BinderRuleReader;
-use super::{FirstLegacyItem, FirstPredicate, FirstSetContext, IdentSummaryContext};
+use super::{
+    FirstLegacyItem, FirstPredicate, FirstSetContext, IdentSummaryContext, PrefixPatternObservation,
+};
 use std::convert::Infallible;
 
 /// Fallible counterpart of every original FIRST source observation.
@@ -17,7 +19,7 @@ pub trait TryFirstSetContext<'source, R: BinderRuleReader<'source>> {
     type Error;
     type Category: Copy;
     type Literal;
-    type Pattern: ToString;
+    type Pattern: PrefixPatternObservation;
     fn try_rules_len(&self) -> Result<usize, Self::Error>;
     fn try_rule_at(&self, index: usize) -> Result<R::Rule, Self::Error>;
     fn try_find_category(&mut self, name: &str) -> Result<Option<Self::Category>, Self::Error>;

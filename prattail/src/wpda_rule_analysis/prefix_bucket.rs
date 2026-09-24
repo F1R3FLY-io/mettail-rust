@@ -13,9 +13,9 @@ use super::binder::optional::BinderSyntaxObservation;
 use super::binder::rule::BinderRuleReader;
 use super::binder::{binder_initial_body_cat, BinderShape};
 use super::prefix::{
-    insert_unified_descriptor, try_category_leading_literals, try_first_set_of_category,
+    insert_keyed_unified_descriptor, try_category_leading_literals, try_first_set_of_category,
     try_result_has_home_var_reading, try_source_ident_first_is_var_only, FirstPredicate,
-    IdentSummaryContext, TryIdentSummaryContext, UnifiedBucket,
+    IdentSummaryContext, PrefixPatternObservation, TryIdentSummaryContext, UnifiedBucket,
 };
 use crate::binding_power::{compute_prefix_bp, BindingPowerTable, InfixRuleInfo};
 use std::collections::{BTreeMap, HashSet};
@@ -107,10 +107,8 @@ where
 }
 
 /// Existing ordered map plus its separate first-insertion-order roster.
-pub type PrefixBuckets<P> = (
-    BTreeMap<(String, String), UnifiedBucket<P, UnifiedDescriptor<P>>>,
-    Vec<(String, String)>,
-);
+pub type PrefixBuckets<P, K = String> =
+    (BTreeMap<(K, K), UnifiedBucket<P, UnifiedDescriptor<P>>>, Vec<(K, K)>);
 
 /// Derive the original buckets; the backend still owns transition emission.
 ///
@@ -152,7 +150,7 @@ pub fn try_derive_prefix_buckets<'source, R, C>(
     category_name: &str,
     rules_in_category: &[(u16, R::Rule)],
     crosscat_lex_compat_gate: bool,
-) -> Result<PrefixBuckets<C::Pattern>, C::Error>
+) -> Result<PrefixBuckets<C::Pattern, <C::Pattern as PrefixPatternObservation>::Key>, C::Error>
 where
     R: BinderRuleReader<'source>,
     C: TryPrefixBucketContext<'source, R>,
@@ -190,12 +188,8 @@ where
                 .as_ref()
                 .map(|lit| result_leading_literals.contains(lit))
                 .unwrap_or(false);
-            let pat_str = ft.pattern.to_string();
-            let guard_str = ft
-                .extra_guard
-                .as_ref()
-                .map(|g| g.to_string())
-                .unwrap_or_default();
+            let pat_str = ft.pattern.key();
+            let guard_str = ft.extra_guard.as_ref().map(|g| g.key()).unwrap_or_default();
             let key = (pat_str, guard_str);
             if !unified_buckets.contains_key(&key) {
                 unified_order.push(key.clone());
@@ -236,7 +230,7 @@ where
                 &bp_table,
             );
             let (pattern, guard) = context.try_predicate_parts(FirstPredicate::Fixed(trigger))?;
-            insert_unified_descriptor(
+            insert_keyed_unified_descriptor(
                 &mut unified_buckets,
                 &mut unified_order,
                 pattern,
@@ -247,7 +241,7 @@ where
         }
         if let AtomicDescriptor::NullaryLiteralRun { trigger, .. } = &shape {
             let (pattern, guard) = context.try_predicate_parts(FirstPredicate::Fixed(trigger))?;
-            insert_unified_descriptor(
+            insert_keyed_unified_descriptor(
                 &mut unified_buckets,
                 &mut unified_order,
                 pattern,
@@ -270,7 +264,7 @@ where
                     }
                     let (pattern, guard) =
                         context.try_predicate_parts(FirstPredicate::Fixed(trigger))?;
-                    insert_unified_descriptor(
+                    insert_keyed_unified_descriptor(
                         &mut unified_buckets,
                         &mut unified_order,
                         pattern,
@@ -282,7 +276,7 @@ where
                     let kind_name = name.to_string();
                     let (pattern, guard) =
                         context.try_predicate_parts(FirstPredicate::CaptureName(&kind_name))?;
-                    insert_unified_descriptor(
+                    insert_keyed_unified_descriptor(
                         &mut unified_buckets,
                         &mut unified_order,
                         pattern,
@@ -300,7 +294,7 @@ where
                     let close_kind = close.to_string();
                     let (pattern, guard) =
                         context.try_predicate_parts(FirstPredicate::GuestOpen(&open_kind))?;
-                    insert_unified_descriptor(
+                    insert_keyed_unified_descriptor(
                         &mut unified_buckets,
                         &mut unified_order,
                         pattern,
@@ -318,7 +312,7 @@ where
                     if shape.leading_ident_capture.is_some() {
                         let (pattern, guard) =
                             context.try_predicate_parts(FirstPredicate::Ident)?;
-                        insert_unified_descriptor(
+                        insert_keyed_unified_descriptor(
                             &mut unified_buckets,
                             &mut unified_order,
                             pattern,
@@ -351,7 +345,7 @@ where
                         continue;
                     }
                     for first in try_first_set_of_category(source_cat_name, reader, context)? {
-                        insert_unified_descriptor(
+                        insert_keyed_unified_descriptor(
                             &mut unified_buckets,
                             &mut unified_order,
                             first.pattern,
@@ -365,7 +359,7 @@ where
         }
     }
     for desc in atomic_descriptors {
-        insert_unified_descriptor(
+        insert_keyed_unified_descriptor(
             &mut unified_buckets,
             &mut unified_order,
             desc.pattern.clone(),
@@ -393,7 +387,7 @@ where
                 {
                     continue;
                 }
-                insert_unified_descriptor(
+                insert_keyed_unified_descriptor(
                     &mut unified_buckets,
                     &mut unified_order,
                     ft.pattern.clone(),

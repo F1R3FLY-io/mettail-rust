@@ -82,6 +82,25 @@ pub fn classify_atomic<L>(
     unary_prefix: impl FnOnce() -> Option<AtomicUnaryPrefix>,
     literal: impl FnOnce(&str) -> Option<L>,
 ) -> AtomicDescriptor<L> {
+    match try_classify_atomic::<L, std::convert::Infallible>(
+        rule,
+        items,
+        || Ok(unary_prefix()),
+        |name| Ok(literal(name)),
+    ) {
+        Ok(shape) => shape,
+        Err(never) => match never {},
+    }
+}
+
+/// The original classifier with checked lazy callbacks. Errors stop at the
+/// original call site; a failed resolver is never treated as an absent shape.
+pub fn try_classify_atomic<L, E>(
+    rule: &InfixRuleShape,
+    items: &[LegacyAtomicItem],
+    unary_prefix: impl FnOnce() -> Result<Option<AtomicUnaryPrefix>, E>,
+    literal: impl FnOnce(&str) -> Result<Option<L>, E>,
+) -> Result<AtomicDescriptor<L>, E> {
     // Judgement-style rules: check `term_context` + `syntax_pattern` to
     // recognize TerminalKeyword (empty context, single literal pattern).
     if let (Some(tc), Some(sp)) = (&rule.term_context, &rule.syntax_pattern) {
@@ -89,10 +108,10 @@ pub fn classify_atomic<L>(
         // Example: `Err . |- "error" : Int` (tc=[], sp=[Literal("error")]).
         if tc.is_empty() && sp.len() == 1 {
             if let InfixSyntaxShape::Literal(text) = &sp[0] {
-                return AtomicDescriptor::TerminalKeyword {
+                return Ok(AtomicDescriptor::TerminalKeyword {
                     terminal_text: text.clone(),
                     wrapper_variant: rule.label.clone(),
-                };
+                });
             }
         }
         // GAP-3 (2026-06-28): 0-operand MULTI-literal keyword-prefix rule
@@ -118,11 +137,11 @@ pub fn classify_atomic<L>(
                 .next()
                 .expect("classify_atomic: sp.len() >= 2 guarantees a first literal");
             let trailing_literals: Vec<String> = literals.collect();
-            return AtomicDescriptor::NullaryLiteralRun {
+            return Ok(AtomicDescriptor::NullaryLiteralRun {
                 trigger,
                 trailing_literals,
                 wrapper_variant: rule.label.clone(),
-            };
+            });
         }
         // Stage 1.1: cross-category projection (e.g. `ProcInt . i:Int |- i : Proc`,
         // `CastBigRat . r:BigRat |- r : Proc`). One Simple param of base type,
@@ -134,10 +153,10 @@ pub fn classify_atomic<L>(
                         if let InfixTypeShape::Base(source_ident) = ty {
                             let source_cat = source_ident.to_string();
                             if source_cat != rule.category.to_string() {
-                                return AtomicDescriptor::CrossCatProjection {
+                                return Ok(AtomicDescriptor::CrossCatProjection {
                                     source_cat_name: source_cat,
                                     wrapper_variant: rule.label.clone(),
-                                };
+                                });
                             }
                         }
                     }
@@ -176,11 +195,11 @@ pub fn classify_atomic<L>(
                         if let InfixTypeShape::Base(source_ident) = ty {
                             let source_cat = source_ident.to_string();
                             if source_cat != rule.category.to_string() {
-                                return AtomicDescriptor::CrossCatPrefixUnary {
+                                return Ok(AtomicDescriptor::CrossCatPrefixUnary {
                                     trigger: trigger.clone(),
                                     source_cat_name: source_cat,
                                     wrapper_variant: rule.label.clone(),
-                                };
+                                });
                             }
                         }
                     }
@@ -193,21 +212,21 @@ pub fn classify_atomic<L>(
         // category == rule.category guard already enforced there).
         // Emits `AtomicDescriptor::PrefixOperator` so the lex-Fork can
         // bind `Fixed(trigger)` → this rule's `LexAltPrefixOp` branch.
-        if let Some(shape) = unary_prefix() {
-            return AtomicDescriptor::PrefixOperator {
+        if let Some(shape) = unary_prefix()? {
+            return Ok(AtomicDescriptor::PrefixOperator {
                 trigger: shape.trigger,
                 operand_cat_name: shape.operand_category,
-            };
+            });
         }
         // Other judgement-style rules need Phase A.3+ emission.
-        return AtomicDescriptor::NonAtomic;
+        return Ok(AtomicDescriptor::NonAtomic);
     }
 
     if items.len() != 1 {
-        return AtomicDescriptor::NonAtomic;
+        return Ok(AtomicDescriptor::NonAtomic);
     }
 
-    match &items[0] {
+    Ok(match &items[0] {
         LegacyAtomicItem::NonTerminal { kind, ident } => match kind {
             LegacyAtomicKind::Integer => AtomicDescriptor::LiteralInteger,
             LegacyAtomicKind::Boolean => AtomicDescriptor::LiteralBoolean,
@@ -237,9 +256,9 @@ pub fn classify_atomic<L>(
                 // (so cross-cat projections like `ProcInt . i:Int |- i : Proc`
                 // are NOT misclassified — they belong to Phase 3 cross-cat).
                 if rule.category != *ident {
-                    return AtomicDescriptor::NonAtomic;
+                    return Ok(AtomicDescriptor::NonAtomic);
                 }
-                literal(ident)
+                literal(ident)?
                     .map(AtomicDescriptor::LiteralPatterned)
                     .unwrap_or(AtomicDescriptor::NonAtomic)
             },
@@ -249,7 +268,7 @@ pub fn classify_atomic<L>(
             wrapper_variant: rule.label.clone(),
         },
         _ => AtomicDescriptor::NonAtomic,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -266,6 +285,45 @@ mod tests {
             term_context: None,
             syntax_pattern: None,
         }
+    }
+
+    #[test]
+    fn checked_atomic_resolvers_fail_only_at_the_original_lazy_sites() {
+        let mut rule = rule();
+        let items = [LegacyAtomicItem::NonTerminal {
+            kind: LegacyAtomicKind::Category,
+            ident: "Int".into(),
+        }];
+        let result = try_classify_atomic::<(), _>(
+            &rule,
+            &items,
+            || panic!("legacy branch must not call unary resolver"),
+            |_| Err("literal unavailable"),
+        );
+        assert_eq!(result, Err("literal unavailable"));
+        rule.term_context = Some(vec![]);
+        rule.syntax_pattern = Some(vec![]);
+        let result = try_classify_atomic::<(), _>(
+            &rule,
+            &items,
+            || Err("unary failed"),
+            |_| panic!("judgement failure must not fall back to literal resolution"),
+        );
+        assert_eq!(result, Err("unary failed"));
+        rule.syntax_pattern = Some(vec![InfixSyntaxShape::Literal("atom".into())]);
+        let result = try_classify_atomic::<(), ()>(
+            &rule,
+            &items,
+            || panic!("earlier terminal decision skips unary resolver"),
+            |_| panic!("earlier terminal decision skips literal resolver"),
+        );
+        assert_eq!(
+            result,
+            Ok(AtomicDescriptor::TerminalKeyword {
+                terminal_text: "atom".into(),
+                wrapper_variant: "Wrapper".into(),
+            })
+        );
     }
 
     #[test]

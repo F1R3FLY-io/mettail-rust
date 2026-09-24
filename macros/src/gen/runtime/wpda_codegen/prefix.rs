@@ -295,37 +295,67 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
 /// `cargo nextest` (which does not run doctests) stayed green. Keep prose at the left margin, and
 /// use a real markdown list for enumerations rather than hanging indentation.
 fn classify_literal_patterned(cat_ident: &Ident, language: &LanguageDef) -> Option<AtomicShape> {
-    let cat_name = cat_ident.to_string();
-    // Find the LangType for the category to get the native Rust type.
-    let lang_type = language.types.iter().find(|t| &t.name == cat_ident)?;
-    let native_type = lang_type.native_type.as_ref()?.clone();
-    let kind = NativeKind::from_syn_type(&native_type);
-    let family = literal_family_for_category(&cat_name, language)?;
-    let wrapper_variant = crate::gen::generate_literal_label(&native_type);
-
-    // Case (a): explicit literals block.
-    let token_def = declared_literal_token_def(&cat_name, language);
-    if let Some(td) = token_def {
-        if let Some(rust_code) = td.rust_code.clone() {
-            return Some(AtomicShape::LiteralPatterned {
-                cat_name,
-                native_type,
-                family,
-                wrapper_variant,
-                rust_code,
-            });
-        }
+    let result =
+        mettail_prattail::wpda_rule_analysis::native_literal::try_classify_literal_patterned(
+            cat_ident,
+            &mut MacroLiteralReader { language },
+        );
+    match result {
+        Ok(payload) => payload.map(|payload| AtomicShape::LiteralPatterned {
+            cat_name: payload.cat_name,
+            native_type: payload.native_type,
+            family: payload.family,
+            wrapper_variant: payload.wrapper_variant,
+            rust_code: payload.evaluation,
+        }),
+        Err(never) => match never {},
     }
+}
 
-    // Case (b): implicit native-type — synthesize default eval body.
-    let rust_code = default_eval_body_for_native_kind(&kind)?;
-    Some(AtomicShape::LiteralPatterned {
-        cat_name,
-        native_type,
-        family,
-        wrapper_variant,
-        rust_code,
-    })
+struct MacroLiteralReader<'source> {
+    language: &'source LanguageDef,
+}
+
+impl<'source> mettail_prattail::wpda_rule_analysis::native_literal::LiteralPatternedReader<'source>
+    for MacroLiteralReader<'source>
+{
+    type Name = &'source Ident;
+    type Category = mettail_ast::language::LangType;
+    type Native = Type;
+    type Label = Ident;
+    type Evaluation = TokenStream;
+    type Token = &'source mettail_ast::language::TokenDef;
+    type Error = std::convert::Infallible;
+    fn categories(&self) -> &'source [Self::Category] {
+        &self.language.types
+    }
+    fn category_name(&self, category: &'source Self::Category) -> Self::Name {
+        &category.name
+    }
+    fn names_equal(&self, left: Self::Name, right: Self::Name) -> bool {
+        left == right
+    }
+    fn native_type(&self, category: &'source Self::Category) -> Option<Type> {
+        category.native_type.as_ref().cloned()
+    }
+    fn native_kind(&self, native: &Type) -> NativeKind {
+        NativeKind::from_syn_type(native)
+    }
+    fn literal_family(&self, category: &str) -> Option<LiteralFamily> {
+        literal_family_for_category(category, self.language)
+    }
+    fn literal_label(&mut self, native: &Type) -> Result<Ident, Self::Error> {
+        Ok(crate::gen::generate_literal_label(native))
+    }
+    fn declared_token(&self, category: &str) -> Option<Self::Token> {
+        declared_literal_token_def(category, self.language)
+    }
+    fn evaluation(&self, token: Self::Token) -> Option<TokenStream> {
+        token.rust_code.clone()
+    }
+    fn default_evaluation(&self, kind: &NativeKind) -> Option<TokenStream> {
+        default_eval_body_for_native_kind(kind)
+    }
 }
 
 /// Synthesize a default eval-block body for a category whose `native_type`
@@ -2574,10 +2604,15 @@ mod atomic_prefix_descriptor_baselines;
 mod prefix_bucket_driver_baselines;
 
 #[cfg(test)]
+#[path = "../../../../tests/support/neutral_prefix_pattern_reuse.rs"]
+mod neutral_prefix_pattern_reuse;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     include!("../../../../tests/support/owned_atomic_reuse.rs");
+    include!("../../../../tests/support/owned_prefix_reuse.rs");
 
     mod bucket_driver_shared {
         include!("../../../../tests/support/prefix_bucket_shared.rs");

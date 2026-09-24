@@ -5,7 +5,7 @@
 //! `AtomicClassifierProjection.v` and `UnaryPrefixReaderProjection.v` supply
 //! observation/callback correspondence, not installed-parser admission.
 
-use super::atomic::{classify_atomic, AtomicDescriptor, AtomicUnaryPrefix};
+use super::atomic::{try_classify_atomic, AtomicDescriptor, AtomicUnaryPrefix};
 use super::atomic_projection::{project_legacy_atomic_items, LegacyAtomicObservation};
 use super::authored::AuthoredRuleReader;
 use super::infix_projection::{try_project_infix_rule_in, InfixProjectionError};
@@ -35,8 +35,39 @@ pub fn derive_authored_atomic<'store, E, L>(
     admit: impl FnOnce(&AuthoredRuleReader<'store>, AuthoredRuleId) -> Result<(), E>,
     literal: impl FnOnce(AuthoredNameId) -> Option<L>,
 ) -> Result<AtomicDescriptor<L>, InfixProjectionError<E>> {
+    match try_derive_authored_atomic(
+        reader,
+        rule,
+        associativity,
+        shares_level_with_previous,
+        admit,
+        |name| Ok::<_, std::convert::Infallible>(literal(name)),
+    ) {
+        Ok(shape) => Ok(shape),
+        Err(AuthoredAtomicError::Projection(error)) => Err(error),
+        Err(AuthoredAtomicError::Literal(never)) => match never {},
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AuthoredAtomicError<E, L> {
+    Projection(InfixProjectionError<E>),
+    Literal(L),
+}
+
+/// Checked literal resolution at the original lazy singleton-category site.
+/// A missing retained observation is an error, not an absent literal shape.
+pub fn try_derive_authored_atomic<'store, E, L, F>(
+    reader: &AuthoredRuleReader<'store>,
+    rule: AuthoredRuleId,
+    associativity: Associativity,
+    shares_level_with_previous: bool,
+    admit: impl FnOnce(&AuthoredRuleReader<'store>, AuthoredRuleId) -> Result<(), E>,
+    literal: impl FnOnce(AuthoredNameId) -> Result<Option<L>, F>,
+) -> Result<AtomicDescriptor<L>, AuthoredAtomicError<E, F>> {
     let view =
-        try_project_infix_rule_in(reader, rule, associativity, shares_level_with_previous, admit)?;
+        try_project_infix_rule_in(reader, rule, associativity, shares_level_with_previous, admit)
+            .map_err(AuthoredAtomicError::Projection)?;
     let items = project_legacy_atomic_items(&reader.rule(rule).items, |item| match item {
         AuthoredLegacyItem::NonTerminal { kind, ident } => {
             LegacyAtomicObservation::NonTerminal { kind: *kind, ident: reader.name(*ident) }
@@ -44,14 +75,14 @@ pub fn derive_authored_atomic<'store, E, L>(
         AuthoredLegacyItem::Terminal(text) => LegacyAtomicObservation::Terminal(text),
         _ => LegacyAtomicObservation::Other,
     });
-    Ok(classify_atomic(
+    try_classify_atomic(
         &view,
         &items,
         || {
-            classify_unary_prefix_shape_in(reader, rule).map(|shape| AtomicUnaryPrefix {
+            Ok(classify_unary_prefix_shape_in(reader, rule).map(|shape| AtomicUnaryPrefix {
                 trigger: shape.trigger,
                 operand_category: shape.operand_category,
-            })
+            }))
         },
         |_| {
             let [AuthoredLegacyItem::NonTerminal { ident, kind: NonTerminalKind::Category }] =
@@ -61,5 +92,6 @@ pub fn derive_authored_atomic<'store, E, L>(
             };
             literal(*ident)
         },
-    ))
+    )
+    .map_err(AuthoredAtomicError::Literal)
 }

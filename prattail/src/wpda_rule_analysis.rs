@@ -24,6 +24,7 @@ pub mod authored_binder;
 pub mod authored_collection;
 pub mod authored_declarations;
 pub mod authored_normalization;
+pub mod authored_prefix;
 pub mod authored_synthesis;
 pub mod binder;
 pub mod census;
@@ -36,9 +37,11 @@ pub mod guest;
 pub mod infix_projection;
 pub mod mixfix;
 pub mod native_first;
+pub mod native_literal;
 pub mod parikh;
 pub mod prefix;
 pub mod prefix_bucket;
+pub mod prefix_pattern;
 pub mod synthetic;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.
