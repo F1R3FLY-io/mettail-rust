@@ -189,6 +189,8 @@ pub mod wpds;
 /// Stage 1 of W7 plan v5.1 — see `prattail/docs/design/wpds-migration-survey.md`.
 pub mod wpda_runtime;
 
+pub mod wpda_transitions;
+
 /// WPDS walker: pure reactive FSM (`State × Event → Transition`) driving
 /// the runtime parser. Stage 4 of W7 plan v5.1.
 pub mod wpda_walker;

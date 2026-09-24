@@ -160,6 +160,7 @@ theories/CollectionAssemblyProjection.v
 theories/FactoringEmissionData.v
 theories/FactoringOrdinalAdmission.v
 theories/CastSourceObservation.v
+theories/TransitionBodyRelocation.v
 theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.

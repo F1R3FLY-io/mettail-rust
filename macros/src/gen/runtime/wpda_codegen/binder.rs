@@ -48,43 +48,9 @@ fn emit_token_capture_and_replace(
     new_state: TokenStream,
 ) -> TokenStream {
     quote! {{
-        let __capture_kind_name: &'static str = #kind_name;
-        let __capture_branches =
-            mettail_prattail::wpda_runtime::matching_token_capture_edges(
-                tokens,
-                _pos,
-                __capture_kind_name,
-            )
-            .into_iter()
-            .map(|__edge| {
-                let __open_len =
-                    u16::try_from(__edge.text.len()).expect("token length exceeds u16");
-                let __capture_symbol = #symbol;
-                mettail_prattail::wpda_walker::ForkBranch {
-                    weight: lex_w_alt_with_len(
-                        __open_len,
-                        0.0,
-                        __capture_symbol.category_src_idx,
-                        __capture_symbol.rule_index_in_category,
-                        __edge.alt_idx,
-                    ),
-                    symbol: __capture_symbol,
-                    new_state: #new_state,
-                    action_kind:
-                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeTokenKindAtAndReplace {
-                            alt_idx: __edge.alt_idx,
-                            kind_name: __capture_kind_name.to_string(),
-                            kind: __edge.kind,
-                            text: __edge.text,
-                            next_pos: __edge.next_pos,
-                        },
-                }
-            })
-            .collect();
-        return WpdaStepAction::Fork {
-            branches: __capture_branches,
-            consume_trigger: false,
-        };
+        return mettail_prattail::wpda_transitions::binder::token_capture_and_replace(
+            tokens, _pos, #kind_name, || #symbol, || #new_state, lex_w_alt_with_len,
+        );
     }}
 }
 
@@ -955,12 +921,9 @@ pub(crate) fn emit_binder_rule_body(
             let final_pos = (shape.positions.len() + 1) as u8;
             group_arms.push(quote! {
                 (#result_src_idx, #rule_idx, #final_pos) => {
-                    return WpdaStepAction::Pop {
-                        weight: lex_one(),
-                        new_state: WpdaState::InfixLoop {
-                            cur_bp: *outer_bp,
-                        },
-                    };
+                    return mettail_prattail::wpda_transitions::binder::rule_complete(
+                        *outer_bp, lex_one,
+                    );
                 }
             });
             for (idx, position) in shape.positions.iter().enumerate() {
@@ -1085,27 +1048,11 @@ pub(crate) fn emit_binder_rule_body(
                         // tiling). Structural twin of the TokenKindCapture arm.
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::BinderRule {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            body_src_idx: *_body_src_idx,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
-                                                open_kind: #open_kind.to_string(),
-                                                nested_open_kinds: vec![#(#nested_open_kinds),*],
-                                                close_kind: #close_kind.to_string(),
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                                return mettail_prattail::wpda_transitions::binder::rule_guest_body(
+                                    #result_src_idx, #rule_idx, #next_pos, *outer_bp,
+                                    *_body_src_idx, #open_kind,
+                                    || vec![#(#nested_open_kinds),*], #close_kind, lex_one,
+                                );
                             }
                         }
                     },
@@ -1129,26 +1076,10 @@ pub(crate) fn emit_binder_rule_body(
                                 // == #text guard runs inside the walker,
                                 // failure produces no child (cursor dies via
                                 // step_fanout's empty-children pathway).
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::BinderRule {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            body_src_idx: *_body_src_idx,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
-                                                expected_text: #text.to_string(),
-                                                required_top_cat: #required_top_cat_tokens,
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                                return mettail_prattail::wpda_transitions::binder::rule_literal(
+                                    #result_src_idx, #rule_idx, #next_pos, *outer_bp,
+                                    *_body_src_idx, #text, #required_top_cat_tokens, lex_one,
+                                );
                             }
                         }
                     },
@@ -1216,23 +1147,10 @@ pub(crate) fn emit_binder_rule_body(
                                     // sub-parse returns, Unwinding-RuleAt sees
                                     // the post-param position. THEN push
                                     // CategoryEntry on top of the new marker.
-                                    return WpdaStepAction::ReplaceAndPush {
-                                        replace_symbol: StackSymbolV2::rule_at(
-                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                        ),
-                                        // A typed nonterminal occurrence is a strict goal:
-                                        // operators may change category while parsing the
-                                        // child only when their result can still reach the
-                                        // declared child category.  A goal-free entry lets
-                                        // a cross-category continuation consume the
-                                        // enclosing rule's following literal.
-                                        push_symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::PrefixDispatch {
-                                            pos: _pos,
-                                            cur_bp: #cur_bp_lit,
-                                        },
-                                    };
+                                    return mettail_prattail::wpda_transitions::binder::rule_parameter(
+                                        #result_src_idx, #rule_idx, #next_pos, *outer_bp,
+                                        #cat_src_idx, _pos, #cur_bp_lit, lex_one,
+                                    );
                                 }
                             },
                             Some(info) => {
@@ -1270,20 +1188,10 @@ pub(crate) fn emit_binder_rule_body(
                                 let slot_idx = info.slot_idx;
                                 quote! {
                                     (#result_src_idx, #rule_idx, #pos) => {
-                                        return WpdaStepAction::ReplaceAndPush {
-                                            replace_symbol: StackSymbolV2::rule_at(
-                                                #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                            ),
-                                            push_symbol: StackSymbolV2::collection_marker(
-                                                // binder-internal collection: dispatch_bp=0.
-                                                #result_src_idx, #rule_idx, #slot_idx, 0u8,
-                                            ),
-                                            weight: lex_one(),
-                                            new_state: WpdaState::PrefixDispatch {
-                                                pos: _pos,
-                                                cur_bp: 0u8,
-                                            },
-                                        };
+                                        return mettail_prattail::wpda_transitions::binder::rule_collection_parameter(
+                                            #result_src_idx, #rule_idx, #next_pos, *outer_bp,
+                                            #slot_idx, _pos, lex_one,
+                                        );
                                     }
                                 }
                             },
@@ -1294,18 +1202,10 @@ pub(crate) fn emit_binder_rule_body(
                             // Phase 6: parse predicate inline. Walker
                             // invokes parse_predicate_from_tokens, pushes
                             // ActionArg::Predicate, advances pos.
-                            return WpdaStepAction::ParsePredicate {
-                                replace_symbol: StackSymbolV2::rule_at(
-                                    #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
-                                ),
-                                weight: lex_one(),
-                                new_state: WpdaState::BinderRule {
-                                    result_src_idx: #result_src_idx,
-                                    rule_idx: #rule_idx,
-                                    body_src_idx: *_body_src_idx,
-                                    outer_bp: *outer_bp,
-                                },
-                            };
+                            return mettail_prattail::wpda_transitions::binder::rule_guard(
+                                #result_src_idx, #rule_idx, #next_pos, *outer_bp,
+                                *_body_src_idx, lex_one,
+                            );
                         }
                     },
                     BinderPosition::OptionalGroup { group_idx, .. } => {
@@ -1320,14 +1220,8 @@ pub(crate) fn emit_binder_rule_body(
                         let group_idx_value = *group_idx;
                         quote! {
                             (#result_src_idx, #rule_idx, #pos) => {
-                                return WpdaStepAction::Advance(
-                                    WpdaState::OptionalGroup {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        group_idx: #group_idx_value,
-                                        sub_pos: 0,
-                                        outer_bp: *outer_bp,
-                                    },
+                                return mettail_prattail::wpda_transitions::binder::rule_optional(
+                                    #result_src_idx, #rule_idx, #group_idx_value, *outer_bp,
                                 );
                             }
                         }
@@ -3491,10 +3385,10 @@ mod tests {
         // GuardedConsumeBinderIdentAndReplaceWithEffect to atomically
         // capture the lone Ident, open + close the binder scope, and
         // replace the GSS top. The "." Literal arm still uses
-        // GuardedConsumeAndReplace.
+        // the shared rule_literal leaf (GuardedConsumeAndReplace).
         assert!(s.contains("GuardedConsumeBinderIdentAndReplaceWithEffect"));
         assert!(s.contains("EndBinderScope"));
-        assert!(s.contains("GuardedConsumeAndReplace"));
+        assert!(s.contains("binder :: rule_literal"));
         assert!(s.contains("\".\""));
     }
 
@@ -3519,11 +3413,11 @@ mod tests {
         let s = ts.to_string();
         // "fraction" is the trigger consumed at open; positions 1+ are
         // "(", a (ParamParse), ",", b (ParamParse), ")". Verify the
-        // emitted code contains ReplaceAndPush (for ParamParse slots) and
+        // emitted code calls the shared strict-goal ParamParse leaf and
         // the literals.
-        assert!(s.contains("ReplaceAndPush"));
+        assert!(s.contains("binder :: rule_parameter"));
         assert_eq!(
-            s.matches("category_entry_goal (0u16)").count(),
+            s.matches("0u16 , _pos , 0u8 , lex_one").count(),
             2,
             "every typed BigInt child occurrence must carry its declared category goal",
         );
