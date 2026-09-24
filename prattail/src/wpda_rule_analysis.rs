@@ -20,6 +20,7 @@ pub mod atomic_prefix;
 pub mod authored;
 pub mod authored_declarations;
 pub mod authored_normalization;
+pub mod authored_synthesis;
 pub mod binder;
 pub mod census;
 pub mod collection;

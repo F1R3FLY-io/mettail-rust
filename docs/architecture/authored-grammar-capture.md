@@ -381,6 +381,77 @@ These workers derive descriptors. They do not recognize guest input, execute
 semantic rewrites, or establish that installed parsing already uses the shared
 WPDA walker. That integration requires its own transition and consumer checks.
 
+### Owned synthesis and source occurrences
+
+The [owned synthesis adapter](../../prattail/src/wpda_rule_analysis/authored_synthesis.rs)
+connects retained GrammarCore observations to that same builder. Its input is
+the checked core, an ordered roster of original production indices, and one
+admission policy. The roster is explicit: the macro bridge can append auxiliary
+collection productions after capturing original rules, so enumerating every
+lowered production or filtering on flags is not equivalent to the original
+input. An empty roster is valid for a declaration-only language, and repeated
+indices remain repeated occurrences.
+
+The adapter performs four bounded phases:
+
+1. Admit source validation, check each selected occurrence, and pass its rule
+   handle to the existing category census in the supplied order.
+2. Admit the input rosters and their string copies. Copy the source arena once
+   after admission, creating one consuming normalization/materialization session.
+3. Run the original synthesis worker. Each user payload retains its original
+   production index while normalization changes only its current rule handle.
+   Synthesized payloads have an explicit synthetic origin, not an invented
+   source index. Label, collection, and binder callbacks reuse the existing
+   helpers at their original call sites.
+4. Check category and category-local rule counts against the descriptor index
+   widths, then publish the complete store, categories, rows, and policy owner.
+   Any error returns none of those partial outputs.
+
+For example, source occurrences `[1, 0, 1]` retain that order when their rules
+belong to one category. Both occurrences of production 1 still identify its
+original reduction metadata, even if their normalized arena handles differ.
+Source production identity, arena identity, and category-local descriptor index
+are three separate coordinates.
+
+The adapter's admission events describe actual operation sites. Whole-helper
+events prepay their supplied source domain, including temporary storage and
+string work; they are not constant-cost tokens. One policy spans source staging,
+the original builder, and all owned callbacks. A production caller must supply
+a finite policy: accepting every event is appropriate for a bounded test oracle,
+not an untrusted runtime installation. Grammar content limits are not a substitute
+for a compilation-work budget. Logical admission does not bound physical RSS.
+
+The [composition model](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredSynthesisComposition.v)
+proves the explicit occurrence/origin relation, immutable source metadata,
+append-only store correspondence, and success-only publication, using the
+existing synthesis laws. Its callback correspondence assumptions remain local
+implementation obligations. [Differential tests](../../macros/tests/support/owned_synthesis_reuse.rs)
+compare the original macro builder with the owned adapter through actual
+LanguageSpec/GrammarCore projection: complete retained rule shapes, category
+and row order, name-equality relations, and source origins. They do not establish
+equivalence of unretained Rust payloads or installed parser execution.
+
+### Shared binder-presence traversal
+
+The AST predicates and PraTTaIL parameter iterator share the original
+[parameter worklist](../../grammar-core/src/term_param_walk.rs). Optional groups
+are expanded with heap-backed frames; the worker preserves leaf payloads,
+optional flags, and the original first/second observation order. Binder queries
+short-circuit on the first matching leaf. A rule still obtains its legacy-item
+slice after checking its context, even when the context already contains a
+binder, preserving the original observation schedule.
+
+Fallible queries admit reads, frame reservation, pushes, pops, and observations
+before those operations. They consume their private worklist on error rather
+than returning a failed iterator that could resume. AST callers reuse their
+existing reader with infallible admission; owned synthesis forwards the same
+finite-policy boundary through its retained reader. The
+[binder projection model](../../formal/rocq/prattail_wpda_runtime/theories/BinderPresenceProjection.v)
+relates this schedule to the original finite predicate equations. Focused tests
+check denial at every reached event and traversal plus cleanup at 20,000 levels
+on a 64 KiB thread stack; they do not claim termination for arbitrary cyclic
+reader implementations.
+
 ### Collection declaration observations
 
 The shared [collection declaration helpers](../../grammar-core/src/collection_declaration.rs)

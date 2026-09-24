@@ -269,6 +269,8 @@ fn materialize_synthetic_rule(
 
 #[cfg(test)]
 mod tests {
+    include!("../../../../tests/support/owned_synthesis_reuse.rs");
+
     use super::*;
     use mettail_ast::grammar::{rule_fixture, PatternOp, SyntaxExpr, TermParam};
     use mettail_ast::language::{CategoryRole, CollectionDelimiters, LangType, TokenDef};
