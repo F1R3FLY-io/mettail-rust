@@ -13,9 +13,9 @@ use super::binder::optional::BinderSyntaxObservation;
 use super::binder::rule::BinderRuleReader;
 use super::binder::{binder_initial_body_cat, BinderShape};
 use super::prefix::{
-    category_leading_literals, first_set_of_category, insert_unified_descriptor,
-    result_has_home_var_reading, source_ident_first_is_var_only, FirstPredicate,
-    IdentSummaryContext, UnifiedBucket,
+    insert_unified_descriptor, try_category_leading_literals, try_first_set_of_category,
+    try_result_has_home_var_reading, try_source_ident_first_is_var_only, FirstPredicate,
+    IdentSummaryContext, TryIdentSummaryContext, UnifiedBucket,
 };
 use crate::binding_power::{compute_prefix_bp, BindingPowerTable, InfixRuleInfo};
 use std::collections::{BTreeMap, HashSet};
@@ -45,6 +45,67 @@ pub trait PrefixBucketContext<'source, R: BinderRuleReader<'source>>:
     fn nested_guest_openers(&mut self, open: &str) -> Vec<String>;
 }
 
+/// Checked observations for the same ordered bucket driver.
+///
+/// An error ends the worker at that observation; it is never interpreted as an
+/// absent rule or empty descriptor list. Previously assembled buckets remain
+/// private on failure. Callback side effects are not rolled back.
+pub trait TryPrefixBucketContext<'source, R: BinderRuleReader<'source>>:
+    TryIdentSummaryContext<'source, R>
+{
+    fn try_infix(&mut self, rule: R::Rule) -> Result<Option<InfixRuleInfo>, Self::Error>;
+    fn try_category_names(&mut self) -> Result<Vec<String>, Self::Error>;
+    fn try_binding_power_table(&mut self) -> Result<BindingPowerTable, Self::Error>;
+    fn try_explicit_prefix_bp(&self, rule: R::Rule) -> Result<Option<u8>, Self::Error>;
+    fn try_binder_shape(&mut self, rule: R::Rule) -> Result<Option<BinderShape>, Self::Error>;
+    fn try_atomic_rows(
+        &mut self,
+        category_src_idx: u16,
+        rule_idx: u16,
+        shape: &AtomicDescriptor<Self::Literal>,
+    ) -> Result<Vec<PrefixArmDescriptor<Self::Pattern>>, Self::Error>;
+    fn try_nested_guest_openers(&mut self, open: &str) -> Result<Vec<String>, Self::Error>;
+}
+
+impl<'source, R, C> TryPrefixBucketContext<'source, R> for C
+where
+    R: BinderRuleReader<'source>,
+    C: PrefixBucketContext<'source, R>,
+{
+    fn try_infix(&mut self, rule: R::Rule) -> Result<Option<InfixRuleInfo>, Self::Error> {
+        Ok(self.infix(rule))
+    }
+
+    fn try_category_names(&mut self) -> Result<Vec<String>, Self::Error> {
+        Ok(self.category_names())
+    }
+
+    fn try_binding_power_table(&mut self) -> Result<BindingPowerTable, Self::Error> {
+        Ok(self.binding_power_table())
+    }
+
+    fn try_explicit_prefix_bp(&self, rule: R::Rule) -> Result<Option<u8>, Self::Error> {
+        Ok(self.explicit_prefix_bp(rule))
+    }
+
+    fn try_binder_shape(&mut self, rule: R::Rule) -> Result<Option<BinderShape>, Self::Error> {
+        Ok(self.binder_shape(rule))
+    }
+
+    fn try_atomic_rows(
+        &mut self,
+        category_src_idx: u16,
+        rule_idx: u16,
+        shape: &AtomicDescriptor<Self::Literal>,
+    ) -> Result<Vec<PrefixArmDescriptor<Self::Pattern>>, Self::Error> {
+        Ok(self.atomic_rows(category_src_idx, rule_idx, shape))
+    }
+
+    fn try_nested_guest_openers(&mut self, open: &str) -> Result<Vec<String>, Self::Error> {
+        Ok(self.nested_guest_openers(open))
+    }
+}
+
 /// Existing ordered map plus its separate first-insertion-order roster.
 pub type PrefixBuckets<P> = (
     BTreeMap<(String, String), UnifiedBucket<P, UnifiedDescriptor<P>>>,
@@ -70,32 +131,59 @@ where
     C: PrefixBucketContext<'source, R>,
     C::Pattern: Clone,
 {
+    match try_derive_prefix_buckets(
+        reader,
+        context,
+        category_src_idx,
+        category_name,
+        rules_in_category,
+        crosscat_lex_compat_gate,
+    ) {
+        Ok(buckets) => buckets,
+        Err(never) => match never {},
+    }
+}
+
+/// Checked entry to the original driver, preserving every observation and pass.
+pub fn try_derive_prefix_buckets<'source, R, C>(
+    reader: &R,
+    context: &mut C,
+    category_src_idx: u16,
+    category_name: &str,
+    rules_in_category: &[(u16, R::Rule)],
+    crosscat_lex_compat_gate: bool,
+) -> Result<PrefixBuckets<C::Pattern>, C::Error>
+where
+    R: BinderRuleReader<'source>,
+    C: TryPrefixBucketContext<'source, R>,
+    C::Pattern: Clone,
+{
     let mut cross_cat_infix_sources: HashSet<String> = HashSet::new();
-    for index in 0..context.rules_len() {
-        let rule = context.rule_at(index);
+    for index in 0..context.try_rules_len()? {
+        let rule = context.try_rule_at(index)?;
         if reader.category(rule).to_string() != category_name {
             continue;
         }
-        if let Some(info) = context.infix(rule) {
+        if let Some(info) = context.try_infix(rule)? {
             if info.is_cross_category && info.category != info.result_category {
                 cross_cat_infix_sources.insert(info.category.clone());
             }
         }
     }
-    let categories = context.category_names();
-    let bp_table = context.binding_power_table();
+    let categories = context.try_category_names()?;
+    let bp_table = context.try_binding_power_table()?;
     let mut sorted_sources: Vec<&String> = cross_cat_infix_sources.iter().collect();
     sorted_sources.sort();
     let mut unified_buckets = BTreeMap::new();
     let mut unified_order = Vec::new();
-    let result_leading_literals = category_leading_literals(category_name, reader, context);
+    let result_leading_literals = try_category_leading_literals(category_name, reader, context)?;
     for source_cat_name in &sorted_sources {
         let source_src_idx = categories
             .iter()
             .position(|c| c == *source_cat_name)
             .map(|i| i as u16)
             .unwrap_or(0);
-        let first_set = first_set_of_category(source_cat_name, reader, context);
+        let first_set = try_first_set_of_category(source_cat_name, reader, context)?;
         for ft in first_set {
             let sigil_leads_result_rule = ft
                 .leading_literal
@@ -129,8 +217,8 @@ where
     // collected immediately, but flushed only after that complete pass.
     let mut atomic_descriptors = Vec::new();
     for &(rule_idx, rule) in rules_in_category {
-        let shape = context.atomic(rule);
-        atomic_descriptors.extend(context.atomic_rows(category_src_idx, rule_idx, &shape));
+        let shape = context.try_atomic(rule)?;
+        atomic_descriptors.extend(context.try_atomic_rows(category_src_idx, rule_idx, &shape)?);
         if let AtomicDescriptor::CrossCatPrefixUnary {
             trigger,
             source_cat_name,
@@ -142,9 +230,12 @@ where
                 .position(|c| c == source_cat_name)
                 .map(|i| i as u16)
                 .unwrap_or(category_src_idx);
-            let operand_bp =
-                compute_prefix_bp(source_cat_name, context.explicit_prefix_bp(rule), &bp_table);
-            let (pattern, guard) = context.predicate_parts(FirstPredicate::Fixed(trigger));
+            let operand_bp = compute_prefix_bp(
+                source_cat_name,
+                context.try_explicit_prefix_bp(rule)?,
+                &bp_table,
+            );
+            let (pattern, guard) = context.try_predicate_parts(FirstPredicate::Fixed(trigger))?;
             insert_unified_descriptor(
                 &mut unified_buckets,
                 &mut unified_order,
@@ -155,7 +246,7 @@ where
             continue;
         }
         if let AtomicDescriptor::NullaryLiteralRun { trigger, .. } = &shape {
-            let (pattern, guard) = context.predicate_parts(FirstPredicate::Fixed(trigger));
+            let (pattern, guard) = context.try_predicate_parts(FirstPredicate::Fixed(trigger))?;
             insert_unified_descriptor(
                 &mut unified_buckets,
                 &mut unified_order,
@@ -168,7 +259,7 @@ where
         if matches!(shape, AtomicDescriptor::CrossCatProjection { .. }) {
             continue;
         }
-        if let Some(shape) = context.binder_shape(rule) {
+        if let Some(shape) = context.try_binder_shape(rule)? {
             let body_src_idx = binder_initial_body_cat(&shape)
                 .and_then(|name| categories.iter().position(|c| c == name).map(|i| i as u16))
                 .unwrap_or(category_src_idx);
@@ -177,7 +268,8 @@ where
                     if trigger == "(" {
                         continue;
                     }
-                    let (pattern, guard) = context.predicate_parts(FirstPredicate::Fixed(trigger));
+                    let (pattern, guard) =
+                        context.try_predicate_parts(FirstPredicate::Fixed(trigger))?;
                     insert_unified_descriptor(
                         &mut unified_buckets,
                         &mut unified_order,
@@ -189,7 +281,7 @@ where
                 Some(BinderSyntaxObservation::TokenKind { name, .. }) => {
                     let kind_name = name.to_string();
                     let (pattern, guard) =
-                        context.predicate_parts(FirstPredicate::CaptureName(&kind_name));
+                        context.try_predicate_parts(FirstPredicate::CaptureName(&kind_name))?;
                     insert_unified_descriptor(
                         &mut unified_buckets,
                         &mut unified_order,
@@ -204,10 +296,10 @@ where
                 },
                 Some(BinderSyntaxObservation::GuestBody { open, close, .. }) => {
                     let open_kind = open.to_string();
-                    let nested_open_kinds = context.nested_guest_openers(&open_kind);
+                    let nested_open_kinds = context.try_nested_guest_openers(&open_kind)?;
                     let close_kind = close.to_string();
                     let (pattern, guard) =
-                        context.predicate_parts(FirstPredicate::GuestOpen(&open_kind));
+                        context.try_predicate_parts(FirstPredicate::GuestOpen(&open_kind))?;
                     insert_unified_descriptor(
                         &mut unified_buckets,
                         &mut unified_order,
@@ -224,7 +316,8 @@ where
                 },
                 Some(BinderSyntaxObservation::Param(_)) => {
                     if shape.leading_ident_capture.is_some() {
-                        let (pattern, guard) = context.predicate_parts(FirstPredicate::Ident);
+                        let (pattern, guard) =
+                            context.try_predicate_parts(FirstPredicate::Ident)?;
                         insert_unified_descriptor(
                             &mut unified_buckets,
                             &mut unified_order,
@@ -257,7 +350,7 @@ where
                     {
                         continue;
                     }
-                    for first in first_set_of_category(source_cat_name, reader, context) {
+                    for first in try_first_set_of_category(source_cat_name, reader, context)? {
                         insert_unified_descriptor(
                             &mut unified_buckets,
                             &mut unified_order,
@@ -284,17 +377,19 @@ where
     // Classify again in the original second pass. Never reuse a first-pass
     // result, move the lexical checks outside this row loop, or cache them.
     for &(rule_idx, rule) in rules_in_category {
-        if let AtomicDescriptor::CrossCatProjection { source_cat_name, .. } = context.atomic(rule) {
+        if let AtomicDescriptor::CrossCatProjection { source_cat_name, .. } =
+            context.try_atomic(rule)?
+        {
             let source_src_idx = categories
                 .iter()
                 .position(|c| c == &source_cat_name)
                 .map(|i| i as u16)
                 .unwrap_or(0);
-            for ft in first_set_of_category(&source_cat_name, reader, context) {
+            for ft in try_first_set_of_category(&source_cat_name, reader, context)? {
                 if crosscat_lex_compat_gate
                     && ft.is_var_contribution
-                    && source_ident_first_is_var_only(&source_cat_name, reader, context)
-                    && result_has_home_var_reading(category_name, reader, context)
+                    && try_source_ident_first_is_var_only(&source_cat_name, reader, context)?
+                    && try_result_has_home_var_reading(category_name, reader, context)?
                 {
                     continue;
                 }
@@ -308,5 +403,5 @@ where
             }
         }
     }
-    (unified_buckets, unified_order)
+    Ok((unified_buckets, unified_order))
 }

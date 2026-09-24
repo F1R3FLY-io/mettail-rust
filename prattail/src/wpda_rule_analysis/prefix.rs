@@ -19,6 +19,9 @@ use super::binder::optional::{BinderSyntaxObservation, BinderSyntaxReader};
 use super::binder::rule::BinderRuleReader;
 use mettail_ast::grammar::NonTerminalKind;
 
+mod fallible;
+pub use fallible::{TryFirstSetContext, TryIdentSummaryContext};
+
 /// Original FIRST row; token quotation belongs to the caller, not this worker.
 #[derive(Debug, Clone)]
 pub struct FirstToken<P> {
@@ -120,6 +123,7 @@ pub trait IdentSummaryContext<'source, R: BinderRuleReader<'source>>:
 
 /// Original declaration-first home-variable predicate. An explicit first Var
 /// short-circuits the data-role read; undeclared categories refuse immediately.
+/// Infallible compatibility entrypoint; executes the same fallible worker.
 pub fn result_has_home_var_reading<'source, R, C>(
     cat_name: &str,
     reader: &R,
@@ -129,24 +133,46 @@ where
     R: BinderRuleReader<'source>,
     C: FirstSetContext<'source, R>,
 {
-    let Some(lang_type) = context.find_category(cat_name) else {
-        return false;
+    match try_result_has_home_var_reading(cat_name, reader, context) {
+        Ok(value) => value,
+        Err(impossible) => match impossible {},
+    }
+}
+
+/// Fallible home-variable predicate; returns the first observation error.
+pub fn try_result_has_home_var_reading<'source, R, C>(
+    cat_name: &str,
+    reader: &R,
+    context: &mut C,
+) -> Result<bool, C::Error>
+where
+    R: BinderRuleReader<'source>,
+    C: TryFirstSetContext<'source, R>,
+{
+    let Some(lang_type) = context.try_find_category(cat_name)? else {
+        return Ok(false);
     };
-    let has_user_var = (0..context.rules_len()).any(|index| {
-        let rule = context.rule_at(index);
-        reader.category(rule).to_string() == cat_name
+    let mut has_user_var = false;
+    for index in 0..context.try_rules_len()? {
+        let rule = context.try_rule_at(index)?;
+        if reader.category(rule).to_string() == cat_name
             && context
-                .legacy_first(rule)
+                .try_legacy_first(rule)?
                 .map(|item| {
                     matches!(item, FirstLegacyItem::NonTerminal { kind: NonTerminalKind::Var, .. })
                 })
                 .unwrap_or(false)
-    });
-    has_user_var || !context.is_data(lang_type)
+        {
+            has_user_var = true;
+            break;
+        }
+    }
+    Ok(has_user_var || !context.try_is_data(lang_type)?)
 }
 
 /// Original identifier closure: authored rule order, duplicate reverse edges,
 /// guard-before-format short-circuit, and HashSet seed enumeration are retained.
+/// Infallible compatibility entrypoint; executes the same fallible worker.
 pub fn ident_first_categories<'source, R, C>(
     reader: &R,
     context: &mut C,
@@ -155,25 +181,42 @@ where
     R: BinderRuleReader<'source>,
     C: IdentSummaryContext<'source, R>,
 {
-    let mut reached: std::collections::HashSet<String> = (0..context.categories_len())
-        .map(|index| context.category_at(index))
-        .filter(|ty| !context.is_data(*ty))
-        .map(|ty| context.category_spelling(ty))
-        .collect();
+    match try_ident_first_categories(reader, context) {
+        Ok(value) => value,
+        Err(impossible) => match impossible {},
+    }
+}
+
+/// Fallible identifier closure with the original source and worklist order.
+pub fn try_ident_first_categories<'source, R, C>(
+    reader: &R,
+    context: &mut C,
+) -> Result<std::collections::HashSet<String>, C::Error>
+where
+    R: BinderRuleReader<'source>,
+    C: TryIdentSummaryContext<'source, R>,
+{
+    let mut reached: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for index in 0..context.try_categories_len()? {
+        let ty = context.try_category_at(index)?;
+        if !context.try_is_data(ty)? {
+            reached.insert(context.try_category_spelling(ty)?);
+        }
+    }
     let mut reverse: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
 
-    for index in 0..context.rules_len() {
-        let rule = context.rule_at(index);
+    for index in 0..context.try_rules_len()? {
+        let rule = context.try_rule_at(index)?;
         let category = reader.category(rule).to_string();
-        match context.atomic(rule) {
+        match context.try_atomic(rule)? {
             AtomicDescriptor::VarRule { .. } => {
                 reached.insert(category);
             },
             AtomicDescriptor::LiteralPatterned(literal) => {
                 let has_ident =
                     context
-                        .patterned_first(literal)
+                        .try_patterned_first(literal)?
                         .into_iter()
                         .any(|(pattern, guard)| {
                             guard.is_none() && pattern.to_string().contains("Ident")
@@ -195,7 +238,7 @@ where
                     if let Some(FirstLegacyItem::NonTerminal {
                         name,
                         kind: NonTerminalKind::Category,
-                    }) = context.legacy_first(rule)
+                    }) = context.try_legacy_first(rule)?
                     {
                         let source = name.to_string();
                         if source != category {
@@ -225,12 +268,13 @@ where
             }
         }
     }
-    reached
+    Ok(reached)
 }
 
 /// Original explicit-frame var-only traversal, not a new FIRST recognizer.
 /// The closure is eager; each cursor advances before the rule is inspected.
 /// Purity retains its three separate, short-circuiting source passes.
+/// Infallible compatibility entrypoint; executes the same fallible worker.
 pub fn source_ident_first_is_var_only<'source, R, C>(
     source_cat: &str,
     reader: &R,
@@ -240,16 +284,32 @@ where
     R: BinderRuleReader<'source>,
     C: IdentSummaryContext<'source, R>,
 {
+    match try_source_ident_first_is_var_only(source_cat, reader, context) {
+        Ok(value) => value,
+        Err(impossible) => match impossible {},
+    }
+}
+
+/// Fallible var-only traversal; failed observations do not become refusals.
+pub fn try_source_ident_first_is_var_only<'source, R, C>(
+    source_cat: &str,
+    reader: &R,
+    context: &mut C,
+) -> Result<bool, C::Error>
+where
+    R: BinderRuleReader<'source>,
+    C: TryIdentSummaryContext<'source, R>,
+{
     struct Frame {
         category: String,
         next_rule: usize,
     }
 
-    let ident_first = ident_first_categories(reader, context);
+    let ident_first = try_ident_first_categories(reader, context)?;
     let mut rules_by_category: std::collections::HashMap<String, Vec<R::Rule>> =
         std::collections::HashMap::new();
-    for index in 0..context.rules_len() {
-        let rule = context.rule_at(index);
+    for index in 0..context.try_rules_len()? {
+        let rule = context.try_rule_at(index)?;
         rules_by_category
             .entry(reader.category(rule).to_string())
             .or_default()
@@ -273,7 +333,7 @@ where
         frame.next_rule += 1;
 
         let is_var_rule = context
-            .legacy_first(rule)
+            .try_legacy_first(rule)?
             .map(|item| {
                 matches!(item, FirstLegacyItem::NonTerminal { kind: NonTerminalKind::Var, .. })
             })
@@ -281,39 +341,50 @@ where
         if is_var_rule {
             continue;
         }
-        match context.legacy_first(rule) {
+        match context.try_legacy_first(rule)? {
             Some(FirstLegacyItem::Terminal(_)) => continue,
             Some(FirstLegacyItem::NonTerminal { name, kind: NonTerminalKind::Category }) => {
                 let nt_cat = name.to_string();
                 if nt_cat == frame.category {
                     continue;
                 }
-                let structural_item_count = (0..context.legacy_len(rule))
-                    .filter(|index| {
-                        !matches!(
-                            context.legacy_at(rule, *index),
-                            Some(FirstLegacyItem::Terminal(_))
-                        )
-                    })
-                    .count();
-                let is_pure_projection = structural_item_count == 1
-                    && (0..context.legacy_len(rule)).all(|index| {
-                        matches!(
-                            context.legacy_at(rule, index),
+                let mut structural_item_count: usize = 0;
+                for index in 0..context.try_legacy_len(rule)? {
+                    if !matches!(
+                        context.try_legacy_at(rule, index)?,
+                        Some(FirstLegacyItem::Terminal(_))
+                    ) {
+                        structural_item_count += 1;
+                    }
+                }
+                let mut is_pure_projection = structural_item_count == 1;
+                if is_pure_projection {
+                    for index in 0..context.try_legacy_len(rule)? {
+                        if !matches!(
+                            context.try_legacy_at(rule, index)?,
                             Some(
                                 FirstLegacyItem::NonTerminal {
                                     kind: NonTerminalKind::Category,
                                     ..
                                 } | FirstLegacyItem::Terminal(_)
                             )
-                        )
-                    })
-                    && (0..context.legacy_len(rule)).all(|index| {
-                        !matches!(
-                            context.legacy_at(rule, index),
+                        ) {
+                            is_pure_projection = false;
+                            break;
+                        }
+                    }
+                }
+                if is_pure_projection {
+                    for index in 0..context.try_legacy_len(rule)? {
+                        if matches!(
+                            context.try_legacy_at(rule, index)?,
                             Some(FirstLegacyItem::Terminal(_))
-                        )
-                    });
+                        ) {
+                            is_pure_projection = false;
+                            break;
+                        }
+                    }
+                }
                 if ident_first.contains(&nt_cat) {
                     if is_pure_projection && !visited.insert(nt_cat.clone()) {
                         continue;
@@ -322,7 +393,7 @@ where
                         frames.push(Frame { category: nt_cat, next_rule: 0 });
                         continue;
                     }
-                    return false;
+                    return Ok(false);
                 }
                 continue;
             },
@@ -331,16 +402,16 @@ where
                 if let Some(sp) = reader.syntax_pattern(rule) {
                     match reader.at(sp, 0) {
                         Some(BinderSyntaxObservation::Literal(_)) => continue,
-                        Some(BinderSyntaxObservation::Param(_)) => return false,
-                        _ => return false,
+                        Some(BinderSyntaxObservation::Param(_)) => return Ok(false),
+                        _ => return Ok(false),
                     }
                 } else {
-                    return false;
+                    return Ok(false);
                 }
             },
         }
     }
-    true
+    Ok(true)
 }
 
 impl<P> FirstToken<P> {
@@ -356,6 +427,7 @@ impl<P> FirstToken<P> {
 
 /// Original direct leading-literal set. Present empty/nonliteral syntax suppresses
 /// legacy fallback; only absent syntax consults the first legacy Terminal.
+/// Infallible compatibility entrypoint; executes the same fallible worker.
 pub fn category_leading_literals<'source, R, C>(
     cat_name: &str,
     reader: &R,
@@ -365,9 +437,25 @@ where
     R: BinderRuleReader<'source>,
     C: FirstSetContext<'source, R>,
 {
+    match try_category_leading_literals(cat_name, reader, context) {
+        Ok(value) => value,
+        Err(impossible) => match impossible {},
+    }
+}
+
+/// Fallible leading-literal set; no partial set is returned on error.
+pub fn try_category_leading_literals<'source, R, C>(
+    cat_name: &str,
+    reader: &R,
+    context: &C,
+) -> Result<std::collections::BTreeSet<String>, C::Error>
+where
+    R: BinderRuleReader<'source>,
+    C: TryFirstSetContext<'source, R>,
+{
     let mut out = std::collections::BTreeSet::new();
-    for index in 0..context.rules_len() {
-        let rule = context.rule_at(index);
+    for index in 0..context.try_rules_len()? {
+        let rule = context.try_rule_at(index)?;
         if reader.category(rule).to_string() != cat_name {
             continue;
         }
@@ -375,15 +463,16 @@ where
             if let Some(BinderSyntaxObservation::Literal(text)) = reader.at(sp, 0) {
                 out.insert(text.to_string());
             }
-        } else if let Some(FirstLegacyItem::Terminal(text)) = context.legacy_first(rule) {
+        } else if let Some(FirstLegacyItem::Terminal(text)) = context.try_legacy_first(rule)? {
             out.insert(text.to_string());
         }
     }
-    out
+    Ok(out)
 }
 
 /// Original FIFO FIRST traversal and stable formatter-key deduplication.
 /// The complete first row survives, including metadata and guard Option.
+/// Infallible compatibility entrypoint; executes the same fallible worker.
 pub fn first_set_of_category<'source, R, C>(
     cat_name: &str,
     reader: &R,
@@ -393,9 +482,25 @@ where
     R: BinderRuleReader<'source>,
     C: FirstSetContext<'source, R>,
 {
+    match try_first_set_of_category(cat_name, reader, context) {
+        Ok(value) => value,
+        Err(impossible) => match impossible {},
+    }
+}
+
+/// Fallible original FIRST traversal; deduplication follows successful collection.
+pub fn try_first_set_of_category<'source, R, C>(
+    cat_name: &str,
+    reader: &R,
+    context: &mut C,
+) -> Result<Vec<FirstToken<C::Pattern>>, C::Error>
+where
+    R: BinderRuleReader<'source>,
+    C: TryFirstSetContext<'source, R>,
+{
     let mut acc = Vec::new();
     let mut visited = std::collections::HashSet::new();
-    collect_first_set(cat_name, reader, context, &mut acc, &mut visited);
+    try_collect_first_set(cat_name, reader, context, &mut acc, &mut visited)?;
     let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
     acc.retain(|ft| {
         let key = (
@@ -407,18 +512,19 @@ where
         );
         seen.insert(key)
     });
-    acc
+    Ok(acc)
 }
 
-fn collect_first_set<'source, R, C>(
+fn try_collect_first_set<'source, R, C>(
     cat_name: &str,
     reader: &R,
     context: &mut C,
     acc: &mut Vec<FirstToken<C::Pattern>>,
     visited: &mut std::collections::HashSet<String>,
-) where
+) -> Result<(), C::Error>
+where
     R: BinderRuleReader<'source>,
-    C: FirstSetContext<'source, R>,
+    C: TryFirstSetContext<'source, R>,
 {
     let mut pending = std::collections::VecDeque::new();
     pending.push_back(cat_name.to_string());
@@ -427,8 +533,8 @@ fn collect_first_set<'source, R, C>(
         if !visited.insert(current_cat_name.clone()) {
             continue;
         }
-        if let Some(lang_type) = context.find_category(&current_cat_name) {
-            for (pattern, extra_guard) in context.native_first(lang_type, &current_cat_name) {
+        if let Some(lang_type) = context.try_find_category(&current_cat_name)? {
+            for (pattern, extra_guard) in context.try_native_first(lang_type, &current_cat_name)? {
                 acc.push(FirstToken {
                     pattern,
                     extra_guard,
@@ -437,18 +543,24 @@ fn collect_first_set<'source, R, C>(
                 });
             }
         }
-        if let Some(lang_type) = context.find_category(&current_cat_name) {
-            if !context.is_data(lang_type) {
-                let has_user_var = (0..context.rules_len()).any(|index| {
-                    let rule = context.rule_at(index);
-                    reader.category(rule).to_string() == current_cat_name
+        if let Some(lang_type) = context.try_find_category(&current_cat_name)? {
+            if !context.try_is_data(lang_type)? {
+                let mut has_user_var = false;
+                for index in 0..context.try_rules_len()? {
+                    let rule = context.try_rule_at(index)?;
+                    if reader.category(rule).to_string() == current_cat_name
                         && matches!(
-                            context.legacy_first(rule),
+                            context.try_legacy_first(rule)?,
                             Some(FirstLegacyItem::NonTerminal { kind: NonTerminalKind::Var, .. })
                         )
-                });
+                    {
+                        has_user_var = true;
+                        break;
+                    }
+                }
                 if !has_user_var {
-                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Ident);
+                    let (pattern, extra_guard) =
+                        context.try_predicate_parts(FirstPredicate::Ident)?;
                     acc.push(FirstToken {
                         pattern,
                         extra_guard,
@@ -458,23 +570,23 @@ fn collect_first_set<'source, R, C>(
                 }
             }
         }
-        if let Some(lang_type) = context.find_category(&current_cat_name) {
-            if let Some(open) = context.collection_open(lang_type) {
+        if let Some(lang_type) = context.try_find_category(&current_cat_name)? {
+            if let Some(open) = context.try_collection_open(lang_type)? {
                 let first_open = open.trim_end_matches('(').to_string();
                 let (pattern, extra_guard) =
-                    context.predicate_parts(FirstPredicate::Fixed(&first_open));
+                    context.try_predicate_parts(FirstPredicate::Fixed(&first_open))?;
                 acc.push(FirstToken::fixed_leading(&first_open, pattern, extra_guard));
             }
         }
-        for index in 0..context.rules_len() {
-            let rule = context.rule_at(index);
+        for index in 0..context.try_rules_len()? {
+            let rule = context.try_rule_at(index)?;
             if reader.category(rule).to_string() != current_cat_name {
                 continue;
             }
-            let shape = context.atomic(rule);
+            let shape = context.try_atomic(rule)?;
             match shape {
                 AtomicDescriptor::LiteralPatterned(literal) => {
-                    for (pattern, extra_guard) in context.patterned_first(literal) {
+                    for (pattern, extra_guard) in context.try_patterned_first(literal)? {
                         acc.push(FirstToken {
                             pattern,
                             extra_guard,
@@ -485,11 +597,12 @@ fn collect_first_set<'source, R, C>(
                 },
                 AtomicDescriptor::TerminalKeyword { terminal_text, .. } => {
                     let (pattern, extra_guard) =
-                        context.predicate_parts(FirstPredicate::Fixed(&terminal_text));
+                        context.try_predicate_parts(FirstPredicate::Fixed(&terminal_text))?;
                     acc.push(FirstToken::fixed_leading(&terminal_text, pattern, extra_guard));
                 },
                 AtomicDescriptor::VarRule { .. } => {
-                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Ident);
+                    let (pattern, extra_guard) =
+                        context.try_predicate_parts(FirstPredicate::Ident)?;
                     acc.push(FirstToken {
                         pattern,
                         extra_guard,
@@ -498,7 +611,8 @@ fn collect_first_set<'source, R, C>(
                     });
                 },
                 AtomicDescriptor::LiteralInteger => {
-                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Integer);
+                    let (pattern, extra_guard) =
+                        context.try_predicate_parts(FirstPredicate::Integer)?;
                     acc.push(FirstToken {
                         pattern,
                         extra_guard,
@@ -507,7 +621,8 @@ fn collect_first_set<'source, R, C>(
                     });
                 },
                 AtomicDescriptor::LiteralBoolean => {
-                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Boolean);
+                    let (pattern, extra_guard) =
+                        context.try_predicate_parts(FirstPredicate::Boolean)?;
                     acc.push(FirstToken {
                         pattern,
                         extra_guard,
@@ -516,7 +631,8 @@ fn collect_first_set<'source, R, C>(
                     });
                 },
                 AtomicDescriptor::LiteralString => {
-                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::String);
+                    let (pattern, extra_guard) =
+                        context.try_predicate_parts(FirstPredicate::String)?;
                     acc.push(FirstToken {
                         pattern,
                         extra_guard,
@@ -525,7 +641,8 @@ fn collect_first_set<'source, R, C>(
                     });
                 },
                 AtomicDescriptor::LiteralFloat => {
-                    let (pattern, extra_guard) = context.predicate_parts(FirstPredicate::Float);
+                    let (pattern, extra_guard) =
+                        context.try_predicate_parts(FirstPredicate::Float)?;
                     acc.push(FirstToken {
                         pattern,
                         extra_guard,
@@ -538,17 +655,17 @@ fn collect_first_set<'source, R, C>(
                 },
                 AtomicDescriptor::CrossCatPrefixUnary { trigger, .. } => {
                     let (pattern, extra_guard) =
-                        context.predicate_parts(FirstPredicate::Fixed(&trigger));
+                        context.try_predicate_parts(FirstPredicate::Fixed(&trigger))?;
                     acc.push(FirstToken::fixed_leading(&trigger, pattern, extra_guard));
                 },
                 AtomicDescriptor::PrefixOperator { trigger, .. } => {
                     let (pattern, extra_guard) =
-                        context.predicate_parts(FirstPredicate::Fixed(&trigger));
+                        context.try_predicate_parts(FirstPredicate::Fixed(&trigger))?;
                     acc.push(FirstToken::fixed_leading(&trigger, pattern, extra_guard));
                 },
                 AtomicDescriptor::NullaryLiteralRun { trigger, .. } => {
                     let (pattern, extra_guard) =
-                        context.predicate_parts(FirstPredicate::Fixed(&trigger));
+                        context.try_predicate_parts(FirstPredicate::Fixed(&trigger))?;
                     acc.push(FirstToken::fixed_leading(&trigger, pattern, extra_guard));
                 },
                 AtomicDescriptor::NonAtomic => {
@@ -556,19 +673,20 @@ fn collect_first_set<'source, R, C>(
                         match reader.at(sp, 0) {
                             Some(BinderSyntaxObservation::Literal(text)) => {
                                 let (pattern, extra_guard) =
-                                    context.predicate_parts(FirstPredicate::Fixed(text));
+                                    context.try_predicate_parts(FirstPredicate::Fixed(text))?;
                                 acc.push(FirstToken::fixed_leading(text, pattern, extra_guard));
                             },
                             Some(BinderSyntaxObservation::Param(_)) => {
-                                let leading_cat = context.binder_leading(rule).or_else(|| {
-                                    match context.legacy_first(rule) {
+                                let leading_cat = match context.try_binder_leading(rule)? {
+                                    Some(leading) => Some(leading),
+                                    None => match context.try_legacy_first(rule)? {
                                         Some(FirstLegacyItem::NonTerminal {
                                             name,
                                             kind: NonTerminalKind::Category,
                                         }) => Some(name.to_string()),
                                         _ => None,
-                                    }
-                                });
+                                    },
+                                };
                                 if let Some(nt_cat) = leading_cat {
                                     if nt_cat != current_cat_name {
                                         pending.push_back(nt_cat);
@@ -578,7 +696,7 @@ fn collect_first_set<'source, R, C>(
                             Some(BinderSyntaxObservation::TokenKind { name, .. }) => {
                                 let kind_name = name.to_string();
                                 let (pattern, extra_guard) = context
-                                    .predicate_parts(FirstPredicate::CaptureName(&kind_name));
+                                    .try_predicate_parts(FirstPredicate::CaptureName(&kind_name))?;
                                 acc.push(FirstToken {
                                     pattern,
                                     extra_guard,
@@ -588,8 +706,8 @@ fn collect_first_set<'source, R, C>(
                             },
                             Some(BinderSyntaxObservation::GuestBody { open, .. }) => {
                                 let open_kind = open.to_string();
-                                let (pattern, extra_guard) =
-                                    context.predicate_parts(FirstPredicate::GuestOpen(&open_kind));
+                                let (pattern, extra_guard) = context
+                                    .try_predicate_parts(FirstPredicate::GuestOpen(&open_kind))?;
                                 acc.push(FirstToken {
                                     pattern,
                                     extra_guard,
@@ -604,6 +722,7 @@ fn collect_first_set<'source, R, C>(
             }
         }
     }
+    Ok(())
 }
 
 /// One original unified dispatch bucket, independent of token quotation.

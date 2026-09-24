@@ -10,6 +10,10 @@ use mettail_prattail::wpda_rule_analysis::prefix_bucket::{
 };
 use std::cell::RefCell;
 
+mod fallible_context {
+    include!("prefix_fallible_context.rs");
+}
+
 type Reader = super::super::super::binder::MacroBinderSyntaxReader;
 
 struct Observed<'source> {

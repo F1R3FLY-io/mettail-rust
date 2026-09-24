@@ -710,6 +710,40 @@ order. The [driver projection model](../../formal/rocq/prattail_wpda_runtime/the
 proves finite callback and descriptor correspondence. Rust transition emission
 remains in the original backend and is outside this model's claim.
 
+### Checked prefix observations
+
+The FIRST (possible initial-token) and identifier workers expose
+`TryFirstSetContext` and `TryIdentSummaryContext`; the bucket driver adds
+`TryPrefixBucketContext`. Each observation returns `Result`, distinguishing a
+successful absence, such as `Ok(None)`, from an error. The original public
+interfaces forward through these same worker bodies using `Infallible`, Rust's
+type with no possible error values. There is no second traversal implementation.
+
+For example, when a non-atomic rule starts with a parameter, a successful binder
+lookup may supply its leading category. Only `Ok(None)` consults the original
+legacy-item fallback. An error returns immediately, without that fallback or
+any later context observation. Similarly, the three purity scans remain
+separate and short-circuit at their original sites; introducing checked reads
+does not combine scans or cache repeated classifications.
+
+All output remains local until the worker returns `Ok`. Failed calls return the
+original error, not an empty FIRST set or partially constructed bucket map.
+Effects inside a callback are not rolled back. Allocation and panic recovery
+are separate concerns; this interface does not promise transactional callbacks
+or introduce a new runtime fuel limit.
+
+The [callback-failure model](../../formal/rocq/prattail_wpda_runtime/theories/PrefixCallbackFailure.v)
+proves preservation under all-successful callbacks and exact first-error
+termination for response-sensitive continuations. It reuses the original
+algorithm models rather than re-deriving FIRST or bucket construction. Its
+Rust correspondence obligation is explicit: source review checks observation
+order, and [failure-injection tests](../../macros/tests/support/prefix_fallible_context.rs)
+exercise every reached callback position across all 23 context methods. They
+compare complete successful outputs with the infallible wrappers, while the
+existing original-behavior fixtures remain the independent baseline. These
+checks do not establish the owned compilation context or installed-parser
+cutover, which require their own integration evidence.
+
 ### Native literals, identifiers, and guest modes
 
 The shared [native-literal worker](../../prattail/src/wpda_rule_analysis/native_first.rs)
