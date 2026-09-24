@@ -150,6 +150,7 @@ theories/AuthoredSynthesisComposition.v
 theories/AuthoredInfixProjection.v
 theories/BindingPowerAdmission.v
 theories/CollectionReaderProjection.v
+theories/BinderNumericAdmission.v
 theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.
