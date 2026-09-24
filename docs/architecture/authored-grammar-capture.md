@@ -916,6 +916,69 @@ For example, identical rendered mode names cannot substitute for source name
 equality. An owned adapter must retain that equality rather than strip
 qualifiers from lowered lexer names.
 
+## Owned descriptor assembly
+
+[`OwnedWpdaDescriptors`](../../prattail/src/wpda_rule_analysis/authored_descriptors.rs)
+owns the synthesized source store and the original derivation outputs together.
+This prevents the transition adapter from inventing a second classification or
+normalization procedure. Raw source occurrences, normalized source occurrences,
+and category-local synthetic rule coordinates are distinct; duplicate source
+occurrences retain their own positions.
+
+The assembly calls the existing binding-power, label-index, prefix, grouping,
+traversal, collection, factoring, mixfix, and Parikh workers. Parikh analysis
+computes token-class requirements using the original fixed-point loops; it does
+not replace recognition. The occurrence reader can borrow a rule handle by
+value or by reference while forwarding the same source observations.
+
+The caller admits the complete finite helper domain before validation, copying,
+or derivation. A failed source observation or descriptor encoding returns an
+error without publishing a partial artifact. This logical work-admission
+interface does not itself supply the installed compiler's finite budget, nor
+does it promise recovery from physical allocator failure.
+
+The original factoring switches retain their relationship: mixfix factoring is
+active only when both prefix factoring and mixfix cohorts are enabled. Numeric
+cast participation is a checked source observation, not a guess from lowered
+reduction metadata. Missing observations cannot be replaced with `false`.
+
+The [owned cast adapter](../../prattail/src/wpda_rule_analysis/authored_cast.rs)
+calls the original cast-participation worker. Source body presence and an
+explicit `Fold` annotation are retained separately; a later lowering default
+does not create a source annotation. Native lookup by retained name identity
+is distinct from the original lookup through a newly constructed identifier.
+The latter remains an explicit checked producer callback, not an inferred
+spelling comparison. An object-category election with tied maximum counts
+returns an error; a unique maximum agrees with the original election.
+The [cast observation model](../../formal/rocq/prattail_wpda_runtime/theories/CastSourceObservation.v)
+specifies this observation order and refusal boundary. It does not establish
+the producer callback's source correspondence or implement numeric evaluation.
+
+Factoring allocates synthetic spine identifiers at the original allocation
+sites using checked addition. An unrepresentable identifier records a hard
+refusal and cannot publish a wrapped identifier or a partial parser image.
+The original later callbacks and recovery ceilings remain in effect. The
+[ordinal model](../../formal/rocq/prattail_wpda_runtime/theories/FactoringOrdinalAdmission.v)
+proves exact representable allocation and refusal without counter advancement.
+
+The [traversal marker model](../../formal/rocq/prattail_wpda_runtime/theories/TraversalMarkerProjection.v)
+connects optional-before-binder marker allocation to dense identifiers and
+last-write coordinate lookup. The
+[collection assembly model](../../formal/rocq/prattail_wpda_runtime/theories/CollectionAssemblyProjection.v)
+distinguishes delayed duplicate-key conflicts from immediate callback failure:
+after a conflict, original descriptor discovery continues, but no conflicting
+table is published. The
+[factoring emission model](../../formal/rocq/prattail_wpda_runtime/theories/FactoringEmissionData.v)
+preserves the pure descriptor writes extracted from the original interleaved
+Rust quotation loop. These models cover the stated interfaces, not an entire
+generated parser.
+
+Descriptor assembly does not establish runtime parser cutover. Actual fork
+ordinals must still come from the original transition-emission schedule; a
+grammar rule index is not a branch ordinal. The owned image must subsequently
+use the existing WPDA walker and installed-language entrypoint. No independent
+recognizer or textual reconstruction is part of this artifact.
+
 ## Verification boundaries
 
 The Rocq models separate obligations rather than treating an interface test as

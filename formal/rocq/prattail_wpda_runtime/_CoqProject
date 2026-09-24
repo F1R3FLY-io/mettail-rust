@@ -155,6 +155,11 @@ theories/UnaryPrefixReaderProjection.v
 theories/PrefixCallbackFailure.v
 theories/PrefixKeyObservation.v
 theories/NativeLiteralEligibility.v
+theories/TraversalMarkerProjection.v
+theories/CollectionAssemblyProjection.v
+theories/FactoringEmissionData.v
+theories/FactoringOrdinalAdmission.v
+theories/CastSourceObservation.v
 theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.

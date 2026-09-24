@@ -153,6 +153,8 @@ impl AuthoredNormalizationSession {
         // no public rule with just one of the two normalized fields installed.
         let original = self.original_rule(id)?;
         let (label, category) = (original.label, original.category);
+        let source_body_present = original.source_body_present;
+        let explicit_fold = original.explicit_fold;
         admit(Event::LegacyItems(original.items.len())).map_err(Error::Admission)?;
         let mut items = Vec::new();
         items
@@ -165,6 +167,8 @@ impl AuthoredNormalizationSession {
         let result = self.commit_rule(
             label,
             category,
+            source_body_present,
+            explicit_fold,
             items,
             Some(param_ids),
             Some(syntax_items),
@@ -270,7 +274,16 @@ impl AuthoredNormalizationSession {
         } else {
             None
         };
-        let result = self.commit_rule(label, category, items, params, syntax, &mut admit)?;
+        let result = self.commit_rule(
+            label,
+            category,
+            mettail_grammar_core::SourceObservation::Known(false),
+            mettail_grammar_core::SourceObservation::Known(false),
+            items,
+            params,
+            syntax,
+            &mut admit,
+        )?;
         Ok((self, result))
     }
 
@@ -288,6 +301,8 @@ impl AuthoredNormalizationSession {
         &mut self,
         label: AuthoredNameId,
         category: AuthoredNameId,
+        source_body_present: mettail_grammar_core::SourceObservation<bool>,
+        explicit_fold: mettail_grammar_core::SourceObservation<bool>,
         items: Vec<AuthoredLegacyItem>,
         params: Option<Vec<AuthoredParamId>>,
         syntax: Option<Vec<AuthoredSyntax>>,
@@ -309,6 +324,8 @@ impl AuthoredNormalizationSession {
             AuthoredNode::Rule(AuthoredRule {
                 label,
                 category,
+                source_body_present,
+                explicit_fold,
                 term_context,
                 syntax_pattern,
                 items,

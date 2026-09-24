@@ -6,6 +6,8 @@
 
 use mettail_ast::types::CollectionType;
 
+pub mod traversal;
+
 /// Build the original unary-prefix map over the original per-category rule rows.
 ///
 /// The caller prepares the existing binding-power table once, including for
@@ -20,6 +22,26 @@ pub fn build_prefix_bp_map_with<R>(
     mut unary_eligible: impl FnMut(&R) -> bool,
     mut prefix_metadata: impl FnMut(&R) -> (String, Option<u8>),
 ) -> std::collections::HashMap<(u16, u16), u8> {
+    let result = try_build_prefix_bp_map_with(
+        per_cat,
+        bp_table,
+        |rule| Ok::<_, std::convert::Infallible>(unary_eligible(rule)),
+        |rule| Ok(prefix_metadata(rule)),
+    );
+    match result {
+        Ok(map) => map,
+        Err(error) => match error {},
+    }
+}
+
+/// Fallible interface to the same original unary-prefix map loop. Eligibility
+/// failure does not read metadata and no failed map is published.
+pub fn try_build_prefix_bp_map_with<R, E>(
+    per_cat: &[Vec<R>],
+    bp_table: &crate::binding_power::BindingPowerTable,
+    mut unary_eligible: impl FnMut(&R) -> Result<bool, E>,
+    mut prefix_metadata: impl FnMut(&R) -> Result<(String, Option<u8>), E>,
+) -> Result<std::collections::HashMap<(u16, u16), u8>, E> {
     let mut map = std::collections::HashMap::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
@@ -35,8 +57,8 @@ pub fn build_prefix_bp_map_with<R>(
             // path, not a binding-power annotation; see the campaign's §17.10-B1
             // for the scoped follow-up. Rholang's `PNew` consequently keeps a
             // DELIMITED body (`… "in" "{" p "}"`), which needs no floor.
-            if unary_eligible(rule) {
-                let (category, explicit_prefix_bp) = prefix_metadata(rule);
+            if unary_eligible(rule)? {
+                let (category, explicit_prefix_bp) = prefix_metadata(rule)?;
                 let bp = crate::binding_power::compute_prefix_bp(
                     &category,
                     explicit_prefix_bp,
@@ -46,7 +68,7 @@ pub fn build_prefix_bp_map_with<R>(
             }
         }
     }
-    map
+    Ok(map)
 }
 
 /// Classification of a multi-step rule.

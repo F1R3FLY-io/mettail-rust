@@ -12,12 +12,22 @@ use mettail_grammar_core::{
     AuthoredNamesId, AuthoredOperationId, AuthoredParamId, AuthoredParamsId, AuthoredSyntaxId,
     AuthoredTypeId,
 };
+use std::borrow::Borrow;
+use std::marker::PhantomData;
 
-pub(super) struct OccurrenceReader<'reader, 'store> {
-    pub(super) inner: &'reader AuthoredRuleReader<'store>,
+pub(in crate::wpda_rule_analysis) struct OccurrenceReader<'reader, 'store, H = AuthoredRulePayload>
+{
+    pub(in crate::wpda_rule_analysis) inner: &'reader AuthoredRuleReader<'store>,
+    handle: PhantomData<H>,
 }
 
-impl<'store> TermParamReader<'store> for OccurrenceReader<'_, 'store> {
+impl<'reader, 'store, H> OccurrenceReader<'reader, 'store, H> {
+    pub(in crate::wpda_rule_analysis) fn new(inner: &'reader AuthoredRuleReader<'store>) -> Self {
+        Self { inner, handle: PhantomData }
+    }
+}
+
+impl<'store, H> TermParamReader<'store> for OccurrenceReader<'_, 'store, H> {
     type Parameters = AuthoredParamsId;
     type Param = AuthoredParamId;
     type Name = AuthoredNameRef<'store>;
@@ -35,7 +45,7 @@ impl<'store> TermParamReader<'store> for OccurrenceReader<'_, 'store> {
         self.inner.param(param)
     }
 }
-impl<'store> BinderSyntaxReader<'store> for OccurrenceReader<'_, 'store> {
+impl<'store, H> BinderSyntaxReader<'store> for OccurrenceReader<'_, 'store, H> {
     type Sequence = AuthoredSyntaxId;
     type Name = AuthoredNameRef<'store>;
     type Operation = AuthoredOperationId;
@@ -56,20 +66,22 @@ impl<'store> BinderSyntaxReader<'store> for OccurrenceReader<'_, 'store> {
         self.inner.operation(operation)
     }
 }
-impl<'store> BinderRuleReader<'store> for OccurrenceReader<'_, 'store> {
-    type Rule = AuthoredRulePayload;
+impl<'store, H: Copy + Borrow<AuthoredRulePayload>> BinderRuleReader<'store>
+    for OccurrenceReader<'_, 'store, H>
+{
+    type Rule = H;
     type Names = AuthoredNamesId;
     fn term_context(&self, rule: Self::Rule) -> Option<Self::Parameters> {
-        self.inner.term_context(rule.rule)
+        self.inner.term_context(rule.borrow().rule)
     }
     fn syntax_pattern(&self, rule: Self::Rule) -> Option<Self::Sequence> {
-        self.inner.syntax_pattern(rule.rule)
+        self.inner.syntax_pattern(rule.borrow().rule)
     }
     fn label(&self, rule: Self::Rule) -> AuthoredNameRef<'store> {
-        self.inner.label(rule.rule)
+        self.inner.label(rule.borrow().rule)
     }
     fn category(&self, rule: Self::Rule) -> AuthoredNameRef<'store> {
-        self.inner.category(rule.rule)
+        self.inner.category(rule.borrow().rule)
     }
     fn ty(
         &self,

@@ -666,36 +666,10 @@ pub fn emit_single_hop_coercion_body(
 /// `trigger_unary_wrapper_rule_matches` parking gate consults. Visibility-only
 /// change; emission is untouched.
 pub(crate) fn trigger_unary_wrapper_source_cat(rule: &GrammarRule) -> Option<String> {
-    use mettail_ast::grammar::{SyntaxExpr, TermParam};
-    use mettail_ast::types::TypeExpr;
-
-    let tc = rule.term_context.as_ref()?;
-    if tc.len() != 1 {
-        return None;
-    }
-    let TermParam::Simple { name: param_name, ty } = &tc[0] else {
-        return None;
-    };
-    let TypeExpr::Base(source_ident) = ty else {
-        return None;
-    };
-    let sp = rule.syntax_pattern.as_ref()?;
-    if !matches!(sp.first(), Some(SyntaxExpr::Literal(_))) {
-        return None;
-    }
-    let refs_param = sp
-        .iter()
-        .any(|e| matches!(e, SyntaxExpr::Param(syn_name) if syn_name == param_name));
-    let is_lone_param = sp.len() == 1
-        && matches!(
-            sp.first(),
-            Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
-        );
-    if refs_param && !is_lone_param {
-        Some(source_ident.to_string())
-    } else {
-        None
-    }
+    mettail_prattail::wpda_rule_analysis::cast_participation::trigger_unary_wrapper_source_cat_in(
+        &super::binder::MacroBinderSyntaxReader,
+        rule,
+    )
 }
 
 /// RC-B (2026-06-19): emit the body of

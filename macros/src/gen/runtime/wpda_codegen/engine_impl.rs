@@ -186,7 +186,7 @@ pub(crate) fn emit_engine_impl_full(
     // One deterministic table supplies every nested traversal marker and both
     // unwind decoders. Construct it before the emitters so all of them share
     // one classification and one marker-ID assignment.
-    let traversal_markers = super::binder::TraversalMarkerTable::build(language, per_cat);
+    let traversal_markers = super::binder::build_traversal_marker_table(language, per_cat);
     // Task #15 (frame-bound peel): `emit_binder_rule_body` returns the inline
     // skeleton body PLUS the per-(cat,rule) `#[inline(never)]` helper methods
     // that get emitted into the sibling inherent `impl #engine_ident` block.

@@ -17,90 +17,85 @@ use mettail_ast::language::{CollectionDelimiters, LanguageDef};
 use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::quote;
-use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::type_expr_walk::TypeExprBaseIdents;
 
-use super::binder::{classify_binder_in, BinderPosition, BinderShape, CollectionSepInfo};
+use super::binder::{classify_binder_in, BinderPosition, BinderShape};
+use mettail_prattail::wpda_rule_analysis::collection::assembly::{
+    self as collection_assembly, CollectionAssemblyContext,
+};
+#[cfg(test)]
+use mettail_prattail::wpda_rule_analysis::collection::assembly::{
+    binder_collection_infos, insert_collection_spec_arm, GeneratedCollectionSpec,
+};
+
+struct MacroCollectionAssemblyContext<'language> {
+    language: &'language LanguageDef,
+}
+
+#[cfg(test)]
+pub(crate) fn original_collection_descriptors_for_test(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> Vec<collection_assembly::GeneratedCollectionSpecArm> {
+    collection_assembly::try_build_collection_specs(
+        categories,
+        per_cat,
+        &mut MacroCollectionAssemblyContext { language },
+    )
+    .expect("captured static collection descriptors must be valid")
+}
+
+impl<'source> CollectionAssemblyContext<'source, GrammarRule>
+    for MacroCollectionAssemblyContext<'_>
+{
+    type Error = std::convert::Infallible;
+    type Label = &'source syn::Ident;
+
+    fn try_infix(
+        &mut self,
+        rule: &'source GrammarRule,
+    ) -> Result<Option<mettail_prattail::binding_power::InfixRuleInfo>, Self::Error> {
+        Ok(super::infix::classify_rule_public(rule))
+    }
+
+    fn try_collection(
+        &mut self,
+        rule: &'source GrammarRule,
+    ) -> Result<Option<CollectionShape>, Self::Error> {
+        Ok(classify_collection(rule, self.language))
+    }
+
+    fn try_binder(
+        &mut self,
+        rule: &'source GrammarRule,
+    ) -> Result<Option<BinderShape>, Self::Error> {
+        Ok(classify_binder_in(rule, self.language))
+    }
+
+    fn try_label(&mut self, rule: &'source GrammarRule) -> Result<Self::Label, Self::Error> {
+        Ok(&rule.label)
+    }
+}
 
 /// Classification of a collection-literal rule.
 pub type CollectionShape =
     mettail_prattail::wpda_rule_analysis::collection::CollectionShape<CollectionType>;
 
-fn collect_binder_collection_infos<'a>(
-    positions: &'a [BinderPosition],
-    out: &mut Vec<&'a CollectionSepInfo>,
-) {
-    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
-    while let Some(position) = work.pop() {
-        match position {
-            BinderPosition::ParamParse { collection: Some(info), .. } => out.push(info),
-            BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
-                work.extend(inner_positions.iter().rev());
-            },
-            _ => {},
-        }
-    }
-}
-
-fn binder_collection_infos(shape: &BinderShape) -> Vec<&CollectionSepInfo> {
-    let mut infos = Vec::new();
-    collect_binder_collection_infos(&shape.positions, &mut infos);
-    infos
-}
-
-fn collect_binder_close_delimiters(positions: &[BinderPosition], closes: &mut BTreeSet<String>) {
-    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
-    while let Some(position) = work.pop() {
-        match position {
-            BinderPosition::BinderListLoop { close, inner_positions, .. } => {
-                if !close.is_empty() {
-                    closes.insert(close.clone());
-                }
-                work.extend(inner_positions.iter().rev());
-            },
-            BinderPosition::ParamParse { collection: Some(info), .. } => {
-                if !info.close.is_empty() {
-                    closes.insert(info.close.clone());
-                }
-            },
-            BinderPosition::OptionalGroup { positions: inner, .. } => {
-                work.extend(inner.iter().rev());
-            },
-            _ => {},
-        }
-    }
-}
-
 pub(crate) fn collect_structural_delimiters(
     language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],
 ) -> (BTreeSet<String>, BTreeSet<String>) {
-    let mut opens = BTreeSet::new();
-    let mut closes = BTreeSet::new();
-
-    // Grouping is emitted by the backend for every parseable category.
-    opens.insert("(".to_string());
-    closes.insert(")".to_string());
-
-    for rules in per_cat {
-        for rule in rules {
-            if let Some(shape) = classify_collection(rule, language) {
-                opens.insert(shape.open_token);
-                if shape.has_synth_paren {
-                    opens.insert("(".to_string());
-                }
-                closes.insert(shape.close);
-                continue;
-            }
-            if let Some(shape) = classify_binder_in(rule, language) {
-                collect_binder_close_delimiters(&shape.positions, &mut closes);
-            }
-        }
-    }
-
-    (opens, closes)
+    collection_assembly::try_collect_structural_delimiters(
+        per_cat,
+        &mut MacroCollectionAssemblyContext { language },
+    )
+    .expect("static collection delimiter observations are infallible")
 }
 
 fn has_binder_internal_collection_slot(positions: &[BinderPosition]) -> bool {
@@ -947,183 +942,26 @@ pub(crate) fn emit_collection_loop_arm(
 /// FireAction-suppression query (`emit_is_binder_internal_collection_lookup`)
 /// stays a SEPARATE method — it is keyed without a slot and is not a per-slot
 /// field of this record.
-type CollectionSpecKey = (u16, u16, u8);
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct GeneratedCollectionSpec {
-    open: String,
-    has_synth_paren: bool,
-    close: String,
-    sep: String,
-    min_elements: u8,
-    kv_sep: Option<String>,
-    kv_value_optional: bool,
-    element_src_idx: Option<u16>,
-    close_resumes_via_unwinding: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct GeneratedCollectionSpecArm {
-    key: CollectionSpecKey,
-    spec: GeneratedCollectionSpec,
-    first_origin: String,
-}
-
-/// Insert one discovered collection slot into the generated finite map.
-///
-/// A repeated identical discovery is idempotent. A repeated key with a
-/// different value is a generator error rather than a first-match-wins policy:
-/// traversal order must never select parser semantics accidentally. This is
-/// the Rust refinement of `CanonicalDispatchTable.insert_checked`.
-fn insert_collection_spec_arm(
-    arms: &mut Vec<GeneratedCollectionSpecArm>,
-    indices: &mut BTreeMap<CollectionSpecKey, usize>,
-    key: CollectionSpecKey,
-    spec: GeneratedCollectionSpec,
-    origin: String,
-) -> Result<(), String> {
-    if let Some(&index) = indices.get(&key) {
-        let existing = &arms[index];
-        if existing.spec == spec {
-            return Ok(());
-        }
-        return Err(format!(
-            "conflicting generated CollectionSpec for key {key:?}: first from {} as {:?}; \
-             conflicting discovery from {origin} as {spec:?}",
-            existing.first_origin, existing.spec,
-        ));
-    }
-
-    indices.insert(key, arms.len());
-    arms.push(GeneratedCollectionSpecArm { key, spec, first_origin: origin });
-    Ok(())
-}
-
 pub(crate) fn emit_collection_spec_table(
     language: &mettail_ast::language::LanguageDef,
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
-    let mut arms: Vec<GeneratedCollectionSpecArm> = Vec::new();
-    let mut indices: BTreeMap<CollectionSpecKey, usize> = BTreeMap::new();
-    let mut conflict: Option<String> = None;
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        for (rule_i, rule) in rules.iter().enumerate() {
-            let result_src_idx = cat_i as u16;
-            let rule_idx = rule_i as u16;
-            // GEN-1 B-3 (Stage S3): mixfix `*sep` repetition slots. Each maps to a
-            // per-slot CollectionSpec keyed (result_src, rule_idx, part_idx) that
-            // the CollectionLoop reads. `close_resumes_via_unwinding: true` (like a
-            // Class-2 binder-internal slot) so the close pops via Unwinding back to
-            // the enclosing mixfix marker — the FireAction-suppression then leaves
-            // the CollectionId in the marker's args for the rule action to drain.
-            // The close is the SINGLE terminator literal following the `*sep` (")",
-            // "<-", "<="); open-ended reps (empty close — ForRow only, gated out)
-            // would carry "". Disjoint from collection-literal / binder keys.
-            for (slot_idx, elem_cat, sep, close, min_elements) in mixfix_rep_slots(rule) {
-                let close_str = close.first().cloned().unwrap_or_default();
-                let spec = GeneratedCollectionSpec {
-                    open: String::new(),
-                    has_synth_paren: false,
-                    close: close_str,
-                    sep,
-                    min_elements,
-                    kv_sep: None,
-                    kv_value_optional: false,
-                    element_src_idx: lookup_element_src_idx(&elem_cat, categories),
-                    close_resumes_via_unwinding: true,
-                };
-                if conflict.is_none() {
-                    conflict = insert_collection_spec_arm(
-                        &mut arms,
-                        &mut indices,
-                        (result_src_idx, rule_idx, slot_idx),
-                        spec,
-                        format!(
-                            "mixfix repetition in category {cat_i}, rule {rule_i} ({})",
-                            rule.label,
-                        ),
-                    )
-                    .err();
-                }
-            }
-            let Some(shape) = classify_collection(rule, language) else {
-                // Class-2/3 binder-internal collection slots: one arm per slot
-                // keyed on the 3-tuple (src, rule, slot_idx). The close resumes
-                // via Unwinding (close_resumes_via_unwinding = true).
-                if let Some(bshape) = classify_binder_in(rule, language) {
-                    for info in binder_collection_infos(&bshape) {
-                        let slot_idx = info.slot_idx;
-                        let spec = GeneratedCollectionSpec {
-                            open: String::new(),
-                            has_synth_paren: false,
-                            close: info.close.clone(),
-                            sep: info.separator.clone(),
-                            min_elements: 0,
-                            kv_sep: info.key_val_separator.clone(),
-                            // Binder-internal slots are never PathMap.
-                            kv_value_optional: false,
-                            element_src_idx: lookup_element_src_idx(&info.elem_cat, categories),
-                            close_resumes_via_unwinding: true,
-                        };
-                        if conflict.is_none() {
-                            conflict = insert_collection_spec_arm(
-                                &mut arms,
-                                &mut indices,
-                                (result_src_idx, rule_idx, slot_idx),
-                                spec,
-                                format!(
-                                    "binder collection in category {cat_i}, rule {rule_i} ({})",
-                                    rule.label,
-                                ),
-                            )
-                            .err();
-                        }
-                    }
-                }
-                continue;
-            };
-            // Class-5 collection literal rule: single slot at slot_idx=0. The
-            // close resumes the enclosing InfixLoop
-            // (close_resumes_via_unwinding = false).
-            // Pathmap optional-value (2026-06-27): a Pathmap set-form literal
-            // `{| k |}` ≡ `{| k : k |}` (value = key). ONLY PathMap admits an
-            // optional per-entry value; HashMap values stay mandatory. Scoped
-            // to the declared collection type, NOT a blanket kv change.
-            let kv_value_optional = matches!(shape.coll_kind, CollectionType::PathMap);
-            let spec = GeneratedCollectionSpec {
-                open: shape.open_token.clone(),
-                has_synth_paren: shape.has_synth_paren,
-                close: shape.close.clone(),
-                sep: shape.separator.clone(),
-                min_elements: 0,
-                kv_sep: shape.pair_separator.clone(),
-                kv_value_optional,
-                element_src_idx: lookup_element_src_idx(&shape.element_cat, categories),
-                close_resumes_via_unwinding: false,
-            };
-            if conflict.is_none() {
-                conflict = insert_collection_spec_arm(
-                    &mut arms,
-                    &mut indices,
-                    (result_src_idx, rule_idx, 0),
-                    spec,
-                    format!(
-                        "collection literal in category {cat_i}, rule {rule_i} ({})",
-                        rule.label,
-                    ),
-                )
-                .err();
-            }
-        }
-    }
-    if let Some(message) = conflict {
-        return quote! {{
-            compile_error!(#message);
-            let _ = (result_src_idx, rule_idx, slot_idx);
-            None
-        }};
-    }
+    let arms = match collection_assembly::try_build_collection_specs(
+        categories,
+        per_cat,
+        &mut MacroCollectionAssemblyContext { language },
+    ) {
+        Ok(arms) => arms,
+        Err(error) => {
+            let message = error.to_string();
+            return quote! {{
+                compile_error!(#message);
+                let _ = (result_src_idx, rule_idx, slot_idx);
+                None
+            }};
+        },
+    };
     if arms.is_empty() {
         return quote! {
             {
@@ -1186,32 +1024,19 @@ fn has_any_collection_slot(
     language: &mettail_ast::language::LanguageDef,
     per_cat: &[Vec<GrammarRule>],
 ) -> bool {
-    for rules in per_cat {
-        for rule in rules {
-            if classify_collection(rule, language).is_some() {
-                return true;
-            }
-            if let Some(shape) = classify_binder_in(rule, language) {
-                if !binder_collection_infos(&shape).is_empty() {
-                    return true;
-                }
-            }
-            // GEN-1 B-3 (Stage S3): a mixfix `*sep` repetition slot also drives the
-            // CollectionLoop, so a language with ONLY rep slots (no literals /
-            // binder collections) still needs the loop arm emitted.
-            if !mixfix_rep_slots(rule).is_empty() {
-                return true;
-            }
-        }
-    }
-    false
+    collection_assembly::try_has_any_collection_slot(
+        per_cat,
+        &mut MacroCollectionAssemblyContext { language },
+    )
+    .expect("static collection slot discovery requires representable coordinates")
 }
 
 fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u16> {
-    categories
-        .iter()
-        .position(|c| c == element_cat)
-        .map(|i| i as u16)
+    collection_assembly::try_lookup_element_src_idx::<std::convert::Infallible>(
+        element_cat,
+        categories,
+    )
+    .expect("static collection element category requires a u16 coordinate")
 }
 
 /// GEN-1 B-3 (Stage S3): the `*sep` repetition `MixfixPart`s of a rule, as
@@ -1228,24 +1053,10 @@ fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u1
 /// their own classifiers, so they classify to non-mixfix or `None` here and never
 /// collide with a rep slot's `(result_src, rule_idx, part_idx)` key.
 fn mixfix_rep_slots(rule: &GrammarRule) -> Vec<(u8, String, String, Vec<String>, u8)> {
-    let Some(info) = super::infix::classify_rule_public(rule) else {
-        return Vec::new();
-    };
-    info.mixfix_parts
-        .iter()
-        .enumerate()
-        .filter_map(|(i, part)| {
-            part.repetition.as_ref().map(|rep| {
-                (
-                    i as u8,
-                    part.operand_category.clone(),
-                    rep.separator.clone(),
-                    rep.close.clone(),
-                    rep.min,
-                )
-            })
-        })
-        .collect()
+    collection_assembly::try_mixfix_rep_slots_with::<std::convert::Infallible>(|| {
+        Ok(super::infix::classify_rule_public(rule))
+    })
+    .expect("static collection repetition requires a u8 part coordinate")
 }
 
 /// Emit the grammar-derived FIRST-set predicate used by collection entry and

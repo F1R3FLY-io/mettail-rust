@@ -17,9 +17,9 @@
 use std::collections::{BTreeSet, HashMap};
 
 use super::factoring::{
-    build_tree, mixfix_spine_arm_coords, CandidateMember, CategoryFactoring, GroupMember,
-    IneligibleGroup, IneligibleReason, MemberKind, SingletonMember, SingletonReason, SpineItem,
-    SpineTree, LIMIT_REFUSAL, SPINE_RULE_BASE,
+    allocate_spine_id, build_tree, mixfix_spine_arm_coords, CandidateMember, CategoryFactoring,
+    GroupMember, IneligibleGroup, IneligibleReason, MemberKind, SingletonMember, SingletonReason,
+    SpineItem, SpineTree, LIMIT_REFUSAL, SPINE_RULE_BASE,
 };
 use crate::binding_power::{BindingPowerTable, InfixOperator};
 
@@ -293,9 +293,38 @@ pub fn build_mixfix_factoring_with<R, E>(
     grouped: &std::collections::BTreeMap<(u16, String), Vec<GroupedOp<'_>>>,
     max_slice: usize,
     recovery_base: u16,
-    mut resolve_category: impl FnMut(&str, &[String], &'static str, &str) -> Result<u16, E>,
+    resolve_category: impl FnMut(&str, &[String], &'static str, &str) -> Result<u16, E>,
     mut cast_participates: impl FnMut(&R) -> bool,
 ) -> Vec<MixfixFactoring> {
+    match try_build_mixfix_factoring_with(
+        categories,
+        per_cat,
+        prefix_partition,
+        grouped,
+        max_slice,
+        recovery_base,
+        resolve_category,
+        |rule| Ok::<_, std::convert::Infallible>(cast_participates(rule)),
+    ) {
+        Ok(value) => value,
+        Err(never) => match never {},
+    }
+}
+
+/// Original mixfix factoring with fallible cast observations.
+/// Resolver errors retain their original candidate-refusal semantics and are
+/// deliberately distinct from observation errors, which stop the whole helper.
+#[allow(clippy::too_many_arguments)]
+pub fn try_build_mixfix_factoring_with<R, ResolveError, E>(
+    categories: &[String],
+    per_cat: &[Vec<R>],
+    prefix_partition: &[CategoryFactoring],
+    grouped: &std::collections::BTreeMap<(u16, String), Vec<GroupedOp<'_>>>,
+    max_slice: usize,
+    recovery_base: u16,
+    mut resolve_category: impl FnMut(&str, &[String], &'static str, &str) -> Result<u16, ResolveError>,
+    mut cast_participates: impl FnMut(&R) -> Result<bool, E>,
+) -> Result<Vec<MixfixFactoring>, E> {
     // Operand-absorbability oracle (A-M5): every (category, terminal) that
     // carries ANY operator row — a post-operand divergence literal matching
     // one of these could be absorbed INTO the operand sub-parse.
@@ -409,7 +438,10 @@ pub fn build_mixfix_factoring_with<R, E>(
             let rule = per_cat
                 .get(cand.result_src_idx as usize)
                 .and_then(|rules| rules.get(cand.member.rule_idx as usize));
-            let is_cast = rule.map(&mut cast_participates).unwrap_or(false);
+            let is_cast = match rule {
+                Some(rule) => cast_participates(rule)?,
+                None => false,
+            };
             if is_cast {
                 singletons.push(SingletonMember {
                     rule_idx: cand.member.rule_idx,
@@ -464,7 +496,8 @@ pub fn build_mixfix_factoring_with<R, E>(
                 &mut next_ordinal,
                 &mut refusals,
             ) {
-                Ok(group) => groups.push(group),
+                Ok(Some(group)) => groups.push(group),
+                Ok(None) => {}, // Hard encoding refusal already recorded; never a fallback group.
                 Err(bad) => ineligible.push(bad),
             }
         } else {
@@ -553,7 +586,7 @@ pub fn build_mixfix_factoring_with<R, E>(
             }),
         }
     }
-    out
+    Ok(out)
 }
 
 fn op_first_nullary_literal(op: &InfixOperator) -> Option<String> {
@@ -570,7 +603,7 @@ fn build_mixfix_group(
     operator_trigger_keys: &BTreeSet<(u16, String)>,
     next_ordinal: &mut [u16],
     refusals: &mut Vec<String>,
-) -> Result<MixfixGroup, IneligibleGroup> {
+) -> Result<Option<MixfixGroup>, IneligibleGroup> {
     let member_rule_idxs: Vec<u16> = part.iter().map(|c| c.member.rule_idx).collect();
     let member_l_bps: Vec<(u8, u16)> = part.iter().map(|c| (c.l_bp, c.member.rule_idx)).collect();
     // Uniform result_src (the mixfix analog of body_src uniformity).
@@ -708,9 +741,16 @@ fn build_mixfix_group(
     let ordinal = next_ordinal
         .get_mut(result_src_idx as usize)
         .expect("result category index in range");
-    let spine_id = SPINE_RULE_BASE + *ordinal;
-    *ordinal += 1;
-    Ok(MixfixGroup {
+    let Some(spine_id) = allocate_spine_id(ordinal) else {
+        refusals.push(format!(
+            "{LIMIT_REFUSAL} mixfix cohort at dispatch category index {dispatch_cat}, \
+             trigger {trigger:?}, result category index {result_src_idx}, cannot allocate \
+             spine ordinal {ordinal}: base {SPINE_RULE_BASE:#06x} plus ordinal exceeds \
+             the u16 rule-index encoding."
+        ));
+        return Ok(None);
+    };
+    Ok(Some(MixfixGroup {
         spine_id,
         result_src_idx,
         min_l_bp,
@@ -719,7 +759,7 @@ fn build_mixfix_group(
         expected_cats_union,
         fixb_literal,
         roots,
-    })
+    }))
 }
 
 /// The identity mixfix partition: the same cohort census (slice membership),

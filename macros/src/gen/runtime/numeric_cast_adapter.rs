@@ -27,48 +27,52 @@
 
 use mettail_ast::grammar::{GrammarRule, TermParam};
 use mettail_ast::language::{LanguageDef, NativeKind, NativeKindFromSynType};
-use mettail_ast::types::{EvalMode, TypeExpr};
+use mettail_ast::types::EvalMode;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
 
 use crate::gen::generate_literal_label;
 
-/// The numeric family a cast narrows to. For native-output casts this is read structurally from
-/// the OUTPUT category's native kind (`arity_of_kind`); object-output casts carry no arity (it is
-/// parse-committed and unneeded — see `CastFold::arity`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Arity {
-    Int,
-    UInt,
-    Float,
-    Fixed,
-    BigInt,
-    BigRat,
+use crate::gen::runtime::wpda_codegen::binder::MacroBinderSyntaxReader;
+use mettail_prattail::wpda_rule_analysis::cast_participation::{
+    self as shared_cast, is_numeric_kind, Arity, CastObservationContext, Flavor,
+};
+type CastFold<'a> = shared_cast::CastFold<&'a Ident>;
+static CAST_READER: MacroBinderSyntaxReader = MacroBinderSyntaxReader;
+struct MacroCastContext<'language> {
+    language: &'language LanguageDef,
 }
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Flavor {
-    Native,
-    Object,
+impl<'source> CastObservationContext<'source, MacroBinderSyntaxReader> for MacroCastContext<'_> {
+    type Error = std::convert::Infallible;
+    fn try_source_body_present(&mut self, rule: &'source GrammarRule) -> Result<bool, Self::Error> {
+        Ok(rule.rust_code.is_some())
+    }
+    fn try_explicit_fold(&mut self, rule: &'source GrammarRule) -> Result<bool, Self::Error> {
+        Ok(rule.eval_mode == Some(EvalMode::Fold))
+    }
+    fn try_native_kind(&mut self, name: &'source Ident) -> Result<Option<NativeKind>, Self::Error> {
+        Ok(kind_of(self.language, name))
+    }
+    fn try_trigger_native_kind(
+        &mut self,
+        spelling: &str,
+    ) -> Result<Option<NativeKind>, Self::Error> {
+        let source = Ident::new(spelling, proc_macro2::Span::call_site());
+        Ok(kind_of(self.language, &source))
+    }
+    fn try_elect_object_category(
+        &mut self,
+        counts: &std::collections::HashMap<String, (&'source Ident, usize)>,
+    ) -> Result<Option<&'source Ident>, Self::Error> {
+        Ok(counts.values().max_by_key(|(_, n)| *n).map(|(id, _)| *id))
+    }
 }
-
-struct CastFold<'a> {
-    /// the redex constructor label (`IntBin` native / `IntBinProc` object)
-    label: &'a Ident,
-    /// the rule's output category (`Int` native / `Proc` object)
-    output_cat: &'a Ident,
-    /// the cast arity. `Some` for native-output casts — derived **structurally from the OUTPUT
-    /// category's native kind**, never from the keyword/label/body fn-name. `None` for
-    /// object-output casts: the object arity is PARSE-COMMITTED (the WPDA commits the constructor
-    /// from the keyword evidence) and is never needed at reduction — a nested object cast reduces
-    /// child-first via saturation (`try_fold_to_self`) into a value WRAPPER, reaching the
-    /// literal-wrapper arm, so the macro derives no object nested arm and needs no object arity.
-    arity: Option<Arity>,
-    flavor: Flavor,
-    /// binary cast (carries a width param, `int(a, m)`) vs unary (`bigint(a)`) — from the param
-    /// count (shape), independent of arity.
-    is_binary: bool,
+fn infallible<T>(result: Result<T, std::convert::Infallible>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => match error {},
+    }
 }
 
 struct Wrapper<'a> {
@@ -79,26 +83,6 @@ struct Wrapper<'a> {
     /// the inner literal variant (`NumLit`/`RatLit`/`FixedLit`/`FloatLit`/`BoolLit`/`StringLit`)
     literal: Ident,
     kind: NativeKind,
-}
-
-/// The cast **arity** for a numeric native `kind` — the structural target of a native-output
-/// cast, read from its OUTPUT category (never from the keyword, label, or body fn-name). `None`
-/// for kinds that are not numeric-cast outputs (`Bool`/`Str`/`Other`/wide uints).
-fn arity_of_kind(kind: NativeKind) -> Option<Arity> {
-    Some(match kind {
-        NativeKind::Int8
-        | NativeKind::Int16
-        | NativeKind::Int32
-        | NativeKind::Int64
-        | NativeKind::Int128
-        | NativeKind::Isize => Arity::Int,
-        NativeKind::UInt8 | NativeKind::UInt16 | NativeKind::UInt32 => Arity::UInt,
-        NativeKind::Float32 | NativeKind::Float64 => Arity::Float,
-        NativeKind::CanonicalFixedPoint => Arity::Fixed,
-        NativeKind::CanonicalBigInt => Arity::BigInt,
-        NativeKind::CanonicalBigRat => Arity::BigRat,
-        _ => return None,
-    })
 }
 
 /// Recognize a numeric-cast `fold` rule **purely by its shape** (the OSLF cast-rule shape), with
@@ -122,50 +106,19 @@ fn arity_of_kind(kind: NativeKind) -> Option<Arity> {
 fn recognize_cast_fold<'a>(
     language: &LanguageDef,
     rule: &'a GrammarRule,
-    proc_cat: &Ident,
+    proc_cat: &'a Ident,
 ) -> Option<CastFold<'a>> {
-    if rule.eval_mode != Some(EvalMode::Fold) {
-        return None;
-    }
-    let ps = rule.term_context.as_ref()?;
-    if ps.is_empty() || ps.len() > 2 {
-        return None;
-    }
-    // param 0 must be the primary/object category (the cast's input value).
-    if simple_param_cat(&ps[0])? != proc_cat {
-        return None;
-    }
-    let is_binary = ps.len() == 2;
-    if is_binary {
-        // binary cast ⇒ the 2nd param is an integer width.
-        let w = simple_param_cat(&ps[1])?;
-        if !kind_of(language, w)?.is_integer() {
-            return None;
-        }
-    }
-    // Flavor + arity from the OUTPUT category (structural, never the name):
-    //   * numeric-native output  ⇒ native cast, arity = output kind;
-    //   * object-category output ⇒ object cast (binary only — see above), arity unneeded.
-    let (flavor, arity) = match kind_of(language, &rule.category) {
-        Some(k) => (Flavor::Native, Some(arity_of_kind(k)?)),
-        None if &rule.category == proc_cat && is_binary => (Flavor::Object, None),
-        _ => return None,
-    };
-    Some(CastFold {
-        label: &rule.label,
-        output_cat: &rule.category,
-        arity,
-        flavor,
-        is_binary,
-    })
+    infallible(shared_cast::try_recognize_cast_fold(
+        &CAST_READER,
+        rule,
+        proc_cat,
+        &mut MacroCastContext { language },
+    ))
 }
 
 /// The base category of a `Simple` typed param (`a:Proc` → `Proc`).
 fn simple_param_cat(p: &TermParam) -> Option<&Ident> {
-    match p {
-        TermParam::Simple { ty: TypeExpr::Base(c), .. } => Some(c),
-        _ => None,
-    }
+    shared_cast::simple_param_cat_in(&CAST_READER, p)
 }
 
 /// The `Simple` value params of a rule, in order (None ⇒ not a judgement-style rule).
@@ -237,29 +190,6 @@ fn numeric_input_for_reduced(arity: Arity, int_kind: NativeKind, val: &Ident) ->
         // Fixed/BigInt/BigRat reduced values are not re-fed as scalar NumericInputs here.
         _ => quote!(return None),
     }
-}
-
-/// Whether a native kind is a numeric category the adapter can carry.
-fn is_numeric_kind(kind: NativeKind) -> bool {
-    matches!(
-        kind,
-        NativeKind::Int8
-            | NativeKind::Int16
-            | NativeKind::Int32
-            | NativeKind::Int64
-            | NativeKind::Int128
-            | NativeKind::Isize
-            | NativeKind::UInt8
-            | NativeKind::UInt16
-            | NativeKind::UInt32
-            | NativeKind::Float32
-            | NativeKind::Float64
-            | NativeKind::Bool
-            | NativeKind::Str
-            | NativeKind::CanonicalBigInt
-            | NativeKind::CanonicalBigRat
-            | NativeKind::CanonicalFixedPoint
-    )
 }
 
 fn kind_of(language: &LanguageDef, cat: &Ident) -> Option<NativeKind> {
@@ -748,51 +678,23 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
 /// WIDEN this predicate (factoring eligibility only shrinks — behavior under
 /// the OFF const is unaffected either way).
 pub(crate) fn cast_machinery_participates(language: &LanguageDef, rule: &GrammarRule) -> bool {
-    // (c) numeric-domain trigger-bearing unary wrapper — `int(<Bool>)`.
-    if let Some(src) =
-        crate::gen::runtime::wpda_codegen::semantic_actions::trigger_unary_wrapper_source_cat(rule)
-    {
-        let src_ident = Ident::new(&src, proc_macro2::Span::call_site());
-        if matches!(kind_of(language, &src_ident), Some(k) if is_numeric_kind(k)) {
-            return true;
-        }
-    }
-    // (a) wrapper-candidate row — mirrors the `WrapCand` filter in
-    // `generate_numeric_cast_adapter` step 1 (same helpers, same source data).
-    let is_wrap_candidate = |r: &GrammarRule| -> bool {
-        if r.rust_code.is_some() {
-            return false;
-        }
-        let Some(ps) = r.term_context.as_ref() else {
-            return false;
-        };
-        if ps.len() != 1 {
-            return false;
-        }
-        let Some(inner) = simple_param_cat(&ps[0]) else {
-            return false;
-        };
-        matches!(kind_of(language, inner), Some(k) if is_numeric_kind(k))
-    };
-    if is_wrap_candidate(rule) {
-        return true;
-    }
-    // (b) cast-fold row against the SAME elected object category. Mirrors
-    // `generate_numeric_cast_adapter` steps 1-2: no wrapper candidates ⇒ the
-    // adapter emits nothing ⇒ no fold rows.
-    let mut counts: std::collections::HashMap<String, (&Ident, usize)> =
-        std::collections::HashMap::new();
-    for cand in language.terms.iter().filter(|r| is_wrap_candidate(*r)) {
-        let entry = counts
-            .entry(cand.category.to_string())
-            .or_insert((&cand.category, 0));
-        entry.1 += 1;
-    }
-    let Some(proc_cat) = counts.values().max_by_key(|(_, n)| *n).map(|(id, _)| *id) else {
-        return false;
-    };
-    recognize_cast_fold(language, rule, proc_cat).is_some()
+    infallible(shared_cast::try_cast_machinery_participates(
+        &CAST_READER,
+        rule,
+        language.terms.iter(),
+        &mut MacroCastContext { language },
+    ))
 }
+
+#[cfg(test)]
+pub(crate) fn original_trigger_kind_for_test(
+    language: &LanguageDef,
+    spelling: &str,
+) -> Option<NativeKind> {
+    kind_of(language, &Ident::new(spelling, proc_macro2::Span::call_site()))
+}
+#[cfg(test)]
+pub(crate) use tests::{NATIVE_CAST_GRAMMAR, OBJECT_CAST_GRAMMAR};
 
 #[cfg(test)]
 mod tests {
@@ -807,7 +709,7 @@ mod tests {
     /// A brand-new **native-output** cast grammar — neither Calculator nor Rholang — exercising the
     /// fully structural derivation: `Int` (i32) native, a `ProcInt` wrapper, and one binary
     /// `int(a, w) : Int` cast whose body is the language-agnostic `mettail_runtime` reduction.
-    const NATIVE_CAST_GRAMMAR: &str = r#"
+    pub(crate) const NATIVE_CAST_GRAMMAR: &str = r#"
         name: AnyNativeCast,
         types {
             Proc
@@ -831,7 +733,7 @@ mod tests {
     /// (with an `Err` normal form), exercising the `CastResult` path and the `dovetail-codegen`
     /// gate. The constructor names differ deliberately (`CastInt`/`IntBinProc`) to prove that
     /// recognition is structural — keyed on the rule SHAPE, never on the label or keyword.
-    const OBJECT_CAST_GRAMMAR: &str = r#"
+    pub(crate) const OBJECT_CAST_GRAMMAR: &str = r#"
         name: AnyObjectCast,
         types {
             Proc

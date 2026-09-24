@@ -190,6 +190,10 @@ pub enum AuthoredLegacyItem<I = u32> {
 pub struct AuthoredRule<I = u32> {
     pub label: AuthoredNameId<I>,
     pub category: AuthoredNameId<I>,
+    /// Authored body presence, not a later reduction/evaluation inference.
+    pub source_body_present: SourceObservation<bool>,
+    /// Whether Fold was explicitly present in this source declaration.
+    pub explicit_fold: SourceObservation<bool>,
     pub term_context: Option<AuthoredParamsId<I>>,
     pub syntax_pattern: Option<AuthoredSyntaxId<I>>,
     pub items: Vec<AuthoredLegacyItem<I>>,
@@ -865,6 +869,8 @@ mod tests {
             ),
             (
                 Node::Rule(AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(0),
                     category: AuthoredNameId(1),
                     term_context: Some(AuthoredParamsId(4)),
@@ -876,6 +882,8 @@ mod tests {
             ),
             (
                 Node::Rule(AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(0),
                     category: AuthoredNameId(1),
                     term_context: Some(AuthoredParamsId(5)),
@@ -887,6 +895,8 @@ mod tests {
             ),
             (
                 Node::Rule(AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(0),
                     category: AuthoredNameId(1),
                     term_context: None,
@@ -1179,6 +1189,8 @@ mod tests {
         for context in [None, Some(empty_params)] {
             for syntax in [None, Some(empty_syntax)] {
                 let rule = AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(0),
                     category: AuthoredNameId(1),
                     term_context: context,
@@ -1214,6 +1226,8 @@ mod tests {
     #[test]
     fn reference_roster_preserves_order_duplicates_and_early_error() {
         let node: AuthoredNode = AuthoredNode::Rule(AuthoredRule {
+            source_body_present: crate::SourceObservation::Unavailable,
+            explicit_fold: crate::SourceObservation::Unavailable,
             label: AuthoredNameId(1),
             category: AuthoredNameId(1),
             term_context: Some(AuthoredParamsId(5)),

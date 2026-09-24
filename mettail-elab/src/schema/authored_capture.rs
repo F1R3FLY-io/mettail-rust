@@ -756,6 +756,10 @@ impl<'a> AuthoredCaptureSource for Source<'a, '_> {
             Handle::Rule(rule) => AuthoredNode::Rule(AuthoredRule {
                 label: name(&rule.label),
                 category: name(&rule.category),
+                source_body_present: SourceObservation::Known(rule.evaluation.is_some()),
+                explicit_fold: SourceObservation::Known(
+                    rule.mode == Some(mettail_grammar_core::EvaluationMode::Fold),
+                ),
                 term_context: context(rule).map(|params| AuthoredParamsId(Handle::Params(params))),
                 syntax_pattern: match &rule.body {
                     TermBody::Judgement(values) => Some(AuthoredSyntaxId(Handle::Syntax(values))),

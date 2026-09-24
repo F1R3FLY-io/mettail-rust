@@ -15,6 +15,12 @@
 use indexmap::IndexMap;
 use std::collections::BTreeSet;
 
+pub mod emission;
+
+#[cfg(test)]
+#[path = "factoring_fallible_tests.rs"]
+mod fallible_tests;
+
 use super::binder::{
     binder_initial_body_cat, lookup_src_idx, required_top_cat_after_position, BinderPosition,
     BinderShape,
@@ -56,10 +62,35 @@ pub fn discover_prefix_members_with<R>(
     mut classify_binder: impl FnMut(&R) -> Option<BinderShape>,
     mut leading_literal: impl for<'a> FnMut(&'a R) -> Option<&'a str>,
 ) -> Vec<(String, CandidateMember)> {
+    match try_discover_prefix_members_with(
+        categories,
+        category_src_idx,
+        rules,
+        prefix_bp_map,
+        |rule| Ok::<_, std::convert::Infallible>(classify_atomic(rule)),
+        |rule| Ok(classify_binder(rule)),
+        |rule| Ok(leading_literal(rule)),
+    ) {
+        Ok(value) => value,
+        Err(never) => match never {},
+    }
+}
+
+/// The original discovery loop with first-error propagation at callback sites.
+/// Successful absence retains the original fallback; failure publishes no prefix.
+pub fn try_discover_prefix_members_with<'rules, R, E>(
+    categories: &[String],
+    category_src_idx: u16,
+    rules: &'rules [R],
+    prefix_bp_map: &std::collections::HashMap<(u16, u16), u8>,
+    mut classify_atomic: impl FnMut(&R) -> Result<PrefixAtomicObservation, E>,
+    mut classify_binder: impl FnMut(&R) -> Result<Option<BinderShape>, E>,
+    mut leading_literal: impl FnMut(&'rules R) -> Result<Option<&'rules str>, E>,
+) -> Result<Vec<(String, CandidateMember)>, E> {
     let mut out = Vec::new();
     for (rule_i, rule) in rules.iter().enumerate() {
         let rule_idx = rule_i as u16;
-        match classify_atomic(rule) {
+        match classify_atomic(rule)? {
             PrefixAtomicObservation::CrossCatPrefixUnary => continue,
             PrefixAtomicObservation::NullaryLiteralRun { trigger, trailing_literals, .. } => {
                 let items: Vec<SpineItem> = trailing_literals
@@ -87,10 +118,10 @@ pub fn discover_prefix_members_with<R>(
             PrefixAtomicObservation::CrossCatProjection => continue,
             _ => {},
         }
-        let Some(shape) = classify_binder(rule) else {
+        let Some(shape) = classify_binder(rule)? else {
             continue;
         };
-        let Some(trigger) = leading_literal(rule) else {
+        let Some(trigger) = leading_literal(rule)? else {
             continue;
         };
         if trigger == "(" {
@@ -114,7 +145,7 @@ pub fn discover_prefix_members_with<R>(
             },
         ));
     }
-    out
+    Ok(out)
 }
 
 /// Map a binder member's `BinderShape.positions` to its mergeable
@@ -868,6 +899,21 @@ pub fn mixfix_spine_arm_coords(root: &SpineTree) -> Option<Vec<((u8, u8, u8), &S
 /// allocation never crosses either bound.
 pub const SPINE_RULE_BASE: u16 = 0xF800;
 
+/// Allocate at the original emission site, publishing no wrapped identifier.
+/// On failure the caller must append a hard encoding refusal. The unchanged
+/// ordinal makes failure explicit rather than manufacturing an unused ID.
+/// `FactoringOrdinalAdmission.v` proves exact representable behavior.
+pub(super) fn allocate_spine_id(ordinal: &mut u16) -> Option<u16> {
+    let spine_id = SPINE_RULE_BASE.checked_add(*ordinal)?;
+    let next = ordinal.checked_add(1)?;
+    *ordinal = next;
+    Some(spine_id)
+}
+
+#[cfg(test)]
+#[path = "factoring/ordinal_tests.rs"]
+mod ordinal_tests;
+
 /// An ELIGIBLE factored group: one spine branch replaces its members'
 /// per-rule Fork branches (F1).
 #[derive(Debug)]
@@ -1046,13 +1092,34 @@ pub fn build_prefix_factoring_with<R>(
     mut discover: impl FnMut(u16, &[R]) -> Vec<(String, CandidateMember)>,
     mut cast_participates: impl FnMut(&R) -> bool,
 ) -> Vec<CategoryFactoring> {
+    match try_build_prefix_factoring_with(
+        per_cat,
+        accept_continue,
+        recovery_base,
+        |category, rules| Ok::<_, std::convert::Infallible>(discover(category, rules)),
+        |rule| Ok(cast_participates(rule)),
+    ) {
+        Ok(value) => value,
+        Err(never) => match never {},
+    }
+}
+
+/// Original factoring with fallible discovery and cast observations.
+/// Callback errors stop at their original site, without exposing partial groups.
+pub fn try_build_prefix_factoring_with<'rules, R, E>(
+    per_cat: &'rules [Vec<R>],
+    accept_continue: bool,
+    recovery_base: u16,
+    mut discover: impl FnMut(u16, &'rules [R]) -> Result<Vec<(String, CandidateMember)>, E>,
+    mut cast_participates: impl FnMut(&R) -> Result<bool, E>,
+) -> Result<Vec<CategoryFactoring>, E> {
     let mut out = Vec::with_capacity(per_cat.len());
     // ★ #141 G8 — one sink per category, drained into that category's
     // `CategoryFactoring` (`std::mem::take` at the push below).
     let mut refusals: Vec<String> = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let category_src_idx = cat_i as u16;
-        let members = discover(category_src_idx, rules);
+        let members = discover(category_src_idx, rules)?;
         // Bucket by leading literal, first-seen order (mirrors the
         // `unified_order` insertion-order discipline in `prefix.rs`).
         let mut bucket_order: Vec<String> = Vec::new();
@@ -1080,7 +1147,7 @@ pub fn build_prefix_factoring_with<R>(
             let mut groupable: Vec<CandidateMember> = Vec::with_capacity(bucket.len());
             for member in bucket {
                 let rule = &rules[member.rule_idx as usize];
-                if cast_participates(rule) {
+                if cast_participates(rule)? {
                     singletons.push(SingletonMember {
                         rule_idx: member.rule_idx,
                         reason: SingletonReason::CastMachinery,
@@ -1179,12 +1246,16 @@ pub fn build_prefix_factoring_with<R>(
                     // All-nullary group: no BinderRule state consumes the
                     // field before a commit; carry the owning category.
                     .unwrap_or(category_src_idx);
-                groups.push(SpineGroup {
-                    spine_id: SPINE_RULE_BASE + next_spine_ordinal,
-                    body_src_idx,
-                    roots,
-                });
-                next_spine_ordinal += 1;
+                let Some(spine_id) = allocate_spine_id(&mut next_spine_ordinal) else {
+                    refusals.push(format!(
+                        "{LIMIT_REFUSAL} category index {category_src_idx}, trigger \
+                         {leading_literal:?}, cannot allocate spine ordinal \
+                         {next_spine_ordinal}: base {SPINE_RULE_BASE:#06x} plus ordinal \
+                         exceeds the u16 rule-index encoding."
+                    ));
+                    continue;
+                };
+                groups.push(SpineGroup { spine_id, body_src_idx, roots });
             }
             buckets.push(FactoringBucket {
                 leading_literal,
@@ -1225,7 +1296,7 @@ pub fn build_prefix_factoring_with<R>(
             refusals: std::mem::take(&mut refusals),
         });
     }
-    out
+    Ok(out)
 }
 
 /// Original disabled factoring path: every discovered member is a singleton.
@@ -1236,10 +1307,24 @@ pub fn prefix_identity_partition<R>(
     per_cat: &[Vec<R>],
     mut discover: impl FnMut(u16, &[R]) -> Vec<(String, CandidateMember)>,
 ) -> Vec<CategoryFactoring> {
+    match try_prefix_identity_partition(per_cat, |category, rules| {
+        Ok::<_, std::convert::Infallible>(discover(category, rules))
+    }) {
+        Ok(value) => value,
+        Err(never) => match never {},
+    }
+}
+
+/// Disabled factoring still observes discovery and propagates its first error.
+/// It never observes cast machinery or constructs a factoring tree.
+pub fn try_prefix_identity_partition<'rules, R, E>(
+    per_cat: &'rules [Vec<R>],
+    mut discover: impl FnMut(u16, &'rules [R]) -> Result<Vec<(String, CandidateMember)>, E>,
+) -> Result<Vec<CategoryFactoring>, E> {
     let mut out = Vec::with_capacity(per_cat.len());
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let category_src_idx = cat_i as u16;
-        let members = discover(category_src_idx, rules);
+        let members = discover(category_src_idx, rules)?;
         let mut bucket_order: Vec<String> = Vec::new();
         let mut bucket_singletons: Vec<Vec<SingletonMember>> = Vec::new();
         for (trigger, member) in members {
@@ -1272,5 +1357,5 @@ pub fn prefix_identity_partition<R>(
             refusals: Vec::new(),
         });
     }
-    out
+    Ok(out)
 }

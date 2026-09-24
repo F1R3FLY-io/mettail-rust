@@ -219,202 +219,19 @@ mod classifier_projection_tests;
 #[path = "../../../../tests/support/binder_traversal_recursive_oracle.rs"]
 mod traversal_recursive_oracle;
 
-/// Caller continuation for a nested optional or binder-list frame.
-///
-/// The generated PDA stores this continuation in the GSS symbol immediately
-/// below the entered frame. Keeping it out of `WpdaState::BinderListLoop`
-/// makes the state frame-local and permits arbitrary Optional/BinderList
-/// nesting without caller-specific fields or native recursion.
-#[derive(Clone, Copy)]
-enum TraversalResume {
-    Rule { next_pos: u8 },
-    Optional { group_idx: u32, next_sub_pos: u32 },
-    BinderList { frame_idx: u32, next_sub_pos: u32 },
-}
+pub(crate) use mettail_prattail::wpda_rule_analysis::binder::traversal::{
+    binder_list_frame_indices, traversal_sites, BinderListSite, OptionalSite,
+    TraversalMarkerCoordinate, TraversalMarkerTable, TraversalResume, TraversalSites,
+};
 
-struct BinderListSite<'position> {
-    separator: &'position str,
-    close: &'position str,
-    inner_positions: &'position [BinderPosition],
-    collection_param_cat: &'position Option<String>,
-    slot_idx: u8,
-    frame_idx: u32,
-    resume: TraversalResume,
-}
-
-struct OptionalSite<'position> {
-    positions: &'position [BinderPosition],
-    group_idx: u32,
-    first_token_set: &'position [String],
-    resume: TraversalResume,
-}
-
-struct TraversalSites<'position> {
-    binder_lists: Vec<BinderListSite<'position>>,
-    optionals: Vec<OptionalSite<'position>>,
-    binder_frame_indices: HashMap<*const BinderPosition, u32>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum TraversalMarkerCoordinate {
-    Optional { group_idx: u32, sub_pos: u32 },
-    BinderList { frame_idx: u32, sub_pos: u32 },
-}
-
-pub(crate) struct TraversalMarkerTable {
-    ids: HashMap<(u16, u16, TraversalMarkerCoordinate), u32>,
-    optional_metadata: Vec<(u32, u16, u16, u32, u32)>,
-    binder_metadata: Vec<(u32, u16, u16, u32, u32)>,
-}
-
-impl TraversalMarkerTable {
-    pub(crate) fn build(language: &LanguageDef, per_cat: &[Vec<GrammarRule>]) -> Self {
-        let mut ids = HashMap::new();
-        let mut optional_metadata = Vec::new();
-        let mut binder_metadata = Vec::new();
-        let mut next_marker_id = 0u32;
-
-        for (cat_i, rules) in per_cat.iter().enumerate() {
-            for (rule_i, rule) in rules.iter().enumerate() {
-                let Some(shape) = classify_binder_in(rule, language) else {
-                    continue;
-                };
-                let result_src_idx = cat_i as u16;
-                let rule_idx = rule_i as u16;
-                let sites = traversal_sites(&shape.positions);
-                for OptionalSite { positions, group_idx, .. } in sites.optionals {
-                    let final_sub_pos = u32::try_from(positions.len() + 1)
-                        .expect("optional marker count exceeds compact addressability");
-                    for sub_pos in 0..=final_sub_pos {
-                        let marker_id = next_marker_id;
-                        next_marker_id = next_marker_id
-                            .checked_add(1)
-                            .expect("traversal marker table exceeds u32 addressability");
-                        let coordinate = TraversalMarkerCoordinate::Optional { group_idx, sub_pos };
-                        ids.insert((result_src_idx, rule_idx, coordinate), marker_id);
-                        optional_metadata.push((
-                            marker_id,
-                            result_src_idx,
-                            rule_idx,
-                            group_idx,
-                            sub_pos,
-                        ));
-                    }
-                }
-                for BinderListSite { inner_positions, frame_idx, .. } in sites.binder_lists {
-                    let final_sub_pos = u32::try_from(inner_positions.len() + 1)
-                        .expect("binder marker count exceeds compact addressability");
-                    for sub_pos in 0..=final_sub_pos {
-                        let marker_id = next_marker_id;
-                        next_marker_id = next_marker_id
-                            .checked_add(1)
-                            .expect("traversal marker table exceeds u32 addressability");
-                        let coordinate =
-                            TraversalMarkerCoordinate::BinderList { frame_idx, sub_pos };
-                        ids.insert((result_src_idx, rule_idx, coordinate), marker_id);
-                        binder_metadata.push((
-                            marker_id,
-                            result_src_idx,
-                            rule_idx,
-                            frame_idx,
-                            sub_pos,
-                        ));
-                    }
-                }
-            }
-        }
-
-        Self { ids, optional_metadata, binder_metadata }
-    }
-
-    fn id(&self, result_src_idx: u16, rule_idx: u16, coordinate: TraversalMarkerCoordinate) -> u32 {
-        self.ids[&(result_src_idx, rule_idx, coordinate)]
-    }
-}
-
-/// Build the recursive position forest's flat PDA-frame table iteratively.
-/// Sites are emitted in deterministic preorder; depth is represented by the
-/// heap-backed `pending` worklist rather than the native call stack.
-fn traversal_sites(positions: &[BinderPosition]) -> TraversalSites<'_> {
-    struct Pending<'position> {
-        position: &'position BinderPosition,
-        resume: TraversalResume,
-    }
-
-    let mut pending = Vec::with_capacity(positions.len());
-    for (idx, position) in positions.iter().enumerate().rev() {
-        pending.push(Pending {
-            position,
-            resume: TraversalResume::Rule { next_pos: (idx + 2) as u8 },
-        });
-    }
-
-    let mut binder_lists = Vec::new();
-    let mut optionals = Vec::new();
-    let mut binder_frame_indices = HashMap::new();
-    while let Some(Pending { position, resume }) = pending.pop() {
-        match position {
-            BinderPosition::OptionalGroup { positions, group_idx, first_token_set } => {
-                optionals.push(OptionalSite {
-                    positions,
-                    group_idx: *group_idx,
-                    first_token_set,
-                    resume,
-                });
-                for (idx, child) in positions.iter().enumerate().rev() {
-                    pending.push(Pending {
-                        position: child,
-                        resume: TraversalResume::Optional {
-                            group_idx: *group_idx,
-                            next_sub_pos: (idx + 2) as u32,
-                        },
-                    });
-                }
-            },
-            BinderPosition::BinderListLoop {
-                separator,
-                close,
-                inner_positions,
-                collection_param_cat,
-                slot_idx,
-                ..
-            } => {
-                let frame_idx = u32::try_from(binder_lists.len())
-                    .expect("binder-list frame count exceeds compact marker addressability");
-                binder_frame_indices.insert(position as *const BinderPosition, frame_idx);
-                binder_lists.push(BinderListSite {
-                    separator,
-                    close,
-                    inner_positions,
-                    collection_param_cat,
-                    slot_idx: *slot_idx,
-                    frame_idx,
-                    resume,
-                });
-                let last = inner_positions.len().saturating_sub(1);
-                for (idx, child) in inner_positions.iter().enumerate().rev() {
-                    pending.push(Pending {
-                        position: child,
-                        resume: TraversalResume::BinderList {
-                            frame_idx,
-                            next_sub_pos: if idx == last { 0 } else { (idx + 2) as u32 },
-                        },
-                    });
-                }
-            },
-            _ => {},
-        }
-    }
-
-    TraversalSites {
-        binder_lists,
-        optionals,
-        binder_frame_indices,
-    }
-}
-
-fn binder_list_frame_indices(positions: &[BinderPosition]) -> HashMap<*const BinderPosition, u32> {
-    traversal_sites(positions).binder_frame_indices
+pub(crate) fn build_traversal_marker_table(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> TraversalMarkerTable {
+    TraversalMarkerTable::try_build_with(per_cat, |rule| {
+        Ok::<_, std::convert::Infallible>(classify_binder_in(rule, language))
+    })
+    .expect("traversal marker table exceeds compact source addressability")
 }
 
 fn traversal_resume_symbol(
@@ -578,7 +395,7 @@ fn emit_binder_list_entry(
     }
 }
 
-pub(super) struct MacroBinderSyntaxReader;
+pub(crate) struct MacroBinderSyntaxReader;
 
 impl<'syntax> BinderSyntaxReader<'syntax> for MacroBinderSyntaxReader {
     type Sequence = &'syntax [SyntaxExpr];
@@ -3655,7 +3472,7 @@ mod tests {
         let per_cat = vec![vec![lambda_lam_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
         let language = synthetic_lang_for_lambda_test();
-        let markers = TraversalMarkerTable::build(&language, &per_cat);
+        let markers = build_traversal_marker_table(&language, &per_cat);
         let (mut ts, __ts_helpers) = emit_binder_rule_body(
             &language,
             &categories,
@@ -3687,7 +3504,7 @@ mod tests {
         let per_cat = vec![Vec::new(), vec![fraction_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
         let language = synthetic_lang_for_lambda_test();
-        let markers = TraversalMarkerTable::build(&language, &per_cat);
+        let markers = build_traversal_marker_table(&language, &per_cat);
         let (mut ts, __ts_helpers) = emit_binder_rule_body(
             &language,
             &categories,

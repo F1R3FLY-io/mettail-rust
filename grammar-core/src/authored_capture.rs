@@ -391,6 +391,8 @@ impl<I, K> AuthoredNode<I, K> {
             Node::Rule(rule) => Node::Rule(AuthoredRule {
                 label: reference!(Name, AuthoredNameId, rule.label),
                 category: reference!(Name, AuthoredNameId, rule.category),
+                source_body_present: rule.source_body_present,
+                explicit_fold: rule.explicit_fold,
                 term_context: rule
                     .term_context
                     .map(|params| Ok(reference!(Params, AuthoredParamsId, params)))
@@ -475,6 +477,8 @@ mod tests {
         Graph {
             nodes: vec![
                 N::Rule(AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(1),
                     category: AuthoredNameId(2),
                     term_context: Some(AuthoredParamsId(3)),
@@ -716,6 +720,8 @@ mod tests {
         let mut graph = Graph {
             nodes: vec![
                 AuthoredNode::Rule(AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(2),
                     category: AuthoredNameId(2),
                     term_context: None,
@@ -723,6 +729,8 @@ mod tests {
                     items: vec![],
                 }),
                 AuthoredNode::Rule(AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(2),
                     category: AuthoredNameId(2),
                     term_context: Some(AuthoredParamsId(3)),
@@ -733,6 +741,8 @@ mod tests {
                 AuthoredNode::Params(vec![]),
                 AuthoredNode::Syntax(vec![]),
                 AuthoredNode::Rule(AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(2),
                     category: AuthoredNameId(2),
                     term_context: Some(AuthoredParamsId(3)),
@@ -740,6 +750,8 @@ mod tests {
                     items: vec![],
                 }),
                 AuthoredNode::Rule(AuthoredRule {
+                    source_body_present: crate::SourceObservation::Unavailable,
+                    explicit_fold: crate::SourceObservation::Unavailable,
                     label: AuthoredNameId(2),
                     category: AuthoredNameId(2),
                     term_context: None,
@@ -871,6 +883,8 @@ mod tests {
                 AuthoredSyntax::Op(AuthoredOperationId(7)),
             ]));
             nodes.push(N::Rule(AuthoredRule {
+                source_body_present: crate::SourceObservation::Unavailable,
+                explicit_fold: crate::SourceObservation::Unavailable,
                 label: AuthoredNameId(1),
                 category: AuthoredNameId(2),
                 term_context: presence.then_some(AuthoredParamsId(3)),

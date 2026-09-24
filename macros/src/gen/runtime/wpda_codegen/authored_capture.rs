@@ -115,6 +115,10 @@ impl<'syntax> AuthoredCaptureSource for MacroSource<'syntax> {
                 AuthoredNode::Rule(AuthoredRule {
                     label: name_id(reader.label(rule)),
                     category: name_id(reader.category(rule)),
+                    source_body_present: SourceObservation::Known(rule.rust_code.is_some()),
+                    explicit_fold: SourceObservation::Known(
+                        rule.eval_mode == Some(mettail_ast::types::EvalMode::Fold),
+                    ),
                     term_context: reader
                         .term_context(rule)
                         .map(|params| AuthoredParamsId(Handle::Params(params))),

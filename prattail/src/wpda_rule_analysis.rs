@@ -21,13 +21,16 @@ pub mod atomic_projection;
 pub mod authored;
 pub mod authored_atomic;
 pub mod authored_binder;
+pub mod authored_cast;
 pub mod authored_collection;
 pub mod authored_declarations;
+pub mod authored_descriptors;
 pub mod authored_normalization;
 pub mod authored_prefix;
 pub mod authored_synthesis;
 pub mod binder;
 pub mod census;
+pub mod cast_participation;
 pub mod collection;
 pub mod collection_projection;
 pub mod factoring;
@@ -43,6 +46,9 @@ pub mod prefix;
 pub mod prefix_bucket;
 pub mod prefix_pattern;
 pub mod synthetic;
+
+#[cfg(test)]
+mod checked_assembly_tests;
 
 /// Ordered rule observations, with absent lists distinguished from empty ones.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -2613,6 +2613,8 @@ mod tests {
 
     include!("../../../../tests/support/owned_atomic_reuse.rs");
     include!("../../../../tests/support/owned_prefix_reuse.rs");
+    include!("../../../../tests/support/owned_descriptor_reuse.rs");
+    include!("../../../../tests/support/owned_cast_reuse.rs");
 
     mod bucket_driver_shared {
         include!("../../../../tests/support/prefix_bucket_shared.rs");

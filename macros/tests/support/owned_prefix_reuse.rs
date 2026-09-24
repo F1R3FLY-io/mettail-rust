@@ -18,7 +18,7 @@ mod owned_prefix_reuse {
 
     // Test-only association to the ORIGINAL constructors. This does not parse
     // generated tokens or introduce quotation into the owned implementation.
-    fn original_quote(pattern: &N) -> TokenStream {
+    pub(super) fn original_quote(pattern: &N) -> TokenStream {
         match pattern {
             N::Empty => TokenStream::new(),
             N::FixedKeyword => first_predicate_parts(F::Fixed("")).0,
@@ -53,7 +53,7 @@ mod owned_prefix_reuse {
     }
 
     #[derive(Debug, PartialEq, Eq)]
-    enum Descriptor {
+    pub(super) enum Descriptor {
         CrossLhs(u16, bool),
         Atomic(String, Option<String>, u16, u16),
         Binder(u16, u16),
@@ -104,9 +104,9 @@ mod owned_prefix_reuse {
         }
     }
 
-    type Bucket = ((String, String), String, Option<String>, Vec<Descriptor>);
+    pub(super) type Bucket = ((String, String), String, Option<String>, Vec<Descriptor>);
 
-    fn observations<P, K: Ord>(
+    pub(super) fn observations<P, K: Ord>(
         (mut buckets, order): PrefixBuckets<P, K>,
         render: impl Fn(&P) -> String,
         key: impl Fn(&K) -> String,
@@ -132,7 +132,7 @@ mod owned_prefix_reuse {
         result
     }
 
-    fn core(language: &LanguageDef) -> mettail_grammar_core::GrammarCoreV1 {
+    pub(super) fn core(language: &LanguageDef) -> mettail_grammar_core::GrammarCoreV1 {
         crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(language)
             .expect("original macro bridge accepts fixture")
             .to_grammar_core()
@@ -209,7 +209,7 @@ mod owned_prefix_reuse {
         SyntaxExpr::Param(id(text))
     }
 
-    fn mixed_language() -> LanguageDef {
+    pub(super) fn mixed_language() -> LanguageDef {
         let mut language = lang_with_int_literal();
         language.types.push(LangType {
             name: id("Expr"),
@@ -293,8 +293,7 @@ mod owned_prefix_reuse {
         assert_parity(&language, &[6, 1, 0, 3, 4, 5, 2, 0, 7, 8]);
     }
 
-    #[test]
-    fn owned_prefix_guest_capture_and_optional_shapes_match_original() {
+    pub(super) fn guest_language() -> LanguageDef {
         use crate::gen::runtime::wpda_codegen::guest_mode_descriptor_baselines as guests;
         let mut language = mixed_language();
         let mut open = guests::token("GuestOpen", Some("Guest"));
@@ -349,6 +348,12 @@ mod owned_prefix_reuse {
             }],
         }]);
         language.terms.push(optional);
+        language
+    }
+
+    #[test]
+    fn owned_prefix_guest_capture_and_optional_shapes_match_original() {
+        let language = guest_language();
         let rows = assert_parity(&language, &(0..language.terms.len()).collect::<Vec<_>>());
         assert!(rows.iter().flat_map(|row| &row.3).any(|d| matches!(d, Descriptor::Guest(_, _, open, nested, close) if open == "GuestOpen" && nested == &vec!["NestedZ".to_string(), "NestedA".to_string()] && close == "GuestClose")));
         assert!(rows

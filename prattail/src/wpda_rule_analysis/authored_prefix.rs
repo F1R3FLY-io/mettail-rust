@@ -13,7 +13,7 @@
 //! panic recovery remain outside this logical admission contract.
 
 mod literal;
-mod reader;
+pub(super) mod reader;
 
 use super::atomic::AtomicDescriptor;
 use super::atomic_prefix::{atomic_arm_descriptors, PrefixArmDescriptor};
@@ -64,6 +64,7 @@ pub enum AuthoredPrefixError<E> {
     Projection(InfixProjectionError<Infallible>),
     Atomic(AuthoredAtomicError<Infallible, LiteralError>),
     Binder(AuthoredBinderError<Infallible>),
+    Collection(super::authored_collection::AuthoredCollectionError<Infallible>),
     BindingPower(BindingPowerError<Infallible>),
 }
 
@@ -80,8 +81,32 @@ pub fn derive_authored_prefix_buckets<P, E>(
     crosscat_lex_compat_gate: bool,
     admit: impl FnOnce(&GrammarCoreV1, &[usize], &AuthoredSynthesisOutput<P>, u16) -> Result<(), E>,
 ) -> Result<PrefixBuckets<NeutralPattern, NeutralPatternKey>, AuthoredPrefixError<E>> {
+    admit(core, original_occurrences, synthesis, category_src_idx)
+        .map_err(AuthoredPrefixError::Admission)?;
+    with_authored_context(core, original_occurrences, synthesis, |reader, context| {
+        derive_category_prefix(
+            reader,
+            context,
+            synthesis,
+            category_src_idx,
+            crosscat_lex_compat_gate,
+        )
+    })?
+}
+
+/// Borrow one validated occurrence context for complete descriptor assembly.
+/// The caller admits the complete helper domain before entering this function;
+/// its result cannot borrow the local original-occurrence roster.
+pub(super) fn with_authored_context<'store, P, E, T>(
+    core: &'store GrammarCoreV1,
+    original_occurrences: &[usize],
+    synthesis: &'store AuthoredSynthesisOutput<P>,
+    consume: impl for<'reader> FnOnce(
+        &OccurrenceReader<'reader, 'store>,
+        &mut Context<'reader, 'store, E>,
+    ) -> T,
+) -> Result<T, AuthoredPrefixError<E>> {
     use AuthoredPrefixError as Error;
-    admit(core, original_occurrences, synthesis, category_src_idx).map_err(Error::Admission)?;
     let declarations = AuthoredDeclarationReader::new(core).map_err(Error::Declaration)?;
     let rules = AuthoredRuleReader::new(&synthesis.store).map_err(Error::Reader)?;
     let source_store = core.authored.as_ref().ok_or(Error::MissingSourceStore)?;
@@ -146,6 +171,27 @@ pub fn derive_authored_prefix_buckets<P, E>(
             }
         }
     }
+    let reader = OccurrenceReader::new(&rules);
+    let mut context = Context {
+        core,
+        declarations,
+        rules: &rules,
+        originals: &originals,
+        normalized: &synthesis.source_order,
+        expected_categories: &synthesis.categories,
+        error: PhantomData,
+    };
+    Ok(consume(&reader, &mut context))
+}
+
+pub(super) fn derive_category_prefix<'reader, 'store, P, E>(
+    reader: &OccurrenceReader<'reader, 'store>,
+    context: &mut Context<'reader, 'store, E>,
+    synthesis: &AuthoredSynthesisOutput<P>,
+    category_src_idx: u16,
+    crosscat_lex_compat_gate: bool,
+) -> Result<PrefixBuckets<NeutralPattern, NeutralPatternKey>, AuthoredPrefixError<E>> {
+    use AuthoredPrefixError as Error;
     let category_index = usize::from(category_src_idx);
     let category_name = synthesis
         .categories
@@ -160,19 +206,9 @@ pub fn derive_authored_prefix_buckets<P, E>(
         let index = u16::try_from(index).map_err(|_| Error::RuleIndexOverflow(category_index))?;
         indexed.push((index, rule));
     }
-    let reader = OccurrenceReader { inner: &rules };
-    let mut context = Context {
-        core,
-        declarations,
-        rules: &rules,
-        originals: &originals,
-        normalized: &synthesis.source_order,
-        expected_categories: &synthesis.categories,
-        error: PhantomData,
-    };
     try_derive_prefix_buckets(
-        &reader,
-        &mut context,
+        reader,
+        context,
         category_src_idx,
         category_name,
         &indexed,
@@ -180,18 +216,74 @@ pub fn derive_authored_prefix_buckets<P, E>(
     )
 }
 
-struct Context<'reader, 'store, E> {
+pub(super) struct Context<'reader, 'store, E> {
     core: &'store GrammarCoreV1,
     declarations: AuthoredDeclarationReader<'store>,
-    rules: &'reader AuthoredRuleReader<'store>,
-    originals: &'reader [AuthoredRulePayload],
-    normalized: &'store [AuthoredRulePayload],
+    pub(super) rules: &'reader AuthoredRuleReader<'store>,
+    pub(super) originals: &'reader [AuthoredRulePayload],
+    pub(super) normalized: &'store [AuthoredRulePayload],
     expected_categories: &'store [String],
     error: PhantomData<E>,
 }
 
 impl<'store, E> Context<'_, 'store, E> {
-    fn precedence(&self, rule: AuthoredRulePayload) -> Result<Precedence, AuthoredPrefixError<E>> {
+    pub(super) fn infix_original(
+        &self,
+        rule: AuthoredRulePayload,
+    ) -> Result<Option<InfixRuleInfo>, AuthoredPrefixError<E>> {
+        let AuthoredRuleOrigin::User { roster_index, .. } = rule.origin else {
+            return Err(AuthoredPrefixError::InvalidRule);
+        };
+        let normalized = *self
+            .normalized
+            .get(roster_index)
+            .ok_or(AuthoredPrefixError::SourceRosterMismatch(roster_index))?;
+        if normalized.origin != rule.origin {
+            return Err(AuthoredPrefixError::SourceRosterMismatch(roster_index));
+        }
+        self.infix_normalized(normalized)
+    }
+    pub(super) fn atomic(
+        &self,
+        rule: AuthoredRulePayload,
+    ) -> Result<AtomicDescriptor<OwnedLiteral<'store>>, AuthoredPrefixError<E>> {
+        let precedence = self.precedence(rule)?;
+        try_derive_authored_atomic(
+            self.rules,
+            rule.rule,
+            precedence.associativity,
+            precedence.shares_previous_level,
+            |_, _| Ok::<_, Infallible>(()),
+            |name| literal::resolve(self.rules, &self.declarations, name),
+        )
+        .map_err(AuthoredPrefixError::Atomic)
+    }
+
+    pub(super) fn binder_shape(
+        &self,
+        rule: AuthoredRulePayload,
+    ) -> Result<Option<BinderShape>, AuthoredPrefixError<E>> {
+        derive_authored_binder(self.rules, rule.rule, |_, _, _| Ok::<_, Infallible>(()))
+            .map_err(AuthoredPrefixError::Binder)
+    }
+
+    pub(super) fn explicit_prefix_bp(
+        &self,
+        rule: AuthoredRulePayload,
+    ) -> Result<Option<u8>, AuthoredPrefixError<E>> {
+        self.precedence(rule)?
+            .binding_power
+            .map(|power| {
+                u8::try_from(power)
+                    .map_err(|_| AuthoredPrefixError::PrefixBindingPowerOverflow(power))
+            })
+            .transpose()
+    }
+
+    pub(super) fn precedence(
+        &self,
+        rule: AuthoredRulePayload,
+    ) -> Result<Precedence, AuthoredPrefixError<E>> {
         match rule.origin {
             AuthoredRuleOrigin::User { production_index, .. } => self
                 .core
@@ -206,7 +298,7 @@ impl<'store, E> Context<'_, 'store, E> {
             }),
         }
     }
-    fn infix_normalized(
+    pub(super) fn infix_normalized(
         &self,
         payload: AuthoredRulePayload,
     ) -> Result<Option<InfixRuleInfo>, AuthoredPrefixError<E>> {
@@ -320,16 +412,7 @@ impl<'reader, 'store, E> TryFirstSetContext<'store, OccurrenceReader<'reader, 's
         &mut self,
         rule: AuthoredRulePayload,
     ) -> Result<AtomicDescriptor<Self::Literal>, Self::Error> {
-        let precedence = self.precedence(rule)?;
-        try_derive_authored_atomic(
-            self.rules,
-            rule.rule,
-            precedence.associativity,
-            precedence.shares_previous_level,
-            |_, _| Ok::<_, Infallible>(()),
-            |name| literal::resolve(self.rules, &self.declarations, name),
-        )
-        .map_err(AuthoredPrefixError::Atomic)
+        self.atomic(rule)
     }
     fn try_patterned_first(
         &mut self,
@@ -397,17 +480,7 @@ impl<'reader, 'store, E> TryPrefixBucketContext<'store, OccurrenceReader<'reader
         &mut self,
         rule: AuthoredRulePayload,
     ) -> Result<Option<InfixRuleInfo>, Self::Error> {
-        let AuthoredRuleOrigin::User { roster_index, .. } = rule.origin else {
-            return Err(AuthoredPrefixError::InvalidRule);
-        };
-        let normalized = *self
-            .normalized
-            .get(roster_index)
-            .ok_or(AuthoredPrefixError::SourceRosterMismatch(roster_index))?;
-        if normalized.origin != rule.origin {
-            return Err(AuthoredPrefixError::SourceRosterMismatch(roster_index));
-        }
-        self.infix_normalized(normalized)
+        self.infix_original(rule)
     }
     fn try_category_names(&mut self) -> Result<Vec<String>, Self::Error> {
         let rules: Vec<_> = self.originals.iter().map(|payload| payload.rule).collect();
@@ -433,20 +506,13 @@ impl<'reader, 'store, E> TryPrefixBucketContext<'store, OccurrenceReader<'reader
             .map_err(AuthoredPrefixError::BindingPower)
     }
     fn try_explicit_prefix_bp(&self, rule: AuthoredRulePayload) -> Result<Option<u8>, Self::Error> {
-        self.precedence(rule)?
-            .binding_power
-            .map(|power| {
-                u8::try_from(power)
-                    .map_err(|_| AuthoredPrefixError::PrefixBindingPowerOverflow(power))
-            })
-            .transpose()
+        self.explicit_prefix_bp(rule)
     }
     fn try_binder_shape(
         &mut self,
         rule: AuthoredRulePayload,
     ) -> Result<Option<BinderShape>, Self::Error> {
-        derive_authored_binder(self.rules, rule.rule, |_, _, _| Ok::<_, Infallible>(()))
-            .map_err(AuthoredPrefixError::Binder)
+        self.binder_shape(rule)
     }
     fn try_atomic_rows(
         &mut self,

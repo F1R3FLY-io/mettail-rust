@@ -80,6 +80,8 @@ impl Fixture {
         AuthoredRuleId(
             self.store
                 .try_push(AuthoredNode::Rule(AuthoredRule {
+                    source_body_present: mettail_grammar_core::SourceObservation::Unavailable,
+                    explicit_fold: mettail_grammar_core::SourceObservation::Unavailable,
                     label,
                     category,
                     term_context: None,

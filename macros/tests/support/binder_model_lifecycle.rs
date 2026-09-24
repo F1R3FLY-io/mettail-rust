@@ -1,8 +1,8 @@
 use super::{
-    classify_binder_in, classify_optional_body, emit_binder_list_loop_body,
-    emit_nested_optional_action, emit_optional_group_body, first_param_cat_from_positions,
-    traversal_sites, ActionArgKind, BinderPosition, ParamKind, TraversalMarkerCoordinate,
-    TraversalMarkerTable, TraversalResume,
+    build_traversal_marker_table, classify_binder_in, classify_optional_body,
+    emit_binder_list_loop_body, emit_nested_optional_action, emit_optional_group_body,
+    first_param_cat_from_positions, traversal_sites, ActionArgKind, BinderPosition, ParamKind,
+    TraversalMarkerCoordinate, TraversalResume,
 };
 use mettail_ast::grammar::{rule_fixture, GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use mettail_ast::language::{LangType, LanguageDef};
@@ -352,7 +352,7 @@ fn nested_optional_classifier_and_emitter_preserve_frame_identity() {
     ));
 
     let per_cat = vec![vec![rule]];
-    let markers = TraversalMarkerTable::build(&language, &per_cat);
+    let markers = build_traversal_marker_table(&language, &per_cat);
     let tokens =
         emit_optional_group_body(&language, &["Expr".to_string()], &per_cat, &markers).to_string();
     assert!(tokens.contains("0u32 , 0u32"), "outer group entry arm missing");
@@ -379,7 +379,7 @@ fn binder_list_nested_in_optional_emits_shared_entry_and_loop_frames() {
     ));
 
     let per_cat = vec![vec![rule]];
-    let markers = TraversalMarkerTable::build(&language, &per_cat);
+    let markers = build_traversal_marker_table(&language, &per_cat);
     let optional =
         emit_optional_group_body(&language, &["Expr".to_string()], &per_cat, &markers).to_string();
     assert!(optional.contains("frame_idx : 0u32"));
@@ -404,7 +404,7 @@ fn traversal_marker_ids_are_dense_unique_and_decode_to_their_coordinates() {
     let rule = nested_optional_binder_rule();
     let language = nested_optional_language(rule.clone());
     let per_cat = vec![vec![rule]];
-    let table = TraversalMarkerTable::build(&language, &per_cat);
+    let table = build_traversal_marker_table(&language, &per_cat);
     let total = table.optional_metadata.len() + table.binder_metadata.len();
 
     assert!(total > 0, "fixture must produce traversal markers");

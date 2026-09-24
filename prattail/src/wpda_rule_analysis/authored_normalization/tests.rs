@@ -29,6 +29,8 @@ fn rule(
     AuthoredRuleId(append(
         store,
         AuthoredNode::Rule(AuthoredRule {
+            source_body_present: mettail_grammar_core::SourceObservation::Unavailable,
+            explicit_fold: mettail_grammar_core::SourceObservation::Unavailable,
             label: category,
             category,
             term_context: None,
@@ -414,6 +416,8 @@ fn owned_normalization_profile_conflicts_are_lazy_until_successful_recipes() {
                 AuthoredRuleId(append(
                     &mut store,
                     AuthoredNode::Rule(AuthoredRule {
+                        source_body_present: mettail_grammar_core::SourceObservation::Unavailable,
+                        explicit_fold: mettail_grammar_core::SourceObservation::Unavailable,
                         label: category_id,
                         category: category_id,
                         term_context: Some(context),
@@ -458,6 +462,8 @@ fn owned_normalization_half_delimiters_follow_presence_and_preflight_order() {
             let id = AuthoredRuleId(append(
                 &mut store,
                 AuthoredNode::Rule(AuthoredRule {
+                    source_body_present: mettail_grammar_core::SourceObservation::Unavailable,
+                    explicit_fold: mettail_grammar_core::SourceObservation::Unavailable,
                     label: category_id,
                     category: category_id,
                     term_context: (presence == 1).then_some(context),

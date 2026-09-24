@@ -63,9 +63,22 @@ pub fn build_alphabet<T>(
     authored_rules: &[T],
     mut classify: impl FnMut(&T) -> Option<InfixRuleInfo>,
 ) -> Alphabet {
+    match try_build_alphabet(authored_rules, |rule| {
+        Ok::<_, std::convert::Infallible>(classify(rule))
+    }) {
+        Ok(alphabet) => alphabet,
+        Err(error) => match error {},
+    }
+}
+
+/// Original alphabet loop, propagating classifier errors at their call site.
+pub fn try_build_alphabet<T, E>(
+    authored_rules: &[T],
+    mut classify: impl FnMut(&T) -> Result<Option<InfixRuleInfo>, E>,
+) -> Result<Alphabet, E> {
     let mut triggers: BTreeSet<String> = BTreeSet::new();
     for rule in authored_rules {
-        if let Some(info) = classify(rule) {
+        if let Some(info) = classify(rule)? {
             if info.is_cross_category && info.category != info.result_category {
                 triggers.insert(info.terminal.clone());
             }
@@ -81,7 +94,7 @@ pub fn build_alphabet<T>(
         }
     }
     let coarse_bit = next; // the next free bit is the coarse class
-    Alphabet { trigger_bit, coarse_bit }
+    Ok(Alphabet { trigger_bit, coarse_bit })
 }
 
 /// Build a `param-name → category-name` map for a judgement-style rule
@@ -351,12 +364,32 @@ pub fn build_parikh_descriptors<'syntax, T: 'syntax, R>(
     authored_rules: &[T],
     categories: &[String],
     per_cat: &'syntax [Vec<T>],
-    classify: impl FnMut(&T) -> Option<InfixRuleInfo>,
+    mut classify: impl FnMut(&T) -> Option<InfixRuleInfo>,
 ) -> ParikhDescriptors
 where
     R: BinderRuleReader<'syntax, Rule = &'syntax T>,
 {
-    let alpha = build_alphabet(authored_rules, classify);
+    match try_build_parikh_descriptors(reader, authored_rules, categories, per_cat, |rule| {
+        Ok::<_, std::convert::Infallible>(classify(rule))
+    }) {
+        Ok(descriptors) => descriptors,
+        Err(error) => match error {},
+    }
+}
+
+/// Fallible classifier interface; the existing fixed-point and suffix loops
+/// remain unchanged. The caller admits category, rule and position widths.
+pub fn try_build_parikh_descriptors<'syntax, T: 'syntax, R, E>(
+    reader: &R,
+    authored_rules: &[T],
+    categories: &[String],
+    per_cat: &'syntax [Vec<T>],
+    classify: impl FnMut(&T) -> Result<Option<InfixRuleInfo>, E>,
+) -> Result<ParikhDescriptors, E>
+where
+    R: BinderRuleReader<'syntax, Rule = &'syntax T>,
+{
+    let alpha = try_build_alphabet(authored_rules, classify)?;
     let (cat_must, cat_nullable) = compute_category_must(reader, per_cat, categories, &alpha);
 
     let mut must_entries: BTreeMap<(u16, u16, u8), Mask> = BTreeMap::new();
@@ -381,5 +414,5 @@ where
         }
     }
 
-    ParikhDescriptors { alphabet: alpha, must_entries }
+    Ok(ParikhDescriptors { alphabet: alpha, must_entries })
 }

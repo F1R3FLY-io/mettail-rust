@@ -28,6 +28,8 @@ fn store() -> (Arc<core::AuthoredRuleStore>, [core::AuthoredRuleId; 2]) {
         rules.push(core::AuthoredRuleId(
             store
                 .try_push(core::AuthoredNode::Rule(core::AuthoredRule {
+                    source_body_present: mettail_grammar_core::SourceObservation::Unavailable,
+                    explicit_fold: mettail_grammar_core::SourceObservation::Unavailable,
                     label,
                     category,
                     term_context: None,

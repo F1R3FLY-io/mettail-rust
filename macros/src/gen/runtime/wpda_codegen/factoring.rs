@@ -269,6 +269,24 @@ pub(crate) fn emission_partition(
     )
 }
 
+/// Test-only explicit switch over the same static discovery callback.
+#[cfg(test)]
+pub(crate) fn original_prefix_partition_for_test(
+    language: &LanguageDef,
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+    enabled: bool,
+) -> Vec<CategoryFactoring> {
+    if enabled {
+        return build_prefix_factoring(language, categories, per_cat);
+    }
+    let prefix_bp_map = build_prefix_bp_map(language, per_cat);
+    mettail_prattail::wpda_rule_analysis::factoring::prefix_identity_partition(
+        per_cat,
+        |category, rules| discover_members(language, categories, category, rules, &prefix_bp_map),
+    )
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // F5-2 — MIXFIX SEND COHORTS: the SECOND factoring surface (plan
 // `scratchpad/zz_probes/f5_mixfix_cohorts_plan.md` + its §RED-TEAM
@@ -439,32 +457,9 @@ use quote::quote;
 
 use super::binder::ActionArgKind;
 
-/// How a BinderPrefix/NullaryLiteralRun descriptor is emitted under the
-/// factored partition (absent from the map = ordinary singleton emission,
-/// byte-identical to today).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SpineDisposition {
-    /// First member (bucket discovery order) of an eligible group: emit the
-    /// group's ONE spine trigger branch at this member's position.
-    GroupFirst {
-        spine_id: u16,
-        body_src_idx: u16,
-        /// AV5 weight identity: the MIN member rule idx (never SPINE_ID).
-        weight_rule_idx: u16,
-    },
-    /// Non-first member of an eligible group: emit nothing (the spine branch
-    /// at the first member's position covers it).
-    GroupRest,
-}
-
-/// Per-category lex-alt surface adjustments (A3).
-#[derive(Debug, Default)]
-pub(crate) struct SpineLexAlt {
-    /// Grouped member rule idxs whose per-member PrefixOp/NullaryPrefixRun
-    /// entries are REPLACED by group entries (assert: no per-member entries
-    /// for these under the const).
-    pub grouped: HashMap<u16, SpineDisposition>,
-}
+pub(crate) use mettail_prattail::wpda_rule_analysis::factoring::emission::{
+    MixfixGroupEmission, SpineDisposition, SpineLexAlt,
+};
 
 /// The complete F1 emission bundle.
 pub(crate) struct SpineEmission {
@@ -536,24 +531,6 @@ pub(crate) struct SpineEmission {
     /// early-returns, so spine ids never reach the generic
     /// `mixfix_part`/`mixfix_parts_len` reads). EMPTY when no mixfix groups.
     pub mixfix_prelude_arms: TokenStream,
-}
-
-/// F5-2: one factored mixfix cohort's emission coordinates.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MixfixGroupEmission {
-    /// The InfixLoop dispatch category (rholang Name = 3).
-    pub dispatch_cat_src_idx: u16,
-    /// The trigger terminal (`"!"` / `"!!"`).
-    pub trigger: String,
-    /// Uniform member result category (rholang Proc = 0).
-    pub result_src_idx: u16,
-    pub spine_id: u16,
-    /// D-1 full-admission floor (min over member l_bps).
-    pub min_l_bp: u8,
-    /// AV5-analog identity (min member rule idx — weight stamps + the
-    /// `LexAltMixfixOp.rule_idx` action-kind field, A-M5).
-    pub min_member_rule_idx: u16,
-    pub member_rule_idxs: Vec<u16>,
 }
 
 impl SpineEmission {
@@ -719,15 +696,16 @@ pub(crate) fn build_spine_emission_from_parts(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> SpineEmission {
-    let mut dispositions: Vec<HashMap<u16, SpineDisposition>> =
-        (0..per_cat.len()).map(|_| HashMap::new()).collect();
-    // Task #10 item 1: `GroupFirst rule -> ordered members` per cat (see the
-    // SpineEmission field doc) — filled in the SAME loop that assigns
-    // dispositions, from the SAME `ordered` list.
-    let mut group_members: Vec<HashMap<u16, Vec<u16>>> =
-        (0..per_cat.len()).map(|_| HashMap::new()).collect();
-    let mut lex_alt: Vec<SpineLexAlt> =
-        (0..per_cat.len()).map(|_| SpineLexAlt::default()).collect();
+    use mettail_prattail::wpda_rule_analysis::factoring::emission::{
+        try_build_factoring_emission_descriptors, FactoringEmissionDescriptors,
+    };
+    let FactoringEmissionDescriptors {
+        dispositions,
+        group_members,
+        lex_alt,
+        mixfix_groups,
+    } = try_build_factoring_emission_descriptors(per_cat.len(), partition, mixfix_partition)
+        .expect("original factoring partitions have valid category indexes and nonempty groups");
     // ★ #141 G8 — the model's refusals, rendered once, here, from BOTH
     // partitions. `emission_partition` / `mixfix_emission_partition` are the
     // only producers and this is their only consumer, so a refusal cannot be
@@ -756,37 +734,11 @@ pub(crate) fn build_spine_emission_from_parts(
             for group in &bucket.groups {
                 any_groups = true;
                 let spine_id = group.spine_id;
-                let body_src_idx = group.body_src_idx;
                 let members = group.member_rule_idxs(); // BTreeSet — min first
                 let weight_rule_idx = *members
                     .iter()
                     .next()
                     .expect("an eligible group has members");
-                // Dispositions: first member in BUCKET DISCOVERY ORDER (the
-                // emission order of the per-rule branches) carries the spine
-                // branch; the rest are silent. Discovery order = leaf order
-                // of the tree restricted to... members were bucketed in rule
-                // declaration order, so min rule_idx = the first-emitted
-                // member.
-                let mut first = true;
-                let mut ordered: Vec<u16> = members.iter().copied().collect();
-                ordered.sort_unstable();
-                // Task #10 item 1: the GroupFirst member keys the group's
-                // ORDERED member list (the same list the disposition loop
-                // walks) for the fork-emission ordinal derivation.
-                if let Some(&first_member) = ordered.first() {
-                    group_members[cat_usize].insert(first_member, ordered.clone());
-                }
-                for m in ordered {
-                    let d = if first {
-                        first = false;
-                        SpineDisposition::GroupFirst { spine_id, body_src_idx, weight_rule_idx }
-                    } else {
-                        SpineDisposition::GroupRest
-                    };
-                    dispositions[cat_usize].insert(m, d);
-                    lex_alt[cat_usize].grouped.insert(m, d);
-                }
                 // ── binder arms ──────────────────────────────────────────
                 for node in flatten_forest(&group.roots, &mut emission_refusals) {
                     let node_id = node.node_id;
@@ -1005,7 +957,6 @@ pub(crate) fn build_spine_emission_from_parts(
     }
 
     // ── F5-2: the mixfix send-cohort emission ─────────────────────────────
-    let mut mixfix_groups: Vec<MixfixGroupEmission> = Vec::new();
     let mut mixfix_fan_arm_streams: Vec<TokenStream> = Vec::new();
     let mut mixfix_prelude_arm_streams: Vec<TokenStream> = Vec::new();
     for fact in mixfix_partition {
@@ -1015,7 +966,6 @@ pub(crate) fn build_spine_emission_from_parts(
                 any_groups = true;
                 let result_src = group.result_src_idx;
                 let spine_id = group.spine_id;
-                let min_l_bp = group.min_l_bp;
                 let min_member = group.min_member_rule_idx;
                 let members = group.member_rule_idxs();
                 let rules = &per_cat[result_src as usize];
@@ -1109,15 +1059,6 @@ pub(crate) fn build_spine_emission_from_parts(
                 let trigger = &bucket.trigger;
                 mixfix_fan_arm_streams.push(mixfix_fan_group_arm(dispatch_cat, trigger, group));
                 mixfix_prelude_arm_streams.push(mixfix_prelude_group_arms(group));
-                mixfix_groups.push(MixfixGroupEmission {
-                    dispatch_cat_src_idx: dispatch_cat,
-                    trigger: trigger.clone(),
-                    result_src_idx: result_src,
-                    spine_id,
-                    min_l_bp,
-                    min_member_rule_idx: min_member,
-                    member_rule_idxs: members,
-                });
             }
         }
     }
