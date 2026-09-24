@@ -147,6 +147,7 @@ theories/AuthoredSyntheticMaterialization.v
 theories/CollectionDeclarationProjection.v
 theories/SyntheticRuleAdmission.v
 theories/AuthoredSynthesisComposition.v
+theories/AuthoredInfixProjection.v
 theories/BindingPowerAdmission.v
 theories/ConstructorElectionEvidence.v
 
