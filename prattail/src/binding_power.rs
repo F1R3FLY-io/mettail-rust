@@ -653,6 +653,68 @@ pub fn compute_prefix_bp(
 /// postfix binds tighter than infix (e.g., `3 + 5!` = `3 + (5!)`), and unary
 /// prefix binds between infix and postfix (e.g., `-5!` = `-(5!)`).
 pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
+    match try_analyze_binding_powers(rules, |_| Ok::<(), std::convert::Infallible>(())) {
+        Ok(table) => table,
+        Err(BindingPowerError::Admission(impossible)) => match impossible {},
+        Err(BindingPowerError::Overflow { category_index, site }) => {
+            panic!("binding power overflow in category {category_index} at {site:?}")
+        },
+    }
+}
+
+/// Original arithmetic sites, retaining both gap operations even for categories
+/// with no postfix operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingPowerSite {
+    InfixAdvance,
+    InfixSlot,
+    FirstFree,
+    PostfixStart,
+    PostfixAdvance,
+    PostfixSlot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingPowerError<E> {
+    Admission(E),
+    Overflow {
+        /// Ordinal in the original sorted category grouping, not a Core CategoryId.
+        category_index: usize,
+        site: BindingPowerSite,
+    },
+}
+
+fn checked_binding_power_add<E>(
+    left: u8,
+    right: u8,
+    category_index: usize,
+    site: BindingPowerSite,
+) -> Result<u8, BindingPowerError<E>> {
+    left.checked_add(right)
+        .ok_or(BindingPowerError::Overflow { category_index, site })
+}
+
+/// Execute the original assignment loop with checked arithmetic.
+///
+/// Admission is called once, before grouping, cloning, or allocating the table.
+/// The caller must prepay work and temporary/output storage for the complete
+/// supplied source domain, not treat this callback as a constant-cost token.
+/// This does not impose a rule-count cap: arbitrarily many operators may share
+/// one representable level. A production runtime caller supplies a finite
+/// compilation policy; parse-item budgets do not substitute for that policy.
+///
+/// The grouping order and descriptor construction are unchanged. Overflow
+/// refuses at its original arithmetic site and returns no partially built
+/// table. The legacy static API forwards here and reports overflow explicitly;
+/// all representable original tables are identical. This is logical admission,
+/// not a guarantee of recovering from every allocator failure.
+///
+/// `BindingPowerAdmission.v` verifies the two-pass arithmetic refinement.
+pub fn try_analyze_binding_powers<E>(
+    rules: &[InfixRuleInfo],
+    admit: impl FnOnce(&[InfixRuleInfo]) -> Result<(), E>,
+) -> Result<BindingPowerTable, BindingPowerError<E>> {
+    admit(rules).map_err(BindingPowerError::Admission)?;
     let mut table = BindingPowerTable::new();
 
     // Group infix rules by category
@@ -669,7 +731,7 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
     // 1. Non-postfix (infix) operators in declaration order
     // 2. Postfix operators above the non-postfix range, leaving a gap for
     //    unary prefix (which gets max_non_postfix_bp + 2 in lib.rs)
-    for cat_rules in by_category.values() {
+    for (category_index, cat_rules) in by_category.values().enumerate() {
         // The level of the rule currently being assigned. Starts at 2 to leave room for
         // 0 (entry) and 1. A level occupies exactly two binding-power slots — `p` and
         // `p + 1` — so the next level is `p + 2`.
@@ -685,7 +747,12 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
         // level its predecessor opened instead of starting a tighter one.
         for rule in cat_rules.iter().filter(|r| !r.is_postfix) {
             if level_is_open && !rule.shares_level_with_previous {
-                precedence += 2;
+                precedence = checked_binding_power_add(
+                    precedence,
+                    2,
+                    category_index,
+                    BindingPowerSite::InfixAdvance,
+                )?;
             }
             level_is_open = true;
 
@@ -694,8 +761,24 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
             // for both arms, which is what lets operators of DIFFERENT associativity
             // share one level.
             let (left_bp, right_bp) = match rule.associativity {
-                Associativity::Left => (precedence, precedence + 1),
-                Associativity::Right => (precedence + 1, precedence),
+                Associativity::Left => (
+                    precedence,
+                    checked_binding_power_add(
+                        precedence,
+                        1,
+                        category_index,
+                        BindingPowerSite::InfixSlot,
+                    )?,
+                ),
+                Associativity::Right => (
+                    checked_binding_power_add(
+                        precedence,
+                        1,
+                        category_index,
+                        BindingPowerSite::InfixSlot,
+                    )?,
+                    precedence,
+                ),
             };
 
             table.operators.push(InfixOperator {
@@ -726,11 +809,16 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
         // category declares no non-postfix operator at all), keeping this layout — and
         // every prefix/postfix binding power derived from it — exactly as it was.
         let first_free_bp = if level_is_open {
-            precedence + 2
+            checked_binding_power_add(precedence, 2, category_index, BindingPowerSite::FirstFree)?
         } else {
             precedence
         };
-        let mut postfix_prec = first_free_bp + 2;
+        let mut postfix_prec = checked_binding_power_add(
+            first_free_bp,
+            2,
+            category_index,
+            BindingPowerSite::PostfixStart,
+        )?;
         // `same` has the same relative-level meaning in the postfix pass as it does in
         // the infix/mixfix pass. Keeping a separate open-level bit is essential: the
         // first postfix operator cannot share the final infix level, because postfix
@@ -738,14 +826,24 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
         let mut postfix_level_is_open = false;
         for rule in cat_rules.iter().filter(|r| r.is_postfix) {
             if postfix_level_is_open && !rule.shares_level_with_previous {
-                postfix_prec += 2;
+                postfix_prec = checked_binding_power_add(
+                    postfix_prec,
+                    2,
+                    category_index,
+                    BindingPowerSite::PostfixAdvance,
+                )?;
             }
             postfix_level_is_open = true;
             table.operators.push(InfixOperator {
                 terminal: rule.terminal.clone(),
                 category: rule.category.clone(),
                 result_category: rule.result_category.clone(),
-                left_bp: postfix_prec + 1,
+                left_bp: checked_binding_power_add(
+                    postfix_prec,
+                    1,
+                    category_index,
+                    BindingPowerSite::PostfixSlot,
+                )?,
                 right_bp: 0, // unused for postfix (no right recursive call)
                 label: rule.label.clone(),
                 is_cross_category: rule.is_cross_category,
@@ -757,7 +855,7 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
         }
     }
 
-    table
+    Ok(table)
 }
 
 /// Simplified infix rule info for binding power analysis.
@@ -802,6 +900,9 @@ pub struct InfixRuleInfo {
     /// [`InfixOperator::nullary_literals`].
     pub nullary_literals: Vec<String>,
 }
+
+#[cfg(test)]
+mod admission_tests;
 
 #[cfg(test)]
 mod tests {
