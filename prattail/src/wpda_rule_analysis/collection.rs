@@ -7,6 +7,24 @@
 //! caller-owned operation at its original successful-classification site.
 
 use super::InfixSyntaxShape;
+use mettail_ast::types::CollectionType;
+
+/// The original key/value separator decision, with lazy declared spelling.
+///
+/// Only map kinds inspect the declaration. A present spelling, including an
+/// empty string, wins; absent spelling defaults to `":"`. Sequence and set
+/// kinds never inherit a separator from their enclosing result category.
+pub fn kv_sep_for<'declared>(
+    coll_type: &CollectionType,
+    declared: impl FnOnce() -> Option<&'declared str>,
+) -> Option<String> {
+    match coll_type {
+        CollectionType::HashMap | CollectionType::PathMap => declared()
+            .map(str::to_owned)
+            .or_else(|| Some(":".to_string())),
+        CollectionType::Vec | CollectionType::HashBag | CollectionType::HashSet => None,
+    }
+}
 
 /// Classification of a collection-literal rule, with the original fields.
 #[derive(Debug, Clone)]

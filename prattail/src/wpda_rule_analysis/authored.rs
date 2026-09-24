@@ -19,10 +19,11 @@ use super::binder::term_param::{TermParamObservation, TermParamReader};
 use mettail_ast::grammar::DelimitedRegionKind;
 use mettail_ast::types::CollectionType;
 use mettail_grammar_core::{
-    AuthoredDelimitedRegionKind, AuthoredName, AuthoredNameId, AuthoredNamesId, AuthoredNode,
-    AuthoredOperation, AuthoredOperationId, AuthoredParam, AuthoredParamId, AuthoredParamsId,
-    AuthoredRule, AuthoredRuleId, AuthoredRuleStore, AuthoredStoreError, AuthoredSyntax,
-    AuthoredSyntaxId, AuthoredType, AuthoredTypeId, CollectionKind,
+    AuthoredDeclarations, AuthoredDelimitedRegionKind, AuthoredName, AuthoredNameId,
+    AuthoredNamesId, AuthoredNode, AuthoredOperation, AuthoredOperationId, AuthoredParam,
+    AuthoredParamId, AuthoredParamsId, AuthoredRule, AuthoredRuleId, AuthoredRuleStore,
+    AuthoredStoreError, AuthoredSyntax, AuthoredSyntaxId, AuthoredType, AuthoredTypeId,
+    CollectionKind,
 };
 use std::fmt;
 
@@ -93,6 +94,11 @@ impl<'store> AuthoredRuleReader<'store> {
         }
     }
 
+    /// The header belongs to the same already-validated immutable arena.
+    pub(super) fn declarations(&self) -> Option<&'store AuthoredDeclarations> {
+        self.store.declarations()
+    }
+
     fn params(&self, id: AuthoredParamsId) -> &'store [AuthoredParamId] {
         match self.store.get(id.0) {
             Some(AuthoredNode::Params(params)) => params,
@@ -130,7 +136,7 @@ impl<'store> AuthoredRuleReader<'store> {
 }
 
 /// Only a finite discriminator mapping; no type AST is constructed.
-fn collection_kind(kind: CollectionKind) -> &'static CollectionType {
+pub(super) fn collection_kind(kind: CollectionKind) -> &'static CollectionType {
     match kind {
         CollectionKind::Bag => &CollectionType::HashBag,
         CollectionKind::Set => &CollectionType::HashSet,

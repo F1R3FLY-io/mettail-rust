@@ -178,16 +178,9 @@ pub(crate) fn kv_sep_for(
     coll_type: &CollectionType,
     declared: Option<&CollectionDelimiters>,
 ) -> Option<String> {
-    match coll_type {
-        // Only kv-bearing container types have a key/value separator. The
-        // declared spelling wins when present; `":"` is the per-type default.
-        CollectionType::HashMap | CollectionType::PathMap => declared
-            .and_then(|d| d.key_val_sep.clone())
-            .or_else(|| Some(":".to_string())),
-        // Sequence/set types have no key/value separator regardless of what the
-        // enclosing (possibly collection-declared) category spells out.
-        CollectionType::Vec | CollectionType::HashBag | CollectionType::HashSet => None,
-    }
+    mettail_prattail::wpda_rule_analysis::collection::kv_sep_for(coll_type, || {
+        declared.and_then(|d| d.key_val_sep.as_deref())
+    })
 }
 
 /// Try to classify a `GrammarRule` as a collection-literal rule.
@@ -208,50 +201,15 @@ pub(crate) fn classify_collection(
     rule: &GrammarRule,
     language: &LanguageDef,
 ) -> Option<CollectionShape> {
-    use mettail_prattail::wpda_rule_analysis::{
-        collection::{CollectionParamShape, CollectionRuleShape},
-        InfixSyntaxShape,
-    };
+    use mettail_prattail::wpda_rule_analysis::collection_projection::try_project_collection_rule_in;
+
     // Keep every authored position. Unlike the infix projection, a Sep with
     // a source is unsupported here and must not become an accepted plain Sep.
-    let view = CollectionRuleShape {
-        label: rule.label.to_string(),
-        term_context: rule.term_context.as_ref().map(|params| {
-            params
-                .iter()
-                .map(|param| match param {
-                    TermParam::Simple {
-                        name,
-                        ty: TypeExpr::Collection { coll_type, element },
-                    } => CollectionParamShape::SimpleCollection {
-                        name: name.to_string(),
-                        kind: coll_type,
-                        element_base: match element.as_ref() {
-                            TypeExpr::Base(element) => Some(element.to_string()),
-                            _ => None,
-                        },
-                    },
-                    _ => CollectionParamShape::Other,
-                })
-                .collect()
-        }),
-        syntax_pattern: rule.syntax_pattern.as_ref().map(|syntax| {
-            syntax
-                .iter()
-                .map(|item| match item {
-                    SyntaxExpr::Literal(text) => InfixSyntaxShape::Literal(text.clone()),
-                    SyntaxExpr::Param(name) => InfixSyntaxShape::Param(name.to_string()),
-                    SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
-                        InfixSyntaxShape::Sep {
-                            collection: collection.to_string(),
-                            separator: separator.clone(),
-                        }
-                    },
-                    _ => InfixSyntaxShape::Other,
-                })
-                .collect()
-        }),
-    };
+    let view =
+        try_project_collection_rule_in(&super::binder::MacroBinderSyntaxReader, rule, |_, _| {
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .expect("original AST collection observations are valid and admitted");
     mettail_prattail::wpda_rule_analysis::collection::classify_collection(&view, || {
         // Retain the original first-match result-category lookup, lazily after
         // successful structural classification, using the original Ident.
@@ -1614,6 +1572,7 @@ pub(crate) fn emit_is_binder_internal_collection_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("../../../../tests/support/owned_collection_reuse.rs");
     use mettail_ast::grammar::{rule_fixture, GrammarRule};
     use mettail_ast::language::CollectionCategory;
     use mettail_ast::types::CollectionType;
@@ -1818,7 +1777,8 @@ mod tests {
         ] {
             for split in [false, true] {
                 let rule = collection_baseline_rule(kind.clone(), split);
-                let shape = classify_collection(&rule, &empty_lang()).expect("original shape");
+                let shape = owned_collection_reuse::assert_parity(&rule, &empty_lang())
+                    .expect("original shape");
                 assert_eq!(shape.open_token, "open");
                 assert_eq!(shape.has_synth_paren, split);
                 assert_eq!(shape.close, "close");
@@ -1909,7 +1869,10 @@ mod tests {
             cases.push(rule);
         }
         for (index, rule) in cases.iter().enumerate() {
-            assert!(classify_collection(rule, &empty_lang()).is_none(), "case {index}");
+            assert!(
+                owned_collection_reuse::assert_parity(rule, &empty_lang()).is_none(),
+                "case {index}"
+            );
         }
     }
 
@@ -1925,7 +1888,8 @@ mod tests {
             }),
             SyntaxExpr::Literal(String::new()),
         ]);
-        let shape = classify_collection(&rule, &empty_lang()).expect("empty literals allowed");
+        let shape = owned_collection_reuse::assert_parity(&rule, &empty_lang())
+            .expect("empty literals allowed");
         assert_eq!(
             (shape.open_token, shape.close, shape.separator),
             (String::new(), String::new(), String::new())
@@ -1950,7 +1914,7 @@ mod tests {
         let vector = collection_baseline_rule(CollectionType::Vec, false);
         let map = collection_baseline_rule(CollectionType::HashMap, false);
         assert_eq!(
-            classify_collection(&map, &language)
+            owned_collection_reuse::assert_parity(&map, &language)
                 .expect("map shape")
                 .pair_separator,
             None
@@ -1958,7 +1922,7 @@ mod tests {
         for kind in [CollectionCategory::Map(custom.clone()), CollectionCategory::Pathmap(custom)] {
             language.types = vec![declaration(Some(kind))];
             assert_eq!(
-                classify_collection(&vector, &language)
+                owned_collection_reuse::assert_parity(&vector, &language)
                     .expect("vector shape")
                     .pair_separator
                     .as_deref(),
@@ -1967,7 +1931,7 @@ mod tests {
             // A first matching noncollection declaration blocks later duplicates.
             language.types.insert(0, declaration(None));
             assert_eq!(
-                classify_collection(&map, &language)
+                owned_collection_reuse::assert_parity(&map, &language)
                     .expect("map shape")
                     .pair_separator,
                 None
@@ -1977,7 +1941,7 @@ mod tests {
         defaults.key_val_sep = None;
         language.types = vec![declaration(Some(CollectionCategory::Map(defaults)))];
         assert_eq!(
-            classify_collection(&map, &language)
+            owned_collection_reuse::assert_parity(&map, &language)
                 .expect("map shape")
                 .pair_separator
                 .as_deref(),
@@ -1986,7 +1950,7 @@ mod tests {
         language.types =
             vec![declaration(Some(CollectionCategory::List(CollectionCategory::map_defaults())))];
         assert_eq!(
-            classify_collection(&map, &language)
+            owned_collection_reuse::assert_parity(&map, &language)
                 .expect("map shape")
                 .pair_separator,
             None

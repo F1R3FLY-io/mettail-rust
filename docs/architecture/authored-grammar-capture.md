@@ -482,6 +482,46 @@ independently preserved, test-only copy of the original implementation. These
 interfaces do not by themselves establish a finite installed-compilation policy
 or activate the runtime WPDA consumer.
 
+### Collection descriptors from the same readers
+
+The [collection projection](../../prattail/src/wpda_rule_analysis/collection_projection.rs)
+uses the same shallow reader interfaces, but retains the original collection
+classifier's stricter separator rule: a separator operation with a source
+expression remains `Other`. Infix projection deliberately ignores that source
+field. Sharing the readers does not make these two observations interchangeable.
+Collection kinds are borrowed during projection; the existing classifier clones
+the kind only after its original parameter checks. Optional groups remain
+unsupported positions rather than being flattened.
+
+The [owned collection adapter](../../prattail/src/wpda_rule_analysis/authored_collection.rs)
+requires the declaration header from the reader's own validated arena. Missing
+header data is an error. One caller admission prepays projection, classification,
+the possible declaration scan and their temporary storage before any of that
+work. Structural nonmatches remain successful `None` results. The caller must
+supply a valid rule handle and a budget policy for its admitted domain; this
+adapter does not itself define the installed compiler's numeric budget.
+
+Declaration lookup occurs only after structural classification succeeds. It
+finds the first result-category declaration by captured name identity, then
+inspects that declaration's collection metadata. A matching noncollection
+declaration blocks later duplicates. This is distinct from the spelling-based
+parameter and separator comparison inside the classifier.
+
+The shared key/value separator resolver inspects declared spelling only for
+map-like container kinds. An absent spelling defaults to `:`, while an empty
+declared spelling stays empty. The caller chooses which kind to supply:
+
+- A collection literal uses its **result declaration's** kind. A missing
+  declaration yields no pair separator, even for a map-shaped rule.
+- A collection slot inside a binder uses the **slot's own** kind. A vector slot
+  cannot acquire a pair separator from an enclosing map category.
+
+The [reader model](../../formal/rocq/prattail_wpda_runtime/theories/CollectionReaderProjection.v)
+composes these observation and admission laws with the existing collection
+classifier proof. Macro-versus-owned fixtures test concrete capture and reader
+correspondence. This boundary neither reconstructs source syntax nor activates
+the installed parser on its own.
+
 ### Shared binder-presence traversal
 
 The AST predicates and PraTTaIL parameter iterator share the original
