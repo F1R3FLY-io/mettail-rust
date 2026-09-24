@@ -398,20 +398,25 @@ The adapter performs four bounded phases:
    handle to the existing category census in the supplied order.
 2. Admit the input rosters and their string copies. Copy the source arena once
    after admission, creating one consuming normalization/materialization session.
-3. Run the original synthesis worker. Each user payload retains its original
-   production index while normalization changes only its current rule handle.
+3. Run the original synthesis worker. Each user payload retains both its caller
+   roster ordinal and original production index while normalization changes only
+   its current rule handle. Successful normalization records that payload in its
+   private, write-once ordinal slot, before returning to the original worker.
    Synthesized payloads have an explicit synthetic origin, not an invented
    source index. Label, collection, and binder callbacks reuse the existing
    helpers at their original call sites.
 4. Check category and category-local rule counts against the descriptor index
-   widths, then publish the complete store, categories, rows, and policy owner.
+   widths and require every source-ordinal slot to be filled. Publish the complete
+   store, categories, grouped rows, source-ordered rows, and policy owner.
    Any error returns none of those partial outputs.
 
 For example, source occurrences `[1, 0, 1]` retain that order when their rules
 belong to one category. Both occurrences of production 1 still identify its
 original reduction metadata, even if their normalized arena handles differ.
-Source production identity, arena identity, and category-local descriptor index
-are three separate coordinates.
+Caller-roster ordinal, source production identity, arena identity, and
+category-local descriptor index are separate coordinates. The two occurrences
+of production 1 have distinct ordinal slots. Source-order finalization does not
+sort production indices, scan synthesized buckets, or normalize rules again.
 
 The adapter's admission events describe actual operation sites. Whole-helper
 events prepay their supplied source domain, including temporary storage and
@@ -430,6 +435,52 @@ compare the original macro builder with the owned adapter through actual
 LanguageSpec/GrammarCore projection: complete retained rule shapes, category
 and row order, name-equality relations, and source origins. They do not establish
 equivalence of unretained Rust payloads or installed parser execution.
+
+### Binding-power inputs and checked assignment
+
+The [shared infix projection](../../prattail/src/wpda_rule_analysis/infix_projection.rs)
+uses the existing shallow rule-reader interfaces for both macro and owned
+inputs. It copies only the original classifier's observations: exact names and
+flags, top-level parameter and syntax positions, immediate base types, and
+separator payloads. Unsupported entries remain `Other`; an optional group is
+not flattened and a nested collection is not mistaken for its inner base type.
+The classifier and its binding-power algorithm remain the original ones.
+
+Binding-power input order is the caller's original rule order, not the grouped
+result-category order. For example, Add and Mul returning Int, and Eq returning
+Bool, can all operate on Int operands. Grouping their results
+before assigning precedence would move Eq relative to Mul. The explicit
+source-order view prevents that change while allowing the parser's category
+tables to keep their grouped rows. Associativity and shared-level metadata are
+read from the original production identified by each payload.
+
+The projection refuses `NonAssociative`, which the original right-associative
+Boolean cannot represent. It does not reinterpret that declaration as left
+associativity or change the language schema. Prefix precedence is not read at
+this boundary; a later consumer of the retained wider integer must check its
+own representable range. The
+[owned projection model](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredInfixProjection.v)
+reuses the original classifier observation laws and proves ordered, duplicate-
+preserving publication from the write-once slots. Concrete reader correspondence
+is also exercised by the [macro differential fixtures](../../macros/tests/support/owned_infix_reuse.rs).
+
+The [binding-power worker](../../prattail/src/binding_power.rs) exposes a fallible
+entrypoint with one whole-domain admission callback before grouping or copying.
+It retains the original sorted category traversal and separate infix and postfix
+passes. Checked additions occur at the original six arithmetic sites; even the
+postfix-gap initialization remains observable when there are no postfix rules.
+For example, 125 distinct infix levels fit, while 126 overflow at postfix-gap
+initialization. This is a bound on representable levels, not on rule count:
+thousands of operators sharing one level can still fit.
+
+Errors identify the arithmetic site and sorted category ordinal and return no
+partial table. The static entrypoint forwards to the same worker and reports
+overflow explicitly. The [arithmetic model](../../formal/rocq/prattail_wpda_runtime/theories/BindingPowerAdmission.v)
+proves equality of every successful checked table with the original mathematical
+assignment. Tests additionally compare complete descriptor payloads against an
+independently preserved, test-only copy of the original implementation. These
+interfaces do not by themselves establish a finite installed-compilation policy
+or activate the runtime WPDA consumer.
 
 ### Shared binder-presence traversal
 

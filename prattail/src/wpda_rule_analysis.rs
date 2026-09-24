@@ -28,6 +28,7 @@ pub mod factoring;
 pub mod fork_emission;
 pub mod grouping;
 pub mod guest;
+pub mod infix_projection;
 pub mod mixfix;
 pub mod native_first;
 pub mod parikh;

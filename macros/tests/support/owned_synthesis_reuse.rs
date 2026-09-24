@@ -108,11 +108,13 @@ mod owned_synthesis_reuse {
                     payload.rule.0,
                     &mut classes,
                 );
-                let expected_origin = source_positions
-                    .get(local)
-                    .map_or(AuthoredRuleOrigin::Synthetic, |index| AuthoredRuleOrigin::User {
-                        production_index: *index,
-                    });
+                let expected_origin =
+                    source_positions
+                        .get(local)
+                        .map_or(AuthoredRuleOrigin::Synthetic, |index| AuthoredRuleOrigin::User {
+                            roster_index: *index,
+                            production_index: *index,
+                        });
                 assert_eq!(
                     payload.origin, expected_origin,
                     "source occurrence is not a local rule index"

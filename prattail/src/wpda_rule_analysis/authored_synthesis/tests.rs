@@ -102,7 +102,12 @@ impl Fixture {
                 .expect("fixture declarations"),
         );
         self.core.authored_bindings = Some(AuthoredDeclarationBindings {
-            categories: vec![CategoryId(0)],
+            categories: self
+                .core
+                .categories
+                .iter()
+                .map(|category| category.id)
+                .collect(),
             tokens: vec![],
             modes: vec![],
         });
@@ -142,22 +147,23 @@ fn authored_synthesis_preserves_explicit_occurrences_duplicates_metadata_and_pre
     assert_eq!(
         rows.iter().map(|p| p.origin).collect::<Vec<_>>(),
         [
-            AuthoredRuleOrigin::User { production_index: 1 },
-            AuthoredRuleOrigin::User { production_index: 0 },
-            AuthoredRuleOrigin::User { production_index: 1 },
+            AuthoredRuleOrigin::User { roster_index: 0, production_index: 1 },
+            AuthoredRuleOrigin::User { roster_index: 1, production_index: 0 },
+            AuthoredRuleOrigin::User { roster_index: 2, production_index: 1 },
         ]
     );
     assert!(rows.iter().all(|p| p.rule != id));
     assert_eq!(
         rows.iter()
             .map(|p| match p.origin {
-                AuthoredRuleOrigin::User { production_index } =>
+                AuthoredRuleOrigin::User { production_index, .. } =>
                     core.productions[production_index].constructor,
                 AuthoredRuleOrigin::Synthetic => panic!("no synthetic data-category rule"),
             })
             .collect::<Vec<_>>(),
         [ConstructorId(1), ConstructorId(0), ConstructorId(1)]
     );
+    assert_eq!(output.source_order, *rows);
     let source = core.authored.as_ref().expect("source store");
     for index in 0..source.len() {
         assert_eq!(source.get(index as u32), output.store.get(index as u32));
@@ -185,7 +191,7 @@ fn authored_synthesis_terminal_only_normalization_preserves_original_handle() {
         output.per_category,
         [vec![AuthoredRulePayload {
             rule: id,
-            origin: AuthoredRuleOrigin::User { production_index: 0 },
+            origin: AuthoredRuleOrigin::User { roster_index: 0, production_index: 0 },
         }]]
     );
     assert_eq!(&output.store, core.authored.as_ref().expect("source store"));
@@ -207,6 +213,7 @@ fn authored_synthesis_empty_roster_keeps_declarations_and_synthetic_origins() {
     assert!(output.per_category[0]
         .iter()
         .all(|row| row.origin == AuthoredRuleOrigin::Synthetic));
+    assert!(output.source_order.is_empty());
 }
 
 #[test]
@@ -335,6 +342,189 @@ fn authored_synthesis_collection_uses_original_defaults_and_known_none_fallback(
     assert_eq!(name.spelling, "Expr");
 }
 
+#[test]
+fn source_order_is_recorded_during_grouped_normalization_without_rescan() {
+    let mut f = Fixture::new(None, true);
+    let expr = f.rule(vec![AuthoredLegacyItem::NonTerminal {
+        ident: f.category,
+        kind: NonTerminalKind::Category,
+    }]);
+    f.production(Some(expr), "Original");
+    let other = AuthoredNameId(
+        f.store
+            .try_push(AuthoredNode::Name(AuthoredName {
+                spelling: "Other".into(),
+                equality_class: 2,
+            }))
+            .expect("second category"),
+    );
+    f.core.categories.push(Category {
+        id: CategoryId(1),
+        name: "Other".into(),
+        carrier: Carrier::Dynamic,
+        primary: false,
+        admits_variables: false,
+    });
+    let mut declaration = f.header.categories[0].clone();
+    declaration.name = other;
+    f.header.categories.push(declaration);
+    f.category = other;
+    let other_rule = f.rule(vec![AuthoredLegacyItem::NonTerminal {
+        ident: other,
+        kind: NonTerminalKind::Category,
+    }]);
+    f.production(Some(other_rule), "Original");
+    f.core.productions[1].result = CategoryId(1);
+    f.core.reductions[1].output_category = CategoryId(1);
+    let core = f.finish();
+    let writes = Rc::new(RefCell::new(Vec::new()));
+    let recorder = Rc::clone(&writes);
+    let output = derive_authored_rules(&core, &[1, 0, 1, 0], move |event| {
+        if let AuthoredSynthesisEvent::SourceOrderWrite(payload) = event {
+            recorder.borrow_mut().push(payload.origin);
+        }
+        Ok::<_, Infallible>(())
+    })
+    .expect("grouped normalization and source order");
+    assert_eq!(output.categories, ["Other", "Expr"]);
+    let expected: Vec<_> = [1, 0, 1, 0]
+        .into_iter()
+        .enumerate()
+        .map(|(roster_index, production_index)| AuthoredRuleOrigin::User {
+            roster_index,
+            production_index,
+        })
+        .collect();
+    assert_eq!(
+        output
+            .source_order
+            .iter()
+            .map(|payload| payload.origin)
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(*writes.borrow(), [expected[0], expected[2], expected[1], expected[3]]);
+    assert_eq!(output.source_order[0], output.per_category[0][0]);
+    assert_eq!(output.source_order[2], output.per_category[0][1]);
+    assert_eq!(output.source_order[1], output.per_category[1][0]);
+    assert_eq!(output.source_order[3], output.per_category[1][1]);
+    for payload in &output.source_order {
+        let AuthoredRuleOrigin::User { production_index, .. } = payload.origin else {
+            panic!("source-order rows are original");
+        };
+        assert_ne!(Some(payload.rule), core.productions[production_index].authored);
+    }
+}
+
+#[test]
+fn normalized_source_slots_are_checked_write_once_and_never_partially_finalized() {
+    let payload = |roster_index, production_index| AuthoredRulePayload {
+        rule: AuthoredRuleId(7),
+        origin: AuthoredRuleOrigin::User { roster_index, production_index },
+    };
+    let mut slots = vec![None, None];
+    let mut allow = |_: AuthoredSynthesisEvent<'_>| Ok::<_, Infallible>(());
+    record_normalized(&[5, 5], &mut slots, payload(1, 5), &mut allow)
+        .expect("second ordinal first");
+    assert_eq!(slots, [None, Some(payload(1, 5))]);
+    assert_eq!(
+        record_normalized(&[5, 5], &mut slots, payload(1, 5), &mut allow),
+        Err(AuthoredSynthesisError::DuplicateNormalizedOccurrence(1)),
+    );
+    assert_eq!(
+        record_normalized(&[5, 5], &mut slots, payload(0, 6), &mut allow),
+        Err(AuthoredSynthesisError::RosterProductionMismatch {
+            roster_index: 0,
+            expected: 5,
+            actual: 6
+        }),
+    );
+    assert_eq!(
+        record_normalized(&[5, 5], &mut slots, payload(2, 5), &mut allow),
+        Err(AuthoredSynthesisError::InvalidRosterIndex(2)),
+    );
+    assert_eq!(
+        record_normalized(
+            &[5, 5],
+            &mut slots,
+            AuthoredRulePayload {
+                rule: AuthoredRuleId(8),
+                origin: AuthoredRuleOrigin::Synthetic,
+            },
+            &mut allow
+        ),
+        Err(AuthoredSynthesisError::UnexpectedSyntheticNormalization),
+    );
+    assert_eq!(slots, [None, Some(payload(1, 5))]);
+    assert_eq!(
+        finish_source_order(slots.clone(), &mut allow),
+        Err(AuthoredSynthesisError::MissingNormalizedOccurrence(0))
+    );
+    record_normalized(&[5, 5], &mut slots, payload(0, 5), &mut allow).expect("first ordinal last");
+    assert_eq!(
+        finish_source_order(slots, &mut allow).expect("complete source view"),
+        [payload(0, 5), payload(1, 5)]
+    );
+    let mut missing_storage = [];
+    assert_eq!(
+        record_normalized(&[5], &mut missing_storage, payload(0, 5), &mut allow),
+        Err(AuthoredSynthesisError::InvalidRosterIndex(0)),
+    );
+}
+
+#[test]
+fn source_order_admission_refusal_precedes_write_and_finalization_copy() {
+    let payload = AuthoredRulePayload {
+        rule: AuthoredRuleId(7),
+        origin: AuthoredRuleOrigin::User { roster_index: 0, production_index: 5 },
+    };
+    for deny_write in [false, true] {
+        let mut slots = [None];
+        let mut trace = Vec::new();
+        let result = record_normalized(&[5], &mut slots, payload, &mut |event| {
+            let tag = event_tag(&event);
+            trace.push(tag);
+            if tag
+                == if deny_write {
+                    "source-order-write"
+                } else {
+                    "source-order-check"
+                }
+            {
+                Err("denied")
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result, Err(AuthoredSynthesisError::Admission("denied")));
+        assert_eq!(slots, [None]);
+        assert_eq!(
+            trace,
+            if deny_write {
+                vec!["source-order-check", "source-order-write"]
+            } else {
+                vec!["source-order-check"]
+            }
+        );
+    }
+    for refusal in 0..3 {
+        let mut seen = Vec::new();
+        let result = finish_source_order(vec![Some(payload), Some(payload)], &mut |event| {
+            seen.push(event_tag(&event));
+            if seen.len() == refusal + 1 {
+                Err(refusal)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result, Err(AuthoredSynthesisError::Admission(refusal)));
+        assert_eq!(
+            seen,
+            ["source-order-output", "source-order-read", "source-order-read"][..=refusal]
+        );
+    }
+}
+
 fn event_tag(event: &AuthoredSynthesisEvent<'_>) -> &'static str {
     match event {
         AuthoredSynthesisEvent::Normalization(_) => "normalization",
@@ -343,6 +533,12 @@ fn event_tag(event: &AuthoredSynthesisEvent<'_>) -> &'static str {
         AuthoredSynthesisEvent::NativeProbe { .. } => "native",
         AuthoredSynthesisEvent::StoreCopy(_) => "copy",
         AuthoredSynthesisEvent::StringCopy(_) => "string",
+        AuthoredSynthesisEvent::SourceReceiptSlots(_) => "source-receipts",
+        AuthoredSynthesisEvent::SourceOrderSlots(_) => "source-order-slots",
+        AuthoredSynthesisEvent::SourceOrderCheck(_) => "source-order-check",
+        AuthoredSynthesisEvent::SourceOrderWrite(_) => "source-order-write",
+        AuthoredSynthesisEvent::SourceOrderOutputSlots(_) => "source-order-output",
+        AuthoredSynthesisEvent::SourceOrderRead(_) => "source-order-read",
         _ => "source",
     }
 }
@@ -371,6 +567,16 @@ fn authored_synthesis_one_policy_refuses_every_reached_site_without_suffix() {
     let expected = expected.borrow().clone();
     assert!(expected.contains(&"normalization"));
     assert!(expected.contains(&"binder"));
+    for tag in [
+        "source-receipts",
+        "source-order-slots",
+        "source-order-check",
+        "source-order-write",
+        "source-order-output",
+        "source-order-read",
+    ] {
+        assert!(expected.contains(&tag), "new admission site {tag} reached");
+    }
     for refusal in 0..expected.len() {
         let actual = Rc::new(RefCell::new(Vec::new()));
         let recorder = Rc::clone(&actual);

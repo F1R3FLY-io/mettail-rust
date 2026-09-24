@@ -9,6 +9,10 @@
 //! publication with the existing synthesis worker. Helper-specific models cover
 //! the original label, collection, binder, and category-census observations.
 //! This adapter does not establish native decoder parity or parser cutover.
+//! `AuthoredInfixProjection.v` additionally checks write-once normalized source
+//! occurrences: their explicit caller-roster ordinals are distinct from global
+//! production indices and category-local indices. Finalization never reruns the
+//! normalizer or reconstructs source order from grouped/synthetic rows.
 
 use super::authored::AuthoredRuleReader;
 use super::authored_declarations::{AuthoredDeclarationReader, AuthoredDeclarationReaderError};
@@ -37,8 +41,18 @@ use std::cell::RefCell;
 /// and the eventual category-local WPDA rule index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthoredRuleOrigin {
-    User { production_index: usize },
+    User {
+        roster_index: usize,
+        production_index: usize,
+    },
     Synthetic,
+}
+
+/// Explicit source coordinates staged before category grouping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuthoredSourceOccurrence {
+    pub roster_index: usize,
+    pub production_index: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +65,9 @@ pub struct AuthoredSynthesisOutput<P> {
     pub store: AuthoredRuleStore,
     pub categories: Vec<String>,
     pub per_category: Vec<Vec<AuthoredRulePayload>>,
+    /// Normalized original occurrences in the exact caller-supplied order.
+    /// Repeated production indices retain distinct roster ordinals.
+    pub source_order: Vec<AuthoredRulePayload>,
     pub policy: P,
 }
 
@@ -71,6 +88,9 @@ pub enum NativeProbe {
 pub enum AuthoredSynthesisEvent<'a> {
     ValidateSource(&'a GrammarCoreV1),
     OriginalRosterSlots(usize),
+    SourceReceiptSlots(usize),
+    /// Prepay allocation and initialization of all private write-once slots.
+    SourceOrderSlots(usize),
     OriginalOccurrence(usize),
     CategoryCensus {
         source: &'a GrammarCoreV1,
@@ -99,7 +119,14 @@ pub enum AuthoredSynthesisEvent<'a> {
         category: usize,
         count: usize,
     },
-    Synthesis(SynthesisEvent<'a, usize, usize, AuthoredRulePayload, CollectionKind>),
+    SourceOrderCheck(&'a AuthoredRulePayload),
+    SourceOrderWrite(&'a AuthoredRulePayload),
+    SourceOrderOutputSlots(usize),
+    /// Prepay this slot read and the successful output payload copy/push.
+    SourceOrderRead(usize),
+    Synthesis(
+        SynthesisEvent<'a, AuthoredSourceOccurrence, usize, AuthoredRulePayload, CollectionKind>,
+    ),
     Normalization(AuthoredNormalizationEvent<'a>),
     Binder(BinderPresenceEvent<AuthoredRuleId, AuthoredParamId, AuthoredParamsId>),
 }
@@ -110,9 +137,24 @@ pub enum AuthoredSynthesisError<E> {
     Declaration(AuthoredDeclarationReaderError),
     InvalidOccurrence(usize),
     MissingAuthoredRule(usize),
-    InvalidAuthoredRule { occurrence: usize, rule: AuthoredRuleId },
+    InvalidAuthoredRule {
+        occurrence: usize,
+        rule: AuthoredRuleId,
+    },
+    InvalidRosterIndex(usize),
+    RosterProductionMismatch {
+        roster_index: usize,
+        expected: usize,
+        actual: usize,
+    },
+    DuplicateNormalizedOccurrence(usize),
+    MissingNormalizedOccurrence(usize),
+    UnexpectedSyntheticNormalization,
     MissingCategoryBinding(usize),
-    UnavailableObservation { category: usize, probe: NativeProbe },
+    UnavailableObservation {
+        category: usize,
+        probe: NativeProbe,
+    },
     AbsentNativeObservation(usize),
     Normalization(AuthoredNormalizationError<E>),
     Binder(BinderPresenceError<E>),
@@ -151,6 +193,58 @@ fn reserve<T, E>(count: usize) -> Outcome<Vec<T>, E> {
     Ok(values)
 }
 
+fn record_normalized<P, E>(
+    expected: &[usize],
+    slots: &mut [Option<AuthoredRulePayload>],
+    payload: AuthoredRulePayload,
+    policy: &mut P,
+) -> Outcome<(), E>
+where
+    P: for<'event> FnMut(AuthoredSynthesisEvent<'event>) -> Result<(), E>,
+{
+    use AuthoredSynthesisError as Error;
+    admit(policy, AuthoredSynthesisEvent::SourceOrderCheck(&payload))?;
+    let AuthoredRuleOrigin::User { roster_index, production_index } = payload.origin else {
+        return Err(Error::UnexpectedSyntheticNormalization);
+    };
+    let expected = *expected
+        .get(roster_index)
+        .ok_or(Error::InvalidRosterIndex(roster_index))?;
+    if production_index != expected {
+        return Err(Error::RosterProductionMismatch {
+            roster_index,
+            expected,
+            actual: production_index,
+        });
+    }
+    let slot = slots
+        .get_mut(roster_index)
+        .ok_or(Error::InvalidRosterIndex(roster_index))?;
+    if slot.is_some() {
+        return Err(Error::DuplicateNormalizedOccurrence(roster_index));
+    }
+    admit(policy, AuthoredSynthesisEvent::SourceOrderWrite(&payload))?;
+    *slot = Some(payload);
+    Ok(())
+}
+
+fn finish_source_order<P, E>(
+    slots: Vec<Option<AuthoredRulePayload>>,
+    policy: &mut P,
+) -> Outcome<Vec<AuthoredRulePayload>, E>
+where
+    P: for<'event> FnMut(AuthoredSynthesisEvent<'event>) -> Result<(), E>,
+{
+    admit(policy, AuthoredSynthesisEvent::SourceOrderOutputSlots(slots.len()))?;
+    let mut source_order = reserve(slots.len())?;
+    for index in 0..slots.len() {
+        admit(policy, AuthoredSynthesisEvent::SourceOrderRead(index))?;
+        let slot = slots[index];
+        source_order.push(slot.ok_or(AuthoredSynthesisError::MissingNormalizedOccurrence(index))?);
+    }
+    Ok(source_order)
+}
+
 /// Derive category buckets through the same worker used by macro generation.
 ///
 /// `original_occurrences` is an ordered source receipt supplied by the caller,
@@ -175,7 +269,12 @@ where
         .expect("declaration reader checked source store");
     admit(&mut policy, Event::OriginalRosterSlots(original_occurrences.len()))?;
     let mut original_rules = reserve(original_occurrences.len())?;
-    for &occurrence in original_occurrences {
+    admit(&mut policy, Event::SourceReceiptSlots(original_occurrences.len()))?;
+    let mut source_receipts = reserve(original_occurrences.len())?;
+    admit(&mut policy, Event::SourceOrderSlots(original_occurrences.len()))?;
+    let mut normalized_source = reserve(original_occurrences.len())?;
+    normalized_source.resize(original_occurrences.len(), None);
+    for (roster_index, &occurrence) in original_occurrences.iter().enumerate() {
         admit(&mut policy, Event::OriginalOccurrence(occurrence))?;
         let production = core
             .productions
@@ -188,6 +287,10 @@ where
             return Err(Error::InvalidAuthoredRule { occurrence, rule });
         }
         original_rules.push(rule);
+        source_receipts.push(AuthoredSourceOccurrence {
+            roster_index,
+            production_index: occurrence,
+        });
     }
     admit(&mut policy, Event::CategoryCensus { source: core, rules: &original_rules })?;
     let categories = reader
@@ -199,7 +302,7 @@ where
     }
     admit(&mut policy, Event::UserInputSlots(original_occurrences.len()))?;
     let mut users = reserve(original_occurrences.len())?;
-    for (occurrence, rule) in original_occurrences.iter().zip(&original_rules) {
+    for (occurrence, rule) in source_receipts.iter().zip(&original_rules) {
         let category = reader.rule_reader().rule(*rule).category;
         users.push(UserInput {
             category: copy(&mut policy, &reader.rule_reader().name(category).payload().spelling)?,
@@ -230,6 +333,8 @@ where
         source: core,
         reader,
         original_rules: &original_rules,
+        original_occurrences,
+        normalized_source,
         session: AuthoredNormalizationSession::new(store.clone()),
         policy,
     };
@@ -245,10 +350,12 @@ where
             return Err(Error::RuleIndexOverflow(category));
         }
     }
+    let source_order = finish_source_order(adapter.normalized_source, &mut adapter.policy)?;
     Ok(AuthoredSynthesisOutput {
         store: adapter.session.into_store(),
         categories,
         per_category,
+        source_order,
         policy: adapter.policy,
     })
 }
@@ -257,6 +364,8 @@ struct OwnedSynthesisAdapter<'core, 'rules, P> {
     source: &'core GrammarCoreV1,
     reader: AuthoredDeclarationReader<'core>,
     original_rules: &'rules [AuthoredRuleId],
+    original_occurrences: &'rules [usize],
+    normalized_source: Vec<Option<AuthoredRulePayload>>,
     session: AuthoredNormalizationSession,
     policy: P,
 }
@@ -265,7 +374,7 @@ impl<P, E> TrySynthesisAdapter for OwnedSynthesisAdapter<'_, '_, P>
 where
     P: for<'event> FnMut(AuthoredSynthesisEvent<'event>) -> Result<(), E>,
 {
-    type SourceUser = usize;
+    type SourceUser = AuthoredSourceOccurrence;
     type SourceType = usize;
     type RulePayload = AuthoredRulePayload;
     type CollectionKind = CollectionKind;
@@ -275,12 +384,18 @@ where
         admit(&mut self.policy, AuthoredSynthesisEvent::Synthesis(event))
     }
 
-    fn clone_user(&mut self, occurrence: &usize) -> Outcome<AuthoredRulePayload, E> {
+    fn clone_user(
+        &mut self,
+        occurrence: &AuthoredSourceOccurrence,
+    ) -> Outcome<AuthoredRulePayload, E> {
         Ok(AuthoredRulePayload {
-            rule: self.source.productions[*occurrence]
+            rule: self.source.productions[occurrence.production_index]
                 .authored
                 .expect("selected source occurrence was checked"),
-            origin: AuthoredRuleOrigin::User { production_index: *occurrence },
+            origin: AuthoredRuleOrigin::User {
+                roster_index: occurrence.roster_index,
+                production_index: occurrence.production_index,
+            },
         })
     }
 
@@ -289,17 +404,23 @@ where
             source,
             reader,
             original_rules,
+            original_occurrences,
+            mut normalized_source,
             session,
             mut policy,
         } = self;
         let (session, current) = session
             .normalize(rule.rule, |event| policy(AuthoredSynthesisEvent::Normalization(event)))
             .map_err(AuthoredSynthesisError::Normalization)?;
-        rule.rule = current;
+        let updated = AuthoredRulePayload { rule: current, origin: rule.origin };
+        record_normalized(original_occurrences, &mut normalized_source, updated, &mut policy)?;
+        *rule = updated;
         Ok(Self {
             source,
             reader,
             original_rules,
+            original_occurrences,
+            normalized_source,
             session,
             policy,
         })
@@ -323,6 +444,8 @@ where
             source,
             reader,
             original_rules,
+            original_occurrences,
+            normalized_source,
             session,
             mut policy,
         } = self;
@@ -336,6 +459,8 @@ where
                 source,
                 reader,
                 original_rules,
+                original_occurrences,
+                normalized_source,
                 session,
                 policy,
             },

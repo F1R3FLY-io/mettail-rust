@@ -13,15 +13,12 @@
 //! token has multiple candidate result categories.
 
 use crate::gen::native::NativeTypeFromSynType;
-use mettail_ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
+use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
-use mettail_ast::types::TypeExpr;
 use mettail_prattail::binding_power::{
     analyze_binding_powers, BindingPowerTable, InfixOperator, InfixRuleInfo,
 };
-use mettail_prattail::wpda_rule_analysis::{
-    InfixParamShape, InfixRuleShape, InfixSyntaxShape, InfixTypeShape, IDENT_CAPTURE_KIND_NAME,
-};
+use mettail_prattail::wpda_rule_analysis::{InfixRuleShape, IDENT_CAPTURE_KIND_NAME};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -81,53 +78,18 @@ pub(super) fn project_infix_rule(rule: &GrammarRule) -> InfixRuleShape {
         mettail_ast::grammar::NonTerminalKind::Ident,
         "the shared capture kind must retain the AST's builtin Ident meaning",
     );
-    InfixRuleShape {
-        label: rule.label.to_string(),
-        category: rule.category.to_string(),
-        is_right_assoc: rule.is_right_assoc,
-        shares_level_with_previous: rule.shares_level_with_previous,
-        term_context: rule.term_context.as_ref().map(|params| {
-            params
-                .iter()
-                .map(|param| match param {
-                    TermParam::Simple { name, ty } => InfixParamShape::Simple {
-                        name: name.to_string(),
-                        ty: project_infix_type(ty),
-                    },
-                    _ => InfixParamShape::Other,
-                })
-                .collect()
-        }),
-        syntax_pattern: rule.syntax_pattern.as_ref().map(|pattern| {
-            pattern
-                .iter()
-                .map(|item| match item {
-                    SyntaxExpr::Literal(text) => InfixSyntaxShape::Literal(text.clone()),
-                    SyntaxExpr::Param(name) => InfixSyntaxShape::Param(name.to_string()),
-                    SyntaxExpr::Op(PatternOp::Sep { collection, separator, .. }) => {
-                        InfixSyntaxShape::Sep {
-                            collection: collection.to_string(),
-                            separator: separator.clone(),
-                        }
-                    },
-                    _ => InfixSyntaxShape::Other,
-                })
-                .collect()
-        }),
-    }
-}
-
-fn project_infix_type(ty: &TypeExpr) -> InfixTypeShape {
-    match ty {
-        TypeExpr::Base(name) => InfixTypeShape::Base(name.to_string()),
-        TypeExpr::Collection { element, .. } => InfixTypeShape::Collection {
-            element_base: match element.as_ref() {
-                TypeExpr::Base(name) => Some(name.to_string()),
-                _ => None,
-            },
+    mettail_prattail::wpda_rule_analysis::infix_projection::try_project_infix_rule_in(
+        &super::binder::MacroBinderSyntaxReader,
+        rule,
+        if rule.is_right_assoc {
+            mettail_grammar_core::Associativity::Right
+        } else {
+            mettail_grammar_core::Associativity::Left
         },
-        _ => InfixTypeShape::Other,
-    }
+        rule.shares_level_with_previous,
+        |_, _| Ok::<_, std::convert::Infallible>(()),
+    )
+    .expect("original AST infix observations are valid and admitted")
 }
 
 /// Public re-export of `classify_rule` for use in `semantic_actions.rs`.
@@ -888,6 +850,8 @@ fn emit_mixfix_parts_fn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mettail_prattail::wpda_rule_analysis::{InfixParamShape, InfixSyntaxShape, InfixTypeShape};
+    include!("../../../../tests/support/owned_infix_reuse.rs");
     use mettail_ast::grammar::{rule_fixture, GrammarRule, PatternOp, SyntaxExpr, TermParam};
     use mettail_ast::types::TypeExpr;
     use mettail_prattail::binding_power::{Associativity, InfixRuleInfo, MixfixPart, MixfixRep};
@@ -944,6 +908,7 @@ mod tests {
     }
 
     fn assert_projection_baseline(rule: &GrammarRule, expected: InfixRuleInfo) {
+        owned_infix_reuse::assert_owned_projection(rule);
         let actual = classify_rule(rule).expect("original classifier must accept this fixture");
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
     }
