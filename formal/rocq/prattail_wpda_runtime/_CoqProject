@@ -93,6 +93,7 @@ theories/SyntheticRuleProjection.v
 theories/CollectionClassifierProjection.v
 theories/BinderOptionalProjection.v
 theories/TermParamReaderProjection.v
+theories/BinderPresenceProjection.v
 theories/TermContextItemsProjection.v
 theories/ContextItemsAdmission.v
 theories/BinderRuleProjection.v
