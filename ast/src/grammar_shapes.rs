@@ -33,7 +33,7 @@
 //! No code change in `binder.rs`, `prefix.rs`, `infix.rs`, or
 //! `semantic_actions.rs` is needed for the shared shape recognizers.
 
-use crate::grammar::{GrammarItem, GrammarRule, SyntaxExpr, TermParam};
+use crate::grammar::{GrammarRule, SyntaxExpr, TermParam};
 use crate::language::LanguageDef;
 use crate::types::{CollectionType, EvalMode, TypeExpr};
 use std::collections::HashSet;
@@ -53,17 +53,14 @@ use std::collections::HashSet;
 /// ★ [`TermParam::Optional`] is the case a flat `iter().any(matches!(…))` gets wrong.
 /// `#opt(…)` is a *container* of params, so an abstraction can sit one level down —
 /// `#opt(^x.body:[D -> C])` declares a binder that a non-recursive scan cannot see.
-/// No grammar in the corpus spells that today (measured: the recursive and flat forms
-/// agree on all 54 declared languages), so recursing changes no current answer. It is
-/// written recursively because the shape is *already legal* in the parser
-/// (`ast/src/grammar.rs::parse_term_param` accepts nested params), so the flat form is
-/// a hole waiting for the first grammar that steps in it, not a simplification.
+/// The shared explicit parameter worklist descends through these containers in
+/// declaration order without using the native call stack. It preserves the
+/// recursive predicate's answer, including arbitrarily nested optional groups.
 pub fn param_declares_binder(param: &TermParam) -> bool {
-    match param {
-        TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => true,
-        TermParam::Optional { params } => params.iter().any(param_declares_binder),
-        TermParam::Simple { .. } | TermParam::GuardBody { .. } => false,
-    }
+    mettail_grammar_core::term_param_walk::params_declares_binder(
+        &crate::grammar::AstTermParamReader,
+        std::slice::from_ref(param),
+    )
 }
 
 /// Whether a single grammar rule binds a variable.
@@ -73,7 +70,7 @@ pub fn param_declares_binder(param: &TermParam) -> bool {
 /// | style | where binding is spelled | recognized by |
 /// |---|---|---|
 /// | judgement (`Lam . ^x.body:[T -> T] \|- … : T ;`) | `term_context` params | [`param_declares_binder`] |
-/// | legacy positional (`Lam . "λ" <Name> "." Proc ;`) | `items` | [`GrammarItem::Binder`] |
+/// | legacy positional (`Lam . "λ" <Name> "." Proc ;`) | `items` | [`crate::grammar::GrammarItem::Binder`] |
 ///
 /// Both are consulted, unconditionally. An earlier copy of this predicate consulted
 /// `items` only via `term_context.as_ref().map(…).unwrap_or_else(…)` — i.e. only when
@@ -83,15 +80,10 @@ pub fn param_declares_binder(param: &TermParam) -> bool {
 /// the either/or form encodes an assumption about the two styles being mutually
 /// exclusive that nothing in `ast/src/grammar.rs` enforces.
 pub fn rule_declares_binder(rule: &GrammarRule) -> bool {
-    let binds_in_context = rule
-        .term_context
-        .as_ref()
-        .is_some_and(|params| params.iter().any(param_declares_binder));
-    let binds_in_items = rule
-        .items
-        .iter()
-        .any(|item| matches!(item, GrammarItem::Binder { .. }));
-    binds_in_context || binds_in_items
+    mettail_grammar_core::term_param_walk::rule_declares_binder(
+        &crate::grammar::AstTermParamReader,
+        rule,
+    )
 }
 
 /// **Does this language declare any binder?**
@@ -129,7 +121,10 @@ pub fn rule_declares_binder(rule: &GrammarRule) -> bool {
 /// macro applies `merge::apply_*` before codegen, and
 /// `auto_inject::reconstruct_language_def` replays those same passes.
 pub fn declares_binder(language: &LanguageDef) -> bool {
-    language.terms.iter().any(rule_declares_binder)
+    mettail_grammar_core::term_param_walk::declares_binder(
+        &crate::grammar::AstTermParamReader,
+        language.terms.iter(),
+    )
 }
 
 /// Recognized shape of a unary-prefix rule.

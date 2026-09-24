@@ -28,6 +28,7 @@ mod semantic_machine;
 mod semantic_term;
 mod string_literal;
 mod term_param;
+pub mod term_param_walk;
 mod theorem;
 mod theory_image;
 mod theory_image_codec;

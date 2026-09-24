@@ -1,9 +1,10 @@
 //! Borrowed original AST observations and constructors for shared consumers.
 
-use super::{GrammarItem, TermParam};
+use super::{GrammarItem, GrammarRule, TermParam};
 use crate::types::{CollectionType, TypeExpr};
 use mettail_grammar_core::{
-    context_items::ContextItemsReader, TermParamObservation, TermParamReader,
+    context_items::ContextItemsReader, term_param_walk::BinderPresenceReader, TermParamObservation,
+    TermParamReader,
 };
 use syn::Ident;
 
@@ -39,6 +40,23 @@ impl<'syntax> TermParamReader<'syntax> for AstTermParamReader {
             },
             TermParam::Optional { params } => TermParamObservation::Optional { params },
         }
+    }
+}
+
+impl<'syntax> BinderPresenceReader<'syntax> for AstTermParamReader {
+    type Rule = &'syntax GrammarRule;
+    type Item = GrammarItem;
+
+    fn context(&self, rule: Self::Rule) -> Option<Self::Parameters> {
+        rule.term_context.as_deref()
+    }
+
+    fn items(&self, rule: Self::Rule) -> &'syntax [Self::Item] {
+        &rule.items
+    }
+
+    fn item_is_binder(&self, item: &Self::Item) -> bool {
+        matches!(item, GrammarItem::Binder { .. })
     }
 }
 
