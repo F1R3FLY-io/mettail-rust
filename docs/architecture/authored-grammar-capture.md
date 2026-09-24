@@ -482,6 +482,44 @@ independently preserved, test-only copy of the original implementation. These
 interfaces do not by themselves establish a finite installed-compilation policy
 or activate the runtime WPDA consumer.
 
+### Atomic and unary descriptors without another classifier
+
+The [owned atomic adapter](../../prattail/src/wpda_rule_analysis/authored_atomic.rs)
+calls the existing infix observation projection, the shared legacy-item map,
+and the original atomic classifier. The legacy map retains every position:
+unsupported binder or collection items remain `Other`, and all seven stored
+nonterminal kinds are copied directly, never inferred again from their names.
+Judgement syntax keeps its existing priority over legacy items; a rejected
+judgement does not retry the legacy path.
+
+The unary-prefix helper remains in the AST crate, below the parser analysis
+dependency. Its original public function and the owned reader call one generic
+implementation of the same predicate. The helper inspects only the immediate
+parameter and type, not optional children or nested collection elements. Its
+name comparisons use rendered spelling, including raw identifier prefixes,
+not retained equality classes. It still copies the trigger before checking the
+final parameter reference, even when that last check rejects the rule.
+
+Literal resolution stays lazy and opaque. The owned callback receives the
+exact retained singleton Category name handle; the macro callback keeps its
+original identifier and native resolver. This adapter does not evaluate a
+literal, reconstruct source, or establish native payload equivalence by itself.
+It requires no declaration header when the injected resolver needs none.
+
+One admission callback prepays the complete operation before source reads and
+copies. The existing infix projection's explicit `NonAssociative` refusal is
+propagated; this is a restriction of the current shared projection interface,
+not a claim that atomic decisions depend on associativity. No flag is silently
+reinterpreted. Installed-compiler integration must handle the richer profile
+without weakening its existing semantics.
+
+The [unary reader model](../../formal/rocq/prattail_wpda_runtime/theories/UnaryPrefixReaderProjection.v)
+proves result and read/copy-order correspondence and composes it with the
+existing atomic classifier model. The [owned differential fixtures](../../macros/tests/support/owned_atomic_reuse.rs)
+extend the unchanged macro baselines, including literal callback handles,
+unsupported positions, raw spelling, and admission refusal. These checks do
+not establish installed-parser cutover or a finite production resource policy.
+
 ### Collection descriptors from the same readers
 
 The [collection projection](../../prattail/src/wpda_rule_analysis/collection_projection.rs)

@@ -17,7 +17,9 @@ use crate::binding_power::{Associativity, InfixRuleInfo, MixfixPart, MixfixRep};
 
 pub mod atomic;
 pub mod atomic_prefix;
+pub mod atomic_projection;
 pub mod authored;
+pub mod authored_atomic;
 pub mod authored_binder;
 pub mod authored_collection;
 pub mod authored_declarations;

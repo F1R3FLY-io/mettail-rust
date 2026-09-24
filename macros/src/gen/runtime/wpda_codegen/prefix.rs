@@ -191,31 +191,20 @@ fn classify_atomic_descriptor(
     language: &LanguageDef,
 ) -> mettail_prattail::wpda_rule_analysis::atomic::AtomicDescriptor<AtomicShape> {
     use mettail_prattail::wpda_rule_analysis::atomic::{
-        classify_atomic as classify_shared_atomic, AtomicUnaryPrefix, LegacyAtomicItem,
-        LegacyAtomicKind,
+        classify_atomic as classify_shared_atomic, AtomicUnaryPrefix,
+    };
+    use mettail_prattail::wpda_rule_analysis::atomic_projection::{
+        project_legacy_atomic_items, LegacyAtomicObservation,
     };
 
     let view = super::infix::project_infix_rule(rule);
-    let items: Vec<_> = rule
-        .items
-        .iter()
-        .map(|item| match item {
-            GrammarItem::NonTerminal { kind, ident } => LegacyAtomicItem::NonTerminal {
-                kind: match kind {
-                    NonTerminalKind::Integer => LegacyAtomicKind::Integer,
-                    NonTerminalKind::Boolean => LegacyAtomicKind::Boolean,
-                    NonTerminalKind::StringLiteral => LegacyAtomicKind::StringLiteral,
-                    NonTerminalKind::FloatLiteral => LegacyAtomicKind::FloatLiteral,
-                    NonTerminalKind::Var => LegacyAtomicKind::Var,
-                    NonTerminalKind::Ident => LegacyAtomicKind::Ident,
-                    NonTerminalKind::Category => LegacyAtomicKind::Category,
-                },
-                ident: ident.to_string(),
-            },
-            GrammarItem::Terminal(text) => LegacyAtomicItem::Terminal(text.clone()),
-            _ => LegacyAtomicItem::Other,
-        })
-        .collect();
+    let items = project_legacy_atomic_items(&rule.items, |item| match item {
+        GrammarItem::NonTerminal { kind, ident } => {
+            LegacyAtomicObservation::NonTerminal { kind: *kind, ident }
+        },
+        GrammarItem::Terminal(text) => LegacyAtomicObservation::Terminal(text),
+        _ => LegacyAtomicObservation::Other,
+    });
     classify_shared_atomic(
         &view,
         &items,
@@ -2588,6 +2577,8 @@ mod prefix_bucket_driver_baselines;
 mod tests {
     use super::*;
 
+    include!("../../../../tests/support/owned_atomic_reuse.rs");
+
     mod bucket_driver_shared {
         include!("../../../../tests/support/prefix_bucket_shared.rs");
     }
@@ -2721,6 +2712,7 @@ mod tests {
     ) {
         let actual = classify_atomic(rule, language);
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        owned_atomic_reuse::assert_owned_parity(rule, language);
     }
 
     #[test]

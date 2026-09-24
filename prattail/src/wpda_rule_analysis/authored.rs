@@ -325,6 +325,46 @@ impl<'store> BinderRuleReader<'store> for AuthoredRuleReader<'store> {
     }
 }
 
+impl<'store> mettail_ast::grammar_shapes::UnaryPrefixReader<'store> for AuthoredRuleReader<'store> {
+    type Rule = AuthoredRuleId;
+    type Syntax = AuthoredSyntaxId;
+
+    fn context(&self, rule: Self::Rule) -> Option<Self::Parameters> {
+        BinderRuleReader::term_context(self, rule)
+    }
+
+    fn syntax(&self, rule: Self::Rule) -> Option<Self::Syntax> {
+        BinderRuleReader::syntax_pattern(self, rule)
+    }
+
+    fn syntax_len(&self, syntax: Self::Syntax) -> usize {
+        BinderSyntaxReader::sequence_len(self, syntax)
+    }
+
+    fn base_name(&self, ty: Self::Type) -> Option<Self::Name> {
+        match BinderRuleReader::ty(self, ty) {
+            BinderTypeObservation::Base(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn category_matches(&self, rule: Self::Rule, spelling: &str) -> bool {
+        BinderRuleReader::category(self, rule).payload().spelling == spelling
+    }
+
+    fn literal_at(&self, syntax: Self::Syntax, index: usize) -> Option<&'store str> {
+        match BinderSyntaxReader::at(self, syntax, index) {
+            Some(BinderSyntaxObservation::Literal(text)) => Some(text),
+            _ => None,
+        }
+    }
+
+    fn param_matches(&self, syntax: Self::Syntax, index: usize, spelling: &str) -> bool {
+        matches!(BinderSyntaxReader::at(self, syntax, index),
+            Some(BinderSyntaxObservation::Param(name)) if name.payload().spelling == spelling)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +384,59 @@ mod tests {
                 equality_class,
             }),
         ))
+    }
+
+    #[test]
+    fn unary_prefix_compares_spelling_instead_of_retained_name_identity() {
+        for (category_text, parameter_text) in [("Int", "x"), ("r#type", "r#match")] {
+            let mut store = AuthoredRuleStore::new();
+            let label = name(&mut store, "Unary", 0);
+            let category = name(&mut store, category_text, 1);
+            let operand = name(&mut store, category_text, 2);
+            let parameter = name(&mut store, parameter_text, 3);
+            let reference = name(&mut store, parameter_text, 4);
+            let wrong_reference = name(&mut store, "different", 3);
+            let ty =
+                AuthoredTypeId(push(&mut store, AuthoredNode::Type(AuthoredType::Base(operand))));
+            let param = AuthoredParamId(push(
+                &mut store,
+                AuthoredNode::Param(AuthoredParam::Simple { name: parameter, ty }),
+            ));
+            let params = AuthoredParamsId(push(&mut store, AuthoredNode::Params(vec![param])));
+            let mut cases = Vec::new();
+            for referent in [reference, wrong_reference] {
+                let syntax = AuthoredSyntaxId(push(
+                    &mut store,
+                    AuthoredNode::Syntax(vec![
+                        AuthoredSyntax::Literal("-".into()),
+                        AuthoredSyntax::Param(referent),
+                    ]),
+                ));
+                cases.push(AuthoredRuleId(push(
+                    &mut store,
+                    AuthoredNode::Rule(AuthoredRule {
+                        label,
+                        category,
+                        term_context: Some(params),
+                        syntax_pattern: Some(syntax),
+                        items: vec![],
+                    }),
+                )));
+            }
+            let reader = AuthoredRuleReader::new(&store).expect("valid retained names");
+            assert!(!reader.names_equal(reader.name(category), reader.name(operand)));
+            assert!(!reader.names_equal(reader.name(parameter), reader.name(reference)));
+            assert!(reader.names_equal(reader.name(parameter), reader.name(wrong_reference)));
+            let shape =
+                mettail_ast::grammar_shapes::classify_unary_prefix_shape_in(&reader, cases[0])
+                    .expect("equal spelling is the original unary predicate");
+            assert_eq!(shape.trigger, "-");
+            assert_eq!(shape.operand_category, category_text);
+            assert!(
+                mettail_ast::grammar_shapes::classify_unary_prefix_shape_in(&reader, cases[1],)
+                    .is_none()
+            );
+        }
     }
 
     #[test]

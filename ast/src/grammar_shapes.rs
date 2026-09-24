@@ -140,6 +140,64 @@ pub struct UnaryPrefixShape {
     pub operand_category: String,
 }
 
+/// Shallow observations used by the original unary-prefix helper.
+///
+/// Handles belong to one immutable reader. Parameter observations obey the
+/// existing `TermParamReader` laws; syntax indices preserve original positions.
+/// `base_name` observes only an immediate base type. Both spelling comparisons
+/// match the original identifier-to-string comparison, including raw `r#`
+/// spelling; they must not use source name identity instead.
+/// `UnaryPrefixReaderProjection.v` proves the observation/copy-order boundary,
+/// not arbitrary reader validity or resource admission.
+pub trait UnaryPrefixReader<'syntax>: mettail_grammar_core::TermParamReader<'syntax> {
+    type Rule: Copy;
+    type Syntax: Copy;
+
+    fn context(&self, rule: Self::Rule) -> Option<Self::Parameters>;
+    fn syntax(&self, rule: Self::Rule) -> Option<Self::Syntax>;
+    fn syntax_len(&self, syntax: Self::Syntax) -> usize;
+    fn base_name(&self, ty: Self::Type) -> Option<Self::Name>;
+    fn category_matches(&self, rule: Self::Rule, spelling: &str) -> bool;
+    fn literal_at(&self, syntax: Self::Syntax, index: usize) -> Option<&'syntax str>;
+    fn param_matches(&self, syntax: Self::Syntax, index: usize, spelling: &str) -> bool;
+}
+
+impl<'syntax> UnaryPrefixReader<'syntax> for crate::grammar::AstTermParamReader {
+    type Rule = &'syntax GrammarRule;
+    type Syntax = &'syntax [SyntaxExpr];
+
+    fn context(&self, rule: Self::Rule) -> Option<Self::Parameters> {
+        mettail_grammar_core::term_param_walk::BinderPresenceReader::context(self, rule)
+    }
+
+    fn syntax(&self, rule: Self::Rule) -> Option<Self::Syntax> {
+        rule.syntax_pattern.as_deref()
+    }
+
+    fn syntax_len(&self, syntax: Self::Syntax) -> usize {
+        syntax.len()
+    }
+
+    fn base_name(&self, ty: Self::Type) -> Option<Self::Name> {
+        mettail_grammar_core::context_items::ContextItemsReader::base_name(self, ty)
+    }
+
+    fn category_matches(&self, rule: Self::Rule, spelling: &str) -> bool {
+        rule.category == spelling
+    }
+
+    fn literal_at(&self, syntax: Self::Syntax, index: usize) -> Option<&'syntax str> {
+        match syntax.get(index) {
+            Some(SyntaxExpr::Literal(text)) => Some(text),
+            _ => None,
+        }
+    }
+
+    fn param_matches(&self, syntax: Self::Syntax, index: usize, spelling: &str) -> bool {
+        matches!(syntax.get(index), Some(SyntaxExpr::Param(name)) if *name == spelling)
+    }
+}
+
 /// Recognized shape of a simple single-param cross-cat projection rule.
 ///
 /// Returned by `classify_simple_projection_shape` when the rule matches
@@ -178,35 +236,45 @@ pub struct SimpleProjectionShape {
 ///
 /// **Returns** `None` for non-unary-prefix shapes (the common case).
 pub fn classify_unary_prefix_shape(rule: &GrammarRule) -> Option<UnaryPrefixShape> {
-    let tc = rule.term_context.as_ref()?;
-    let sp = rule.syntax_pattern.as_ref()?;
+    classify_unary_prefix_shape_in(&crate::grammar::AstTermParamReader, rule)
+}
 
-    if tc.len() != 1 || sp.len() != 2 {
+/// Run the original helper through shallow readers without rebuilding syntax.
+///
+/// The gate and copy order is unchanged, including the trigger copy before a
+/// final parameter mismatch. Optional parameters and nested types are refused
+/// without traversing their children. Callers supply any resource admission
+/// before this helper; this function introduces no separate preflight pass.
+pub fn classify_unary_prefix_shape_in<'syntax, R>(
+    reader: &R,
+    rule: R::Rule,
+) -> Option<UnaryPrefixShape>
+where
+    R: UnaryPrefixReader<'syntax>,
+    R::Name: ToString,
+{
+    let tc = reader.context(rule)?;
+    let sp = reader.syntax(rule)?;
+
+    if reader.params_len(tc) != 1 || reader.syntax_len(sp) != 2 {
         return None;
     }
 
-    let (param_name, ty) = match &tc[0] {
-        TermParam::Simple { name, ty } => (name.to_string(), ty),
+    let (param_name, ty) = match reader.param(reader.param_at(tc, 0)?) {
+        mettail_grammar_core::TermParamObservation::Simple { name, ty } => (name.to_string(), ty),
         _ => return None,
     };
 
-    let operand_category = match ty {
-        TypeExpr::Base(t) => t.to_string(),
-        _ => return None,
-    };
+    let operand_category = reader.base_name(ty)?.to_string();
 
-    if rule.category != operand_category {
+    if !reader.category_matches(rule, &operand_category) {
         return None;
     }
 
-    let trigger = match &sp[0] {
-        SyntaxExpr::Literal(lit) => lit.clone(),
-        _ => return None,
-    };
+    let trigger = reader.literal_at(sp, 0)?.to_owned();
 
-    match &sp[1] {
-        SyntaxExpr::Param(p) if *p == param_name => {},
-        _ => return None,
+    if !reader.param_matches(sp, 1, &param_name) {
+        return None;
     }
 
     Some(UnaryPrefixShape { trigger, operand_category })
