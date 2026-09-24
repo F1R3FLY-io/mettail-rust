@@ -139,6 +139,7 @@ theories/AuthoredDeclarationReaderProjection.v
 theories/ConstructorLabelProjection.v
 theories/CanonicalOpaqueLabelProjection.v
 theories/AuthoredNativeObservationsProjection.v
+theories/FallibleConstructorLabelProjection.v
 theories/LegacyNormalizationAdmission.v
 theories/AuthoredNormalizationMaterialization.v
 theories/AuthoredSyntheticMaterialization.v
