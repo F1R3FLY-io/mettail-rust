@@ -5,7 +5,7 @@
 //! supplies validated immutable handles. Helpers run only at their original
 //! field sites, including on paths that later refuse classification.
 
-use super::{ActionArgKind, BinderPosition, CollectionSepInfo, ParamKind};
+use super::{ActionArgKind, BinderNumericError, BinderPosition, CollectionSepInfo, ParamKind};
 use mettail_ast::grammar::DelimitedRegionKind;
 use mettail_ast::types::CollectionType;
 use std::collections::HashMap;
@@ -94,9 +94,37 @@ pub fn classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
     param_map: &HashMap<String, ParamKind>,
     next_group_idx: &mut u32,
     collection_slots_so_far: &mut u8,
+    guest_nested_open_kinds: impl FnMut(&str) -> Vec<String>,
+    kv_sep_for: impl FnMut(&CollectionType) -> Option<String>,
+) -> Option<(Vec<BinderPosition>, Vec<ActionArgKind>)> {
+    try_classify_optional_body(
+        reader,
+        root,
+        param_map,
+        next_group_idx,
+        collection_slots_so_far,
+        guest_nested_open_kinds,
+        kv_sep_for,
+    )
+    .ok()
+    .flatten()
+}
+
+/// Run the same optional frame worker with explicit numeric refusal.
+///
+/// The legacy wrapper erases numeric errors to its original None result. The
+/// fallible main binder worker calls this entry directly so width failures are
+/// not mistaken for structural nonmatches. On refusal, caller counters and
+/// callbacks retain exactly the already-completed prefix; no descriptor escapes.
+pub fn try_classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
+    reader: &R,
+    root: R::Sequence,
+    param_map: &HashMap<String, ParamKind>,
+    next_group_idx: &mut u32,
+    collection_slots_so_far: &mut u8,
     mut guest_nested_open_kinds: impl FnMut(&str) -> Vec<String>,
     mut kv_sep_for: impl FnMut(&CollectionType) -> Option<String>,
-) -> Option<(Vec<BinderPosition>, Vec<ActionArgKind>)> {
+) -> Result<Option<(Vec<BinderPosition>, Vec<ActionArgKind>)>, BinderNumericError> {
     struct Frame<S> {
         items: S,
         next: usize,
@@ -118,11 +146,15 @@ pub fn classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
             .last()
             .is_some_and(|frame| frame.next == reader.sequence_len(frame.items));
         if finished {
-            let completed = frames.pop()?;
+            let Some(completed) = frames.pop() else {
+                return Ok(None);
+            };
             if let Some(parent) = frames.last_mut() {
-                let group_idx = completed.group_idx?;
+                let Some(group_idx) = completed.group_idx else {
+                    return Ok(None);
+                };
                 if completed.positions.is_empty() {
-                    return None;
+                    return Ok(None);
                 }
                 let first_token_set = optional_first_token_set(&completed.positions);
                 parent.positions.push(BinderPosition::OptionalGroup {
@@ -133,10 +165,12 @@ pub fn classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
                 parent.args.push(ActionArgKind::Optional(completed.args));
                 continue;
             }
-            return Some((completed.positions, completed.args));
+            return Ok(Some((completed.positions, completed.args)));
         }
 
-        let frame = frames.last_mut()?;
+        let Some(frame) = frames.last_mut() else {
+            return Ok(None);
+        };
         let item_idx = frame.next;
         frame.next += 1;
         match reader
@@ -173,7 +207,10 @@ pub fn classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
             },
             BinderSyntaxObservation::Param(name) => {
                 let param_name = name.to_string();
-                match param_map.get(&param_name)? {
+                let Some(kind) = param_map.get(&param_name) else {
+                    return Ok(None);
+                };
+                match kind {
                     ParamKind::Binder => {
                         frame.positions.push(BinderPosition::BinderListLoop {
                             separator: String::new(),
@@ -206,13 +243,15 @@ pub fn classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
                         frame.positions.push(BinderPosition::GuardSlot);
                         frame.args.push(ActionArgKind::Predicate);
                     },
-                    ParamKind::BinderList | ParamKind::SimpleCollection { .. } => return None,
+                    ParamKind::BinderList | ParamKind::SimpleCollection { .. } => return Ok(None),
                 }
             },
             BinderSyntaxObservation::Op(operation) => match reader.operation(operation) {
                 OptionalOperationObservation::Opt { inner } => {
                     let group_idx = *next_group_idx;
-                    *next_group_idx = next_group_idx.checked_add(1)?;
+                    *next_group_idx = next_group_idx
+                        .checked_add(1)
+                        .ok_or(BinderNumericError::OptionalGroup)?;
                     frames.push(Frame {
                         items: inner,
                         next: 0,
@@ -224,10 +263,13 @@ pub fn classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
                 OptionalOperationObservation::Sep { collection, separator, source: None } => {
                     let close = match reader.at(frame.items, frame.next) {
                         Some(BinderSyntaxObservation::Literal(text)) => text.to_owned(),
-                        _ => return None,
+                        _ => return Ok(None),
                     };
                     frame.next += 1;
-                    match param_map.get(&collection.to_string())? {
+                    let Some(kind) = param_map.get(&collection.to_string()) else {
+                        return Ok(None);
+                    };
+                    match kind {
                         ParamKind::BinderList => {
                             frame.positions.push(BinderPosition::BinderListLoop {
                                 separator: separator.to_owned(),
@@ -242,7 +284,9 @@ pub fn classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
                         },
                         ParamKind::SimpleCollection { elem_cat, coll_kind } => {
                             let slot_idx = *collection_slots_so_far;
-                            *collection_slots_so_far = collection_slots_so_far.checked_add(1)?;
+                            *collection_slots_so_far = collection_slots_so_far
+                                .checked_add(1)
+                                .ok_or(BinderNumericError::OptionalSlot)?;
                             frame.positions.push(BinderPosition::ParamParse {
                                 cat: elem_cat.clone(),
                                 collection: Some(CollectionSepInfo {
@@ -258,10 +302,10 @@ pub fn classify_optional_body<'syntax, R: BinderSyntaxReader<'syntax>>(
                                 coll_kind: coll_kind.clone(),
                             });
                         },
-                        _ => return None,
+                        _ => return Ok(None),
                     }
                 },
-                _ => return None,
+                _ => return Ok(None),
             },
         }
     }

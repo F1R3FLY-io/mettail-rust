@@ -91,10 +91,7 @@ impl<'core> AuthoredDeclarationReader<'core> {
     }
 
     fn token(&self, index: u32) -> &'core AuthoredTokenDeclaration {
-        self.header
-            .tokens
-            .get(index as usize)
-            .expect("source token index belongs to validated header roster")
+        token_in(self.header, index)
     }
 
     /// Preserve the caller's original rule order and duplicates. Validate every
@@ -169,20 +166,7 @@ impl<'core> AuthoredDeclarationReader<'core> {
     }
 
     pub fn guest_nested_open_kinds(&self, open: &str) -> Vec<String> {
-        super::guest::guest_body_nested_open_kinds(
-            &self.header.global_tokens,
-            &self.header.modes,
-            open,
-            |index, open| self.name(self.token(*index).name).spelling == open,
-            |index| {
-                self.token(*index)
-                    .push
-                    .map(|id| &self.name(id).equality_class)
-            },
-            |mode| &self.name(mode.name).equality_class,
-            |mode| &mode.tokens,
-            |index| self.name(self.token(*index).name).spelling.clone(),
-        )
+        guest_nested_open_kinds_in(&self.rules, self.header, open)
     }
 
     pub fn category_binding(&self, index: usize) -> Option<&'core CategoryId> {
@@ -206,6 +190,42 @@ impl<'core> AuthoredDeclarationReader<'core> {
             .get(target.0 as usize)
             .map(|category| !category.admits_variables)
     }
+}
+
+fn token_in(header: &AuthoredDeclarations, index: u32) -> &AuthoredTokenDeclaration {
+    header
+        .tokens
+        .get(index as usize)
+        .expect("source token index belongs to validated header roster")
+}
+
+/// The header and all retained names must belong to this validated reader.
+/// Both owned consumers share these exact original guest-mode observations.
+pub(super) fn guest_nested_open_kinds_in(
+    rules: &AuthoredRuleReader<'_>,
+    header: &AuthoredDeclarations,
+    open: &str,
+) -> Vec<String> {
+    super::guest::guest_body_nested_open_kinds(
+        &header.global_tokens,
+        &header.modes,
+        open,
+        |index, open| rules.name(token_in(header, *index).name).payload().spelling == open,
+        |index| {
+            token_in(header, *index)
+                .push
+                .map(|id| &rules.name(id).payload().equality_class)
+        },
+        |mode| &rules.name(mode.name).payload().equality_class,
+        |mode| &mode.tokens,
+        |index| {
+            rules
+                .name(token_in(header, *index).name)
+                .payload()
+                .spelling
+                .clone()
+        },
+    )
 }
 
 /// Low-level callbacks require handles/rows from this reader's validated store,

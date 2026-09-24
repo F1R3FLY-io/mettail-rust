@@ -368,6 +368,21 @@ pub fn binder_initial_body_cat(shape: &BinderShape) -> Option<&str> {
 
 mod model_lifecycle;
 
+/// Numeric refusal at an original binder-classifier update site.
+///
+/// Structural nonmatches remain distinct. These variants identify the exact
+/// first failed update; they are not a separate validation pass or a resource
+/// budget. Existing counter and callback effects before that site are retained.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinderNumericError {
+    MainPlainSlot,
+    MainMappedSlot,
+    MainOptionalGroup,
+    OptionalGroup,
+    OptionalSlot,
+    FinalActionArity,
+}
+
 pub mod optional;
 pub mod rule;
 pub mod term_param;

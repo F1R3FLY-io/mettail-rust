@@ -522,6 +522,61 @@ classifier proof. Macro-versus-owned fixtures test concrete capture and reader
 correspondence. This boundary neither reconstructs source syntax nor activates
 the installed parser on its own.
 
+### Checked binder descriptor widths
+
+The original binder classifier and optional-body frame machine expose fallible
+entrypoints that distinguish a structural nonmatch from an unrepresentable
+descriptor. They run the same worklists and inspect the same fields; there is
+no separate validator that tries to predict their decisions.
+
+The checks occur at the original numeric operations:
+
+- Collection-slot counters use checked `u8` increments in the main plain and
+  mapped separator branches and inside optional bodies.
+- Optional-group counters use checked `u32` increments before entering a child.
+- The completed action list uses checked `u8` conversion after the original
+  empty-result gates and before descriptor publication.
+
+An action count of 255 fits. A collection counter of 254 can advance to 255,
+but a counter already at 255 cannot advance again. These are representation
+limits at specific operations, not an arbitrary cap on source grammar size.
+
+Ordering remains significant. Main plain-separator lookup runs before its slot
+increment. A mapped separator validates its body before checking the slot.
+Inside an optional body, the close delimiter is checked before the slot
+increment, and separator lookup runs only after that increment succeeds.
+Numeric failure returns no descriptor; previously completed callback effects
+and caller-visible optional counters are not rolled back.
+
+The checked main entrypoint propagates optional numeric errors instead of
+reporting them as nonmatches. Compatibility wrappers retain the original
+`None` behavior for already-checked optional/group exhaustion. Main-slot and
+final-arity overflow now produce explicit failure in the static wrapper; no
+equivalence is claimed with the old out-of-range debug-panic or release-wrap
+behavior. Representable classifier results remain unchanged.
+
+[BinderNumericAdmission](../../formal/rocq/prattail_wpda_runtime/theories/BinderNumericAdmission.v)
+proves the local numeric refinements against the existing binder and optional
+models, including the actual returned arity field. Original descriptor and
+lifecycle tests remain the normal-domain reference. The new boundary tests
+exercise failure ordering and propagation. Numeric checks do not replace
+whole-domain work and allocation admission at an owned compilation boundary.
+
+The [owned binder adapter](../../prattail/src/wpda_rule_analysis/authored_binder.rs)
+uses the validated rule reader and its own declaration header, admits the whole
+operation once, and calls that same checked binder worker. Header absence,
+admission refusal, numeric refusal, and a structural nonmatch remain distinct.
+Result-category delimiter lookup stays lazy; separator selection receives the
+actual binder-slot kind, preserving the distinction described above.
+
+Guest-body lookup is shared with the existing declaration reader. Both use
+the same header-token adapter and original guest-mode helper, retaining opener
+spelling, captured mode identity, declaration order and duplicates. The adapter
+does not construct another `GrammarCore`, revalidate the same arena, or rebuild
+source syntax. The existing declaration-reader and binder correspondence laws
+apply to these unchanged observations; the admission wrapper reuses the
+collection-reader model's general header/admit/worker law.
+
 ### Shared binder-presence traversal
 
 The AST predicates and PraTTaIL parameter iterator share the original

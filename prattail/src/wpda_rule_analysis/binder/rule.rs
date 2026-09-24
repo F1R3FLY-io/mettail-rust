@@ -7,17 +7,20 @@
 //! `BinderRuleProjection.v` models reader correspondence, all output fields,
 //! and helper/failure ordering. It does not prove arbitrary readers lawful.
 //! In particular, owned-image admission must establish valid acyclic handles,
-//! representable collection slots and action arities before classification.
-//! Original static arithmetic and casts are retained, not silently redefined.
+//! representable collection slots and action arities before publication.
+//! `BinderNumericAdmission.v` refines the six numeric sites without changing
+//! structural classification or helper order.
 
 use super::optional::{
-    classify_optional_body, optional_first_token_set, BinderSyntaxObservation, BinderSyntaxReader,
-    OptionalOperationObservation,
+    optional_first_token_set, try_classify_optional_body, BinderSyntaxObservation,
+    BinderSyntaxReader, OptionalOperationObservation,
 };
 use super::term_param::{
     TermParamLeafKind, TermParamLeaves, TermParamObservation, TermParamReader,
 };
-use super::{ActionArgKind, BinderPosition, BinderShape, CollectionSepInfo, ParamKind};
+use super::{
+    ActionArgKind, BinderNumericError, BinderPosition, BinderShape, CollectionSepInfo, ParamKind,
+};
 use mettail_ast::types::CollectionType;
 
 /// Authored type constructors remain distinct; nested types are only handles.
@@ -98,18 +101,57 @@ pub fn classify_binder_in<'syntax, R, D>(
     reader: &'syntax R,
     rule: R::Rule,
     resolve_declared_delimiters: impl FnOnce() -> D,
-    mut guest_nested_open_kinds: impl FnMut(&str) -> Vec<String>,
-    mut kv_sep_for: impl FnMut(&CollectionType, D) -> Option<String>,
+    guest_nested_open_kinds: impl FnMut(&str) -> Vec<String>,
+    kv_sep_for: impl FnMut(&CollectionType, D) -> Option<String>,
 ) -> Option<BinderShape>
 where
     R: BinderRuleReader<'syntax>,
     <R as BinderSyntaxReader<'syntax>>::Name: std::fmt::Display,
     D: Copy,
 {
-    let tc = reader.term_context(rule)?;
-    let sp = reader.syntax_pattern(rule)?;
+    match try_classify_binder_in(
+        reader,
+        rule,
+        resolve_declared_delimiters,
+        guest_nested_open_kinds,
+        kv_sep_for,
+    ) {
+        Ok(shape) => shape,
+        Err(
+            BinderNumericError::MainOptionalGroup
+            | BinderNumericError::OptionalGroup
+            | BinderNumericError::OptionalSlot,
+        ) => None,
+        Err(error) => panic!("binder descriptor exceeds its numeric representation: {error:?}"),
+    }
+}
+
+/// Derive the original shape, distinguishing numeric refusal from nonmatch.
+///
+/// Numeric checks occur at their original update sites; preceding callback
+/// effects are retained. The private partial descriptor is never published on
+/// error. This worker does not supply caller resource admission or promise
+/// recovery from physical allocator failure.
+pub fn try_classify_binder_in<'syntax, R, D>(
+    reader: &'syntax R,
+    rule: R::Rule,
+    resolve_declared_delimiters: impl FnOnce() -> D,
+    mut guest_nested_open_kinds: impl FnMut(&str) -> Vec<String>,
+    mut kv_sep_for: impl FnMut(&CollectionType, D) -> Option<String>,
+) -> Result<Option<BinderShape>, BinderNumericError>
+where
+    R: BinderRuleReader<'syntax>,
+    <R as BinderSyntaxReader<'syntax>>::Name: std::fmt::Display,
+    D: Copy,
+{
+    let Some(tc) = reader.term_context(rule) else {
+        return Ok(None);
+    };
+    let Some(sp) = reader.syntax_pattern(rule) else {
+        return Ok(None);
+    };
     if reader.sequence_len(sp) == 0 {
-        return None;
+        return Ok(None);
     }
     // Stage 3 (2026-06-27): the declared collection delimiters for THIS rule's
     // result category, if it is declared as a collection category (`as List`/
@@ -149,7 +191,7 @@ where
             | BinderSyntaxObservation::GuestBody { .. }
             | BinderSyntaxObservation::Param(_)
     ) {
-        return None;
+        return Ok(None);
     }
 
     // B9 / Class 2 (2026-05-08): Class-5 collection-rule structural exclusion.
@@ -191,7 +233,7 @@ where
                     BinderSyntaxObservation::Literal(_)
                 );
             if class5_shape_3 || class5_shape_4 {
-                return None;
+                return Ok(None);
             }
         }
     }
@@ -250,7 +292,7 @@ where
                                 },
                             );
                         },
-                        _ => return None,
+                        _ => return Ok(None),
                     }
                 },
                 // Phase 4 #5b (2026-05-12): HashMap(K, V) — the
@@ -277,13 +319,15 @@ where
                                 },
                             );
                         },
-                        _ => return None,
+                        _ => return Ok(None),
                     }
                 },
-                _ => return None,
+                _ => return Ok(None),
             },
             TermParamLeafKind::Abstraction { binder, body, ty, .. } => {
-                let bcat = arrow_codomain_name(reader, ty)?;
+                let Some(bcat) = arrow_codomain_name(reader, ty) else {
+                    return Ok(None);
+                };
                 body_cat = Some(bcat.clone());
                 has_binder = true;
                 param_map.insert(binder.to_string(), ParamKind::Binder);
@@ -293,7 +337,9 @@ where
                 }
             },
             TermParamLeafKind::MultiAbstraction { binder, body, ty, .. } => {
-                let bcat = arrow_codomain_name(reader, ty)?;
+                let Some(bcat) = arrow_codomain_name(reader, ty) else {
+                    return Ok(None);
+                };
                 body_cat = Some(bcat.clone());
                 has_binder = true;
                 is_multi = true;
@@ -316,20 +362,25 @@ where
     // still require their dedicated operators.
     let (leading_category, leading_ident_capture) =
         match reader.at(sp, 0).expect("nonempty syntax has an anchor") {
-            BinderSyntaxObservation::Param(name) => match param_map.get(&name.to_string())? {
-                ParamKind::Body { cat } | ParamKind::Simple { cat }
-                    if mettail_ast::grammar::NonTerminalKind::classify(cat)
-                        != mettail_ast::grammar::NonTerminalKind::Ident =>
-                {
-                    (Some(cat.clone()), None)
-                },
-                ParamKind::Simple { cat }
-                    if mettail_ast::grammar::NonTerminalKind::classify(cat)
-                        == mettail_ast::grammar::NonTerminalKind::Ident =>
-                {
-                    (None, Some(name.to_string()))
-                },
-                _ => return None,
+            BinderSyntaxObservation::Param(name) => {
+                let Some(kind) = param_map.get(&name.to_string()) else {
+                    return Ok(None);
+                };
+                match kind {
+                    ParamKind::Body { cat } | ParamKind::Simple { cat }
+                        if mettail_ast::grammar::NonTerminalKind::classify(cat)
+                            != mettail_ast::grammar::NonTerminalKind::Ident =>
+                    {
+                        (Some(cat.clone()), None)
+                    },
+                    ParamKind::Simple { cat }
+                        if mettail_ast::grammar::NonTerminalKind::classify(cat)
+                            == mettail_ast::grammar::NonTerminalKind::Ident =>
+                    {
+                        (None, Some(name.to_string()))
+                    },
+                    _ => return Ok(None),
+                }
             },
             _ => (None, None),
         };
@@ -429,7 +480,9 @@ where
             },
             BinderSyntaxObservation::Param(name) => {
                 let n = name.to_string();
-                let kind = param_map.get(&n)?;
+                let Some(kind) = param_map.get(&n) else {
+                    return Ok(None);
+                };
                 match kind {
                     ParamKind::Binder => {
                         // Phase 3.B.3 (2026-05-11): unify single-binder
@@ -486,27 +539,29 @@ where
                     ParamKind::BinderList => {
                         // BinderList shouldn't appear as a bare Param —
                         // it's expressed as Op(Sep) below. Defensive.
-                        return None;
+                        return Ok(None);
                     },
                     ParamKind::SimpleCollection { .. } => {
                         // SimpleCollection appears only as Op(Sep) below.
                         // Bare Param reference is invalid — the collection
                         // requires a separator + close delim.
-                        return None;
+                        return Ok(None);
                     },
                 }
             },
             BinderSyntaxObservation::Op(operation) => match reader.operation(operation) {
                 OptionalOperationObservation::Sep { collection, separator, source: None } => {
                     let n = collection.to_string();
-                    let kind = param_map.get(&n)?;
+                    let Some(kind) = param_map.get(&n) else {
+                        return Ok(None);
+                    };
                     match kind {
                         ParamKind::BinderList => {
                             // Find the next Literal in syntax_pattern — that's
                             // the close delim of the binder-list loop.
                             let close = match reader.at(sp, i + 1) {
                                 Some(BinderSyntaxObservation::Literal(text)) => text.to_owned(),
-                                _ => return None,
+                                _ => return Ok(None),
                             };
                             positions.push(BinderPosition::BinderListLoop {
                                 separator: separator.to_owned(),
@@ -571,7 +626,9 @@ where
                             // slot_idx in its `bp` field so the walker's
                             // 3-tuple lookups disambiguate sibling slots.
                             let slot_idx_here = collection_slots_so_far;
-                            collection_slots_so_far += 1;
+                            collection_slots_so_far = collection_slots_so_far
+                                .checked_add(1)
+                                .ok_or(BinderNumericError::MainPlainSlot)?;
                             positions.push(BinderPosition::ParamParse {
                                 cat: elem_cat.clone(),
                                 collection: Some(CollectionSepInfo {
@@ -591,7 +648,7 @@ where
                             // position to the ordinary binder continuation.
                             skip_next = absorbs_following_literal;
                         },
-                        _ => return None, // bare Simple, Body, Guard, Binder are not Sep-eligible.
+                        _ => return Ok(None), // bare Simple, Body, Guard, Binder are not Sep-eligible.
                     }
                 },
                 // B8 / Class 3 ZIP-MAP-SEP (2026-05-08): chained-Sep pattern
@@ -615,23 +672,23 @@ where
                             .map_zip_operation(source)
                         {
                             MapZipObservation::Zip { left, right } => (left, right, params, body),
-                            _ => return None,
+                            _ => return Ok(None),
                         },
-                        _ => return None,
+                        _ => return Ok(None),
                     };
                     if reader.names_len(map_params) != 2 {
-                        return None;
+                        return Ok(None);
                     }
                     // Validate left/right param kinds:
                     //   - left must be SimpleCollection (the names accumulator)
                     //   - right must be BinderList (the multi-binder)
                     let (collection_elem_cat,) = match param_map.get(&zip_left.to_string()) {
                         Some(ParamKind::SimpleCollection { elem_cat, .. }) => (elem_cat.clone(),),
-                        _ => return None,
+                        _ => return Ok(None),
                     };
                     if !matches!(param_map.get(&zip_right.to_string()), Some(ParamKind::BinderList))
                     {
-                        return None;
+                        return Ok(None);
                     }
                     // map_params[0] alias for the names-element; map_params[1]
                     // alias for the binder slot. Inside the body, Param(p1)
@@ -647,7 +704,7 @@ where
                         .to_string();
                     let close = match reader.at(sp, i + 1) {
                         Some(BinderSyntaxObservation::Literal(text)) => text.to_owned(),
-                        _ => return None,
+                        _ => return Ok(None),
                     };
                     // Walk the map body and build the per-iteration positions
                     // used by the Class 3 dispatch.
@@ -662,7 +719,7 @@ where
                                 inner_positions.push(BinderPosition::Literal(text.to_owned()));
                             },
                             BinderSyntaxObservation::TokenKind { .. }
-                            | BinderSyntaxObservation::GuestBody { .. } => return None,
+                            | BinderSyntaxObservation::GuestBody { .. } => return Ok(None),
                             BinderSyntaxObservation::Param(p_name) => {
                                 let pn = p_name.to_string();
                                 if pn == map_param_n {
@@ -695,17 +752,17 @@ where
                                     inner_positions.push(BinderPosition::BinderIdent);
                                     inner_action_args.push(ActionArgKind::BinderName);
                                 } else {
-                                    return None; // unrecognized inner Param.
+                                    return Ok(None); // unrecognized inner Param.
                                 }
                             },
-                            BinderSyntaxObservation::Op(_) => return None, // nested Op out of pilot.
+                            BinderSyntaxObservation::Op(_) => return Ok(None), // nested Op out of pilot.
                         }
                     }
                     if !inner_positions
                         .iter()
                         .any(|position| matches!(position, BinderPosition::BinderIdent))
                     {
-                        return None;
+                        return Ok(None);
                     }
                     // Phase 4 #2 (2026-05-12): Class-3 ZIP-MAP-SEP allocates a
                     // synthesized names accumulator — it occupies a collection
@@ -714,7 +771,9 @@ where
                     // SimpleCollection (or another BinderListLoop) gets the
                     // correct successor slot_idx.
                     let slot_idx_here = collection_slots_so_far;
-                    collection_slots_so_far += 1;
+                    collection_slots_so_far = collection_slots_so_far
+                        .checked_add(1)
+                        .ok_or(BinderNumericError::MainMappedSlot)?;
                     positions.push(BinderPosition::BinderListLoop {
                         separator: separator.to_owned(),
                         close,
@@ -743,8 +802,10 @@ where
                 },
                 OptionalOperationObservation::Opt { inner } => {
                     let group_idx = next_optional_group_idx;
-                    next_optional_group_idx = next_optional_group_idx.checked_add(1)?;
-                    let (inner_positions, inner_action_args) = classify_optional_body(
+                    next_optional_group_idx = next_optional_group_idx
+                        .checked_add(1)
+                        .ok_or(BinderNumericError::MainOptionalGroup)?;
+                    let Some((inner_positions, inner_action_args)) = try_classify_optional_body(
                         reader,
                         inner,
                         &param_map,
@@ -752,9 +813,12 @@ where
                         &mut collection_slots_so_far,
                         &mut guest_nested_open_kinds,
                         |kind| kv_sep_for(kind, declared_delims),
-                    )?;
+                    )?
+                    else {
+                        return Ok(None);
+                    };
                     if inner_positions.is_empty() {
-                        return None;
+                        return Ok(None);
                     }
                     let first_token_set = optional_first_token_set(&inner_positions);
                     positions.push(BinderPosition::OptionalGroup {
@@ -765,7 +829,7 @@ where
                     action_args.push(ActionArgKind::Optional(inner_action_args));
                 },
                 // Op(Map/Zip) or chained ops — Phase 5c territory; skip for now.
-                OptionalOperationObservation::Other(_) => return None,
+                OptionalOperationObservation::Other(_) => return Ok(None),
             },
         }
     }
@@ -788,12 +852,12 @@ where
             BinderSyntaxObservation::TokenKind { .. } | BinderSyntaxObservation::GuestBody { .. }
         );
     if positions.is_empty() && !has_leading_capture {
-        return None;
+        return Ok(None);
     }
     // Skip pure-literal rules (no params, no binder, no guard) — those are
     // already handled by the TerminalKeyword classifier.
     if action_args.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // Phase 4 #1 (2026-05-11): multi-collection-slot Class 2 unlocked.
@@ -807,9 +871,10 @@ where
     // keeping static slot lookup separate from dynamic accumulator
     // addressing even when collections are nested.
 
-    let action_arity: u8 = action_args.len() as u8;
+    let action_arity =
+        u8::try_from(action_args.len()).map_err(|_| BinderNumericError::FinalActionArity)?;
 
-    Some(BinderShape {
+    Ok(Some(BinderShape {
         label: reader.label(rule).to_string(),
         result_cat: reader.category(rule).to_string(),
         leading_category,
@@ -821,7 +886,7 @@ where
         action_args,
         body_cat,
         param_cats,
-    })
+    }))
 }
 
 /// Extract the codomain name from `TypeExpr::Arrow { domain, codomain }`.

@@ -8,7 +8,7 @@ fn ident(value: &str) -> Ident {
     Ident::new(value, Span::call_site())
 }
 
-fn token(name: &str, push: Option<&str>) -> TokenDef {
+pub(super) fn token(name: &str, push: Option<&str>) -> TokenDef {
     TokenDef {
         name: ident(name),
         pattern: String::new(),
@@ -22,7 +22,7 @@ fn token(name: &str, push: Option<&str>) -> TokenDef {
     }
 }
 
-fn mode(name: &str, tokens: Vec<TokenDef>) -> ModeDef {
+pub(super) fn mode(name: &str, tokens: Vec<TokenDef>) -> ModeDef {
     ModeDef {
         name: ident(name),
         token_defs: tokens,
@@ -30,7 +30,7 @@ fn mode(name: &str, tokens: Vec<TokenDef>) -> ModeDef {
     }
 }
 
-fn language(tokens: Vec<TokenDef>, modes: Vec<ModeDef>) -> LanguageDef {
+pub(super) fn language(tokens: Vec<TokenDef>, modes: Vec<ModeDef>) -> LanguageDef {
     let mut source = crate::gen::empty_language_for_tests();
     source.token_defs = tokens;
     source.mode_defs = modes;

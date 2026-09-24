@@ -11,6 +11,12 @@ use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::Span;
 use syn::Ident;
 
+#[path = "binder_numeric_admission.rs"]
+mod numeric_admission;
+
+#[path = "owned_binder_reuse.rs"]
+mod owned_binder_reuse;
+
 fn id(name: &str) -> Ident {
     Ident::new(name, Span::call_site())
 }
@@ -122,6 +128,14 @@ fn assert_shape(rule: &GrammarRule, expected: BinderShape) {
     // The descriptor has a stack-safe Debug implementation, but no PartialEq.
     // Compare complete descriptors: every field and nested sequence is pinned.
     assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    let owned = owned_binder_reuse::classify_owned(rule, &language())
+        .expect("owned classifier accepts the same fixture");
+    assert_eq!(format!("{owned:?}"), format!("{expected:?}"));
+}
+
+fn assert_refuses(rule: &GrammarRule) {
+    assert!(classify_binder_in(rule, &language()).is_none());
+    assert!(owned_binder_reuse::classify_owned(rule, &language()).is_none());
 }
 
 fn term(cat: &str) -> BinderPosition {
@@ -165,12 +179,12 @@ fn original_projection_distinguishes_absent_and_empty_contexts() {
     );
     let mut absent_terms = accepted.clone();
     absent_terms.term_context = None;
-    assert!(classify_binder_in(&absent_terms, &language()).is_none());
+    assert_refuses(&absent_terms);
     let mut absent_syntax = accepted.clone();
     absent_syntax.syntax_pattern = None;
-    assert!(classify_binder_in(&absent_syntax, &language()).is_none());
+    assert_refuses(&absent_syntax);
     for syntax in [Vec::new(), vec![literal("only")], vec![literal("a"), literal("b")]] {
-        assert!(classify_binder_in(&rule(Vec::new(), syntax), &language()).is_none());
+        assert_refuses(&rule(Vec::new(), syntax));
     }
 }
 
@@ -460,7 +474,7 @@ fn original_projection_main_collection_is_open_ended_but_optional_requires_liter
             vec![literal("start"), SyntaxExpr::Op(PatternOp::Opt { inner })],
         );
         if close.is_empty() {
-            assert!(classify_binder_in(&optional_rule, &language()).is_none());
+            assert_refuses(&optional_rule);
         } else {
             let mut expected = shape(
                 vec![BinderPosition::OptionalGroup {
