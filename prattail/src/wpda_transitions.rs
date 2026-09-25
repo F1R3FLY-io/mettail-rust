@@ -8,4 +8,5 @@ pub mod lexical_fork;
 pub mod mixfix;
 pub mod prefix;
 pub mod prefix_dispatch;
+pub mod prefix_policy;
 pub mod unwinding;

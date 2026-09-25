@@ -3,6 +3,46 @@ use crate::gss::WpdaGssNode;
 use crate::wpda_runtime::{StackSymbolV2, WpdaState, WpdaTokenSource};
 use crate::wpda_walker::WpdaStepAction;
 
+/// Original non-atomic prefix query; later readers run only after earlier
+/// evidence fails. The table callbacks are not assumed pure.
+pub fn prefix_token_has_non_atom_start(
+    cat_src_idx: u16,
+    kind: &crate::automata::TokenKind,
+    lex_alt_rules_for_prefix: impl FnOnce(
+        u16,
+        &crate::automata::TokenKind,
+    ) -> Vec<crate::wpda_runtime::LexAltRuleInfo>,
+    prefix_primary_has_non_atom_dispatch_rule: impl FnOnce(u16, &crate::automata::TokenKind) -> bool,
+    prefix_crosscat_lhs_has_dispatch_rule: impl FnOnce(u16, &crate::automata::TokenKind) -> bool,
+) -> bool {
+    lex_alt_rules_for_prefix(cat_src_idx, kind)
+        .into_iter()
+        .any(|info| !matches!(info.kind, crate::wpda_runtime::LexAltRuleKind::Atomic))
+        || prefix_primary_has_non_atom_dispatch_rule(cat_src_idx, kind)
+        || prefix_crosscat_lhs_has_dispatch_rule(cat_src_idx, kind)
+}
+
+/// Original operator-table query shared by grouping continuation and the walker.
+pub fn operator_recognized<'a>(
+    infix: impl FnOnce() -> &'a [(u8, u8, u16, u16)],
+    postfix: impl FnOnce() -> &'a [(u8, u16, u16)],
+    mixfix: impl FnOnce() -> &'a [(u8, u16, u16)],
+) -> bool {
+    !infix().is_empty() || !postfix().is_empty() || !mixfix().is_empty()
+}
+
+/// Original per-category Pratt-floor query, with lazy table observations.
+pub fn operator_at_floor<'a>(
+    floor: u8,
+    infix: impl FnOnce() -> &'a [(u8, u8, u16, u16)],
+    postfix: impl FnOnce() -> &'a [(u8, u16, u16)],
+    mixfix: impl FnOnce() -> &'a [(u8, u16, u16)],
+) -> bool {
+    infix().iter().any(|&(left_bp, ..)| left_bp >= floor)
+        || postfix().iter().any(|&(left_bp, ..)| left_bp >= floor)
+        || mixfix().iter().any(|&(left_bp, ..)| left_bp >= floor)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn ready<W: SemiringRef>(
     primary_src_idx: u16,

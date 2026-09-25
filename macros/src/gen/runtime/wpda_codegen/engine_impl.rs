@@ -1340,13 +1340,11 @@ pub(crate) fn emit_engine_impl_full(
                 text: Option<&str>,
             ) -> bool {
                 let _ = text;
-                lex_alt_rules_for_prefix(cat_src_idx, kind).into_iter().any(|info| {
-                    !matches!(
-                        info.kind,
-                        mettail_prattail::wpda_runtime::LexAltRuleKind::Atomic
-                    )
-                }) || prefix_primary_has_non_atom_dispatch_rule(cat_src_idx, kind)
-                    || prefix_crosscat_lhs_has_dispatch_rule(cat_src_idx, kind)
+                mettail_prattail::wpda_transitions::control::prefix_token_has_non_atom_start(
+                    cat_src_idx, kind, lex_alt_rules_for_prefix,
+                    prefix_primary_has_non_atom_dispatch_rule,
+                    prefix_crosscat_lhs_has_dispatch_rule,
+                )
             }
 
             // EP-P2 (Stage B): delegate the obligation-gate functions to the
@@ -1771,9 +1769,9 @@ fn emit_category_recognizes_token_dispatch(categories: &[String]) -> TokenStream
         let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
         quote! {
             #i_u16 => {
-                !#infix_fn(next_tok).is_empty()
-                    || !#postfix_fn(next_tok).is_empty()
-                    || !#mixfix_fn(next_tok).is_empty()
+                mettail_prattail::wpda_transitions::control::operator_recognized(
+                    || #infix_fn(next_tok), || #postfix_fn(next_tok), || #mixfix_fn(next_tok),
+                )
             }
         }
     });
@@ -1800,9 +1798,9 @@ fn emit_category_recognizes_operator_body(categories: &[String]) -> TokenStream 
         let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
         quote! {
             #i_u16 => {
-                !#infix_fn(token_text).is_empty()
-                    || !#postfix_fn(token_text).is_empty()
-                    || !#mixfix_fn(token_text).is_empty()
+                mettail_prattail::wpda_transitions::control::operator_recognized(
+                    || #infix_fn(token_text), || #postfix_fn(token_text), || #mixfix_fn(token_text),
+                )
             }
         }
     });
@@ -1828,9 +1826,9 @@ fn emit_category_accepts_operator_at_floor_body(categories: &[String]) -> TokenS
         let mixfix_fn = quote::format_ident!("mixfix_bp_{}", cat.to_lowercase());
         quote! {
             #i_u16 => {
-                #infix_fn(token_text).iter().any(|&(left_bp, ..)| left_bp >= floor)
-                    || #postfix_fn(token_text).iter().any(|&(left_bp, ..)| left_bp >= floor)
-                    || #mixfix_fn(token_text).iter().any(|&(left_bp, ..)| left_bp >= floor)
+                mettail_prattail::wpda_transitions::control::operator_at_floor(
+                    floor, || #infix_fn(token_text), || #postfix_fn(token_text), || #mixfix_fn(token_text),
+                )
             }
         }
     });

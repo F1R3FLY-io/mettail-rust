@@ -380,50 +380,13 @@ pub fn emit_lex_alt_rule_for_fn(
                             #( #at_quoted_bind_gate_trigger_arms )*
                             _ => (&[], &[]),
                         };
-                    if bind_triggers.is_empty() {
-                        return false;
-                    }
                     const __OPENS: &[&str] = &[ #( #gap2_open_lits ),* ];
                     const __CLOSES: &[&str] = &[ #( #gap2_close_lits ),* ];
                     const __ROW_SEPS: &[&str] = &[ #( #gap2_row_sep_lits ),* ];
-                    let mut depth: i32 = 0;
-                    let mut next = tokens.next_pos(pos, 0);
-                    while let Some(i) = next {
-                        if let Some(mettail_prattail::automata::TokenKind::Fixed(t)) =
-                            tokens.peek_kind(i)
-                        {
-                            let __t = t.as_str();
-                            if __OPENS.contains(&__t) {
-                                depth += 1;
-                            } else if __CLOSES.contains(&__t) {
-                                depth -= 1;
-                                if depth < 0 {
-                                    return false;
-                                }
-                            } else if depth == 0 && __ROW_SEPS.contains(&__t) {
-                                return false;
-                            } else if depth == 0
-                                && bind_triggers.iter().any(|trig| __t == *trig)
-                            {
-                                // First depth-0 whole-source trigger is a bind
-                                // trigger with a sigil sibling ⇒ over-generation ⇒
-                                // SUPPRESS.
-                                return true;
-                            } else if depth == 0
-                                && polyadic_stops.iter().any(|stop| __t == *stop)
-                            {
-                                // First depth-0 whole-source trigger has NO sigil
-                                // sibling (polyadic) ⇒ legitimate ⇒ KEEP.
-                                return false;
-                            }
-                        }
-                        let following = tokens.next_pos(i, 0);
-                        if following == Some(i) {
-                            break;
-                        }
-                        next = following;
-                    }
-                    false
+                    mettail_prattail::wpda_transitions::prefix_policy::prefix_at_quoted_bind_gate_evidence(
+                        tokens, pos, bind_triggers, polyadic_stops,
+                        __OPENS, __CLOSES, __ROW_SEPS,
+                    )
                 }
             }
         } else {
@@ -493,16 +456,9 @@ pub fn emit_lex_alt_rule_for_fn(
                     tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
                     pos: usize,
                 ) -> bool {
-                    // Only `Ident` peeks can be refuted; anything else is
-                    // lex-compatible by fail-open.
-                    if !matches!(
-                        tokens.peek_kind(pos),
-                        Some(mettail_prattail::automata::TokenKind::Ident)
-                    ) {
-                        return true;
-                    }
-                    // Peek is Ident: refute iff the source is Ident-var-only.
-                    !( #membership_body )
+                    mettail_prattail::wpda_transitions::prefix_policy::crosscat_proj_lex_compatible(
+                        source_src, tokens, pos, |source_src| { #membership_body },
+                    )
                 }
             }
         } else {
@@ -618,25 +574,9 @@ pub fn emit_lex_alt_rule_for_fn(
                 #( #prefix_crosscat_lhs_trigger_set_arms )*
                 _ => &[],
             };
-            if triggers.is_empty() {
-                return false;
-            }
-            let mut next = tokens.next_pos(pos, 0);
-            while let Some(i) = next {
-                if let Some(mettail_prattail::automata::TokenKind::Fixed(t)) =
-                    tokens.peek_kind(i)
-                {
-                    if triggers.iter().any(|trig| t == *trig) {
-                        return true;
-                    }
-                }
-                let following = tokens.next_pos(i, 0);
-                if following == Some(i) {
-                    break;
-                }
-                next = following;
-            }
-            false
+            mettail_prattail::wpda_transitions::prefix_policy::prefix_crosscat_lhs_trigger_ahead(
+                tokens, pos, triggers,
+            )
         }
 
         /// ForRow Part-1 push-gate (F0, 2026-06-28): ROW-SCOPED variant of
@@ -675,47 +615,12 @@ pub fn emit_lex_alt_rule_for_fn(
                 #( #prefix_crosscat_lhs_trigger_set_arms )*
                 _ => &[],
             };
-            if triggers.is_empty() {
-                return false;
-            }
-            // GEN-1 GAP-2 (2026-06-28): spec-derived delimiter / row-separator
-            // tables (emitted from `collect_structural_delimiters` +
-            // `collect_sequence_separators` \ cross-cat-triggers), replacing the
-            // formerly-hardcoded rholang alphabet. `opens`/`closes` depth-track
-            // brackets; a depth-0 `row_seps` entry bounds the row.
             const __OPENS: &[&str] = &[ #( #gap2_open_lits ),* ];
             const __CLOSES: &[&str] = &[ #( #gap2_close_lits ),* ];
             const __ROW_SEPS: &[&str] = &[ #( #gap2_row_sep_lits ),* ];
-            let mut depth: i32 = 0;
-            let mut next = tokens.next_pos(pos, 0);
-            while let Some(i) = next {
-                if let Some(mettail_prattail::automata::TokenKind::Fixed(t)) =
-                    tokens.peek_kind(i)
-                {
-                    let __t = t.as_str();
-                    if __OPENS.contains(&__t) {
-                        depth += 1;
-                    } else if __CLOSES.contains(&__t) {
-                        depth -= 1;
-                        if depth < 0 {
-                            // Exited the enclosing bracketed region (for-`)`).
-                            return false;
-                        }
-                    } else if depth == 0 && __ROW_SEPS.contains(&__t) {
-                        // Row boundary: a trigger in a LATER row does not bind
-                        // THIS row's LHS.
-                        return false;
-                    } else if depth == 0 && triggers.iter().any(|trig| __t == *trig) {
-                        return true;
-                    }
-                }
-                let following = tokens.next_pos(i, 0);
-                if following == Some(i) {
-                    break;
-                }
-                next = following;
-            }
-            false
+            mettail_prattail::wpda_transitions::prefix_policy::prefix_crosscat_lhs_trigger_ahead_scoped(
+                tokens, pos, triggers, __OPENS, __CLOSES, __ROW_SEPS,
+            )
         }
 
         // AT_QUOTED_BIND_GATE (2026-07-03): `prefix_at_quoted_bind_gate_evidence`
