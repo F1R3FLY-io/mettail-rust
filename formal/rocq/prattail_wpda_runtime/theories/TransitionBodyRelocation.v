@@ -35,3 +35,28 @@ Proof. reflexivity. Qed.
 Print Assumptions original_body_is_called_unchanged.
 Print Assumptions equal_observations_preserve_complete_output.
 Print Assumptions relocation_preserves_order_and_duplicates.
+
+(** A lifted early-return fragment returns a decision and its observation
+    state. Falling through must feed that resulting state to the unchanged
+    continuation, rather than replaying the fragment or restoring its input.
+    Rust correspondence must account for every token/callback observation in
+    that state; these laws do not assert purity of external callbacks. *)
+Definition resume_after_fragment {State Output : Type}
+    (decision : option Output * State) (continuation : State -> Output) :=
+  match decision with
+  | (Some result, _) => result
+  | (None, state) => continuation state
+  end.
+
+Theorem fragment_return_skips_continuation : forall State Output
+    (result : Output) (state : State) continuation,
+    resume_after_fragment (Some result, state) continuation = result.
+Proof. reflexivity. Qed.
+
+Theorem fragment_fallthrough_uses_observed_state : forall State Output
+    (state : State) (continuation : State -> Output),
+    resume_after_fragment (None, state) continuation = continuation state.
+Proof. reflexivity. Qed.
+
+Print Assumptions fragment_return_skips_continuation.
+Print Assumptions fragment_fallthrough_uses_observed_state.

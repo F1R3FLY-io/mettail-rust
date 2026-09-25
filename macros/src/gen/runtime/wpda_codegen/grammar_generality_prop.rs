@@ -1163,11 +1163,36 @@ fn inv3_goal_gate(lang: &LanguageDef) -> Result<(), String> {
 fn inv4_fork_symmetry() -> Result<(), String> {
     // S1-FACTORING F1: OFF-shape lex fork (no factored groups in this probe).
     let fork_ts = super::forks::emit_lex_fork_at_prefix_dispatch(0u16, &[], false);
-    let probe: syn::ItemFn = syn::parse2(quote::quote! { fn __probe() { #fork_ts } })
-        .expect("fork code parses inside a probe fn");
-    let mut inspector = ForkArmInspector { violations: Vec::new() };
-    let mut owned = probe;
+    let forwarding = quote::quote! {
+        mettail_prattail::wpda_transitions::lexical_fork::prefix
+    };
+    if !fork_ts.to_string().contains(&forwarding.to_string()) {
+        return Err("INV-4 prefix emission must forward to the shared lexical fork".into());
+    }
+    let shared = syn::parse_file(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../prattail/src/wpda_transitions/lexical_fork.rs",
+    )))
+    .expect("shared lexical fork source parses");
+    let mut owned = shared
+        .items
+        .into_iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == "prefix" => Some(function),
+            _ => None,
+        })
+        .expect("shared prefix fork exists");
+    let mut inspector = ForkArmInspector {
+        violations: Vec::new(),
+        projection_arms: 0,
+    };
     syn::visit_mut::VisitMut::visit_item_fn_mut(&mut inspector, &mut owned);
+    if inspector.projection_arms != 2 {
+        return Err(format!(
+            "INV-4 expected primary and secondary projection arms, found {}",
+            inspector.projection_arms
+        ));
+    }
     if inspector.violations.is_empty() {
         Ok(())
     } else {
@@ -1177,10 +1202,12 @@ fn inv4_fork_symmetry() -> Result<(), String> {
 
 struct ForkArmInspector {
     violations: Vec<String>,
+    projection_arms: usize,
 }
 impl syn::visit_mut::VisitMut for ForkArmInspector {
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
         if pat_last_ident(&arm.pat).as_deref() == Some("CrossCatProjection") {
+            self.projection_arms += 1;
             if let syn::Expr::Block(b) = &*arm.body {
                 for stmt in &b.block.stmts {
                     if let Some(flag) = top_level_survival_assign(stmt) {

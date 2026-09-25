@@ -355,22 +355,9 @@ pub(crate) fn emit_collection_prefix_arms(
                 arms.push(quote! {
                     Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                         if __open == #open_token && state_cat_src_idx == #result_src_idx => {
-                        return WpdaStepAction::ConsumeAndPush {
-                            symbol: StackSymbolV2::collection_marker(
-                                // str-cast collection-infix fix (2026-06-18): capture the
-                                // enclosing Pratt dispatch bp (*cur_bp) on the marker so
-                                // the collection close resumes InfixLoop at that precedence
-                                // (a finalized collection joins the enclosing Pratt loop
-                                // like an atomic primary). Covers both the synth-paren and
-                                // direct-delimited open paths (shared ConsumeAndPush).
-                                #result_src_idx, #rule_idx, 0, *cur_bp,
-                            ),
-                            weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                            new_state: #new_state,
-                            // Phase F.8: collection open delimiter discards
-                            // the trigger token.
-                            trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
-                        };
+                        return mettail_prattail::wpda_transitions::collection_prefix::singleton(
+                            #result_src_idx, #rule_idx, cur_bp, lex_w, || #new_state,
+                        );
                     }
                 });
             } else {
@@ -388,58 +375,25 @@ pub(crate) fn emit_collection_prefix_arms(
                         let source_src_idx = *source_src_idx;
                         let proj_rule = *proj_rule;
                         quote! {
-                            mettail_prattail::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::rule_at(
-                                    #result_src_idx, #proj_rule, 0, Some(*cur_bp),
-                                ).with_kind_return(),
-                                weight: lex_w(
-                                    mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
-                                    #result_src_idx,
-                                    #proj_rule,
-                                ),
-                                new_state: WpdaState::CrossCatDelegate {
-                                    source_src_idx: #source_src_idx,
-                                    inner_cur_bp: *cur_bp,
-                                },
-                                // Unified Fix A (ROOT C): route the Map cross-cat
-                                // projection through the SINGLETON uncached push so
-                                // it reconciles in its OWN binder frame (not the
-                                // cohort broadcast that drops it). FV:
-                                // ForkSurvivorBinderPop.v.
-                                action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::PushProjectionInline,
-                            }
+                            mettail_prattail::wpda_transitions::collection_prefix::projection(
+                                #result_src_idx, #proj_rule, #source_src_idx, cur_bp, lex_w,
+                            )
                         }
                     })
                     .collect();
                 arms.push(quote! {
                     Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                         if __open == #open_token && state_cat_src_idx == #result_src_idx => {
-                        return WpdaStepAction::Fork {
-                            branches: vec![
+                        return mettail_prattail::wpda_transitions::collection_prefix::collision(|| vec![
                                 // branch0 — the PPar collection marker (primary,
                                 // weight BP_TIER_INFIX = 0.0). Discards the open
                                 // trigger token, like the no-collision path.
-                                mettail_prattail::wpda_walker::ForkBranch {
-                                    symbol: StackSymbolV2::collection_marker(
-                                        #result_src_idx, #rule_idx, 0, *cur_bp,
-                                    ),
-                                    weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                                    new_state: #new_state,
-                                    action_kind:
-                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                                            trigger_mode:
-                                                mettail_prattail::wpda_walker::TriggerMode::Discard,
-                                        },
-                                },
+                                mettail_prattail::wpda_transitions::collection_prefix::primary(
+                                    #result_src_idx, #rule_idx, cur_bp, lex_w, || #new_state,
+                                ),
                                 // branch1+ — the Map cross-cat projection(s).
                                 #(#proj_branches),*
-                            ],
-                            // Each branch's action_kind encodes its own consume
-                            // semantics (Discard for the marker, no-consume Push
-                            // for the projection).
-                            consume_trigger: false,
-                        };
+                            ]);
                     }
                 });
             }
@@ -1551,8 +1505,45 @@ mod tests {
 
         // ── Collision: per_cat[Proc] = [PPar, CastMap] ⇒ Fork. ──
         let per_cat_collision = vec![vec![ppar.clone(), cast_map.clone()], Vec::new()];
-        let collision =
+        let forwarding =
             emit_collection_prefix_arms(&lang, &categories, &per_cat_collision).to_string();
+        let projection_call = quote! {
+            mettail_prattail::wpda_transitions::collection_prefix::projection(
+                0u16, 1u16, 1u16, cur_bp, lex_w,
+            )
+        }
+        .to_string();
+        assert!(forwarding.contains(&projection_call), "{forwarding}");
+        let primary_path = "collection_prefix :: primary";
+        let projection_path = "collection_prefix :: projection";
+        assert!(
+            forwarding.find(primary_path).expect("primary branch")
+                < forwarding.find(projection_path).expect("projection branch"),
+            "original primary-before-projection order: {forwarding}"
+        );
+        assert!(forwarding.contains("collection_prefix :: collision"));
+        let shared = syn::parse_file(include_str!(
+            "../../../../../prattail/src/wpda_transitions/collection_prefix.rs"
+        ))
+        .expect("shared collection prefix module parses");
+        let shared_body = |names: &[&str]| {
+            let bodies: Vec<_> = shared
+                .items
+                .iter()
+                .filter_map(|item| {
+                    let syn::Item::Fn(function) = item else {
+                        return None;
+                    };
+                    names
+                        .iter()
+                        .any(|name| function.sig.ident == *name)
+                        .then_some(&function.block)
+                })
+                .collect();
+            assert_eq!(bodies.len(), names.len(), "every selected body must exist");
+            quote! { #(#bodies)* }.to_string()
+        };
+        let collision = shared_body(&["collision", "primary", "projection"]);
         assert!(
             collision.contains("WpdaStepAction :: Fork"),
             "collision must emit a Fork: {collision}"
@@ -1584,7 +1575,7 @@ mod tests {
         );
         // CastMap is rule index 1 within per_cat[Proc]; Map is category index 1.
         assert!(
-            collision.contains("source_src_idx : 1u16"),
+            collision.contains("CrossCatDelegate { source_src_idx ,"),
             "projection must delegate to source Map (src_idx 1): {collision}"
         );
         assert!(
@@ -1594,7 +1585,11 @@ mod tests {
 
         // ── No collision: per_cat[Proc] = [PPar] only ⇒ bare ConsumeAndPush. ──
         let per_cat_fast = vec![vec![ppar.clone()], Vec::new()];
-        let fast = emit_collection_prefix_arms(&lang, &categories, &per_cat_fast).to_string();
+        let fast_forwarding =
+            emit_collection_prefix_arms(&lang, &categories, &per_cat_fast).to_string();
+        assert!(fast_forwarding.contains("collection_prefix :: singleton"));
+        assert!(!fast_forwarding.contains("collection_prefix :: collision"));
+        let fast = shared_body(&["singleton"]);
         assert!(
             fast.contains("WpdaStepAction :: ConsumeAndPush"),
             "no-collision fast path must be a bare ConsumeAndPush: {fast}"

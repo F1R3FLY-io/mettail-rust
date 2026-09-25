@@ -1,6 +1,11 @@
 pub mod binder;
 pub mod collection_loop;
+pub mod collection_prefix;
 pub mod control;
+pub mod factoring;
+pub mod infix;
+pub mod lexical_fork;
 pub mod mixfix;
 pub mod prefix;
+pub mod prefix_dispatch;
 pub mod unwinding;

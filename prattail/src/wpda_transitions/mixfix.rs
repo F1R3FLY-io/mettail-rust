@@ -5,6 +5,39 @@ use crate::wpda_walker::WpdaStepAction;
 pub type MixfixPart<'a> = (u16, &'a [&'a str], &'a [&'a str], Option<&'a str>);
 pub type MixfixRepetition<'a> = (u16, &'a [&'a str], &'a str, &'a [&'a str], u8);
 
+/// Original per-member mixfix fan, also used by the factored dispatch fallback.
+/// Rule order, short-circuit admission and weight evaluation are unchanged.
+#[allow(clippy::too_many_arguments)]
+pub fn member_fan<W: SemiringRef>(
+    __mixfix_slice: &[(u8, u16, u16)],
+    cur_bp: &u8,
+    __mixfix_fallback_full: bool,
+    mut __goal_admits: impl FnMut(u16) -> bool,
+    mut __method_name_admits: impl FnMut(u16, u16) -> bool,
+    mut lex_w: impl FnMut(f64, u16, u16) -> W,
+    __cands: &mut Vec<crate::wpda_walker::ForkBranch<W>>,
+) {
+    for &(l_bp, result_src, rule_idx) in __mixfix_slice {
+        if l_bp >= *cur_bp
+            && __goal_admits(result_src)
+            && (__mixfix_fallback_full || __method_name_admits(result_src, rule_idx))
+        {
+            __cands.push(crate::wpda_walker::ForkBranch {
+                symbol: StackSymbolV2::mixfix_marker(result_src, rule_idx, 0, *cur_bp),
+                weight: lex_w(crate::automata::lex_weight::BP_TIER_MIXFIX, result_src, rule_idx),
+                new_state: WpdaState::MixfixLiteralRun {
+                    result_src_idx: result_src,
+                    rule_idx,
+                    completed_idx: 0,
+                    kind: 2,
+                    sub_pos: 0,
+                },
+                action_kind: crate::wpda_walker::ForkActionKind::Push,
+            });
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn continuation<'a, W: SemiringRef>(
     result_src_idx: &u16,

@@ -45,10 +45,13 @@
 //! spill-and-include pattern documented at
 //! `macros/src/logic/writer.rs::spill_and_include`).
 
-pub mod auto_inject;
 pub(crate) mod authored_capture;
+pub mod auto_inject;
 pub mod binder;
 pub mod builtin_metadata;
+#[cfg(test)]
+#[path = "../../../../tests/support/category_census_baselines.rs"]
+mod category_census_baselines;
 pub mod collection;
 pub mod engine_impl;
 pub mod facade;
@@ -76,9 +79,6 @@ pub mod forks;
 /// `cargo test -p macros grammar_generality`.
 #[cfg(test)]
 mod grammar_generality_prop;
-#[cfg(test)]
-#[path = "../../../../tests/support/category_census_baselines.rs"]
-mod category_census_baselines;
 /// #131: the `Ident`-capture ROUTING GATE — every declared `m:Ident` param must
 /// reach a token consumer in one of the two machines that can provide one. Runs
 /// at macro-expansion time; see the module docs for the three faults it rejects
@@ -832,15 +832,36 @@ mod tests {
         assert!(ts.contains("parse_Name_via_wpda_with_source"));
         assert!(ts.contains("TokenKind :: Ident"));
         assert!(ts.contains("LexAltRuleKind :: Atomic"));
-        assert!(ts.contains("LexAltRuleKind :: CrossCatLhs"));
         assert!(ts.contains("prefix_primary_has_dispatch_rule"));
-        assert!(ts.contains("__primary_survived"));
+        let forwarding = quote::quote! {
+            mettail_prattail::wpda_transitions::lexical_fork::prefix
+        };
         assert!(
-            !ts.contains("__only_secondary_survived"),
+            ts.contains(&forwarding.to_string()),
+            "identifier alternatives must use the shared prefix fork"
+        );
+        let shared = syn::parse_file(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../prattail/src/wpda_transitions/lexical_fork.rs",
+        )))
+        .expect("shared lexical fork source parses");
+        let prefix_body = shared
+            .items
+            .into_iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == "prefix" => Some(function.block),
+                _ => None,
+            })
+            .expect("shared prefix fork exists");
+        let shared = quote::quote! { #prefix_body }.to_string();
+        assert!(shared.contains("LexAltRuleKind :: CrossCatLhs"));
+        assert!(shared.contains("__primary_survived"));
+        assert!(
+            !shared.contains("__only_secondary_survived"),
             "secondary-only lex alternatives must fork instead of falling through to primary dispatch",
         );
         assert!(
-            !ts.contains("__primary_has_fallthrough_rule"),
+            !shared.contains("__primary_has_fallthrough_rule"),
             "primary-token dispatch availability is not evidence for a secondary-only branch",
         );
     }

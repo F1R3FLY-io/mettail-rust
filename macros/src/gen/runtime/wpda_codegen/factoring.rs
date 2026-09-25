@@ -620,16 +620,9 @@ fn child_branch_tokens(cat: u16, spine_id: u16, child: &SpineTree, child_id: u8)
                 None => quote! { None },
             };
             quote! {
-                mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: #sym,
-                    weight: lex_one(),
-                    new_state: #state,
-                    action_kind:
-                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
-                            expected_text: #text.to_string(),
-                            required_top_cat: #req,
-                        },
-                }
+                mettail_prattail::wpda_transitions::factoring::child_literal(
+                    || #sym, || #state, #text, #req, lex_one,
+                )
             }
         },
         SpineItem::ParamParse { cat_src_idx, cur_bp } => {
@@ -637,18 +630,9 @@ fn child_branch_tokens(cat: u16, spine_id: u16, child: &SpineTree, child_id: u8)
             // replacement rides the action kind (walker ReplaceAndPush
             // fork semantics — binder collection-arm precedent).
             quote! {
-                mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                    weight: lex_one(),
-                    new_state: WpdaState::PrefixDispatch {
-                        pos: _pos,
-                        cur_bp: #cur_bp,
-                    },
-                    action_kind:
-                        mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
-                            replace_symbol: #sym,
-                        },
-                }
+                mettail_prattail::wpda_transitions::factoring::parameter_replace_branch(
+                    #cat_src_idx, _pos, #cur_bp, || #sym, lex_one,
+                )
             }
         },
     }
@@ -756,25 +740,16 @@ pub(crate) fn build_spine_emission_from_parts(
                             SpineItem::Literal { .. } => {
                                 let b = &branches[0];
                                 quote! {
-                                    return WpdaStepAction::Fork {
-                                        branches: vec![#b],
-                                        consume_trigger: false,
-                                    };
+                                    return mettail_prattail::wpda_transitions::factoring::literal_chain(|| #b);
                                 }
                             },
                             SpineItem::ParamParse { cat_src_idx, cur_bp } => {
                                 let (sym, state) = child_target_tokens(cat, spine_id, child, *cid);
                                 let _ = state; // param chains resume via PrefixDispatch
                                 quote! {
-                                    return WpdaStepAction::ReplaceAndPush {
-                                        replace_symbol: #sym,
-                                        push_symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::PrefixDispatch {
-                                            pos: _pos,
-                                            cur_bp: #cur_bp,
-                                        },
-                                    };
+                                    return mettail_prattail::wpda_transitions::factoring::parameter_replace(
+                                        || #sym, #cat_src_idx, _pos, #cur_bp, lex_one,
+                                    );
                                 }
                             },
                         }
@@ -789,13 +764,10 @@ pub(crate) fn build_spine_emission_from_parts(
                             }
                         });
                         quote! {
-                            let mut __spine_branches =
-                                ::std::vec::Vec::with_capacity(#branch_count);
-                            #( #branch_pushes )*
-                            return WpdaStepAction::Fork {
-                                branches: __spine_branches,
-                                consume_trigger: false,
-                            };
+                            return mettail_prattail::wpda_transitions::factoring::divergence(
+                                #branch_count,
+                                |__spine_branches| { #( #branch_pushes )* },
+                            );
                         }
                     };
                     binder_arms.push(quote! {
@@ -1184,25 +1156,9 @@ fn mixfix_fan_group_arm(dispatch_cat: u16, trigger: &str, group: &MixfixGroup) -
                     || __method_name_admits(#result_src, #min_member)) =>
         {
             __cands.push(
-                mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: StackSymbolV2::mixfix_marker(
-                        #result_src, #spine_id, 0, *cur_bp,
-                    ),
-                    weight: lex_w(
-                        mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
-                        #result_src,
-                        #min_member,
-                    ),
-                    new_state: WpdaState::MixfixLiteralRun {
-                        result_src_idx: #result_src,
-                        rule_idx: #spine_id,
-                        completed_idx: 0,
-                        kind: 2,
-                        sub_pos: 0,
-                    },
-                    action_kind:
-                        mettail_prattail::wpda_walker::ForkActionKind::Push,
-                },
+                mettail_prattail::wpda_transitions::factoring::mixfix_group_branch(
+                    #result_src, #spine_id, *cur_bp, #min_member, lex_w,
+                ),
             );
             __mixfix_spine_pushed = true;
         }
@@ -1386,14 +1342,9 @@ fn mixfix_spine_step_arm(
             SpineItem::ParamParse { cat_src_idx, cur_bp } => {
                 return quote! {
                     #key_pat => {
-                        return WpdaStepAction::Push {
-                            symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                            weight: lex_one(),
-                            new_state: WpdaState::PrefixDispatch {
-                                pos: _pos,
-                                cur_bp: #cur_bp,
-                            },
-                        };
+                        return mettail_prattail::wpda_transitions::factoring::parameter_push(
+                            #cat_src_idx, _pos, #cur_bp, lex_one,
+                        );
                     }
                 };
             },
@@ -1418,55 +1369,32 @@ fn mixfix_spine_step_arm(
                 });
                 lit_len_terms.push(quote! { #t_ident.len() });
                 singleton_checks.push(quote! {
-                    if let Some(&__spine_np) = #t_ident.first() {
-                        return WpdaStepAction::ConsumeAtAndReplace {
-                            symbol: #sym,
-                            weight: lex_one(),
-                            new_state: #state,
-                            next_pos: __spine_np,
-                        };
+                    if let Some(__action) =
+                        mettail_prattail::wpda_transitions::factoring::literal_singleton(
+                            &#t_ident, || #sym, || #state, lex_one,
+                        )
+                    {
+                        return Some(__action);
                     }
                 });
                 push_stmts.push(quote! {
-                    for __spine_np in &#t_ident {
-                        __spine_branches.push(
-                            mettail_prattail::wpda_walker::ForkBranch {
-                                symbol: #sym,
-                                weight: lex_one(),
-                                new_state: #state,
-                                action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndReplace {
-                                        next_pos: *__spine_np,
-                                    },
-                            },
-                        );
-                    }
+                    mettail_prattail::wpda_transitions::factoring::append_literal_targets(
+                        &#t_ident, || #sym, || #state, lex_one, __spine_branches,
+                    );
                 });
             },
             SpineItem::ParamParse { cat_src_idx, cur_bp } => {
                 let (branch, nonfork) = match child {
                     SpineTree::Interior { .. } => (
                         quote! {
-                            mettail_prattail::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                                weight: lex_one(),
-                                new_state: WpdaState::PrefixDispatch {
-                                    pos: _pos,
-                                    cur_bp: #cur_bp,
-                                },
-                                action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::Push,
-                            }
+                            mettail_prattail::wpda_transitions::factoring::parameter_push_branch(
+                                #cat_src_idx, _pos, #cur_bp, lex_one,
+                            )
                         },
                         quote! {
-                            return WpdaStepAction::Push {
-                                symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                                weight: lex_one(),
-                                new_state: WpdaState::PrefixDispatch {
-                                    pos: _pos,
-                                    cur_bp: #cur_bp,
-                                },
-                            };
+                            return mettail_prattail::wpda_transitions::factoring::parameter_push(
+                                #cat_src_idx, _pos, #cur_bp, lex_one,
+                            );
                         },
                     ),
                     SpineTree::Leaf { .. } => {
@@ -1477,34 +1405,16 @@ fn mixfix_spine_step_arm(
                         // source and result categories coincide: a nested
                         // cross-category operator must not escape the typed
                         // operand merely because the first category matched.
-                        let entry = quote! {
-                            StackSymbolV2::category_entry_goal(#cat_src_idx)
-                        };
                         (
                             quote! {
-                                mettail_prattail::wpda_walker::ForkBranch {
-                                    symbol: #entry,
-                                    weight: lex_one(),
-                                    new_state: WpdaState::PrefixDispatch {
-                                        pos: _pos,
-                                        cur_bp: #cur_bp,
-                                    },
-                                    action_kind:
-                                        mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
-                                            replace_symbol: #sym,
-                                        },
-                                }
+                                mettail_prattail::wpda_transitions::factoring::parameter_replace_branch(
+                                    #cat_src_idx, _pos, #cur_bp, || #sym, lex_one,
+                                )
                             },
                             quote! {
-                                return WpdaStepAction::ReplaceAndPush {
-                                    replace_symbol: #sym,
-                                    push_symbol: #entry,
-                                    weight: lex_one(),
-                                    new_state: WpdaState::PrefixDispatch {
-                                        pos: _pos,
-                                        cur_bp: #cur_bp,
-                                    },
-                                };
+                                return mettail_prattail::wpda_transitions::factoring::parameter_replace(
+                                    || #sym, #cat_src_idx, _pos, #cur_bp, lex_one,
+                                );
                             },
                         )
                     },
@@ -1523,19 +1433,23 @@ fn mixfix_spine_step_arm(
     // The zero-live and singleton short-circuits (plan §2.2).
     let zero_handler = match n_uncond {
         0 => quote! {
-            if __spine_lit_total == 0 {
-                return WpdaStepAction::Error(format!(
-                    "mixfix spine divergence mismatch at pos {} (spine {}:{}) — \
-                     no lattice edge matches any commit literal",
-                    _pos, #result_src, #spine_id,
-                ));
+            if let Some(__action) =
+                mettail_prattail::wpda_transitions::factoring::zero_literal_only(
+                    __spine_lit_total, _pos, #result_src, #spine_id,
+                )
+            {
+                return __action;
             }
         },
         1 => {
             let nonfork = &uncond_nonforks[0];
             quote! {
-                if __spine_lit_total == 0 {
-                    #nonfork
+                if let Some(__action) =
+                    mettail_prattail::wpda_transitions::factoring::zero_one_operand(
+                        __spine_lit_total, || { #nonfork },
+                    )
+                {
+                    return __action;
                 }
             }
         },
@@ -1544,8 +1458,15 @@ fn mixfix_spine_step_arm(
     };
     let singleton_handler = if n_uncond == 0 {
         quote! {
-            if __spine_lit_total == 1 {
-                #(#singleton_checks)*
+            if let Some(__action) =
+                mettail_prattail::wpda_transitions::factoring::singleton(
+                    __spine_lit_total, || {
+                        #(#singleton_checks)*
+                        None
+                    },
+                )
+            {
+                return __action;
             }
         }
     } else {
@@ -1558,14 +1479,10 @@ fn mixfix_spine_step_arm(
             let __spine_lit_total: usize = #lit_total_expr;
             #zero_handler
             #singleton_handler
-            let mut __spine_branches: Vec<
-                mettail_prattail::wpda_walker::ForkBranch<__DwW>,
-            > = Vec::with_capacity(#n_uncond_lit + __spine_lit_total);
-            #(#push_stmts)*
-            return WpdaStepAction::Fork {
-                branches: __spine_branches,
-                consume_trigger: false,
-            };
+            return mettail_prattail::wpda_transitions::factoring::mixfix_divergence(
+                #n_uncond_lit, __spine_lit_total,
+                |__spine_branches| { #(#push_stmts)* },
+            );
         }
     }
 }
@@ -1612,23 +1529,9 @@ pub(crate) fn emit_spine_trigger_branch(
     weight_rule_idx: u16,
 ) -> TokenStream {
     quote! {
-        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-            symbol: StackSymbolV2::rule_at(
-                #category_src_idx, #spine_id, 1u8, Some(_outer_bp),
-            ),
-            weight: lex_w(0.0, #category_src_idx, #weight_rule_idx),
-            new_state: WpdaState::BinderRule {
-                result_src_idx: #category_src_idx,
-                rule_idx: #spine_id,
-                body_src_idx: #body_src_idx,
-                outer_bp: _outer_bp,
-            },
-            action_kind:
-                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                    trigger_mode:
-                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-                },
-        });
+        __pd_branches.push(mettail_prattail::wpda_transitions::factoring::prefix_spine_trigger(
+            #category_src_idx, #spine_id, #body_src_idx, _outer_bp, #weight_rule_idx, lex_w,
+        ));
     }
 }
 
@@ -3243,6 +3146,23 @@ mod tests {
 
     /// Whitespace-insensitive TokenStream text (token spacing in
     /// `TokenStream::to_string` is not load-bearing).
+    fn shared_transition_body(name: &str) -> String {
+        let source = syn::parse_file(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../prattail/src/wpda_transitions/factoring.rs",
+        )))
+        .expect("shared factoring source parses");
+        let body = source
+            .items
+            .into_iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == name => Some(function.block),
+                _ => None,
+            })
+            .expect("original factoring transition body exists");
+        normalized(&quote! { #body })
+    }
+
     fn normalized(ts: &proc_macro2::TokenStream) -> String {
         ts.to_string()
             .chars()
@@ -3637,29 +3557,36 @@ mod tests {
 
         // ── the ROOT-EDGE arm (the F1 root-edge fix pin) ───────────────────
         let arms = normalized(&bundle.binder_arms);
+        let literal_body = shared_transition_body("child_literal");
+        assert!(literal_body.contains("ForkActionKind::GuardedConsumeAndReplace"));
+        assert!(literal_body.contains("expected_text:text.to_string()"));
+        assert!(literal_body.contains("required_top_cat"));
+        assert!(arms.contains("factoring::child_literal("));
+        let parameter_body = shared_transition_body("parameter_replace");
+        assert!(parameter_body.contains("WpdaStepAction::ReplaceAndPush"));
+        assert!(
+            parameter_body.contains("push_symbol:StackSymbolV2::category_entry_goal(cat_src_idx)")
+        );
         // Pre-root arm (node 1) consumes the Nil-group's root item `Nil` —
         // and does NOT dispatch the divergence guards `!`/`!!` (those live
         // on the root node's own arm, id 2, which directly follows).
         let arm1 = window(&arms, "(0u16,63488u16,1u8)=>", "(0u16,63488u16,2u8)=>");
+        assert!(arm1.contains("\"Nil\","), "pre-root arm consumes the root edge item: {arm1}",);
         assert!(
-            arm1.contains("expected_text:\"Nil\""),
-            "pre-root arm consumes the root edge item: {arm1}",
-        );
-        assert!(
-            !arm1.contains("expected_text:\"!\""),
+            !arm1.contains("\"!\","),
             "divergence guards must NOT be on the pre-root arm: {arm1}",
         );
         let arm2 = window(&arms, "(0u16,63488u16,2u8)=>", "(0u16,63488u16,3u8)=>");
         assert!(
-            arm2.contains("expected_text:\"!\"") && arm2.contains("expected_text:\"!!\""),
+            arm2.contains("\"!\",") && arm2.contains("\"!!\","),
             "root-node arm forks the !/!! divergence: {arm2}",
         );
         // Quoted group's pre-root arm is the ParamParse chain form: replace
         // the spine marker to node 2 and push CategoryEntry(Name).
         let quoted_arm1 = window(&arms, "(0u16,63489u16,1u8)=>", "(0u16,63489u16,2u8)=>");
         assert!(
-            quoted_arm1.contains("ReplaceAndPush")
-                && quoted_arm1.contains("category_entry_goal(3u16)")
+            quoted_arm1.contains("factoring::parameter_replace(")
+                && quoted_arm1.contains(",3u16,_pos,0u8,lex_one,")
                 && quoted_arm1.contains("rule_at(0u16,63489u16,2u8"),
             "Quoted pre-root arm pushes the Name operand: {quoted_arm1}",
         );
@@ -3714,12 +3641,23 @@ mod tests {
         let ts = emit_spine_trigger_branch(0, SPINE_RULE_BASE, 0, 10);
         let s = normalized(&ts);
         assert!(s.contains("__pd_branches.push"));
-        // NOTE the trailing comma inside the call — token-exact mirror of the
-        // per-rule BinderPrefix branch's own rendering.
-        assert!(s.contains("rule_at(0u16,63488u16,1u8,Some(_outer_bp),)"), "{s}");
-        assert!(s.contains("lex_w(0.0,0u16,10u16)"), "AV5 weight stamp: {s}");
-        assert!(s.contains("ConsumeAsTriggerOnly"));
-        assert!(s.contains("rule_idx:63488u16"), "BinderRule state carries the SPINE_ID: {s}");
+        assert!(
+            s.contains(
+                "factoring::prefix_spine_trigger(0u16,63488u16,0u16,_outer_bp,10u16,lex_w,)"
+            ),
+            "{s}"
+        );
+        let body = shared_transition_body("prefix_spine_trigger");
+        assert!(body.contains("rule_at(category_src_idx,spine_id,1u8,Some(_outer_bp))"));
+        assert!(
+            body.contains("lex_w(0.0,category_src_idx,weight_rule_idx)"),
+            "AV5 weight stamp: {body}"
+        );
+        assert!(body.contains("ConsumeAsTriggerOnly"));
+        assert!(
+            body.contains("rule_idx:spine_id"),
+            "BinderRule state carries the SPINE_ID: {body}"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3775,6 +3713,10 @@ mod tests {
         assert_eq!(bundle.dispositions[0].len(), 15, "the Proc@ cohort is untouched");
 
         let arms = normalized(&bundle.binder_arms);
+        let parameter_branch = shared_transition_body("parameter_replace_branch");
+        assert!(parameter_branch.contains("symbol:StackSymbolV2::category_entry_goal(cat_src_idx)"));
+        assert!(parameter_branch.contains("ForkActionKind::ReplaceAndPush{replace_symbol:symbol()"));
+        assert!(arms.contains("factoring::divergence(2usize,"));
         let spine = SPINE_RULE_BASE; // 63488
                                      // Arm 1 (pre-root): the shared `pat` Proc operand — ONE push where
                                      // OFF ran three (the actual fan win).
@@ -3784,8 +3726,8 @@ mod tests {
             &format!("({ib}u16,{spine}u16,2u8)=>"),
         );
         assert!(
-            arm1.contains("ReplaceAndPush")
-                && arm1.contains("category_entry_goal(0u16)")
+            arm1.contains("factoring::parameter_replace(")
+                && arm1.contains(",0u16,_pos,0u8,lex_one,")
                 && arm1.contains(&format!("rule_at({ib}u16,{spine}u16,2u8")),
             "pre-root arm pushes the shared Proc operand: {arm1}",
         );
@@ -3796,13 +3738,11 @@ mod tests {
             &format!("({ib}u16,{spine}u16,3u8)=>"),
         );
         assert!(
-            arm2.contains("expected_text:\"<-\"")
-                && arm2.contains(&format!("rule_at({ib}u16,{spine}u16,3u8")),
+            arm2.contains("\"<-\",") && arm2.contains(&format!("rule_at({ib}u16,{spine}u16,3u8")),
             "arm 2 continues the spine on <-: {arm2}",
         );
         assert!(
-            arm2.contains("expected_text:\"<=\"")
-                && arm2.contains(&format!("rule_at({ib}u16,6u16,3u8")),
+            arm2.contains("\"<=\",") && arm2.contains(&format!("rule_at({ib}u16,6u16,3u8")),
             "arm 2 commits r6 on <=: {arm2}",
         );
         // ★Arm 3 — THE ACCEPT+CONTINUE FORK: two same-push branches.
@@ -3812,12 +3752,12 @@ mod tests {
             &format!("({ib}u16,{spine}u16,4u8)=>"),
         );
         assert_eq!(
-            arm3.matches("ReplaceAndPush").count(),
+            arm3.matches("factoring::parameter_replace_branch(").count(),
             2,
             "arm 3 is the two-branch accept fork: {arm3}",
         );
         assert_eq!(
-            arm3.matches(&format!("category_entry_goal({name_src}u16)"))
+            arm3.matches(&format!("parameter_replace_branch({name_src}u16,_pos,0u8,"))
                 .count(),
             2,
             "BOTH branches push the shared CategoryEntry(Name): {arm3}",
@@ -3839,8 +3779,7 @@ mod tests {
         // evidence-prune, exactly where OFF's QuotedQuery cursor dies).
         let arm4 = window(&arms, &format!("({ib}u16,{spine}u16,4u8)=>"), "];");
         assert!(
-            arm4.contains("expected_text:\"!\"")
-                && arm4.contains(&format!("rule_at({ib}u16,2u16,5u8")),
+            arm4.contains("\"!\",") && arm4.contains(&format!("rule_at({ib}u16,2u16,5u8")),
             "arm 4 commits r2 on the ! guard: {arm4}",
         );
 
@@ -3897,9 +3836,9 @@ mod tests {
         let spine = SPINE_RULE_BASE;
         let arm2 =
             window(&arms, &format!("(0u16,{spine}u16,2u8)=>"), &format!("(0u16,{spine}u16,3u8)=>"));
-        assert_eq!(arm2.matches("ReplaceAndPush").count(), 2, "{arm2}");
+        assert_eq!(arm2.matches("factoring::parameter_replace_branch(").count(), 2, "{arm2}");
         assert_eq!(
-            arm2.matches(&format!("category_entry_goal({tee}u16)"))
+            arm2.matches(&format!("parameter_replace_branch({tee}u16,_pos,0u8,"))
                 .count(),
             2,
             "{arm2}",
@@ -3913,7 +3852,7 @@ mod tests {
         assert!(continue_at < accept_at, "A1 order: {arm2}");
         let arm3 = window(&arms, &format!("(0u16,{spine}u16,3u8)=>"), "];");
         assert!(
-            arm3.contains("expected_text:\"»\"") && arm3.contains("rule_at(0u16,1u16,4u8"),
+            arm3.contains("\"»\",") && arm3.contains("rule_at(0u16,1u16,4u8"),
             "arm 3 commits Long on the » guard: {arm3}",
         );
     }
@@ -3939,7 +3878,7 @@ mod tests {
         let arm1 =
             window(&arms, &format!("(0u16,{spine}u16,1u8)=>"), &format!("(0u16,{spine}u16,2u8)=>"));
         assert_eq!(
-            arm1.matches("expected_text:\"«\"").count(),
+            arm1.matches("\"«\",").count(),
             2,
             "the pre-root arm forks BOTH consumers of the root edge: {arm1}",
         );
@@ -3956,8 +3895,7 @@ mod tests {
         );
         let arm2 = window(&arms, &format!("(0u16,{spine}u16,2u8)=>"), "];");
         assert!(
-            arm2.contains("expected_text:\"»\"")
-                && arm2.contains("mixfix_marker(0u16,1u16,0u8,*outer_bp)"),
+            arm2.contains("\"»\",") && arm2.contains("mixfix_marker(0u16,1u16,0u8,*outer_bp)"),
             "arm 2 commits TLong on the » guard: {arm2}",
         );
     }
@@ -4304,6 +4242,10 @@ mod tests {
         );
         // ── the fan arm ────────────────────────────────────────────────────
         let fan = normalized(&bundle.mixfix_fan_arms);
+        let group_body = shared_transition_body("mixfix_group_branch");
+        assert!(group_body.contains("mixfix_marker(result_src,spine_id,0,cur_bp)"));
+        assert!(group_body.contains("BP_TIER_MIXFIX,result_src,min_member"));
+        assert!(group_body.contains("rule_idx:spine_id"));
         let bang_arm = window(&fan, "(3u16,\"!\")", "(3u16,\"!!\")");
         assert!(
             bang_arm.contains("if2u8>=*cur_bp")
@@ -4312,18 +4254,26 @@ mod tests {
             "D-1 full-admission guard on the MEMBER id (A-M4): {bang_arm}",
         );
         assert!(
-            bang_arm.contains("mixfix_marker(0u16,63491u16,0,*cur_bp,)")
-                && bang_arm.contains("BP_TIER_MIXFIX,0u16,3u16")
-                && bang_arm.contains("rule_idx:63491u16")
+            bang_arm.contains("factoring::mixfix_group_branch(0u16,63491u16,*cur_bp,3u16,lex_w,)")
                 && bang_arm.contains("__mixfix_spine_pushed=true"),
             "spine push at the AV5 min-member weight: {bang_arm}",
         );
         assert!(
             fan.contains("(3u16,\"!!\")")
-                && fan.contains("mixfix_marker(0u16,63492u16,0,*cur_bp,)")
+                && fan
+                    .contains("factoring::mixfix_group_branch(0u16,63492u16,*cur_bp,4u16,lex_w,)")
         );
         // ── the prelude arms (the ! group; !! isomorphic) ─────────────────
         let prelude = normalized(&bundle.mixfix_prelude_arms);
+        assert!(shared_transition_body("parameter_push").contains("WpdaStepAction::Push"));
+        assert!(shared_transition_body("parameter_push_branch").contains("ForkActionKind::Push"));
+        assert!(shared_transition_body("zero_one_operand").contains("if__spine_lit_total==0"));
+        assert!(shared_transition_body("singleton").contains("if__spine_lit_total==1"));
+        assert!(shared_transition_body("zero_literal_only").contains("WpdaStepAction::Error"));
+        assert!(shared_transition_body("literal_singleton")
+            .contains("WpdaStepAction::ConsumeAtAndReplace"));
+        assert!(shared_transition_body("append_literal_targets").contains("for__spine_npintargets"));
+        assert!(shared_transition_body("mixfix_divergence").contains("consume_trigger:false"));
         let chain =
             window(&prelude, "(0u16,63491u16,2u8,0u8,0u8)=>", "(0u16,63491u16,2u8,0u8,1u8)=>");
         assert!(
@@ -4337,19 +4287,19 @@ mod tests {
             "divergence 1 gates the rule-5 commit on the close: {div1}",
         );
         assert!(
-            div1.contains("if__spine_lit_total==0{returnWpdaStepAction::Push")
-                && div1.contains("symbol:StackSymbolV2::category_entry_goal(0u16)"),
+            div1.contains("factoring::zero_one_operand(__spine_lit_total,||{")
+                && div1.contains("factoring::parameter_push(0u16,_pos,"),
             "divergence 1 B-alone short-circuit (descent when no close): {div1}",
         );
         assert!(
-            div1.contains("ForkActionKind::Push")
-                && div1.contains("category_entry_goal(0u16)")
+            div1.contains("factoring::parameter_push_branch(0u16,_pos,")
+                && div1.contains("factoring::append_literal_targets(")
                 && div1.contains("mixfix_marker(0u16,5u16,0u8,__mixfix_continuation_bp,)")
                 && div1.contains("kind:2u8,sub_pos:2u8"),
             "divergence 1 fork = descent-first + rule-5 commit CAR: {div1}",
         );
         assert!(
-            !div1.contains("__spine_lit_total==1"),
+            !div1.contains("factoring::singleton("),
             "divergence 1 has an unconditional branch — no literal-singleton \
              short-circuit: {div1}",
         );
@@ -4361,14 +4311,14 @@ mod tests {
             "divergence 2 gates both commits: {div2}",
         );
         assert!(
-            div2.contains("if__spine_lit_total==1")
+            div2.contains("factoring::singleton(__spine_lit_total,||{")
                 && div2.contains("mixfix_marker(0u16,3u16,0u8,__mixfix_continuation_bp,)")
                 && div2.contains("mixfix_marker(0u16,7u16,0u8,__mixfix_continuation_bp,)")
                 && div2.contains("kind:0u8,sub_pos:1u8"),
             "divergence 2 = the two commit CARs with singleton short-circuits: {div2}",
         );
         assert!(
-            div2.contains("WpdaStepAction::Error"),
+            div2.contains("factoring::zero_literal_only(__spine_lit_total,_pos,0u16,63491u16,)"),
             "divergence 2 zero-live miss shape: {div2}",
         );
         // ── engine-table rows ─────────────────────────────────────────────
@@ -4616,9 +4566,9 @@ mod tests {
         let bundle = build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
         let prelude = normalized(&bundle.mixfix_prelude_arms);
         assert!(
-            prelude.contains("ForkActionKind::ReplaceAndPush")
+            prelude.contains("factoring::parameter_replace_branch(0u16,_pos,")
                 && prelude.contains(
-                    "replace_symbol:StackSymbolV2::mixfix_marker(0u16,1u16,0u8,__mixfix_continuation_bp,)"
+                    "||StackSymbolV2::mixfix_marker(0u16,1u16,0u8,__mixfix_continuation_bp,)"
                 ),
             "the operand-edge commit rides ReplaceAndPush: {prelude}",
         );

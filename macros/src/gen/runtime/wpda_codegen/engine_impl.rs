@@ -504,35 +504,10 @@ pub(crate) fn emit_engine_impl_full(
     // partial floor windows / goal / method-name rejections reproduce
     // today's per-member behavior exactly).
     let mixfix_member_fan_loop = quote! {
-        for &(l_bp, result_src, rule_idx) in __mixfix_slice {
-            if l_bp >= *cur_bp
-                && __goal_admits(result_src)
-                && (__mixfix_fallback_full
-                    || __method_name_admits(result_src, rule_idx))
-            {
-                __cands.push(
-                    mettail_prattail::wpda_walker::ForkBranch {
-                        symbol: StackSymbolV2::mixfix_marker(
-                            result_src, rule_idx, 0, *cur_bp,
-                        ),
-                        weight: lex_w(
-                            mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
-                            result_src,
-                            rule_idx,
-                        ),
-                        new_state: WpdaState::MixfixLiteralRun {
-                            result_src_idx: result_src,
-                            rule_idx,
-                            completed_idx: 0,
-                            kind: 2,
-                            sub_pos: 0,
-                        },
-                        action_kind:
-                            mettail_prattail::wpda_walker::ForkActionKind::Push,
-                    },
-                );
-            }
-        }
+        mettail_prattail::wpda_transitions::mixfix::member_fan(
+            __mixfix_slice, cur_bp, __mixfix_fallback_full,
+            &__goal_admits, &__method_name_admits, lex_w, &mut __cands,
+        );
     };
     let s1_mixfix_fan_arms = &s1_spine.mixfix_fan_arms;
     let mixfix_fan_tokens = if mixfix_any {
@@ -551,23 +526,6 @@ pub(crate) fn emit_engine_impl_full(
         }
     } else {
         mixfix_member_fan_loop.clone()
-    };
-    // D-2: a pushed spine branch FORCES the Fork family at width 1
-    // (`Fork{ct: true, n: 1}` — the forks.rs M6c.8.5 single-branch-Fork
-    // precedent). The singleton fast-path's `ConsumeAndPush{Discard}` would
-    // change the action FAMILY at every send site (today's sends are always
-    // ≥2-wide Forks) and bypass every Fork-keyed guard/receipt surface.
-    let mixfix_forced_fork_tokens = if mixfix_any {
-        quote! {
-            if __mixfix_spine_pushed && __cands.len() == 1 {
-                return WpdaStepAction::Fork {
-                    branches: __cands,
-                    consume_trigger: true,
-                };
-            }
-        }
-    } else {
-        TokenStream::new()
     };
     // The MixfixLiteralRun literal-step helpers, extracted so the ON
     // emission can HOIST them above the spine prelude (A-M3: macro_rules!
@@ -841,365 +799,75 @@ pub(crate) fn emit_engine_impl_full(
                             ) -> mettail_prattail::wpda_walker::WpdaStepAction<
                                 mettail_prattail::automata::lex_weight::LexicographicWeight,
                             > {
-                                #[allow(non_camel_case_types)]
-                                type __DwW = mettail_prattail::automata::lex_weight::LexicographicWeight;
-                        // L-substrate Piece #6 (2026-05-13): lex-fork
-                        // dispatch BEFORE any other PrefixDispatch
-                        // logic. Emits a Fork over `peek_alternatives(*pos)`
-                        // when the active token source detected lex
-                        // ambiguity (multi-length-accept points along
-                        // the DFA walk — e.g., for input `-3` the
-                        // scanner visits both `Minus@end=1` and
-                        // `Integer@end=2`, surfacing as 2 alternatives
-                        // in `entries[0]`). The default
-                        // `SliceTokenSource::peek_alternatives` returns
-                        // `&[]` so this dispatch is inert without a
-                        // `MutableMultiTokenSource` attached (Pieces
-                        // #3/#7 facade glue gates the source
-                        // selection).
-                        if let Some(__action) = self.step_prefix_lex_fork(
-                            pos,
-                            cur_bp,
-                            frontier_top,
-                            tokens,
-                            frame_ctx,
-                        ) {
-                            return __action;
-                        }
-                        // Stage 3.16 invariant (Cluster 1, Mechanism γ,
-                        // 2026-05-05): Fork over close + cross-cat-redirect
-                        // branches. For shipped grammars the conditions
-                        // are mutually-exclusive on token (the Fork
-                        // degenerates to one surviving cursor — the other
-                        // drops via Idle on its next step). For G3-style
-                        // future grammars where the close-token equals an
-                        // element-start token, lex-min + source-order
-                        // tiebreak picks close (branch_idx 0 < redirect's
-                        // branch_idx 1; weight 0.0 < SKIP_BIAS).
-                        //
-                        // Walker companion: the apply_action::Fork dispatch
-                        // (wpda_walker.rs:2188) transfers the live builder's
-                        // open collection_stack to the parent cursor on
-                        // Lazy→Strict promotion, fixing the LIFO invariant
-                        // for empty cross-cat collections. See
-                        // `feedback_use_wpds_disambiguation_not_heuristics.md`.
-                        if let Some(node) = frontier_top {
-                            if node.symbol.kind
-                                == mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker
-                            {
-                                let result_src_idx = node.symbol.category_src_idx;
-                                let rule_idx = node.symbol.rule_index_in_category;
-                                // Phase 4 #1.B (2026-05-11): the
-                                // CollectionMarker's `bp` field carries
-                                // the slot identifier. For Class-5
-                                // collection rules and Phase-4-#1's
-                                // top-level Class-2 multi-slot rules
-                                // (no outer collection nesting), the
-                                // marker bp is the codegen-stamped slot_idx;
-                                // runtime accumulator ids flow separately
-                                // through the CollectionId action argument.
-                                let slot_idx = node.symbol.bp.unwrap_or(0u8);
-                                let collection_spec = self
-                                    .collection_spec(result_src_idx, rule_idx, slot_idx);
-                                let close_lookup: Option<&'static str> =
-                                    collection_spec.map(|__s| __s.close);
-                                let token_text = tokens.peek_text(*pos).unwrap_or("");
-                                // #307 ROOT-F G1 site-2 (2026-06-11): the
-                                // empty-collection close detection is edge
-                                // MEMBERSHIP (primary + alternatives), not
-                                // primary-only text equality (the ROOT-A
-                                // primary_equality_loses trap — live for
-                                // multi-char closes like the Bag "}#").
-                                let token_is_close = close_lookup.is_some_and(|cl| {
-                                    !cl.is_empty()
-                                        && (token_text == cl
-                                    || {
-                                        tokens
-                                            .peek_alternatives(*pos)
-                                            .iter()
-                                            .any(|a| a.text == cl)
-                                    })
-                                });
-                                let element_src_lookup: Option<u16> = self
-                                    .collection_spec(result_src_idx, rule_idx, slot_idx)
-                                    .and_then(|__s| __s.element_src_idx);
-                                let redirect_src_idx =
-                                    element_src_lookup.filter(|&esi| esi != result_src_idx);
-                                let element_can_start = element_src_lookup.is_some_and(|esi| {
-                                    tokens
-                                        .peek_kind(*pos)
-                                        .as_ref()
-                                        .is_some_and(|kind| {
-                                            self.collection_element_can_start(esi, kind)
-                                        })
-                                        || tokens
-                                            .peek_alternatives(*pos)
-                                            .iter()
-                                            .any(|alternative| {
-                                                self.collection_element_can_start(
-                                                    esi,
-                                                    &alternative.kind,
-                                                )
-                                            })
-                                });
-                                let can_stop_empty = collection_spec.is_some_and(|spec| {
-                                    spec.close.is_empty() && spec.min_elements == 0
-                                });
-                                let redirect_should_parse = redirect_src_idx.is_some()
-                                    && (!can_stop_empty || element_can_start);
-                                if token_is_close
-                                    || redirect_should_parse
-                                    || can_stop_empty
-                                {
-                                    let mut __branches: Vec<
-                                        mettail_prattail::wpda_walker::ForkBranch<
-                                            __DwW,
-                                        >,
-                                    > = Vec::with_capacity(2);
-                                    if token_is_close {
-                                        // #307 ROOT-F G1 site-2: one
-                                        // ConsumeAtAndPop per matched close
-                                        // edge (deduped by target), never the
-                                        // alt-0 ConsumeAndPop advance.
-                                        let cl = close_lookup.unwrap_or("");
-                                        let mut __targets: Vec<usize> =
-                                            Vec::with_capacity(2);
-                                        if token_text == cl {
-                                            if let Some(np) = tokens.next_pos(*pos, 0) {
-                                                __targets.push(np);
-                                            }
-                                        }
-                                        for (__i, __alt) in
-                                            tokens.peek_alternatives(*pos).iter().enumerate()
-                                        {
-                                            if __alt.text == cl {
-                                                if let Some(np) =
-                                                    tokens.next_pos(*pos, __i + 1)
-                                                {
-                                                    if !__targets.contains(&np) {
-                                                        __targets.push(np);
-                                                    }
+                                mettail_prattail::wpda_transitions::prefix_dispatch::prefix_dispatch(
+                                    #primary_src_idx, pos, cur_bp, frontier_top, tokens,
+                                    || self.step_prefix_lex_fork(
+                                        pos, cur_bp, frontier_top, tokens, frame_ctx,
+                                    ),
+                                    |result_src_idx, rule_idx, slot_idx| {
+                                        self.collection_spec(result_src_idx, rule_idx, slot_idx)
+                                    },
+                                    |src_idx, kind| self.collection_element_can_start(src_idx, kind),
+                                    lex_w,
+                                    |state_cat_src_idx, _outer_bp, peek| {
+                                        match peek {
+                                            // B7 Pattern 2: paren-grouping `(` arms — match
+                                            // first so `(` doesn't fall through to a rule's
+                                            // `(`-prefixed pattern (none exist in shipped
+                                            // grammars; the synthetic-collection paren is
+                                            // consumed via CollectionOpenParen, never here).
+                                            #grouping_arms
+                                            // Phase 4: collection open-delim arms run before
+                                            // generic prefix arms. Open delimiters are
+                                            // typically `Fixed("{")` / `Fixed("[")` /
+                                            // `Fixed("list")` — unambiguous in PrefixDispatch
+                                            // context.
+                                            #collection_arms
+                                            _ => {
+                                                // Generic unified prefix arms.  They retain
+                                                // their original source order, but are routed
+                                                // through bounded per-category match chunks so
+                                                // grammar growth cannot inflate this state's
+                                                // native frame.
+                                                if let Some(__action) = match state_cat_src_idx {
+                                                    #prefix_category_dispatch_arms
+                                                    _ => None,
+                                                } {
+                                                    return __action;
                                                 }
-                                            }
-                                        }
-                                        for np in __targets {
-                                            __branches.push(
-                                                mettail_prattail::wpda_walker::ForkBranch {
-                                                    symbol: StackSymbolV2::category_entry(0),
-                                                    weight: lex_w(0.0, result_src_idx, rule_idx),
-                                                    new_state: WpdaState::Unwinding,
-                                                    action_kind:
-                                                        mettail_prattail::wpda_walker::ForkActionKind::ConsumeAtAndPop {
-                                                            next_pos: np,
-                                                        },
-                                                },
-                                            );
-                                        }
-                                    }
-                                    if let Some(element_src_idx) = redirect_src_idx {
-                                        if !can_stop_empty || element_can_start {
-                                            __branches.push(
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                // GEN-1 goal-gate G2 (2026-06-28):
-                                                // strict GOAL = the collection
-                                                // element's category. For a
-                                                // polyadic bind `a,b,c <- x`
-                                                // (Vec<Name> elements, result
-                                                // InputBind) each element parses
-                                                // with goal=Name, so the
-                                                // InputBindPolyadic `,`
-                                                // (Name→InputBind) is dropped and
-                                                // the CollectionLoop owns the
-                                                // separator — enabling 3+ elems.
-                                                symbol: StackSymbolV2::category_entry_goal(
-                                                    element_src_idx,
-                                                ),
-                                                weight: lex_w(
-                                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                                    result_src_idx,
-                                                    rule_idx,
-                                                ),
-                                                new_state: WpdaState::PrefixDispatch {
-                                                    pos: *pos,
-                                                    cur_bp: *cur_bp,
-                                                },
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::Push,
-                                            },
-                                            );
-                                        }
-                                    }
-                                    if can_stop_empty
-                                        && redirect_src_idx.is_none()
-                                        && element_src_lookup.is_some()
-                                        && element_can_start
-                                    {
-                                        let element_src_idx = element_src_lookup.unwrap_or(0);
-                                        __branches.push(
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::category_entry_goal(
-                                                    element_src_idx,
-                                                ),
-                                                weight: lex_w(
-                                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                                    result_src_idx,
-                                                    rule_idx,
-                                                ),
-                                                new_state: WpdaState::PrefixDispatch {
-                                                    pos: *pos,
-                                                    cur_bp: *cur_bp,
-                                                },
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::Push,
-                                            },
-                                        );
-                                    }
-                                    if can_stop_empty {
-                                        let resumes_via_unwinding = collection_spec
-                                            .is_some_and(|spec| {
-                                                spec.close_resumes_via_unwinding
-                                            });
-                                        __branches.push(
-                                            mettail_prattail::wpda_walker::ForkBranch {
-                                                symbol: StackSymbolV2::category_entry(0),
-                                                weight: lex_w(0.0, result_src_idx, rule_idx),
-                                                new_state: if resumes_via_unwinding {
-                                                    WpdaState::Unwinding
-                                                } else {
-                                                    WpdaState::InfixLoop { cur_bp: *cur_bp }
-                                                },
-                                                action_kind:
-                                                    mettail_prattail::wpda_walker::ForkActionKind::Pop,
-                                            },
-                                        );
-                                    }
-                                    return WpdaStepAction::Fork {
-                                        branches: __branches,
-                                        consume_trigger: false,
-                                    };
-                                }
-                            }
-                        }
-                        // Phase A.2: dispatch on the current category (derived
-                        // from the frontier top's src_idx) and the peek'd token.
-                        let state_cat_src_idx: u16 = frontier_top
-                            .map(|n| n.symbol.category_src_idx)
-                            .unwrap_or(#primary_src_idx);
-                        let _outer_bp: u8 = *cur_bp;
-                        let peek = tokens.peek_kind(*pos);
-                        let _ = frontier_top; // suppress unused warning
-                        match peek {
-                            // B7 Pattern 2: paren-grouping `(` arms — match
-                            // first so `(` doesn't fall through to a rule's
-                            // `(`-prefixed pattern (none exist in shipped
-                            // grammars; the synthetic-collection paren is
-                            // consumed via CollectionOpenParen, never here).
-                            #grouping_arms
-                            // Phase 4: collection open-delim arms run before
-                            // generic prefix arms. Open delimiters are
-                            // typically `Fixed("{")` / `Fixed("[")` /
-                            // `Fixed("list")` — unambiguous in PrefixDispatch
-                            // context.
-                            #collection_arms
-                            _ => {
-                                // Generic unified prefix arms.  They retain
-                                // their original source order, but are routed
-                                // through bounded per-category match chunks so
-                                // grammar growth cannot inflate this state's
-                                // native frame.
-                                if let Some(__action) = match state_cat_src_idx {
-                                    #prefix_category_dispatch_arms
-                                    _ => None,
-                                } {
-                                    return __action;
-                                }
-                                // Stage 3.20 / L12 (Commit D, 2026-05-06):
-                                // WPDS-edge recovery. The wrapper-level
-                                // skip-to-sync loop in facade.rs is replaced
-                                // by intrinsic Walker recovery emitted via
-                                // recovery_dispatch::emit_recovery_fork. Up
-                                // to K=8 lex-min-ranked branches
-                                // (Skip/Delete/Insert/Substitute) replace
-                                // the prior Idle that hung the parse on
-                                // dead-end. Per `feedback_use_wpds_disambiguation_not_heuristics.md`.
-                                //
-                                // Bounded recovery (2026-05-06): the walker's
-                                // apply_action_to_cursor::Fork detects this
-                                // recovery Fork (via branches' BuilderDelta
-                                // effect kind) and enforces three principled
-                                // WPDS-correct bounds before allocating
-                                // children:
-                                //   1. cursor.recovery_depth < RecoveryConfig.max_recovery_depth
-                                //   2. (pos, cat, cur_bp) ∉ cursor.visited_recovery
-                                //   3. forward-progress filter: branches with
-                                //      new_pos == base_pos AND no InsertToken
-                                //      effect are dropped
-                                // No EOF heuristic; recovery_dispatch's
-                                // empty-token-ids path returns Error cleanly,
-                                // and the depth/visited bounds catch any
-                                // mid-stream loops.
-                                match recovery_infra_for(state_cat_src_idx) {
-                                    Some(infra) => {
-                                        let active_recovery_config =
-                                            mettail_prattail::recovery_cohort::with_active_recovery_config(
-                                                |config| config.clone(),
-                                            );
-                                        let recovery_config = active_recovery_config
-                                            .as_ref()
-                                            .unwrap_or(&infra.config);
-                                        // Phase F.13 Task #117 (2026-05-23):
-                                        // try cohort-cached path first via
-                                        // the walker's pinned TLS pointer.
-                                        // Falls through to the uncached path
-                                        // when the cache pointer is null
-                                        // (engine.step called outside a
-                                        // walker parse loop).
-                                        let cached: Option<mettail_prattail::wpda_walker::WpdaStepAction<__DwW>> =
-                                            mettail_prattail::recovery_cohort::with_active_cache_typed::<__DwW, _, _>(
-                                                |cache| {
-                                                    let view = mettail_prattail::recovery_dispatch::WalkerRuntimeView::new(
-                                                        _gss,
-                                                        frontier_top,
-                                                        *pos,
-                                                        state_cat_src_idx,
-                                                        *cur_bp,
-                                                    );
-                                                    mettail_prattail::recovery_dispatch::emit_recovery_fork_cached_with_config(
-                                                        view,
-                                                        tokens,
-                                                        infra,
-                                                        recovery_config,
-                                                        cache,
-                                                    )
-                                                },
-                                            );
-                                        match cached {
-                                            Some(action) => action,
-                                            None => {
-                                                let view = mettail_prattail::recovery_dispatch::WalkerRuntimeView::new(
-                                                    _gss,
-                                                    frontier_top,
-                                                    *pos,
-                                                    state_cat_src_idx,
-                                                    *cur_bp,
-                                                );
-                                                mettail_prattail::recovery_dispatch::emit_recovery_fork_with_config(
-                                                    view,
-                                                    tokens,
-                                                    infra,
-                                                    recovery_config,
+                                                // Stage 3.20 / L12 (Commit D, 2026-05-06):
+                                                // WPDS-edge recovery. The wrapper-level
+                                                // skip-to-sync loop in facade.rs is replaced
+                                                // by intrinsic Walker recovery emitted via
+                                                // recovery_dispatch::emit_recovery_fork. Up
+                                                // to K=8 lex-min-ranked branches
+                                                // (Skip/Delete/Insert/Substitute) replace
+                                                // the prior Idle that hung the parse on
+                                                // dead-end. Per `feedback_use_wpds_disambiguation_not_heuristics.md`.
+                                                //
+                                                // Bounded recovery (2026-05-06): the walker's
+                                                // apply_action_to_cursor::Fork detects this
+                                                // recovery Fork (via branches' BuilderDelta
+                                                // effect kind) and enforces three principled
+                                                // WPDS-correct bounds before allocating
+                                                // children:
+                                                //   1. cursor.recovery_depth < RecoveryConfig.max_recovery_depth
+                                                //   2. (pos, cat, cur_bp) ∉ cursor.visited_recovery
+                                                //   3. forward-progress filter: branches with
+                                                //      new_pos == base_pos AND no InsertToken
+                                                //      effect are dropped
+                                                // No EOF heuristic; recovery_dispatch's
+                                                // empty-token-ids path returns Error cleanly,
+                                                // and the depth/visited bounds catch any
+                                                // mid-stream loops.
+                                                mettail_prattail::wpda_transitions::prefix_dispatch::recover(
+                                                    _gss, frontier_top, pos, cur_bp, state_cat_src_idx,
+                                                    tokens, recovery_infra_for,
                                                 )
                                             }
                                         }
-                                    }
-                                    None => WpdaStepAction::Error(format!(
-                                        "no recovery infra for category src_idx {} at pos {} — \
-                                         codegen invariant violated (recovery_infra_for is exhaustive)",
-                                        state_cat_src_idx, *pos,
-                                    )),
-                                }
-                            }
-                        }
+                                    },
+                                )
                             }
                         }
                         __step_frame.step_prefix_dispatch(
@@ -1253,632 +921,29 @@ pub(crate) fn emit_engine_impl_full(
                             ) -> mettail_prattail::wpda_walker::WpdaStepAction<
                                 mettail_prattail::automata::lex_weight::LexicographicWeight,
                             > {
-                                #[allow(non_camel_case_types)]
-                                type __DwW = mettail_prattail::automata::lex_weight::LexicographicWeight;
-                        // Phase 4/5/B7: if frontier_top is a marker symbol
-                        // for a mid-rule context, skip infix dispatch and
-                        // fall through to Unwinding. Each marker has its
-                        // own Unwinding handler.
-                        //
-                        // F5 fix (2026-05-10): `CollectionMarker` REMOVED
-                        // from this skip list. After a cross-cat sub-parse
-                        // returns to a CollectionMarker top, the next
-                        // tokens may be Pratt infix/postfix/mixfix operators
-                        // extending the current element (e.g., `+ 2` after
-                        // `1` inside `{1 + 2 + 3}`). The infix dispatch
-                        // below uses state_cat_src_idx =
-                        // CollectionMarker.category_src_idx = the
-                        // collection's RESULT category (e.g., Proc for
-                        // PPar) — exactly the category whose operators
-                        // (Add, Mul, ==, etc.) should fire. If no operator
-                        // matches, the standard 0-cands fallthrough below
-                        // advances to Unwinding-CollectionMarker → routes
-                        // to CollectionLoop for close/sep/bare dispatch —
-                        // preserving the close-on-`}` and sep-on-`|`
-                        // semantics. The marker-skip remains for RuleAt /
-                        // OptionalGroupAt / BinderListLoopAt because those
-                        // indicate mid-rule contexts where the next tokens
-                        // are rule-internal literals.
-                        //
-                        // F1 follow-up Cluster B (2026-05-10): `MixfixMarker`
-                        // REMOVED from this skip list. Mixfix inner operands
-                        // must allow infix/postfix extension (e.g.,
-                        // `1 ? 3! : 0` requires `!` to bind to `3` BEFORE
-                        // the mixfix advances to consume `:`). The InfixLoop
-                        // dispatch reads state_cat_src_idx from the marker
-                        // (= result_src_idx of the mixfix rule, which is the
-                        // operand's category for traditional mixfix shapes).
-                        // If no candidate matches, cands is empty and we
-                        // fall through to Unwinding-MixfixMarker, which
-                        // routes to MixfixLiteralRun for the next
-                        // separator/operand transition.
-                        if let Some(node) = frontier_top {
-                            match node.symbol.kind {
-                                mettail_prattail::wpda_runtime::SymbolKind::RuleAt(_)
-                                | mettail_prattail::wpda_runtime::SymbolKind::OptionalGroupAt
-                                | mettail_prattail::wpda_runtime::SymbolKind::BinderListLoopAt => {
-                                    // Rule/optional/binder-list inner markers
-                                    // indicate a mid-rule context; defer to
-                                    // Unwinding so the appropriate state
-                                    // resumes at the recorded sub_pos.
-                                    return WpdaStepAction::Advance(WpdaState::Unwinding);
-                                }
-                                mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker => {
-                                    // Plan B (F5 close/sep filter, 2026-05-11):
-                                    // when frontier_top is CollectionMarker, only
-                                    // proceed with infix/postfix/mixfix dispatch
-                                    // if the next token is actually an operator
-                                    // candidate. If the next token is the
-                                    // collection's close or separator, skip
-                                    // infix dispatch immediately — falling
-                                    // through to Unwinding-CollectionMarker
-                                    // routes to CollectionLoop which handles
-                                    // close/sep/bare correctly.
-                                    //
-                                    // Without this gating, the F5 fix's removal
-                                    // of CollectionMarker from the skip list
-                                    // causes Fork branches that diverge on
-                                    // collection_stack depth, leading to
-                                    // "builder result was empty" failures and
-                                    // degenerate AST (e.g., `{1+2+3}` → ["3"]).
-                                    let result_src_idx = node.symbol.category_src_idx;
-                                    let rule_idx = node.symbol.rule_index_in_category;
-                                    let slot_idx = node.symbol.bp.unwrap_or(0u8);
-                                    let close_sep: Option<(&'static str, &'static str)> = self
-                                        .collection_spec(result_src_idx, rule_idx, slot_idx)
-                                        .map(|__s| (__s.close, __s.sep));
-                                    if let Some((close, sep)) = close_sep {
-                                        // #307 ROOT-F G2 site-3 (2026-06-11):
-                                        // close/sep DETECTION is edge
-                                        // MEMBERSHIP over the complete
-                                        // alternative set. The reroute stays
-                                        // SINGLE (round-2 D-C: longest-match
-                                        // lexing orders multi-char closes as
-                                        // the primary, so a live close/sep on
-                                        // a secondary alternative with a
-                                        // live primary operand is
-                                        // unrealizable in shipped grammars;
-                                        // if a future grammar realizes it,
-                                        // BOTH routes must be forked).
-                                        let token_text = tokens.peek_text(_pos).unwrap_or("");
-                                        let __hit = token_text == close
-                                            || token_text == sep
-                                            || tokens
-                                                .peek_alternatives(_pos)
-                                                .iter()
-                                                .any(|a| a.text == close || a.text == sep);
-                                        if __hit {
-                                            return WpdaStepAction::Advance(WpdaState::Unwinding);
-                                        }
-                                    }
-                                    // Otherwise fall through to infix dispatch
-                                    // below — the F5 fix behavior for genuine
-                                    // operator extension of the current element.
-                                }
-                                _ => {}
-                            }
-                        }
-                        // Stage 3.18 / Fixes #17+#20 (Cluster 3, Mechanism γ,
-                        // 2026-05-05): collect ALL tier candidates whose
-                        // l_bp >= cur_bp, then emit a Fork over them with
-                        // BP_TIER_INFIX < BP_TIER_POSTFIX < BP_TIER_MIXFIX
-                        // bias offsets so lex-min picks the lower tier on
-                        // weight ties. Source-order tiebreak via rule_idx
-                        // within tier. Singleton fast-path emits
-                        // ConsumeAndPush directly to preserve zero-overhead
-                        // dispatch for the deterministic case (one tier
-                        // matches at l_bp >= cur_bp).
-                        // Gap-2 collection-element InfixLoop category redirect
-                        // (2026-07-03): when the InfixLoop frontier is a
-                        // `CollectionMarker` whose declared `element_src_idx`
-                        // differs from the marker's own (result) category — a
-                        // CROSS-CATEGORY collection literal (rholang `[…]` List
-                        // (cat 10) / `#{…}#` Bag (11) / `{|…|}` Pathmap (14),
-                        // each carrying `Vec<Proc>`/`HashBag<Proc>`/… i.e.
-                        // `element_src_idx = Proc(0)`) — the operator-dispatch
-                        // category MUST be the ELEMENT category, not the marker's
-                        // result category. A completed element sits on the SPPF
-                        // stack in the element category (e.g. `Map()` = MapEmpty :
-                        // Proc), and an operator extending it (`* c`, `.values()`,
-                        // `== c`) is an ELEMENT-category (Proc) operator. Reading
-                        // `state_cat_src_idx` straight off the marker selects the
-                        // marker's category (List) whose infix/postfix/mixfix
-                        // tables are EMPTY, so the operator is never dispatched and
-                        // the element is spliced prematurely at its first-completion
-                        // (the Gap-2 bug: `[Map() * c]` strands `*`). Same-category
-                        // collections (PPar `{…}` : Proc with Proc elements,
-                        // `element_src_idx == result`) are unaffected — the redirect
-                        // is a no-op there (byte-identical). Grammar-derived from
-                        // `CollectionSpec.element_src_idx`; no per-rule/keyword
-                        // hardcode. NOTE: the close/sep detection above already
-                        // reads the marker's `collection_spec` directly, so the
-                        // redirect changes ONLY the operator-dispatch category,
-                        // never the close/sep routing — an element with no operator
-                        // continuation still falls through to Unwinding-
-                        // CollectionMarker exactly as before.
-                        let state_cat_src_idx: u16 = {
-                            let __raw = frontier_top
-                                .map(|n| n.symbol.category_src_idx)
-                                .unwrap_or(#primary_src_idx);
-                            match frontier_top {
-                                    Some(__ft)
-                                        if __ft.symbol.kind
-                                            == mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker =>
-                                    {
-                                        let __rs = __ft.symbol.category_src_idx;
-                                        let __ri = __ft.symbol.rule_index_in_category;
-                                        let __slot = __ft.symbol.bp.unwrap_or(0u8);
-                                        match self
-                                            .collection_spec(__rs, __ri, __slot)
-                                            .and_then(|__s| __s.element_src_idx)
-                                        {
-                                            Some(__e) if __e != __rs => __e,
-                                            _ => __raw,
-                                        }
-                                    }
-                                    _ => __raw,
-                                }
-                        };
-                        // GEN-1 goal-gate (2026-06-28): read the STRICT goal off
-                        // the frontier-top symbol (Some only for a
-                        // `category_entry_goal` pushed at a cross-cat operand /
-                        // element site). `__goal_admits(r)` drops an
-                        // infix/postfix/mixfix candidate whose RESULT category
-                        // `r` provably cannot reach the goal `g`
-                        // (`!cat_can_reach(r, g)`) — bounding the operand to its
-                        // category so a cross-cat-out operator cannot
-                        // over-extend it. `None` goal (top-level CrossCatLhs,
-                        // every legacy `category_entry`) admits all candidates ⇒
-                        // the gate is inert (G0 byte-identical). `GOAL_GATE_ENABLED`
-                        // is the compile-time kill-switch (LIFO-revert: flip to
-                        // `false`).
-                        const GOAL_GATE_ENABLED: bool = true;
-                        let __goal = frontier_top.and_then(|n| n.symbol.goal_src_idx);
-                        let __goal_admits = |result_src: u16| -> bool {
-                            if !GOAL_GATE_ENABLED {
-                                true
-                            } else {
-                                match __goal {
-                                    None => true,
-                                    Some(g) => <#engine_ident>::cat_can_reach(result_src, g),
-                                }
-                            }
-                        };
-                        #lex_fork_infix_dispatch
-                        let token_text = tokens.peek_text(_pos).unwrap_or("");
-                        let _ = token_text;
-
-                        let mut __cands: Vec<
-                            mettail_prattail::wpda_walker::ForkBranch<
-                                __DwW,
-                            >,
-                        > = Vec::new();
-
-                        // Infix tier (BP_TIER_INFIX = 0.00).
-                        // GEN-1 B-2 (Stage S0) §2.3: PER-RULE gating. Iterate the
-                        // infix-tier slice (≤ GEN1_MAX_SLICE elems; 1 at S0 ⇒ this
-                        // runs at most once on the legacy single-winner) and gate
-                        // each rule individually on `l_bp >= cur_bp`. Identical
-                        // ForkBranch shape/weight/state as the pre-slice path.
-                        let __infix_slice: &'static [(u8, u8, u16, u16)] =
-                            #infix_loop_dispatch;
-                        for &(l_bp, r_bp, result_src, rule_idx) in __infix_slice {
-                            if l_bp >= *cur_bp && __goal_admits(result_src) {
-                                let new_state =
-                                    if result_src != state_cat_src_idx {
-                                        // D-strings fix (2026-05-13): pass r_bp
-                                        // as the sub-parse's `inner_cur_bp` so
-                                        // the cross-cat operand sub-parse
-                                        // enforces the outer Pratt precedence
-                                        // (e.g. `Str < Str : Bool` at r_bp=7
-                                        // prevents `==` at l_bp=2 from leaking
-                                        // into the RHS sub-parse).
-                                        WpdaState::CrossCatDelegate {
-                                            source_src_idx: state_cat_src_idx,
-                                            inner_cur_bp: r_bp,
-                                        }
-                                    } else {
-                                        WpdaState::PrefixDispatch {
-                                            pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
-                                            cur_bp: r_bp,
-                                        }
-                                    };
-                                __cands.push(
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::rule_at(
-                                            result_src, rule_idx, 0, Some(*cur_bp),
-                                        )
-                                        .with_kind_return(),
-                                        weight: lex_w(
-                                            mettail_prattail::automata::lex_weight::BP_TIER_INFIX,
-                                            result_src,
-                                            rule_idx,
-                                        ),
-                                        new_state,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                mettail_prattail::wpda_transitions::infix::infix_loop::<_, #mixfix_any>(
+                                    #primary_src_idx, cur_bp, frontier_top, _pos, tokens,
+                                    |result_src_idx, rule_idx, slot_idx| {
+                                        self.collection_spec(result_src_idx, rule_idx, slot_idx)
                                     },
-                                );
-                            }
-                        }
-
-                        // Postfix tier (BP_TIER_POSTFIX = 0.10).
-                        // F1 fix (2026-05-10): new_state must be Unwinding, not InfixLoop.
-                        // Postfix has no RHS to parse, so the Return symbol it pushes must
-                        // be popped immediately to fire the action. Going to InfixLoop
-                        // instead leaves the Return on the GSS while subsequent operator
-                        // dispatches push more symbols on top — the action then fires in
-                        // the wrong order (after the surrounding operator's action), with
-                        // wrong types and wrong values on the builder stack. Unwinding
-                        // pops the Return → fires the action → transitions to
-                        // InfixLoop { cur_bp: outer_bp } via the standard Return-pop path
-                        // at engine_impl.rs:357-360.
-                        // GEN-1 B-2 (Stage S0) §2.3: PER-RULE gating, postfix tier.
-                        let __postfix_slice: &'static [(u8, u16, u16)] =
-                            #postfix_dispatch;
-                        for &(l_bp, result_src, rule_idx) in __postfix_slice {
-                            if l_bp >= *cur_bp && __goal_admits(result_src) {
-                                __cands.push(
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::rule_at(
-                                            result_src, rule_idx, 0, Some(*cur_bp),
-                                        )
-                                        .with_kind_return(),
-                                        weight: lex_w(
-                                            mettail_prattail::automata::lex_weight::BP_TIER_POSTFIX,
-                                            result_src,
-                                            rule_idx,
-                                        ),
-                                        new_state: WpdaState::Unwinding,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::Push,
+                                    <#engine_ident>::cat_can_reach,
+                                    |state_cat_src_idx| { #lex_fork_infix_dispatch },
+                                    |state_cat_src_idx, token_text| { #infix_loop_dispatch },
+                                    |state_cat_src_idx, token_text| { #postfix_dispatch },
+                                    |state_cat_src_idx, token_text| { #mixfix_dispatch },
+                                    mixfix_part, mixfix_nullary_literals,
+                                    |state_cat_src_idx, symbol_rs, symbol_ri| {
+                                        #iter_eligible_dispatch
                                     },
-                                );
-                            }
-                        }
-
-                        // Mixfix tier (BP_TIER_MIXFIX = 0.20).
-                        // #307 ROOT-A D1/D2 (2026-06-11; FV:
-                        // MixfixLiteralAccounting.accounting_gap): the trigger
-                        // previously dispatched the part-0 OPERAND directly
-                        // (PrefixDispatch), skipping the part's PRECEDING
-                        // literals (POutput's "(") — the part-0 accounting
-                        // gap. It now enters the pre-operand literal run
-                        // (kind=2), which consumes parts[0].preceding by
-                        // membership-checked steps and then dispatches the
-                        // operand. Empty preceding (Tern/PAmb) passes through
-                        // with zero consumes (empty_pre_passthrough). The
-                        // state is pos-less: every entry path (singleton
-                        // ConsumeAndPush, engine Fork{consume_trigger:true},
-                        // lex-fork next_pos child allocation) advances
-                        // cursor.pos past the trigger BEFORE it activates.
-                        // GEN-1 B-2 (Stage S0) §2.3: PER-RULE gating, mixfix tier.
-                        let __mixfix_slice: &'static [(u8, u16, u16)] =
-                            #mixfix_dispatch;
-                        // ─────────────────────────────────────────────────────────
-                        // Fix-B (2026-06-28): METHOD-NAME PRE-FORK PRUNE.
-                        //
-                        // The `.`-method mixfix slice shares ONE trigger across ~40
-                        // rules (`m "." "get" "(" …`, `m "." "set" "(" …`, `m "."
-                        // "size" "(" ")"`, …). Under S1 (`GEN1_MAX_SLICE` uncapped)
-                        // EVERY `.` forks the WHOLE slice; the wrong ~39 die ONE step
-                        // later at their method-name literal-run
-                        // (`__checked_literal_consume!` → 0-edge `Error`). The
-                        // transient ×40 peak per `.` COMPOUNDS across an N-method chain
-                        // and overflows the 4096 ambiguity budget (ESS≈0.000 — pure
-                        // dead-weight, not genuine ambiguity).
-                        //
-                        // This prunes that dead-weight ONE STEP EARLIER, at the fork
-                        // point, using the SAME evidence the literal-run already uses:
-                        // a rule's FIRST post-trigger literal `L` (= its method name —
-                        // `mixfix_part(rs,ri,0).preceding[0]` for an arg method,
-                        // `mixfix_nullary_literals(rs,ri)[0]` for a 0-arg method; `None`
-                        // for an operand-/rep-leading part-0 such as ternary or
-                        // ForRow's `&`-join, which is ALWAYS kept). A method-name rule
-                        // is admitted iff `L` matches the post-trigger token EXACTLY as
-                        // `__mixfix_literal_targets` (the literal-run's first step)
-                        // would: primary `peek_text` OR any lattice alternative.
-                        //
-                        // SOUNDNESS (observational equivalence — NO-LOSS, NO-SPURIOUS):
-                        // a dropped rule has `L` mismatching the post-trigger token, so
-                        // after consuming the trigger it would enter
-                        // `MixfixLiteralRun { kind:2, sub_pos:0 }` and its FIRST step
-                        // `__checked_literal_consume!(L)` yields an EMPTY target set ⇒
-                        // `Error` ⇒ the cursor drops, realizing NO AST. The post-prune
-                        // cursor set therefore equals the post-1-step set ⇒ realized
-                        // AST unchanged. Genuine ambiguity is preserved: if >1 rule
-                        // shares the same method name, ALL of them match `L` and STILL
-                        // fork (only provably-non-matching names are dropped). This is
-                        // maximal-munch on a TERMINAL (the method-name literal), NOT
-                        // operand commitment — it does NOT disambiguate early.
-                        //
-                        // FALLBACK: if the prune would empty an OTHERWISE-non-empty
-                        // mixfix contribution AND no infix/postfix candidate exists
-                        // (`__cands` empty), restore the full slice. This keeps the
-                        // trigger-consumption decision byte-identical to pre-Fix-B in
-                        // the degenerate all-mismatch case (where unpruned would
-                        // consume-the-trigger-then-die rather than unwind); it never
-                        // fires on the chained-method hot path (which always has a
-                        // matching method). `METHOD_NAME_PRUNE_ENABLED=false` is the
-                        // LIFO kill-switch (reverts to exact pre-Fix-B behavior).
-                        // The `&'static` slice is NEVER mutated — this is a runtime
-                        // evidence filter, so the GEN-1 NO-LOSS slice-multiset
-                        // invariant is untouched.
-                        const METHOD_NAME_PRUNE_ENABLED: bool = true;
-                        // Position the literal-run inspects after the trigger is
-                        // consumed (`advance_cursor_pos` is alt-0-hardwired — mirror it).
-                        let __post_trigger_pos = tokens.next_pos(_pos, 0);
-                        let __method_name_admits = |result_src: u16, rule_idx: u16| -> bool {
-                            if !METHOD_NAME_PRUNE_ENABLED {
-                                true
-                            } else {
-                                // #131: the 4th element is the capture kind, which this
-                                // prune does not consult — its evidence is the part's
-                                // FIRST PRECEDING LITERAL, and a capture part carries
-                                // preceding literals exactly as an operand part does.
-                                // A capture part with none (Rholang's collapsed method
-                                // name, `Call`'s `m`) yields `None` ⇒ ALWAYS KEEP, which
-                                // is the sound direction: the prune may only drop a rule
-                                // it can PROVE dead one step early.
-                                let __lit: Option<&'static str> =
-                                    match mixfix_part(result_src, rule_idx, 0) {
-                                        Some((_, preceding, _, _)) => preceding.first().copied(),
-                                        None => mixfix_nullary_literals(result_src, rule_idx)
-                                            .and_then(|l| l.first().copied()),
-                                    };
-                                match (__lit, __post_trigger_pos) {
-                                    // No distinguishing method-name literal
-                                    // (operand-/rep-leading part-0) OR no token after
-                                    // the trigger (EOF) ⇒ cannot prove dead; KEEP.
-                                    (None, _) | (Some(_), None) => true,
-                                    // Method-name rule: KEEP iff its literal matches the
-                                    // post-trigger token (= __mixfix_literal_targets
-                                    // non-empty: primary text OR any lattice alternative).
-                                    (Some(l), Some(p)) => {
-                                        tokens.peek_text(p) == Some(l)
-                                            || tokens
-                                                .peek_alternatives(p)
-                                                .iter()
-                                                .any(|a| a.text == l)
-                                    }
-                                }
-                            }
-                        };
-                        let __mixfix_no_survivor = !__mixfix_slice.iter().any(
-                            |&(l_bp, result_src, rule_idx)| {
-                                l_bp >= *cur_bp
-                                    && __goal_admits(result_src)
-                                    && __method_name_admits(result_src, rule_idx)
-                            },
-                        );
-                        let __mixfix_fallback_full =
-                            __mixfix_no_survivor && __cands.is_empty();
-                        // S1-FACTORING F5-2: `#mixfix_fan_tokens` is the
-                        // VERBATIM per-member loop for languages without
-                        // factored mixfix cohorts, and the loop-v2 group
-                        // match (spine push on full admission; `_` arm =
-                        // the same verbatim loop) otherwise — see the
-                        // `mixfix_member_fan_loop` extraction above.
-                        #mixfix_fan_tokens
-
-                        // C1-M (WALK-S2, 2026-05-28): pre-fork MIXFIX ternary
-                        // absorption trigger. Mixfix operators (`Tern`,
-                        // `c "?" t ":" e`, right-recursive in the else slot)
-                        // enter the mixfix tier above (pushing a MixfixMarker
-                        // then a PrefixDispatch for the inner operand) and
-                        // NEVER re-iterate to the InfixLoop singleton (mixfix
-                        // associativity is hard-coded Left; plan D2/V5), so the
-                        // singleton fast-path below cannot reach them.
-                        // Intercept HERE — after `__cands` is built (which now
-                        // holds the MixfixMarker candidate), before the
-                        // singleton-vs-fork branch — for the LEADING mixfix-tier
-                        // candidate: if it is the canonical iterative-eligible
-                        // op for its trigger (`iter_eligible_<cat>` → Some) AND
-                        // mixfix AND a forward peek confirms a deterministic
-                        // >= 2-level ternary chain, emit `IterativeChainAbsorb`
-                        // with `new_state = Unwinding` and SUPPRESS the fork
-                        // (the MixfixMarker push is bypassed by the early
-                        // `return`). The peek proves the region is a single
-                        // ternary-shape run, so the normal mixfix descent would
-                        // only re-walk the (about-to-be-absorbed) interior.
-                        // `_pos` is ON the trigger (`?`); the head cond c0
-                        // (parsed at `_pos - 1`) is on `cursor.sppf_stack_id`.
-                        // On peek-failure this block is inert and control falls
-                        // through to the unchanged `match __cands.len()` (other
-                        // languages' mixfix ops won't have `Some(spec)` — the
-                        // `right_recursive_tail` + exact-shape gate in
-                        // `is_iterative_candidate` restricts eligibility to
-                        // Tern-shaped ops — so they are bit-identical).
-                        // GEN-1 B-2 (Stage S0) §2.4: pre-fork absorption reads the
-                        // LEADING (rule_idx-min) mixfix candidate via `.first()`.
-                        // Inert when the slice has >1 elem (S1+); at S0 the slice
-                        // is ≤1 ⇒ identical to the legacy `Some(..)` head.
-                        if let Some(&(_pmx_l_bp, _pmx_result_src, _pmx_rule_idx)) =
-                            #mixfix_dispatch.first()
-                        {
-                            if _pmx_l_bp >= *cur_bp && __goal_admits(_pmx_result_src) {
-                                let symbol_rs = _pmx_result_src;
-                                let symbol_ri = _pmx_rule_idx;
-                                let _pmx_spec: Option<mettail_prattail::binding_power::IterAbsorbSpec> =
-                                    #iter_eligible_dispatch;
-                                if let Some(spec) = _pmx_spec {
-                                    if spec.is_mixfix
-                                        && mettail_prattail::wpda_walker::peek_ternary_chain(
-                                            tokens,
-                                            _pos,
-                                            spec.trigger,
-                                            spec.sep,
-                                            2,
-                                        )
-                                    {
-                                        return WpdaStepAction::IterativeChainAbsorb {
-                                            symbol: StackSymbolV2::rule_at(
-                                                _pmx_result_src,
-                                                _pmx_rule_idx,
-                                                0,
-                                                Some(*cur_bp),
-                                            )
-                                            .with_kind_return(),
-                                            weight: lex_w(
-                                                mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
-                                                _pmx_result_src,
-                                                _pmx_rule_idx,
-                                            ),
-                                            new_state: WpdaState::Unwinding,
-                                            spec,
-                                        };
-                                    }
-                                }
-                            }
-                        }
-
-                        // C1-R (WALK-S1, 2026-05-28): pre-fork right-assoc
-                        // absorption trigger. Right-associative binary
-                        // operators (`^`) recurse via the RHS sub-parse and
-                        // NEVER re-iterate to the InfixLoop singleton (plan
-                        // D2), so the left-assoc singleton fast-path below
-                        // can't reach them. Intercept HERE — after `__cands`
-                        // is built, before the singleton-vs-fork branch — for
-                        // the LEADING infix-tier candidate: if it is the
-                        // canonical iterative-eligible op for its terminal
-                        // (`iter_eligible_<cat>` → Some) AND right-assoc AND a
-                        // forward peek confirms a deterministic >= 5-atom
-                        // (>= 4 remaining after the head) chain of that
-                        // op-kind, emit `IterativeChainAbsorb` with
-                        // `new_state = Unwinding` and SUPPRESS the fork. The
-                        // peek proves the region is a single-op-kind run, so a
-                        // fork at the chain head would only spawn cursors that
-                        // either can't complete the chain or redundantly
-                        // re-walk the (already-absorbed) interior. `_pos` is
-                        // ON the operator; the head atom (parsed at `_pos - 1`)
-                        // is on `cursor.sppf_stack_id`. On peek-failure this
-                        // block is inert and control falls through to the
-                        // unchanged `match __cands.len()` (non-chain /
-                        // short-chain workloads bit-identical). LEFT-assoc
-                        // (AddInt) is NOT routed here — it keeps the existing
-                        // singleton path (minimal blast radius).
-                        // GEN-1 B-2 (Stage S0) §2.4: pre-fork absorption reads the
-                        // LEADING (rule_idx-min) infix candidate via `.first()`.
-                        // Inert when the slice has >1 elem (S1+); at S0 the slice
-                        // is ≤1 ⇒ identical to the legacy `Some(..)` head.
-                        if let Some(&(_pf_l_bp, _pf_r_bp, _pf_result_src, _pf_rule_idx)) =
-                            #infix_loop_dispatch.first()
-                        {
-                            if _pf_l_bp >= *cur_bp && __goal_admits(_pf_result_src) {
-                                let symbol_rs = _pf_result_src;
-                                let symbol_ri = _pf_rule_idx;
-                                let _pf_spec: Option<mettail_prattail::binding_power::IterAbsorbSpec> =
-                                    #iter_eligible_dispatch;
-                                if let Some(spec) = _pf_spec {
-                                    // S1 scope: right-assoc binary only. (S2
-                                    // adds `|| spec.is_mixfix` for ternary.)
-                                    if spec.assoc_right
-                                        && mettail_prattail::wpda_walker::peek_binary_chain(
-                                            tokens, _pos, 5,
-                                        )
-                                    {
-                                        return WpdaStepAction::IterativeChainAbsorb {
-                                            symbol: StackSymbolV2::rule_at(
-                                                _pf_result_src,
-                                                _pf_rule_idx,
-                                                0,
-                                                Some(*cur_bp),
-                                            )
-                                            .with_kind_return(),
-                                            weight: lex_w(
-                                                mettail_prattail::automata::lex_weight::BP_TIER_INFIX,
-                                                _pf_result_src,
-                                                _pf_rule_idx,
-                                            ),
-                                            new_state: WpdaState::Unwinding,
-                                            spec,
-                                        };
-                                    }
-                                }
-                            }
-                        }
-
-                        // S1-FACTORING F5-2 D-2: `#mixfix_forced_fork_tokens`
-                        // (grouped languages only) forces the Fork family
-                        // when the mixfix spine branch is the lone
-                        // candidate — see the extraction above. Empty for
-                        // every other language.
-                        #mixfix_forced_fork_tokens
-                        match __cands.len() {
-                            0 => {
-                                // No tier matched — fall through to Unwinding.
-                                WpdaStepAction::Advance(WpdaState::Unwinding)
-                            }
-                            1 => {
-                                // Singleton fast-path: only one tier matched,
-                                // so emit ConsumeAndPush directly. Preserves
-                                // zero-overhead dispatch for shipped grammars
-                                // (typical case — only one operator at any
-                                // given (token, l_bp >= cur_bp) pair).
-                                //
-                                // Phase F.13 chain_10000 Exp 6 Substage 6b
-                                // (2026-05-26): if the singleton candidate
-                                // refers to an iterative-eligible operator
-                                // AND its (terminal, l_bp) is unique in the
-                                // dispatched category (per Plan A invariant
-                                // I1, codegen-checked in `iter_eligible_<cat>`),
-                                // route through `IterativeChainAbsorb`
-                                // instead so the per-chain Return RuleAt
-                                // push is shared across all `+` iterations.
-                                // First iteration pushes; subsequent
-                                // iterations skip the push via the walker
-                                // arm's chain-extension witness (Plan A
-                                // invariant I2). RHS sub-parse is dispatched
-                                // by the `InfixChainIterative` engine arm.
-                                let b = __cands.into_iter().next().unwrap();
-                                let symbol_rs = b.symbol.category_src_idx;
-                                let symbol_ri = b.symbol.rule_index_in_category;
-                                let iter_lookup: Option<mettail_prattail::binding_power::IterAbsorbSpec> = #iter_eligible_dispatch;
-                                if let Some(spec) = iter_lookup {
-                                    // C1: only LEFT-associative binary operators
-                                    // absorb via this singleton fast-path (the
-                                    // existing iterative chain path). Right-assoc
-                                    // and mixfix operators recurse / enter the
-                                    // mixfix tier and never re-iterate to a
-                                    // singleton, so they are handled by the
-                                    // pre-fork absorption trigger below; here
-                                    // they fall through to ConsumeAndPush.
-                                    if !spec.assoc_right && !spec.is_mixfix {
-                                        return WpdaStepAction::IterativeChainAbsorb {
-                                            symbol: b.symbol,
-                                            weight: b.weight,
-                                            new_state: WpdaState::InfixChainIterative {
-                                                result_src_idx: symbol_rs,
-                                                rule_idx: symbol_ri,
-                                                outer_bp: *cur_bp,
-                                                rhs_bp: spec.right_bp,
-                                            },
-                                            spec,
-                                        };
-                                    }
-                                }
-                                WpdaStepAction::ConsumeAndPush {
-                                    symbol: b.symbol,
-                                    weight: b.weight,
-                                    new_state: b.new_state,
-                                    // Phase F.8: infix-tier singleton
-                                    // discards the operator token at the
-                                    // SPPF layer (the operator's LHS/RHS
-                                    // terms are already on the SPPF stack).
-                                    trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
-                                }
-                            }
-                            _ => {
-                                // Multi-tier ambiguity (G5: e.g. infix and
-                                // postfix sharing a token at the same
-                                // l_bp >= cur_bp) — emit a Fork. Lex-min
-                                // picks the lower BP tier on ties.
-                                WpdaStepAction::Fork {
-                                    branches: __cands,
-                                    consume_trigger: true,
-                                }
-                            }
-                        }
+                                    lex_w,
+                                    |state_cat_src_idx, token_text, __mixfix_slice,
+                                     __mixfix_fallback_full, __goal_admits,
+                                     __method_name_admits, mut __cands| {
+                                        let __mixfix_spine_pushed = false;
+                                        #mixfix_fan_tokens
+                                        __mixfix_spine_pushed
+                                    },
+                                )
                             }
                         }
                         __step_frame.step_infix_loop(
