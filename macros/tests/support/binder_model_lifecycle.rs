@@ -359,7 +359,15 @@ fn nested_optional_classifier_and_emitter_preserve_frame_identity() {
     assert!(tokens.contains("1u32 , 0u32"), "nested group entry arm missing");
     assert!(tokens.contains("group_idx : 1u32"));
     assert!(tokens.contains("group_idx : 0u32"));
-    assert!(tokens.contains("WpdaStepAction :: Advance"));
+    let nested_entry = quote::quote! {
+        mettail_prattail::wpda_transitions::binder::rule_optional(
+            0u16, 0u16, 1u32, *outer_bp
+        )
+    };
+    assert!(
+        tokens.contains(&nested_entry.to_string()),
+        "nested optional must advance category 0, rule 0 to group 1 at the original binding power: {tokens}",
+    );
 }
 
 #[test]
@@ -382,7 +390,18 @@ fn binder_list_nested_in_optional_emits_shared_entry_and_loop_frames() {
     let markers = build_traversal_marker_table(&language, &per_cat);
     let optional =
         emit_optional_group_body(&language, &["Expr".to_string()], &per_cat, &markers).to_string();
-    assert!(optional.contains("frame_idx : 0u32"));
+    let optional_resume_id =
+        markers.id(0, 0, TraversalMarkerCoordinate::Optional { group_idx: 0, sub_pos: 3 });
+    let binder_entry = quote::quote! {
+        mettail_prattail::wpda_transitions::binder::list_entry_plain_allow_empty(
+            0u16, 0u16, 0u32, *outer_bp, ")",
+            || StackSymbolV2::optional_group_at(#optional_resume_id, *outer_bp), lex_w,
+        )
+    };
+    assert!(
+        optional.contains(&binder_entry.to_string()),
+        "nested binder must enter frame 0 and resume optional group 0 at subposition 3: {optional}",
+    );
     assert!(optional.contains("group_idx : 0u32"));
     assert!(optional.contains("0u32 , 3u32"));
 
@@ -390,8 +409,6 @@ fn binder_list_nested_in_optional_emits_shared_entry_and_loop_frames() {
         .to_string();
     assert!(binder.contains("0u32 , 0u32"));
     assert!(binder.contains("optional_group_at"));
-    let optional_resume_id =
-        markers.id(0, 0, TraversalMarkerCoordinate::Optional { group_idx: 0, sub_pos: 3 });
     assert!(
         binder.contains(&format!("optional_group_at ({optional_resume_id}u32")),
         "nested binder completion must carry the dense ID of optional group 0, subposition 3: \

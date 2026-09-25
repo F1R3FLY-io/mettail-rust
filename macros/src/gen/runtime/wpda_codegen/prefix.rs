@@ -857,18 +857,9 @@ pub fn emit_paren_dispatch_arms(
             arms.push(quote! {
                 Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                     if __open == "(" && state_cat_src_idx == #result_src_idx => {
-                    return WpdaStepAction::ConsumeAndPush {
-                        symbol: StackSymbolV2::grouping_marker(
-                            #grouping_src_idx, *cur_bp,
-                        ),
-                        weight: lex_one(),
-                        new_state: WpdaState::PrefixDispatch {
-                            pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
-                            cur_bp: 0,
-                        },
-                        // Phase F.8: `(` grouping discards the trigger token.
-                        trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
-                    };
+                    return mettail_prattail::wpda_transitions::prefix::paren_singleton(
+                        #grouping_src_idx, cur_bp, pos, tokens, lex_one,
+                    );
                 }
             });
             continue;
@@ -1006,17 +997,14 @@ pub fn emit_paren_dispatch_arms(
                 quote! { lex_one() }
             };
             branches.push(quote! {
-                mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: StackSymbolV2::grouping_marker(
-                        #grouping_src_idx, *cur_bp,
-                    ),
-                    weight: #grouping_weight,
-                    new_state: WpdaState::PrefixDispatch {
-                        pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
-                        cur_bp: 0,
-                    },
-                    action_kind: #action_kind,
-                }
+                mettail_prattail::wpda_transitions::prefix::paren_grouping_branch(
+                #grouping_src_idx,
+                cur_bp,
+                pos,
+                tokens,
+                || #grouping_weight,
+                || #action_kind,
+                )
             });
         }
         // Concrete `(`-led rules from every admitted grouping source.  The
@@ -1100,17 +1088,15 @@ pub fn emit_paren_dispatch_arms(
                 }
             };
             branches.push(quote! {
-                mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: #branch_symbol,
-                    weight: #branch_weight,
-                    new_state: WpdaState::BinderRule {
-                        result_src_idx: #owner_src_idx_lit,
-                        rule_idx: #rule_idx_lit,
-                        body_src_idx: #body_src_idx,
-                        outer_bp: _outer_bp,
-                    },
-                    action_kind: #action_kind,
-                }
+                mettail_prattail::wpda_transitions::prefix::paren_binder_branch(
+                #owner_src_idx_lit,
+                #rule_idx_lit,
+                #body_src_idx,
+                _outer_bp,
+                || #branch_symbol,
+                || #branch_weight,
+                || #action_kind,
+                )
             });
         }
         let branch_count = branches.len();
@@ -1122,18 +1108,10 @@ pub fn emit_paren_dispatch_arms(
         arms.push(quote! {
             Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                 if __open == "(" && state_cat_src_idx == #result_src_idx => {
-                let mut __paren_branches = ::std::vec::Vec::with_capacity(#branch_count);
-                #( #branch_pushes )*
-                return WpdaStepAction::Fork {
-                    branches: __paren_branches,
-                    // Each branch owns its consume semantics.  Grouping and
-                    // same-category rules consume immediately; a
-                    // cross-category concrete rule first pushes its source
-                    // CategoryEntry, then consumes through BinderRule's
-                    // trigger prelude.  A fork-global consume would erase
-                    // that required intermediate continuation frame.
-                    consume_trigger: false,
-                };
+                return mettail_prattail::wpda_transitions::prefix::paren_fork(
+                    #branch_count,
+                    |__paren_branches| { #( #branch_pushes )* },
+                );
             }
         });
     }
@@ -1612,23 +1590,11 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
-                        // Cross-category LHS delegation parses a source-category
-                        // atom that may later produce the target category via a
-                        // category-changing infix. The target Pratt floor is
-                        // captured by the runtime edge; the source parse starts
-                        // at its own root floor so target-context precedence
-                        // does not reject source-internal operators.
-                        return WpdaStepAction::PushWithEdgeKind {
-                            symbol: StackSymbolV2::category_entry(#source_src_idx),
-                            weight: lex_one(),
-                            new_state: WpdaState::PrefixDispatch {
-                                pos: *pos,
-                                cur_bp: 0,
-                            },
-                            edge_kind: mettail_prattail::gss::EdgeKind::CrossCatLhs {
-                                source_src_idx: #source_src_idx,
-                            },
-                        };
+                            return mettail_prattail::wpda_transitions::prefix::singleton_crosscat_lhs(
+                            pos,
+                            #source_src_idx,
+                            lex_one,
+                            );
                         }
                     },
                 )
@@ -1688,21 +1654,14 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
-                        #s1_singleton_refusal
-                        return WpdaStepAction::ConsumeAndPush {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                            ),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::BinderRule {
-                                result_src_idx: #category_src_idx,
-                                rule_idx: #rule_idx,
-                                body_src_idx: #body_src_idx,
-                                outer_bp: _outer_bp,
-                            },
-                            trigger_mode:
-                                mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-                        };
+                            #s1_singleton_refusal
+                            return mettail_prattail::wpda_transitions::prefix::singleton_binder_prefix(
+                            _outer_bp,
+                            #category_src_idx,
+                            #rule_idx,
+                            #body_src_idx,
+                            lex_w,
+                            );
                         }
                     },
                 )
@@ -1715,17 +1674,14 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
-                        return WpdaStepAction::ReplaceAndPush {
-                            replace_symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                            ),
-                            push_symbol: StackSymbolV2::category_entry(#source_src_idx),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::PrefixDispatch {
-                                pos: *pos,
-                                cur_bp: 0,
-                            },
-                        };
+                            return mettail_prattail::wpda_transitions::prefix::singleton_leading_category(
+                            _outer_bp,
+                            pos,
+                            #category_src_idx,
+                            #rule_idx,
+                            #source_src_idx,
+                            lex_w,
+                            );
                         }
                     },
                 )
@@ -1777,26 +1733,15 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
-                        #s1_singleton_refusal
-                        return WpdaStepAction::Fork {
-                            branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::rule_at(
-                                    #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                                ),
-                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                                new_state: WpdaState::BinderRule {
-                                    result_src_idx: #category_src_idx,
-                                    rule_idx: #rule_idx,
-                                    body_src_idx: #body_src_idx,
-                                    outer_bp: _outer_bp,
-                                },
-                                action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndPush {
-                                        kind_name: #kind_name.to_string(),
-                                    },
-                            }],
-                            consume_trigger: false,
-                        };
+                            #s1_singleton_refusal
+                            return mettail_prattail::wpda_transitions::prefix::singleton_token_capture(
+                            _outer_bp,
+                            #category_src_idx,
+                            #rule_idx,
+                            #body_src_idx,
+                            #kind_name,
+                            lex_w,
+                            );
                         }
                     },
                 )
@@ -1852,28 +1797,17 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
-                        #s1_singleton_refusal
-                        return WpdaStepAction::Fork {
-                            branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::rule_at(
-                                    #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                                ),
-                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                                new_state: WpdaState::BinderRule {
-                                    result_src_idx: #category_src_idx,
-                                    rule_idx: #rule_idx,
-                                    body_src_idx: #body_src_idx,
-                                    outer_bp: _outer_bp,
-                                },
-                                action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndPush {
-                                        open_kind: #open_kind.to_string(),
-                                        nested_open_kinds: vec![#(#nested_open_kinds),*],
-                                        close_kind: #close_kind.to_string(),
-                                    },
-                            }],
-                            consume_trigger: false,
-                        };
+                            #s1_singleton_refusal
+                            return mettail_prattail::wpda_transitions::prefix::singleton_guest_body(
+                            _outer_bp,
+                            #category_src_idx,
+                            #rule_idx,
+                            #body_src_idx,
+                            #open_kind,
+                            || vec![#(#nested_open_kinds),*],
+                            #close_kind,
+                            lex_w,
+                            );
                         }
                     },
                 )
@@ -1888,18 +1822,14 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
-                        return WpdaStepAction::ConsumeAndPush {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                            ).with_kind_return(),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::CrossCatDelegate {
-                                source_src_idx: #source_src_idx,
-                                inner_cur_bp: #operand_bp,
-                            },
-                            trigger_mode:
-                                mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-                        };
+                            return mettail_prattail::wpda_transitions::prefix::singleton_crosscat_unary(
+                            _outer_bp,
+                            #category_src_idx,
+                            #rule_idx,
+                            #source_src_idx,
+                            #operand_bp,
+                            lex_w,
+                            );
                         }
                     },
                 )
@@ -1914,26 +1844,14 @@ fn emit_unified_arm(
                     quote! { #pat if #guard #__compat },
                     quote! {
                         {
-                        // B10 / Option κ Fix B (2026-05-07): cross-cat
-                        // projection singleton — Push the rule's Return
-                        // marker and route to CrossCatDelegate so the
-                        // source-cat sub-parse fires; on return, the
-                        // projection's action wraps the source term.
-                        // Transparent projection delegates into a source
-                        // category while remaining inside the caller's Pratt
-                        // operand slot. Carry the active floor through so
-                        // the source parse respects the caller's binding
-                        // context.
-                        return WpdaStepAction::Push {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                            ).with_kind_return(),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::CrossCatDelegate {
-                                source_src_idx: #source_src_idx,
-                                inner_cur_bp: *cur_bp,
-                            },
-                        };
+                            return mettail_prattail::wpda_transitions::prefix::singleton_crosscat_projection(
+                            _outer_bp,
+                            cur_bp,
+                            #category_src_idx,
+                            #rule_idx,
+                            #source_src_idx,
+                            lex_w,
+                            );
                         }
                     },
                 )
@@ -1976,30 +1894,13 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
-                        #s1_singleton_refusal
-                        // GAP-3: 0-operand multi-literal keyword prefix. Consume
-                        // the trigger (ConsumeAsTriggerOnly mirrors it to the
-                        // SPPF as a TriggerTerminal — the SOLE child under the
-                        // marker, anchoring its span lo; Discard would leave 0
-                        // children → span realization fail), push the mixfix
-                        // marker, and enter the REUSED MixfixLiteralRun(kind=2,
-                        // parts_len==0) arm, which consumes the trailing literals
-                        // then pops the marker to fire the arity-0 action.
-                        return WpdaStepAction::ConsumeAndPush {
-                            symbol: StackSymbolV2::mixfix_marker(
-                                #category_src_idx, #rule_idx, 0u8, *cur_bp,
-                            ),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::MixfixLiteralRun {
-                                result_src_idx: #category_src_idx,
-                                rule_idx: #rule_idx,
-                                completed_idx: 0u8,
-                                kind: 2u8,
-                                sub_pos: 0u8,
-                            },
-                            trigger_mode:
-                                mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-                        };
+                            #s1_singleton_refusal
+                            return mettail_prattail::wpda_transitions::prefix::singleton_nullary_literal_run(
+                            cur_bp,
+                            #category_src_idx,
+                            #rule_idx,
+                            lex_w,
+                            );
                         }
                     },
                 )
@@ -2028,10 +1929,7 @@ fn emit_unified_arm(
             .iter()
             .enumerate()
             .map(|(branch_position, d)| match d {
-                UnifiedDescriptor::CrossCatLhs {
-                    source_src_idx,
-                    sigil_leads_result_rule,
-                } => {
+                UnifiedDescriptor::CrossCatLhs { source_src_idx, sigil_leads_result_rule } => {
                     let src_idx = *source_src_idx;
                     // AT_QUOTED_BIND_GATE (2026-07-03): the F1/H1 keep-guard is
                     // EXTENDED with a suppression conjunct ONLY when the
@@ -2068,26 +1966,16 @@ fn emit_unified_arm(
                         }
                     };
                     quote! {
-                        // The runtime edge stores the caller's target floor;
-                        // the delegated source parse starts at source root.
-                        if #__keep_guard {
-                            __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::category_entry(#src_idx),
-                                weight: lex_w(
-                                    mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
-                                    #category_src_idx,
-                                    #src_idx,
-                                ),
-                                new_state: WpdaState::PrefixDispatch {
-                                    pos: *pos,
-                                    cur_bp: 0,
-                                },
-                                action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
-                            });
-                        }
+                        mettail_prattail::wpda_transitions::prefix::push_crosscat_lhs(
+                        __pd_branches,
+                        pos,
+                        #category_src_idx,
+                        #src_idx,
+                        || #__keep_guard,
+                        lex_w,
+                        );
                     }
-                }
+                },
                 UnifiedDescriptor::Atomic(desc) => {
                     let rule_idx = desc.rule_idx;
                     let csi = desc.category_src_idx;
@@ -2099,16 +1987,15 @@ fn emit_unified_arm(
                         &fork_bucket_tag,
                     );
                     quote! {
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #csi, #rule_idx, 0, Some(_outer_bp),
-                            ).with_kind_return(),
-                            weight: lex_w(0.0, #csi, #rule_idx),
-                            new_state: WpdaState::Unwinding,
-                            action_kind: mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndCaptureAndPush,
-                        });
+                        mettail_prattail::wpda_transitions::prefix::push_atomic(
+                        __pd_branches,
+                        _outer_bp,
+                        #csi,
+                        #rule_idx,
+                        lex_w,
+                        );
                     }
-                }
+                },
                 UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
                     let rule_idx = *rule_idx;
                     let body_src_idx = *body_src_idx;
@@ -2144,27 +2031,18 @@ fn emit_unified_arm(
                         ),
                         Some(super::factoring::SpineDisposition::GroupRest) => TokenStream::new(),
                         None => quote! {
-                            __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::rule_at(
-                                    #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                                ),
-                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                                new_state: WpdaState::BinderRule {
-                                    result_src_idx: #category_src_idx,
-                                    rule_idx: #rule_idx,
-                                    body_src_idx: #body_src_idx,
-                                    outer_bp: _outer_bp,
-                                },
-                                action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                                        trigger_mode:
-                                            mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-                                    },
-                            });
+                            mettail_prattail::wpda_transitions::prefix::push_binder_prefix(
+                            __pd_branches,
+                            _outer_bp,
+                            #category_src_idx,
+                            #rule_idx,
+                            #body_src_idx,
+                            lex_w,
+                            );
                         },
                     };
                     quote! { #rows_refusal #branch }
-                }
+                },
                 UnifiedDescriptor::LeadingCategory { rule_idx, source_src_idx } => {
                     let rule_idx = *rule_idx;
                     let source_src_idx = *source_src_idx;
@@ -2175,26 +2053,22 @@ fn emit_unified_arm(
                         &fork_bucket_tag,
                     );
                     quote! {
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::category_entry(#source_src_idx),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::PrefixDispatch {
-                                pos: *pos,
-                                cur_bp: 0,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
-                                    replace_symbol: StackSymbolV2::rule_at(
-                                        #category_src_idx,
-                                        #rule_idx,
-                                        1u8,
-                                        Some(_outer_bp),
-                                    ),
-                                },
-                        });
+                        mettail_prattail::wpda_transitions::prefix::push_leading_category(
+                        __pd_branches,
+                        _outer_bp,
+                        pos,
+                        #category_src_idx,
+                        #rule_idx,
+                        #source_src_idx,
+                        lex_w,
+                        );
                     }
-                }
-                UnifiedDescriptor::LeadingTokenKindCapture { rule_idx, body_src_idx, kind_name } => {
+                },
+                UnifiedDescriptor::LeadingTokenKindCapture {
+                    rule_idx,
+                    body_src_idx,
+                    kind_name,
+                } => {
                     let rule_idx = *rule_idx;
                     let body_src_idx = *body_src_idx;
                     // L9-3: leading builtin/custom token-family capture in a Fork bucket (a
@@ -2216,24 +2090,17 @@ fn emit_unified_arm(
                     );
                     quote! {
                         #rows_refusal
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                            ),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::BinderRule {
-                                result_src_idx: #category_src_idx,
-                                rule_idx: #rule_idx,
-                                body_src_idx: #body_src_idx,
-                                outer_bp: _outer_bp,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndPush {
-                                    kind_name: #kind_name.to_string(),
-                                },
-                        });
+                        mettail_prattail::wpda_transitions::prefix::push_token_capture(
+                        __pd_branches,
+                        _outer_bp,
+                        #category_src_idx,
+                        #rule_idx,
+                        #body_src_idx,
+                        #kind_name,
+                        lex_w,
+                        );
                     }
-                }
+                },
                 UnifiedDescriptor::LeadingGuestBody {
                     rule_idx,
                     body_src_idx,
@@ -2260,31 +2127,20 @@ fn emit_unified_arm(
                     );
                     quote! {
                         #rows_refusal
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                            ),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::BinderRule {
-                                result_src_idx: #category_src_idx,
-                                rule_idx: #rule_idx,
-                                body_src_idx: #body_src_idx,
-                                outer_bp: _outer_bp,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndPush {
-                                    open_kind: #open_kind.to_string(),
-                                    nested_open_kinds: vec![#(#nested_open_kinds),*],
-                                    close_kind: #close_kind.to_string(),
-                                },
-                        });
+                        mettail_prattail::wpda_transitions::prefix::push_guest_body(
+                        __pd_branches,
+                        _outer_bp,
+                        #category_src_idx,
+                        #rule_idx,
+                        #body_src_idx,
+                        #open_kind,
+                        || vec![#(#nested_open_kinds),*],
+                        #close_kind,
+                        lex_w,
+                        );
                     }
-                }
-                UnifiedDescriptor::CrossCatPrefixUnary {
-                    rule_idx,
-                    source_src_idx,
-                    operand_bp,
-                } => {
+                },
+                UnifiedDescriptor::CrossCatPrefixUnary { rule_idx, source_src_idx, operand_bp } => {
                     let rule_idx = *rule_idx;
                     let source_src_idx = *source_src_idx;
                     let operand_bp = *operand_bp;
@@ -2296,27 +2152,18 @@ fn emit_unified_arm(
                         &fork_bucket_tag,
                     );
                     quote! {
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                            ).with_kind_return(),
-                            weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                            new_state: WpdaState::CrossCatDelegate {
-                                source_src_idx: #source_src_idx,
-                                inner_cur_bp: #operand_bp,
-                            },
-                            action_kind:
-                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                                    trigger_mode:
-                                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-                                },
-                        });
+                        mettail_prattail::wpda_transitions::prefix::push_crosscat_unary(
+                        __pd_branches,
+                        _outer_bp,
+                        #category_src_idx,
+                        #rule_idx,
+                        #source_src_idx,
+                        #operand_bp,
+                        lex_w,
+                        );
                     }
-                }
-                UnifiedDescriptor::CrossCatProjection {
-                    rule_idx,
-                    source_src_idx,
-                } => {
+                },
+                UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx } => {
                     let rule_idx = *rule_idx;
                     let src_idx = *source_src_idx;
                     // Task #10 item 1: static declaration position (the
@@ -2336,21 +2183,15 @@ fn emit_unified_arm(
                     // unconditional push when the const is off ⇒ byte-identical.
                     // INERT under gate (A) (branch already absent at codegen).
                     let __push = quote! {
-                        __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                            ).with_kind_return(),
-                            weight: lex_w(
-                                mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
-                                #category_src_idx,
-                                #rule_idx,
-                            ),
-                            new_state: WpdaState::CrossCatDelegate {
-                                source_src_idx: #src_idx,
-                                inner_cur_bp: *cur_bp,
-                            },
-                            action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
-                        });
+                        mettail_prattail::wpda_transitions::prefix::push_crosscat_projection(
+                        __pd_branches,
+                        _outer_bp,
+                        cur_bp,
+                        #category_src_idx,
+                        #rule_idx,
+                        #src_idx,
+                        lex_w,
+                        );
                     };
                     if super::forks::CROSSCAT_LEX_COMPAT_RUNTIME_GATE {
                         quote! {
@@ -2369,7 +2210,7 @@ fn emit_unified_arm(
                             #__push
                         }
                     }
-                }
+                },
                 UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
                     let rule_idx = *rule_idx;
                     // Task #10 item 1: same disposition-routed rows as the
@@ -2403,48 +2244,27 @@ fn emit_unified_arm(
                         ),
                         Some(super::factoring::SpineDisposition::GroupRest) => TokenStream::new(),
                         None => quote! {
-                            // GAP-3: nullary multi-literal keyword prefix Fork branch
-                            // (e.g. `@ Nil` co-bucketed with `@ ( p )` / `@ p`).
-                            // Consume the trigger as a TriggerTerminal, push the
-                            // mixfix marker, enter MixfixLiteralRun(kind=2). Tier 0.0
-                            // (atomic-home) so lex-min picks the lowest-rule_idx branch
-                            // (declaration order) on a parse-success tie — NQuoteNil
-                            // (declared before NQuoteShort) wins for `@Nil`.
-                            __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::mixfix_marker(
-                                    #category_src_idx, #rule_idx, 0u8, *cur_bp,
-                                ),
-                                weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                                new_state: WpdaState::MixfixLiteralRun {
-                                    result_src_idx: #category_src_idx,
-                                    rule_idx: #rule_idx,
-                                    completed_idx: 0u8,
-                                    kind: 2u8,
-                                    sub_pos: 0u8,
-                                },
-                                action_kind:
-                                    mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndPush {
-                                        trigger_mode:
-                                            mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-                                    },
-                            });
+                            mettail_prattail::wpda_transitions::prefix::push_nullary_literal_run(
+                            __pd_branches,
+                            cur_bp,
+                            #category_src_idx,
+                            #rule_idx,
+                            lex_w,
+                            );
                         },
                     };
                     quote! { #rows_refusal #branch }
-                }
+                },
             })
             .collect();
         (
             quote! { #pat if #guard },
             quote! {
                 {
-                let mut __pd_branches: Vec<mettail_prattail::wpda_walker::ForkBranch<_>> =
-                    Vec::with_capacity(#n_descs);
-                #( #push_stmts )*
-                return WpdaStepAction::Fork {
-                    branches: __pd_branches,
-                    consume_trigger: false,
-                };
+                    return mettail_prattail::wpda_transitions::prefix::unified_fork(
+                        #n_descs,
+                        |__pd_branches| { #( #push_stmts )* },
+                    );
                 }
             },
         )
@@ -2467,17 +2287,12 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> (TokenStream, TokenS
         quote! { #pat if #guard },
         quote! {
             {
-            return WpdaStepAction::ConsumeAndPush {
-                symbol: StackSymbolV2::rule_at(
-                    #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                ).with_kind_return(),
-                weight: lex_w(0.0, #category_src_idx, #rule_idx),
-                new_state: WpdaState::Unwinding,
-                // Phase F.8: atomic literal arm — the consumed token IS
-                // the action arg (CaptureForBuilder). Not a unary-prefix
-                // trigger (no operand sub-parse).
-                trigger_mode: mettail_prattail::wpda_walker::TriggerMode::CaptureForBuilder,
-            };
+                return mettail_prattail::wpda_transitions::prefix::singleton_atomic(
+                _outer_bp,
+                #category_src_idx,
+                #rule_idx,
+                lex_w,
+                );
             }
         },
     )
@@ -3182,7 +2997,7 @@ mod tests {
             "the Equation dispatch must retain Ast's source continuation: {emitted}"
         );
         assert!(
-            emitted.contains("result_src_idx : 1u16 , rule_idx : 0u16"),
+            emitted.contains("paren_binder_branch (1u16 , 0u16 , 1u16 , _outer_bp"),
             "the delegated branch must select the source rule identity: {emitted}"
         );
         assert!(
@@ -3190,7 +3005,7 @@ mod tests {
             "the delegated rule must carry its cross-category transition cost: {emitted}"
         );
         assert!(
-            emitted.contains("consume_trigger : false"),
+            emitted.contains("wpda_transitions :: prefix :: paren_fork"),
             "heterogeneous paren branches must use branch-local consumption: {emitted}"
         );
     }
@@ -3339,7 +3154,7 @@ mod tests {
         let mut ts: TokenStream = arms.into_iter().collect();
         ts.extend(__ts_helpers);
         let s = ts.to_string();
-        assert!(s.contains("ConsumeAndPush"));
+        assert!(s.contains("singleton_atomic (_outer_bp , 2u16 , 0u16 , lex_w"));
         assert!(s.contains("Integer"));
         assert!(s.contains("2u16"));
     }
@@ -3413,7 +3228,7 @@ mod tests {
         let mut ts: TokenStream = arms.into_iter().collect();
         ts.extend(__ts_helpers);
         let s = ts.to_string();
-        assert!(s.contains("ConsumeAndPush"));
+        assert!(s.contains("singleton_atomic (_outer_bp , 2u16 , 0u16 , lex_w"));
         assert!(s.contains("Fixed"));
         assert!(s.contains("\"error\""));
         assert!(s.contains("2u16"));
@@ -3436,7 +3251,7 @@ mod tests {
         let mut ts: TokenStream = arms.into_iter().collect();
         ts.extend(__ts_helpers);
         let s = ts.to_string();
-        assert!(s.contains("ConsumeAndPush"));
+        assert!(s.contains("singleton_atomic (_outer_bp , 2u16 , 0u16 , lex_w"));
         assert!(s.contains("IntegerLit"));
         assert!(s.contains("\"Int\""));
         assert!(s.contains("2u16"));
@@ -3473,7 +3288,8 @@ mod tests {
         emitted.extend(helpers);
         let emitted = emitted.to_string();
         assert!(
-            !emitted.contains("ReplaceAndPush"),
+            !emitted.contains("singleton_leading_category")
+                && !emitted.contains("push_leading_category"),
             "same-category led rule leaked into generic prefix descent: {emitted}",
         );
     }
@@ -3574,8 +3390,8 @@ mod tests {
             Some(0),
             "the single-bucket direct prefix keeps its derived position"
         );
-        // Task #15 peel: the Fork body moved into the arm's helper; combine so
-        // the WpdaStepAction::Fork / ForkActionKind assertions still see it.
+        // Combine the static arms and helpers to check the shared transition
+        // calls and their original source identities.
         // The guard (with `__kw == "bitnot"`) stays in the arm, so its
         // single-occurrence count is unchanged.
         let mut ts: TokenStream = arms.into_iter().collect();
@@ -3587,10 +3403,16 @@ mod tests {
             1,
             "same fixed-token evidence must emit one arm, not first-match shadow arms: {s}"
         );
-        assert!(s.contains("WpdaStepAction :: Fork"), "{s}");
-        assert!(s.contains("ForkActionKind :: ConsumeAndPush"), "{s}");
-        assert!(s.contains("ForkActionKind :: Push"), "{s}");
-        assert!(s.contains("source_src_idx : 1u16"), "{s}");
-        assert!(s.contains("consume_trigger : false"), "{s}");
+        assert!(s.contains("wpda_transitions :: prefix :: unified_fork"), "{s}");
+        assert!(
+            s.contains(
+                "push_binder_prefix (__pd_branches , _outer_bp , 0u16 , 0u16 , 0u16 , lex_w"
+            ),
+            "the direct-prefix branch must retain its rule and body identities: {s}"
+        );
+        assert!(
+            s.contains("push_crosscat_projection (__pd_branches , _outer_bp , cur_bp , 0u16 , 1u16 , 1u16 , lex_w"),
+            "{s}"
+        );
     }
 }

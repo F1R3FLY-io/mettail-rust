@@ -256,108 +256,34 @@ fn emit_binder_list_entry(
 
     if !*allow_empty && !*allow_multi && collection_param_cat.is_none() {
         return quote! {
-            WpdaStepAction::Fork {
-                branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: #resume_symbol,
-                    weight: lex_one(),
-                    new_state: WpdaState::Unwinding,
-                    action_kind:
-                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
-                            start_scope: true,
-                            effect: mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                        },
-                }],
-                consume_trigger: false,
-            }
+            mettail_prattail::wpda_transitions::binder::list_entry_single(
+                || #resume_symbol, lex_one,
+            )
         };
     }
-
     if collection_param_cat.is_some() {
-        let empty_branch = allow_empty.then(|| quote! {
-            mettail_prattail::wpda_walker::ForkBranch {
-                symbol: #resume_symbol,
-                weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                new_state: WpdaState::Unwinding,
-                action_kind:
-                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
-                        expected_text: #close.to_string(),
-                        effects: vec![
-                            mettail_prattail::wpda_walker::BuilderDelta::StartCollection,
-                            mettail_prattail::wpda_walker::BuilderDelta::PushCollectionId { id: #slot_idx },
-                            mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
-                                names: Vec::new(),
-                            },
-                            mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                        ],
-                    },
-            },
-        });
+        let entry = if *allow_empty {
+            quote! { mettail_prattail::wpda_transitions::binder::list_entry_collection_allow_empty }
+        } else {
+            quote! { mettail_prattail::wpda_transitions::binder::list_entry_collection }
+        };
         return quote! {
-            WpdaStepAction::Fork {
-                branches: vec![
-                    #empty_branch
-                    mettail_prattail::wpda_walker::ForkBranch {
-                        symbol: StackSymbolV2::collection_marker(
-                            #result_src_idx, #rule_idx, #slot_idx, 0u8,
-                        ),
-                        weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
-                        new_state: WpdaState::BinderListLoop {
-                            result_src_idx: #result_src_idx,
-                            rule_idx: #rule_idx,
-                            frame_idx: #frame_idx,
-                            outer_bp: *outer_bp,
-                            sub_pos: 0u32,
-                        },
-                        action_kind:
-                            mettail_prattail::wpda_walker::ForkActionKind::ReplaceAndPush {
-                                replace_symbol: #resume_symbol,
-                            },
-                    },
-                ],
-                consume_trigger: false,
-            }
+            #entry(
+                #result_src_idx, #rule_idx, #frame_idx, *outer_bp, #close,
+                || #resume_symbol,lex_w,#slot_idx,
+            )
         };
     }
-
-    let empty_branch = allow_empty.then(|| quote! {
-        mettail_prattail::wpda_walker::ForkBranch {
-            symbol: #resume_symbol,
-            weight: lex_w(0.0, #result_src_idx, #rule_idx),
-            new_state: WpdaState::Unwinding,
-            action_kind:
-                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
-                    expected_text: #close.to_string(),
-                    effects: vec![
-                        mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
-                            names: Vec::new(),
-                        },
-                        mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                    ],
-                },
-        },
-    });
+    let entry = if *allow_empty {
+        quote! { mettail_prattail::wpda_transitions::binder::list_entry_plain_allow_empty }
+    } else {
+        quote! { mettail_prattail::wpda_transitions::binder::list_entry_plain }
+    };
     quote! {
-        WpdaStepAction::Fork {
-            branches: vec![
-                #empty_branch
-                mettail_prattail::wpda_walker::ForkBranch {
-                    symbol: #resume_symbol,
-                    weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
-                    new_state: WpdaState::BinderListLoop {
-                        result_src_idx: #result_src_idx,
-                        rule_idx: #rule_idx,
-                        frame_idx: #frame_idx,
-                        outer_bp: *outer_bp,
-                        sub_pos: 0u32,
-                    },
-                    action_kind:
-                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
-                            start_scope: true,
-                        },
-                },
-            ],
-            consume_trigger: false,
-        }
+        #entry(
+            #result_src_idx, #rule_idx, #frame_idx, *outer_bp, #close,
+            || #resume_symbol,lex_w,
+        )
     }
 }
 
@@ -780,19 +706,10 @@ pub(crate) fn emit_binder_prefix_arms(
             arms.push(quote! {
                 Some(mettail_prattail::automata::TokenKind::Fixed(__trigger))
                     if __trigger == #trigger && state_cat_src_idx == #result_src_idx => {
-                    return WpdaStepAction::ConsumeAndPush {
-                        symbol: StackSymbolV2::rule_at(
-                            #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                        ),
-                        weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                        new_state: WpdaState::BinderRule {
-                            result_src_idx: #result_src_idx,
-                            rule_idx: #rule_idx,
-                            body_src_idx: #body_src_idx,
-                            outer_bp: _outer_bp,
-                        },
-                        trigger_mode: #trigger_mode,
-                    };
+                    return mettail_prattail::wpda_transitions::binder::trigger_singleton(
+                        #result_src_idx, #rule_idx, #body_src_idx, _outer_bp, lex_w,
+                        || #trigger_mode,
+                    );
                 }
             });
             continue;
@@ -808,23 +725,9 @@ pub(crate) fn emit_binder_prefix_arms(
                     .and_then(|name| lookup_src_idx(name, categories))
                     .unwrap_or(result_src_idx);
                 quote! {
-                    mettail_prattail::wpda_walker::ForkBranch {
-                        symbol: StackSymbolV2::rule_at(
-                            #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
-                        ),
-                        weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                        new_state: WpdaState::BinderRule {
-                            result_src_idx: #result_src_idx,
-                            rule_idx: #rule_idx,
-                            body_src_idx: #body_src_idx,
-                            outer_bp: _outer_bp,
-                        },
-                        // Mirror the singleton ConsumeAndPush structural
-                        // trigger path: each ambiguous trigger branch owns
-                        // the consumed keyword under its rule identity.
-                        action_kind:
-                            mettail_prattail::wpda_walker::ForkActionKind::PushWithTriggerTerminal,
-                    }
+                    mettail_prattail::wpda_transitions::binder::trigger_branch(
+                        #result_src_idx, #rule_idx, #body_src_idx, _outer_bp, lex_w,
+                    )
                 }
             })
             .collect();
@@ -838,13 +741,10 @@ pub(crate) fn emit_binder_prefix_arms(
         arms.push(quote! {
             Some(mettail_prattail::automata::TokenKind::Fixed(__trigger))
                 if __trigger == #trigger && state_cat_src_idx == #result_src_idx => {
-                let mut __binder_trigger_branches =
-                    ::std::vec::Vec::with_capacity(#branch_count);
-                #( #branch_pushes )*
-                return WpdaStepAction::Fork {
-                    branches: __binder_trigger_branches,
-                    consume_trigger: true,
-                };
+                return mettail_prattail::wpda_transitions::binder::trigger_fork(
+                    #branch_count,
+                    |__binder_trigger_branches| { #( #branch_pushes )* },
+                );
             }
         });
     }
@@ -1376,49 +1276,14 @@ pub(crate) fn emit_binder_rule_body(
                 node.symbol.kind
                     == mettail_prattail::wpda_runtime::SymbolKind::CategoryEntry
             }) {
-                if __entry.symbol.category_src_idx != *result_src_idx {
-                    return WpdaStepAction::Error(format!(
-                        "binder-rule source category mismatch: expected {}, found {}",
-                        result_src_idx,
-                        __entry.symbol.category_src_idx,
-                    ));
-                }
-                let __expected_trigger: Option<&'static str> = match (*result_src_idx, *rule_idx) {
-                    #( #category_entry_trigger_arms )*
-                    _ => None,
-                };
-                let Some(__expected_trigger) = __expected_trigger else {
-                    return WpdaStepAction::Error(format!(
-                        "binder rule {}:{} has no literal trigger for category-entry dispatch",
-                        result_src_idx,
-                        rule_idx,
-                    ));
-                };
-                if tokens.peek_text(_pos) != Some(__expected_trigger) {
-                    return WpdaStepAction::Error(format!(
-                        "expected binder-rule trigger {:?} at pos {}, found {:?}",
-                        __expected_trigger,
-                        _pos,
-                        tokens.peek_text(_pos),
-                    ));
-                }
-                return WpdaStepAction::ConsumeAndPush {
-                    symbol: StackSymbolV2::rule_at(
-                        *result_src_idx,
-                        *rule_idx,
-                        1u8,
-                        Some(*outer_bp),
-                    ),
-                    weight: lex_one(),
-                    new_state: WpdaState::BinderRule {
-                        result_src_idx: *result_src_idx,
-                        rule_idx: *rule_idx,
-                        body_src_idx: *_body_src_idx,
-                        outer_bp: *outer_bp,
+                return mettail_prattail::wpda_transitions::binder::category_entry_prelude(
+                    __entry, result_src_idx, rule_idx, _body_src_idx, outer_bp, _pos, tokens,
+                    || match (*result_src_idx, *rule_idx) {
+                        #( #category_entry_trigger_arms )*
+                        _ => None,
                     },
-                    trigger_mode:
-                        mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
-                };
+                    lex_one,
+                );
             }
             let position: u8 = match frontier_top.map(|n| n.symbol.kind) {
                 Some(mettail_prattail::wpda_runtime::SymbolKind::RuleAt(p)) => p,
@@ -1645,53 +1510,7 @@ pub(crate) fn emit_binder_list_loop_body(
                 if collection_param_cat.is_none() {
                     arms.push(quote! {
                         (#result_src_idx, #rule_idx, #frame_idx, 0u32) => {
-                            let _ = tokens.peek_text(_pos);
-                            return WpdaStepAction::Fork {
-                                branches: vec![
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: #resume_symbol,
-                                        weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                                        new_state: WpdaState::Unwinding,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithEffect {
-                                                expected_text: #close.to_string(),
-                                                effect:
-                                                    mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                                            },
-                                    },
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::category_entry(0),
-                                        weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                                        new_state: WpdaState::BinderListLoop {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            frame_idx: #frame_idx,
-                                            outer_bp: *outer_bp,
-                                            sub_pos: 0u32,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsume {
-                                                expected_text: #separator.to_string(),
-                                            },
-                                    },
-                                    mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: #resume_symbol,
-                                        weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
-                                        new_state: WpdaState::BinderListLoop {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            frame_idx: #frame_idx,
-                                            outer_bp: *outer_bp,
-                                            sub_pos: 0u32,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
-                                                start_scope: false,
-                                            },
-                                    },
-                                ],
-                                consume_trigger: false,
-                            };
+                            return mettail_prattail::wpda_transitions::binder::list_plain_head(#result_src_idx,#rule_idx,#frame_idx,*outer_bp,tokens,_pos,#close,#separator,|| #resume_symbol,lex_w);
                         }
                     });
                     continue;
@@ -1704,53 +1523,7 @@ pub(crate) fn emit_binder_list_loop_body(
                 );
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #frame_idx, 0u32) => {
-                        let _ = tokens.peek_text(_pos);
-                        return WpdaStepAction::Fork {
-                            branches: vec![
-                                mettail_prattail::wpda_walker::ForkBranch {
-                                    symbol: StackSymbolV2::category_entry(0),
-                                    weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                                    new_state: WpdaState::Unwinding,
-                                    action_kind:
-                                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndPopWithEffect {
-                                            expected_text: #close.to_string(),
-                                            effect:
-                                                mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                                        },
-                                },
-                                mettail_prattail::wpda_walker::ForkBranch {
-                                    symbol: StackSymbolV2::category_entry(0),
-                                    weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                                    new_state: WpdaState::BinderListLoop {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        frame_idx: #frame_idx,
-                                        outer_bp: *outer_bp,
-                                        sub_pos: 0u32,
-                                    },
-                                    action_kind:
-                                        mettail_prattail::wpda_walker::ForkActionKind::GuardedConsume {
-                                            expected_text: #separator.to_string(),
-                                        },
-                                },
-                                mettail_prattail::wpda_walker::ForkBranch {
-                                    symbol: StackSymbolV2::binder_list_loop_at(
-                                        #first_marker_id, *outer_bp,
-                                    ),
-                                    weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
-                                    new_state: WpdaState::BinderListLoop {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        frame_idx: #frame_idx,
-                                        outer_bp: *outer_bp,
-                                        sub_pos: 1u32,
-                                    },
-                                    action_kind:
-                                        mettail_prattail::wpda_walker::ForkActionKind::Push,
-                                },
-                            ],
-                            consume_trigger: false,
-                        };
+                        return mettail_prattail::wpda_transitions::binder::list_collection_head(#result_src_idx,#rule_idx,#frame_idx,*outer_bp,tokens,_pos,#close,#separator,#first_marker_id,lex_w);
                     }
                 });
 
@@ -1777,19 +1550,7 @@ pub(crate) fn emit_binder_list_loop_body(
                     let arm = match inner_position {
                         BinderPosition::Literal(text) => quote! {
                             (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: #next_symbol,
-                                        weight: lex_one(),
-                                        new_state: #next_state,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
-                                                expected_text: #text.to_string(),
-                                                required_top_cat: None,
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                                return mettail_prattail::wpda_transitions::binder::position_literal(|| #next_symbol, || #next_state, #text, lex_one);
                             }
                         },
                         BinderPosition::TokenKindCapture { kind_name, .. } => {
@@ -1824,37 +1585,13 @@ pub(crate) fn emit_binder_list_loop_body(
                                 .collect::<Vec<_>>();
                             quote! {
                                 (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                    return WpdaStepAction::Fork {
-                                        branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                            symbol: #next_symbol,
-                                            weight: lex_one(),
-                                            new_state: #next_state,
-                                            action_kind:
-                                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
-                                                    open_kind: #open_kind.to_string(),
-                                                    nested_open_kinds: vec![#(#nested_open_kinds),*],
-                                                    close_kind: #close_kind.to_string(),
-                                                },
-                                        }],
-                                        consume_trigger: false,
-                                    };
+                                    return mettail_prattail::wpda_transitions::binder::position_guest_body(|| #next_symbol, || #next_state, #open_kind, || vec![#(#nested_open_kinds),*], #close_kind, lex_one);
                                 }
                             }
                         },
                         BinderPosition::BinderIdent => quote! {
                             (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: #next_symbol,
-                                        weight: lex_one(),
-                                        new_state: #next_state,
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
-                                                start_scope: false,
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                                return mettail_prattail::wpda_transitions::binder::position_binder_ident(|| #next_symbol, || #next_state, lex_one);
                             }
                         },
                         BinderPosition::ParamParse { cat, .. } => {
@@ -1867,39 +1604,18 @@ pub(crate) fn emit_binder_list_loop_body(
                             );
                             quote! {
                                 (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                    return WpdaStepAction::ReplaceAndPush {
-                                        replace_symbol: #next_symbol,
-                                        push_symbol:
-                                            StackSymbolV2::category_entry_goal(#cat_src_idx),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::PrefixDispatch {
-                                            pos: _pos,
-                                            cur_bp: 0u8,
-                                        },
-                                    };
+                                    return mettail_prattail::wpda_transitions::binder::position_parameter(|| #next_symbol, #cat_src_idx, _pos, lex_one);
                                 }
                             }
                         },
                         BinderPosition::GuardSlot => quote! {
                             (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                return WpdaStepAction::ParsePredicate {
-                                    replace_symbol: #next_symbol,
-                                    weight: lex_one(),
-                                    new_state: #next_state,
-                                };
+                                return mettail_prattail::wpda_transitions::binder::position_guard(|| #next_symbol, || #next_state, lex_one);
                             }
                         },
                         BinderPosition::OptionalGroup { group_idx, .. } => quote! {
                             (#result_src_idx, #rule_idx, #frame_idx, #sub_pos) => {
-                                return WpdaStepAction::Advance(
-                                    WpdaState::OptionalGroup {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        group_idx: #group_idx,
-                                        sub_pos: 0u32,
-                                        outer_bp: *outer_bp,
-                                    },
-                                );
+                                return mettail_prattail::wpda_transitions::binder::rule_optional(#result_src_idx,#rule_idx,#group_idx,*outer_bp);
                             }
                         },
                         BinderPosition::BinderListLoop { .. } => {
@@ -1932,16 +1648,7 @@ pub(crate) fn emit_binder_list_loop_body(
                 let final_sub_pos = (inner_positions.len() + 1) as u32;
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #frame_idx, #final_sub_pos) => {
-                        return WpdaStepAction::Pop {
-                            weight: lex_one(),
-                            new_state: WpdaState::BinderListLoop {
-                                result_src_idx: #result_src_idx,
-                                rule_idx: #rule_idx,
-                                frame_idx: #frame_idx,
-                                outer_bp: *outer_bp,
-                                sub_pos: 0u32,
-                            },
-                        };
+                        return mettail_prattail::wpda_transitions::binder::list_complete(#result_src_idx, #rule_idx, #frame_idx, *outer_bp, lex_one);
                     }
                 });
             }
@@ -2235,44 +1942,7 @@ pub(crate) fn emit_optional_group_body(
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #group_idx_value, 0u32) => {
                         // Stage 3.12 / Class A.i (2026-05-01): Opt-Group Fork.
-                        return WpdaStepAction::Fork {
-                            branches: vec![
-                                // TAKE branch (push OptionalGroupAt(1) →
-                                // walker auto-opens optional scope via
-                                // emit_push_side_effects).
-                                mettail_prattail::wpda_walker::ForkBranch {
-                                    symbol: StackSymbolV2::optional_group_at(
-                                        #take_marker_id, *outer_bp,
-                                    ),
-                                    weight: lex_w(0.0, #result_src_idx, #rule_idx),
-                                    new_state: WpdaState::OptionalGroup {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        group_idx: #group_idx_value,
-                                        sub_pos: 1,
-                                        outer_bp: *outer_bp,
-                                    },
-                                    action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
-                                },
-                                // SKIP branch (mirror OptGroupAbsent: log
-                                // PushOptionalAbsent + pop outer RuleAt +
-                                // push advanced outer RuleAt).
-                                mettail_prattail::wpda_walker::ForkBranch {
-                                    // `symbol` is unused for OptGroupAbsent
-                                    // action_kind — the cursor-side Fork
-                                    // arm uses `replace_symbol` from
-                                    // `action_kind`. We supply a stable
-                                    // sentinel to satisfy the field.
-                                    symbol: StackSymbolV2::category_entry(0),
-                                    weight: lex_w(mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP, #result_src_idx, #rule_idx),
-                                    new_state: #resume_state,
-                                    action_kind: mettail_prattail::wpda_walker::ForkActionKind::OptGroupAbsent {
-                                        replace_symbol: #resume_symbol,
-                                    },
-                                },
-                            ],
-                            consume_trigger: false,
-                        };
+                        return mettail_prattail::wpda_transitions::binder::optional_start(#result_src_idx,#rule_idx,#group_idx_value,*outer_bp,#take_marker_id,|| #resume_symbol,|| #resume_state,lex_w);
                     }
                 });
 
@@ -2324,28 +1994,7 @@ pub(crate) fn emit_optional_group_body(
                                 .collect::<Vec<_>>();
                             quote! {
                                 (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
-                                    return WpdaStepAction::Fork {
-                                        branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                            symbol: StackSymbolV2::optional_group_at(
-                                                #next_marker_id, *outer_bp,
-                                            ),
-                                            weight: lex_one(),
-                                            new_state: WpdaState::OptionalGroup {
-                                                result_src_idx: #result_src_idx,
-                                                rule_idx: #rule_idx,
-                                                group_idx: #group_idx_value,
-                                                sub_pos: #next_sp,
-                                                outer_bp: *outer_bp,
-                                            },
-                                            action_kind:
-                                                mettail_prattail::wpda_walker::ForkActionKind::ConsumeGuestBodyAndReplace {
-                                                    open_kind: #open_kind.to_string(),
-                                                    nested_open_kinds: vec![#(#nested_open_kinds),*],
-                                                    close_kind: #close_kind.to_string(),
-                                                },
-                                        }],
-                                        consume_trigger: false,
-                                    };
+                                    return mettail_prattail::wpda_transitions::binder::position_guest_body(|| StackSymbolV2::optional_group_at(#next_marker_id,*outer_bp),|| WpdaState::OptionalGroup { result_src_idx:#result_src_idx,rule_idx:#rule_idx,group_idx:#group_idx_value,sub_pos:#next_sp,outer_bp:*outer_bp },#open_kind,|| vec![#(#nested_open_kinds),*],#close_kind,lex_one);
                                 }
                             }
                         },
@@ -2385,27 +2034,7 @@ pub(crate) fn emit_optional_group_body(
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
                                 // Cluster 1 compatibility closure #4 (opt-group
                                 // inner mirror of site #5).
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::optional_group_at(
-                                            #next_marker_id, *outer_bp,
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::OptionalGroup {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            group_idx: #group_idx_value,
-                                            sub_pos: #next_sp,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplace {
-                                                expected_text: #text.to_string(),
-                                                required_top_cat: None,
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                                return mettail_prattail::wpda_transitions::binder::position_literal(|| StackSymbolV2::optional_group_at(#next_marker_id,*outer_bp),|| WpdaState::OptionalGroup { result_src_idx:#result_src_idx,rule_idx:#rule_idx,group_idx:#group_idx_value,sub_pos:#next_sp,outer_bp:*outer_bp },#text,lex_one);
                             }
                         },
                         BinderPosition::ParamParse { cat, collection } => {
@@ -2420,21 +2049,7 @@ pub(crate) fn emit_optional_group_body(
                             match collection {
                                 None => quote! {
                                     (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
-                                        return WpdaStepAction::ReplaceAndPush {
-                                            replace_symbol: StackSymbolV2::optional_group_at(
-                                                #next_marker_id, *outer_bp,
-                                            ),
-                                            push_symbol: StackSymbolV2::category_entry_goal(#cat_src_idx),
-                                            weight: lex_one(),
-                                            new_state: WpdaState::PrefixDispatch {
-                                                pos: _pos,
-                                                // Optional-group inner ParamParse starts a
-                                                // nested category parse at ordinary precedence;
-                                                // prefix binding power belongs to the outer
-                                                // binder dispatch path.
-                                                cur_bp: 0u8,
-                                            },
-                                        };
+                                        return mettail_prattail::wpda_transitions::binder::position_parameter(|| StackSymbolV2::optional_group_at(#next_marker_id,*outer_bp),#cat_src_idx,_pos,lex_one);
                                     }
                                 },
                                 Some(info) => {
@@ -2453,20 +2068,7 @@ pub(crate) fn emit_optional_group_body(
                                     let slot_idx = info.slot_idx;
                                     quote! {
                                         (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
-                                            return WpdaStepAction::ReplaceAndPush {
-                                                replace_symbol: StackSymbolV2::optional_group_at(
-                                                    #next_marker_id, *outer_bp,
-                                                ),
-                                                push_symbol: StackSymbolV2::collection_marker(
-                                                    // binder-internal collection: dispatch_bp=0.
-                                                    #result_src_idx, #rule_idx, #slot_idx, 0u8,
-                                                ),
-                                                weight: lex_one(),
-                                                new_state: WpdaState::PrefixDispatch {
-                                                    pos: _pos,
-                                                    cur_bp: 0u8,
-                                                },
-                                            };
+                                            return mettail_prattail::wpda_transitions::binder::optional_collection(#next_marker_id,*outer_bp,#result_src_idx,#rule_idx,#slot_idx,_pos,lex_one);
                                         }
                                     }
                                 },
@@ -2477,57 +2079,18 @@ pub(crate) fn emit_optional_group_body(
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
                                 // Cluster 1 compatibility closure #6 (opt-group
                                 // inner mirror of site #6).
-                                return WpdaStepAction::Fork {
-                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
-                                        symbol: StackSymbolV2::optional_group_at(
-                                            #next_marker_id, *outer_bp,
-                                        ),
-                                        weight: lex_one(),
-                                        new_state: WpdaState::OptionalGroup {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            group_idx: #group_idx_value,
-                                            sub_pos: #next_sp,
-                                            outer_bp: *outer_bp,
-                                        },
-                                        action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeIdentAndReplace {
-                                                start_scope: true,
-                                            },
-                                    }],
-                                    consume_trigger: false,
-                                };
+                                return mettail_prattail::wpda_transitions::binder::optional_ident(#next_marker_id,*outer_bp,#result_src_idx,#rule_idx,#group_idx_value,#next_sp,lex_one);
                             }
                         },
                         BinderPosition::GuardSlot => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
-                                return WpdaStepAction::ParsePredicate {
-                                    replace_symbol: StackSymbolV2::optional_group_at(
-                                        #next_marker_id, *outer_bp,
-                                    ),
-                                    weight: lex_one(),
-                                    new_state: WpdaState::OptionalGroup {
-                                        result_src_idx: #result_src_idx,
-                                        rule_idx: #rule_idx,
-                                        group_idx: #group_idx_value,
-                                        sub_pos: #next_sp,
-                                        outer_bp: *outer_bp,
-                                    },
-                                };
+                                return mettail_prattail::wpda_transitions::binder::position_guard(|| StackSymbolV2::optional_group_at(#next_marker_id,*outer_bp),|| WpdaState::OptionalGroup { result_src_idx:#result_src_idx,rule_idx:#rule_idx,group_idx:#group_idx_value,sub_pos:#next_sp,outer_bp:*outer_bp },lex_one);
                             }
                         },
                         BinderPosition::OptionalGroup { group_idx: child_group_idx, .. } => {
                             quote! {
                                 (#result_src_idx, #rule_idx, #group_idx_value, #sp) => {
-                                    return WpdaStepAction::Advance(
-                                        WpdaState::OptionalGroup {
-                                            result_src_idx: #result_src_idx,
-                                            rule_idx: #rule_idx,
-                                            group_idx: #child_group_idx,
-                                            sub_pos: 0u32,
-                                            outer_bp: *outer_bp,
-                                        },
-                                    );
+                                    return mettail_prattail::wpda_transitions::binder::rule_optional(#result_src_idx,#rule_idx,#child_group_idx,*outer_bp);
                                 }
                             }
                         },
@@ -2564,11 +2127,7 @@ pub(crate) fn emit_optional_group_body(
                 // sub_pos == final_sub_pos: finalize.
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #group_idx_value, #final_sub_pos) => {
-                        return WpdaStepAction::OptGroupFinalize {
-                            replace_symbol: #resume_symbol,
-                            weight: lex_one(),
-                            new_state: #resume_state,
-                        };
+                        return mettail_prattail::wpda_transitions::binder::optional_complete(|| #resume_symbol,|| #resume_state,lex_one);
                     }
                 });
             }
@@ -3294,8 +2853,16 @@ mod tests {
         let language = synthetic_lang_for_lambda_test();
         let ts = emit_binder_prefix_arms(&language, &categories, &per_cat);
         let s = ts.to_string();
-        assert!(s.contains("ConsumeAndPush"));
-        assert!(s.contains("BinderRule"));
+        let expected = quote! {
+            mettail_prattail::wpda_transitions::binder::trigger_singleton(
+                0u16, 0u16, 0u16, _outer_bp, lex_w,
+                || mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
+            )
+        };
+        assert!(
+            s.contains(&expected.to_string()),
+            "singleton must retain the rule-0 continuation and structural trigger: {s}"
+        );
         assert!(s.contains("\"lam \""));
     }
 
@@ -3307,27 +2874,46 @@ mod tests {
         let ts = emit_binder_prefix_arms(&language, &categories, &per_cat);
         let s = ts.to_string();
 
-        assert!(s.contains("WpdaStepAction :: Fork"));
-        assert!(s.contains("consume_trigger : true"));
+        let first = quote! {
+            mettail_prattail::wpda_transitions::binder::trigger_branch(
+                1u16, 0u16, 0u16, _outer_bp, lex_w,
+            )
+        }
+        .to_string();
+        let second = quote! {
+            mettail_prattail::wpda_transitions::binder::trigger_branch(
+                1u16, 1u16, 0u16, _outer_bp, lex_w,
+            )
+        }
+        .to_string();
+        let first_pos = s
+            .find(&first)
+            .expect("first branch must retain category 1, rule 0, body category 0");
+        let second_pos = s
+            .find(&second)
+            .expect("second branch must retain category 1, rule 1, body category 0");
+        assert!(first_pos < second_pos, "same-trigger branches must retain source order");
+        assert_eq!(s.matches("binder :: trigger_branch").count(), 2);
+        let expected = quote! {
+            mettail_prattail::wpda_transitions::binder::trigger_fork(
+                2usize,
+                |__binder_trigger_branches| {
+                    __binder_trigger_branches.push(
+                        mettail_prattail::wpda_transitions::binder::trigger_branch(
+                            1u16, 0u16, 0u16, _outer_bp, lex_w,
+                        )
+                    );
+                    __binder_trigger_branches.push(
+                        mettail_prattail::wpda_transitions::binder::trigger_branch(
+                            1u16, 1u16, 0u16, _outer_bp, lex_w,
+                        )
+                    );
+                },
+            )
+        };
         assert!(
-            s.contains("ForkActionKind :: PushWithTriggerTerminal"),
-            "each same-trigger branch must own the consumed trigger under its rule identity",
-        );
-        assert!(
-            s.contains("StackSymbolV2 :: rule_at (1u16 , 0u16 , 1u8"),
-            "first branch must keep its category/rule/position stack identity",
-        );
-        assert!(
-            s.contains("StackSymbolV2 :: rule_at (1u16 , 1u16 , 1u8"),
-            "second branch must keep its category/rule/position stack identity",
-        );
-        assert!(
-            s.contains("rule_idx : 0u16") && s.contains("rule_idx : 1u16"),
-            "same-trigger branches must remain distinct in WpdaState::BinderRule",
-        );
-        assert!(
-            s.matches("body_src_idx : 0u16").count() >= 2,
-            "both branches should parse their first operand through the declared source category",
+            s.contains(&expected.to_string()),
+            "the consuming fork must build both original trigger-owning branches in order: {s}"
         );
     }
 
@@ -3382,12 +2968,19 @@ mod tests {
         // Phase 3.B.3 (2026-05-11): single-binder rules are unified
         // into the BinderListLoop dispatch with allow_empty=false,
         // allow_multi=false. The emitted code uses
-        // GuardedConsumeBinderIdentAndReplaceWithEffect to atomically
-        // capture the lone Ident, open + close the binder scope, and
-        // replace the GSS top. The "." Literal arm still uses
-        // the shared rule_literal leaf (GuardedConsumeAndReplace).
-        assert!(s.contains("GuardedConsumeBinderIdentAndReplaceWithEffect"));
-        assert!(s.contains("EndBinderScope"));
+        // list_entry_single to atomically capture the lone Ident,
+        // open + close the binder scope, and replace the GSS top.
+        // The "." Literal arm uses rule_literal.
+        let expected = quote! {
+            mettail_prattail::wpda_transitions::binder::list_entry_single(
+                || StackSymbolV2::rule_at(0u16, 0u16, 2u8, Some(*outer_bp),),
+                lex_one,
+            )
+        };
+        assert!(
+            s.contains(&expected.to_string()),
+            "singleton must resume rule 0 at position 2 with its original binding power: {s}"
+        );
         assert!(s.contains("binder :: rule_literal"));
         assert!(s.contains("\".\""));
     }

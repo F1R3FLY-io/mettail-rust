@@ -112,7 +112,19 @@ fn prefix_bucket_baseline_cross_lhs_binder_atomic_projection_order() {
     assert_eq!(rows.site2_ordinal(1, 1), Some(1), "global cross-LHS occupies slot zero");
     assert_eq!(rows.site2_ordinal(1, 0), Some(2), "atomic rows flush after binder rows");
     assert_eq!(rows.site2_ordinal(1, 2), Some(3), "projection rows belong to pass two");
-    assert!(helpers.to_string().contains("WpdaStepAction :: Fork"));
+    let helpers = helpers.to_string();
+    assert!(
+        helpers.contains("wpda_transitions :: prefix :: unified_fork (4usize ,"),
+        "{helpers}"
+    );
+    let positions = [
+        "push_crosscat_lhs (__pd_branches , pos , 1u16 , 0u16 ,",
+        "push_binder_prefix (__pd_branches , _outer_bp , 1u16 , 1u16 , 1u16 , lex_w ,)",
+        "push_atomic (__pd_branches , _outer_bp , 1u16 , 0u16 , lex_w ,)",
+        "push_crosscat_projection (__pd_branches , _outer_bp , cur_bp , 1u16 , 2u16 , 0u16 , lex_w ,)",
+    ]
+    .map(|call| helpers.find(call).unwrap_or_else(|| panic!("missing {call}: {helpers}")));
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{helpers}");
 }
 
 #[test]
@@ -133,7 +145,18 @@ fn prefix_bucket_baseline_duplicate_indexed_rules_remain_distinct_branches() {
     let atom = terminal("Repeated", "Expr", "x");
     let (arms, helpers, rows) = emit(&language(Vec::new()), 0, &[(7, &atom), (7, &atom)]);
     assert_eq!(arms.len(), 1);
-    assert!(helpers.to_string().contains("WpdaStepAction :: Fork"));
+    let helpers = helpers.to_string();
+    assert!(
+        helpers.contains("wpda_transitions :: prefix :: unified_fork (2usize ,"),
+        "{helpers}"
+    );
+    assert_eq!(
+        helpers
+            .matches("push_atomic (__pd_branches , _outer_bp , 0u16 , 7u16 , lex_w ,)")
+            .count(),
+        2,
+        "both identical rule identities must still append a branch: {helpers}",
+    );
     assert!(
         rows.is_ambiguous_multi_bucket(0, 7),
         "the existing accumulator observes the two different static positions",
@@ -177,7 +200,11 @@ fn prefix_bucket_baseline_missing_category_falls_back_or_skips_at_original_sites
         1,
         "unresolved leading-category branch must skip rather than fallback"
     );
-    assert!(helpers.to_string().contains("source_src_idx : 9u16"));
+    let helpers = helpers.to_string();
+    assert!(
+        helpers.contains("singleton_crosscat_unary (_outer_bp , 9u16 , 0u16 , 9u16 ,"),
+        "the unresolved prefix source must retain its owner-category fallback: {helpers}",
+    );
     assert_eq!(rows.site2_ordinal(9, 0), Some(0));
     assert_eq!(rows.site2_ordinal(9, 1), None);
 }
