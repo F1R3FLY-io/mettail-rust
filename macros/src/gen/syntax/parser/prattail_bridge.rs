@@ -24,10 +24,68 @@ use mettail_ast::{
 };
 use mettail_prattail::{
     binding_power::Associativity, grammar::ir::CollectionKind, BeamWidthConfig, CategorySpec,
-    CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RefinementPredKind,
-    RefinementTypeSpec, ReservationPolicy, RuleSpecInput, SyncConstraintSpec, SyncSpec,
-    SyntaxItemSpec, TreeInvariantSpec,
+    CustomTokenSpec, LanguageSpec, LexerModeSpec, RefinementPredKind, RefinementTypeSpec,
+    ReservationPolicy, RuleSpecInput, SyncConstraintSpec, SyncSpec, SyntaxItemSpec,
+    TreeInvariantSpec,
 };
+
+struct MacroTokenDeclarationReader<'a> {
+    language: &'a LanguageDef,
+    categories: &'a [CategorySpec],
+}
+
+impl<'a> mettail_prattail::token_declarations::TokenDeclarationReader
+    for MacroTokenDeclarationReader<'a>
+{
+    type Token = &'a mettail_ast::language::TokenDef;
+    type Output = CustomTokenSpec;
+
+    fn name(&self, td: Self::Token) -> String {
+        td.name.to_string()
+    }
+    fn native_kind(&self, td: Self::Token) -> Option<mettail_grammar_core::NativeKind> {
+        td.category.as_ref().and_then(|cat| {
+            self.language
+                .types
+                .iter()
+                .find(|t| t.name == *cat)
+                .and_then(|t| t.native_type.as_ref())
+                .map(mettail_ast::language::NativeKind::from_syn_type)
+        })
+    }
+    fn pattern(&self, td: Self::Token) -> String {
+        td.pattern.clone()
+    }
+    fn from_literals(&self, td: Self::Token) -> bool {
+        td.from_literals
+    }
+    fn category_native_type(&self, td: Self::Token) -> Option<String> {
+        td.category.as_ref().and_then(|cat| {
+            self.categories
+                .iter()
+                .find(|c| c.name == cat.to_string())
+                .and_then(|c| c.native_type.clone())
+        })
+    }
+    fn finish(
+        &self,
+        td: Self::Token,
+        fields: mettail_prattail::token_declarations::TokenDeclarationFields,
+    ) -> CustomTokenSpec {
+        CustomTokenSpec {
+            name: fields.name,
+            pattern: td.pattern.clone(),
+            category: td.category.as_ref().map(|c| c.to_string()),
+            payload_type: fields.payload_type,
+            constructor_code: td.rust_code.as_ref().map(|code| code.to_string()),
+            is_builtin_override: fields.is_builtin_override,
+            priority: td.priority.unwrap_or(2),
+            push_mode: td.push_mode.as_ref().map(|m| m.to_string()),
+            is_pop: td.is_pop,
+            stream: td.stream.as_ref().map(|s| s.to_string()),
+        }
+    }
+}
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
 ///
@@ -278,144 +336,12 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
 
     let semantic_dependency_groups = collect_semantic_dependency_groups(language);
 
-    // Convert token definitions to CustomTokenSpec
-    let mut literal_patterns = LiteralPatterns::default();
-    let mut integer_alternatives: Vec<String> = Vec::new();
-    let mut authored_token_origins = mettail_prattail::AuthoredTokenOrigins::default();
-    let custom_tokens: Vec<CustomTokenSpec> = language
-        .token_defs
-        .iter()
-        .enumerate()
-        .map(|(source_index, td)| {
-            let name = td.name.to_string();
-
-            // Resolve the NativeKind for this token's category so all
-            // dispatch below is typed — no string comparisons on variant
-            // family names.
-            let native_kind = td.category.as_ref().and_then(|cat| {
-                language
-                    .types
-                    .iter()
-                    .find(|t| t.name == *cat)
-                    .and_then(|t| t.native_type.as_ref())
-                    .map(mettail_ast::language::NativeKind::from_syn_type)
-            });
-
-            // A "builtin" token is one whose NativeKind maps to a
-            // standard Token variant family (Integer, Float, Boolean,
-            // StringLit). Every non-None return from standard_token_variant()
-            // IS a builtin family — no string comparison needed.
-            let builtin_family = native_kind.and_then(|kind| kind.standard_token_variant());
-            let is_builtin = builtin_family.is_some();
-            authored_token_origins
-                .builtin_overrides
-                .push(builtin_family);
-
-            // Update LiteralPatterns from the resolved NativeKind.
-            // Multiple literals can share a built-in token family (e.g.
-            // Int/UInt32/BigInt all map to Integer). We build a UNION
-            // regex so the single `Token::Integer(i64)` matches any.
-            if let Some(kind) = native_kind {
-                if is_builtin {
-                    if kind.is_integer() {
-                        integer_alternatives.push(td.pattern.clone());
-                    } else {
-                        match kind {
-                            mettail_ast::language::NativeKind::Float32
-                            | mettail_ast::language::NativeKind::Float64 => {
-                                literal_patterns.float = td.pattern.clone();
-                            },
-                            mettail_ast::language::NativeKind::Bool => {
-                                literal_patterns.boolean = Some(td.pattern.clone());
-                            },
-                            mettail_ast::language::NativeKind::Str => {
-                                literal_patterns.string = td.pattern.clone();
-                            },
-                            _ => {},
-                        }
-                    }
-                } else if td.from_literals {
-                    // Non-builtin literal families: Rational, FixedPoint.
-                    // Populate the by_category maps for the NFA builder.
-                    // Key = mapped variant name (not original category).
-                    match kind {
-                        mettail_ast::language::NativeKind::CanonicalBigRat => {
-                            literal_patterns
-                                .rational_by_category
-                                .insert(name.clone(), td.pattern.clone());
-                            authored_token_origins
-                                .typed_literals
-                                .insert(("Rational".into(), name.clone()), source_index);
-                        },
-                        mettail_ast::language::NativeKind::CanonicalFixedPoint => {
-                            literal_patterns
-                                .fixed_by_category
-                                .insert(name.clone(), td.pattern.clone());
-                            authored_token_origins
-                                .typed_literals
-                                .insert(("FixedPoint".into(), name.clone()), source_index);
-                        },
-                        _ => {},
-                    }
-                }
-            }
-
-            // For built-in overrides, also update LiteralPatterns for
-            // the Ident pattern (no NativeKind — Ident is structural).
-            if !is_builtin && td.from_literals && name == "Ident" {
-                literal_patterns.ident = td.pattern.clone();
-            }
-
-            // Payload type: built-in literals keep the built-in payload
-            // (i64, bool, f64, …); non-builtin literal-block tokens carry
-            // raw `&'a str`; tokens{} entries inherit their category's
-            // native type.
-            let payload_type = if td.from_literals {
-                if is_builtin {
-                    td.category.as_ref().and_then(|cat| {
-                        categories
-                            .iter()
-                            .find(|c| c.name == cat.to_string())
-                            .and_then(|c| c.native_type.clone())
-                    })
-                } else {
-                    Some("str".to_string())
-                }
-            } else {
-                td.category.as_ref().and_then(|cat| {
-                    categories
-                        .iter()
-                        .find(|c| c.name == cat.to_string())
-                        .and_then(|c| c.native_type.clone())
-                })
-            };
-
-            CustomTokenSpec {
-                name,
-                pattern: td.pattern.clone(),
-                category: td.category.as_ref().map(|c| c.to_string()),
-                payload_type,
-                constructor_code: td.rust_code.as_ref().map(|code| code.to_string()),
-                is_builtin_override: is_builtin,
-                priority: td.priority.unwrap_or(2),
-                push_mode: td.push_mode.as_ref().map(|m| m.to_string()),
-                is_pop: td.is_pop,
-                stream: td.stream.as_ref().map(|s| s.to_string()),
-            }
-        })
-        .collect();
-
-    // Build the union integer pattern from all Integer-mapped literals.
-    // Multiple categories (Int/UInt32/BigInt) each contribute a regex
-    // alternative; the DFA matches the union as a single `Token::Integer`.
-    if !integer_alternatives.is_empty() {
-        let union = integer_alternatives
-            .iter()
-            .map(|p| format!("({})", p))
-            .collect::<Vec<_>>()
-            .join("|");
-        literal_patterns.integer = union;
-    }
+    let token_reader = MacroTokenDeclarationReader { language, categories: &categories };
+    let (literal_patterns, authored_token_origins, custom_tokens) =
+        mettail_prattail::token_declarations::project_global_tokens(
+            &token_reader,
+            language.token_defs.iter(),
+        );
 
     // Convert mode definitions
     let modes: Vec<LexerModeSpec> = language
@@ -427,28 +353,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
                 .token_defs
                 .iter()
                 .map(|td| {
-                    let payload_type = if td.from_literals {
-                        Some("str".to_string())
-                    } else {
-                        td.category.as_ref().and_then(|cat| {
-                            categories
-                                .iter()
-                                .find(|c| c.name == cat.to_string())
-                                .and_then(|c| c.native_type.clone())
-                        })
-                    };
-                    CustomTokenSpec {
-                        name: td.name.to_string(),
-                        pattern: td.pattern.clone(),
-                        category: td.category.as_ref().map(|c| c.to_string()),
-                        payload_type,
-                        constructor_code: td.rust_code.as_ref().map(|code| code.to_string()),
-                        is_builtin_override: false, // modes can't override built-ins
-                        priority: td.priority.unwrap_or(2),
-                        push_mode: td.push_mode.as_ref().map(|m| m.to_string()),
-                        is_pop: td.is_pop,
-                        stream: td.stream.as_ref().map(|s| s.to_string()),
-                    }
+                    mettail_prattail::token_declarations::project_mode_token(&token_reader, td)
                 })
                 .collect(),
             raw: md.raw,

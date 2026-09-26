@@ -161,6 +161,10 @@ theories/FactoringEmissionData.v
 theories/FactoringOrdinalAdmission.v
 theories/CastSourceObservation.v
 theories/TransitionBodyRelocation.v
+theories/TermCategoryObservation.v
+theories/LogicalEoiObservation.v
+theories/OwnedLexicalAdapter.v
+theories/StructuralHoleBridge.v
 theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.
@@ -168,3 +172,16 @@ theories/LiteralCarrierContextIndependence.v
 
 # Nested Optional/BinderList PDA frame identity and typed-continuation laws.
 theories/BinderTraversalFrames.v
+theories/TokenKindBindingObservation.v
+theories/StructuralTerminalRoster.v
+theories/RegexCharacterProfile.v
+theories/TerminalOccurrence.v
+theories/OwnedActionAdapter.v
+theories/ActionContextDispatch.v
+theories/OwnedCollectionAction.v
+theories/OwnedVariableAction.v
+theories/TokenDeclarationProjection.v
+theories/SeparatedTerminalObservation.v
+theories/OwnedSeparatedCollectionSlot.v
+theories/IterAbsorptionObservation.v
+theories/SourceRoleVariableAuthority.v

@@ -310,7 +310,8 @@ pub(super) fn emitted_source_does_not_lex(
 /// the lexer and parser pipelines. The `rust_code: Option<TokenStream>`
 /// field on `RuleSpec` is intentionally not copied — it is never used
 /// by the recursive descent handler generator.
-pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
+/// Original lexer-only projection; also used to retain token-kind observations.
+pub(crate) fn extract_lexer_bundle(spec: &LanguageSpec) -> LexerBundle {
     // ── Lexer bundle ──
     let grammar_rules: Vec<GrammarRuleInfo> = spec
         .rules
@@ -347,7 +348,7 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
         .filter(|category| category.has_var)
         .map(|category| category.name.clone())
         .collect();
-    let lexer_bundle = LexerBundle {
+    LexerBundle {
         grammar_rules,
         type_infos,
         has_binders,
@@ -356,7 +357,12 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
         custom_tokens: spec.custom_tokens.clone(),
         modes: spec.modes.clone(),
         reservation_policy: spec.reservation_policy.clone(),
-    };
+    }
+}
+
+pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
+    let lexer_bundle = extract_lexer_bundle(spec);
+    let has_binders = lexer_bundle.has_binders;
 
     // ── Parser bundle ──
     let categories: Vec<CategoryInfo> = spec
@@ -616,32 +622,23 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
 /// This extracts terminals from top-level items AND from nested structures
 /// like `Sep`/`Map`/`Zip` body items and separators.
 pub(crate) fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
-    let mut terminals = Vec::new();
-    for item in crate::syntax_item::preorder(items) {
+    use crate::lexer::TerminalObservation;
+    crate::lexer::collect_terminal_observations(crate::syntax_item::preorder(items).map(|item| {
         match item {
-            SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
+            SyntaxItemSpec::Terminal(t) => TerminalObservation::Terminal(t),
             SyntaxItemSpec::Collection { separator, key_val_separator, .. } => {
-                if !separator.is_empty() {
-                    terminals.push(separator.clone());
-                }
-                if let Some(kv) = key_val_separator {
-                    terminals.push(kv.clone());
+                TerminalObservation::Collection {
+                    separator,
+                    key_val_separator: key_val_separator.as_ref(),
                 }
             },
             SyntaxItemSpec::BinderCollection { separator, .. } => {
-                if !separator.is_empty() {
-                    terminals.push(separator.clone());
-                }
+                TerminalObservation::BinderCollection { separator }
             },
-            SyntaxItemSpec::Sep { separator, .. } if !separator.is_empty() => {
-                terminals.push(separator.clone());
-            },
-            _ => {},
+            SyntaxItemSpec::Sep { separator, .. } => TerminalObservation::Sep { separator },
+            _ => TerminalObservation::Other,
         }
-    }
-    terminals.sort();
-    terminals.dedup();
-    terminals
+    }))
 }
 
 /// Detect whether an infix rule is mixfix and extract its parts.

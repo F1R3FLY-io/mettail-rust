@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn native_variable_publication_keeps_an_explicit_boundary_error() {
+    let error = DynamicReflectionError::NativeVariablePublication;
+    for reply in [
+        boundary_diagnostic(error.clone()),
+        wire_diagnostic(SemanticWireError::Resource(error.clone())),
+        service_diagnostic(InstalledSemanticError::Resource(error)),
+    ] {
+        assert!(matches!(reply, ReplyBody::Error(DiagnosticDomain::Boundary, 12)));
+    }
+    assert!(matches!(
+        boundary_diagnostic(DynamicReflectionError::InvalidFingerprint),
+        ReplyBody::Error(DiagnosticDomain::Boundary, 11)
+    ));
+    assert!(matches!(
+        boundary_diagnostic(DynamicReflectionError::WorkLimit),
+        ReplyBody::Undetermined(DiagnosticDomain::Boundary, 7)
+    ));
+}
+
+#[test]
 fn predicate_roles_keep_kernel_diagnostics_and_never_become_false_results() {
     use mettail_dovetail_runtime::TheoryImageCompileError;
     for reason in [

@@ -1,7 +1,7 @@
 use crate::{
     CategoryId, CollectionKind, ConstructorId, EvaluationMode, NativeEvaluation, TierDirective,
 };
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -13,6 +13,12 @@ pub struct SourceSpan {
 
 pub enum DynamicValue {
     Term(Box<DynamicTerm>),
+    /// Actual native free-variable identity. This ephemeral leaf is not a
+    /// template hole and has no canonical semantic-image/wire projection yet.
+    NativeVariable {
+        category: CategoryId,
+        variable: moniker::FreeVar<String>,
+    },
     /// A structural FLT metavariable admitted directly at a grammar category.
     ///
     /// This value is produced only by template parsing. It is never decoded
@@ -34,11 +40,40 @@ pub enum DynamicValue {
 }
 
 #[derive(Debug)]
+pub enum DynamicValueEncodingError {
+    NativeVariable,
+    Encode(postcard::Error),
+}
+
+impl fmt::Display for DynamicValueEncodingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NativeVariable => {
+                formatter.write_str("native variable has no portable identity projection")
+            },
+            Self::Encode(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for DynamicValueEncodingError {}
+
+#[derive(Debug)]
 pub enum DynamicCollectionError {
     Encode(postcard::Error),
+    NativeVariable,
     InvalidMapEntry,
     DuplicateMapKey,
     KindMismatch,
+}
+
+impl From<DynamicValueEncodingError> for DynamicCollectionError {
+    fn from(error: DynamicValueEncodingError) -> Self {
+        match error {
+            DynamicValueEncodingError::NativeVariable => Self::NativeVariable,
+            DynamicValueEncodingError::Encode(error) => Self::Encode(error),
+        }
+    }
 }
 
 impl DynamicValue {
@@ -77,6 +112,11 @@ impl DynamicValue {
                     pending.extend(entries.iter());
                 },
                 Self::Text(text) => weight = weight.saturating_add(text.capacity()),
+                Self::NativeVariable { variable, .. } => {
+                    if let Some(name) = &variable.pretty_name {
+                        weight = weight.saturating_add(name.capacity());
+                    }
+                },
                 Self::Bytes(bytes) => weight = weight.saturating_add(bytes.capacity()),
                 Self::TemplateHole { .. } | Self::Integer(_) | Self::Boolean(_) | Self::Unit => {},
             }
@@ -84,8 +124,9 @@ impl DynamicValue {
         weight
     }
 
-    pub fn semantic_key(&self) -> Result<Vec<u8>, postcard::Error> {
-        postcard::to_allocvec(&SemanticFlatValueV1::from_value(self))
+    pub fn semantic_key(&self) -> Result<Vec<u8>, DynamicValueEncodingError> {
+        postcard::to_allocvec(&SemanticFlatValueV1::from_value(self)?)
+            .map_err(DynamicValueEncodingError::Encode)
     }
 
     pub fn collection(
@@ -101,7 +142,7 @@ impl DynamicValue {
                         value
                             .semantic_key()
                             .map(|key| (key, value))
-                            .map_err(DynamicCollectionError::Encode)
+                            .map_err(DynamicCollectionError::from)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 keyed.sort_by(|left, right| left.0.cmp(&right.0));
@@ -123,7 +164,7 @@ impl DynamicValue {
                         pair[0]
                             .semantic_key()
                             .map(|key| (key, entry))
-                            .map_err(DynamicCollectionError::Encode)
+                            .map_err(DynamicCollectionError::from)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 keyed.sort_by(|left, right| left.0.cmp(&right.0));
@@ -165,6 +206,7 @@ impl DynamicValue {
             Self::Sequence(values) => pending.append(values),
             Self::Collection { entries, .. } => pending.append(entries),
             Self::TemplateHole { .. }
+            | Self::NativeVariable { .. }
             | Self::Text(_)
             | Self::Integer(_)
             | Self::Boolean(_)
@@ -219,6 +261,12 @@ impl Clone for DynamicValue {
                     },
                     Self::TemplateHole { id, category } => {
                         values.push(Self::TemplateHole { id: *id, category: *category });
+                    },
+                    Self::NativeVariable { category, variable } => {
+                        values.push(Self::NativeVariable {
+                            category: *category,
+                            variable: variable.clone(),
+                        });
                     },
                     Self::Sequence(children) => {
                         tasks.push(Task::Sequence(children.len()));
@@ -291,6 +339,13 @@ impl PartialEq for DynamicValue {
                     Self::TemplateHole { id: left_id, category: left_category },
                     Self::TemplateHole { id: right_id, category: right_category },
                 ) if left_id == right_id && left_category == right_category => {},
+                (
+                    Self::NativeVariable { category: left_category, variable: left },
+                    Self::NativeVariable {
+                        category: right_category,
+                        variable: right,
+                    },
+                ) if left_category == right_category && left == right => {},
                 (Self::Sequence(left), Self::Sequence(right)) => {
                     if left.len() != right.len() {
                         return false;
@@ -366,6 +421,11 @@ impl Hash for DynamicValue {
                     value.hash(state);
                 },
                 Self::Unit => 8u8.hash(state),
+                Self::NativeVariable { category, variable } => {
+                    9u8.hash(state);
+                    category.hash(state);
+                    variable.hash(state);
+                },
             }
         }
     }
@@ -399,6 +459,9 @@ impl fmt::Debug for DynamicValue {
                     },
                     Self::TemplateHole { id, category } => {
                         write!(formatter, "TemplateHole({id}, {category:?})")?;
+                    },
+                    Self::NativeVariable { category, variable } => {
+                        write!(formatter, "NativeVariable({category:?}, {variable:?})")?;
                     },
                     Self::Sequence(values) => {
                         formatter.write_str("Sequence([")?;
@@ -465,7 +528,7 @@ enum FlatDynamicNodeV1 {
 }
 
 impl FlatDynamicValueV1 {
-    fn from_value(value: &DynamicValue) -> Self {
+    fn from_value(value: &DynamicValue) -> Result<Self, DynamicValueEncodingError> {
         let mut nodes = Vec::new();
         let mut pending = vec![value];
         while let Some(value) = pending.pop() {
@@ -498,12 +561,15 @@ impl FlatDynamicValueV1 {
                 DynamicValue::Boolean(value) => FlatDynamicNodeV1::Boolean(*value),
                 DynamicValue::Bytes(value) => FlatDynamicNodeV1::Bytes(value.clone()),
                 DynamicValue::Unit => FlatDynamicNodeV1::Unit,
+                DynamicValue::NativeVariable { .. } => {
+                    return Err(DynamicValueEncodingError::NativeVariable)
+                },
             });
         }
-        Self {
+        Ok(Self {
             version: FLAT_DYNAMIC_VALUE_VERSION,
             nodes,
-        }
+        })
     }
 
     fn into_value(self) -> Result<DynamicValue, &'static str> {
@@ -565,7 +631,9 @@ fn take_reverse_children(
 
 impl Serialize for DynamicValue {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        FlatDynamicValueV1::from_value(self).serialize(serializer)
+        FlatDynamicValueV1::from_value(self)
+            .map_err(S::Error::custom)?
+            .serialize(serializer)
     }
 }
 
@@ -607,7 +675,7 @@ enum SemanticFlatNodeV1 {
 }
 
 impl SemanticFlatValueV1 {
-    fn from_value(value: &DynamicValue) -> Self {
+    fn from_value(value: &DynamicValue) -> Result<Self, DynamicValueEncodingError> {
         let mut nodes = Vec::new();
         let mut pending = vec![value];
         while let Some(value) = pending.pop() {
@@ -639,12 +707,15 @@ impl SemanticFlatValueV1 {
                 DynamicValue::Boolean(value) => SemanticFlatNodeV1::Boolean(*value),
                 DynamicValue::Bytes(value) => SemanticFlatNodeV1::Bytes(value.clone()),
                 DynamicValue::Unit => SemanticFlatNodeV1::Unit,
+                DynamicValue::NativeVariable { .. } => {
+                    return Err(DynamicValueEncodingError::NativeVariable)
+                },
             });
         }
-        Self {
+        Ok(Self {
             version: FLAT_DYNAMIC_VALUE_VERSION,
             nodes,
-        }
+        })
     }
 }
 
@@ -727,6 +798,100 @@ impl ReductionPlan {
 mod tests {
     use super::*;
     use std::collections::hash_map::DefaultHasher;
+
+    #[test]
+    fn native_variable_retains_identity_and_refuses_portable_publication() {
+        let variable = moniker::FreeVar::fresh_named("x".to_string());
+        let value = DynamicValue::NativeVariable {
+            category: CategoryId(0),
+            variable: variable.clone(),
+        };
+        assert_eq!(value, value.clone());
+        let different = DynamicValue::NativeVariable {
+            category: CategoryId(0),
+            variable: moniker::FreeVar::fresh_named("x".to_string()),
+        };
+        assert_ne!(value, different, "pretty names cannot replace native identity");
+        assert_ne!(value, DynamicValue::NativeVariable { category: CategoryId(1), variable });
+        let mut first = DefaultHasher::new();
+        let mut second = DefaultHasher::new();
+        value.hash(&mut first);
+        value.clone().hash(&mut second);
+        assert_eq!(first.finish(), second.finish());
+        let nested = DynamicValue::Sequence(vec![value.clone()]);
+        assert!(matches!(nested.semantic_key(), Err(DynamicValueEncodingError::NativeVariable)));
+        assert!(postcard::to_allocvec(&nested).is_err());
+        assert!(matches!(
+            FlatDynamicValueV1::from_value(&nested),
+            Err(DynamicValueEncodingError::NativeVariable)
+        ));
+        let list = DynamicValue::collection(CollectionKind::List, vec![value.clone()]).unwrap();
+        assert_eq!(list, list.clone());
+        for kind in [CollectionKind::Bag, CollectionKind::Set] {
+            assert!(matches!(
+                DynamicValue::collection(kind, vec![value.clone()]),
+                Err(DynamicCollectionError::NativeVariable)
+            ));
+        }
+        for kind in [CollectionKind::Map, CollectionKind::PathMap] {
+            assert!(matches!(
+                DynamicValue::collection(
+                    kind,
+                    vec![DynamicValue::Sequence(vec![value.clone(), DynamicValue::Unit])]
+                ),
+                Err(DynamicCollectionError::NativeVariable)
+            ));
+        }
+    }
+
+    #[test]
+    fn adding_native_leaf_preserves_all_existing_wire_tags() {
+        let span = SourceSpan { start: 2, end: 5 };
+        let values = DynamicValue::Sequence(vec![
+            DynamicValue::Term(Box::new(DynamicTerm {
+                category: CategoryId(2),
+                constructor: ConstructorId(3),
+                fields: vec![DynamicValue::Unit],
+                span,
+            })),
+            DynamicValue::TemplateHole { id: 4, category: CategoryId(2) },
+            DynamicValue::Sequence(vec![]),
+            DynamicValue::Collection {
+                kind: CollectionKind::List,
+                entries: vec![],
+            },
+            DynamicValue::Text("x".into()),
+            DynamicValue::Integer(-9),
+            DynamicValue::Boolean(true),
+            DynamicValue::Bytes(vec![1, 2]),
+            DynamicValue::Unit,
+        ]);
+        let original_wire = FlatDynamicValueV1 {
+            version: 1,
+            nodes: vec![
+                FlatDynamicNodeV1::Sequence(9),
+                FlatDynamicNodeV1::Term {
+                    category: CategoryId(2),
+                    constructor: ConstructorId(3),
+                    span,
+                    children: 1,
+                },
+                FlatDynamicNodeV1::Unit,
+                FlatDynamicNodeV1::TemplateHole { id: 4, category: CategoryId(2) },
+                FlatDynamicNodeV1::Sequence(0),
+                FlatDynamicNodeV1::Collection { kind: CollectionKind::List, children: 0 },
+                FlatDynamicNodeV1::Text("x".into()),
+                FlatDynamicNodeV1::Integer(-9),
+                FlatDynamicNodeV1::Boolean(true),
+                FlatDynamicNodeV1::Bytes(vec![1, 2]),
+                FlatDynamicNodeV1::Unit,
+            ],
+        };
+        let bytes = postcard::to_allocvec(&values).unwrap();
+        assert_eq!(bytes, postcard::to_allocvec(&original_wire).unwrap());
+        assert_eq!(postcard::from_bytes::<DynamicValue>(&bytes).unwrap(), values);
+        assert_eq!(postcard::to_allocvec(&DynamicValue::Unit).unwrap(), vec![1, 1, 8]);
+    }
 
     fn term(value: i128, span: SourceSpan) -> DynamicValue {
         DynamicValue::Term(Box::new(DynamicTerm {

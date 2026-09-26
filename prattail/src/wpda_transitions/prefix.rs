@@ -26,6 +26,53 @@ use crate::automata::semiring::SemiringRef;
 use crate::wpda_runtime::{StackSymbolV2, WpdaState, WpdaTokenSource};
 use crate::wpda_walker::{ForkActionKind, ForkBranch, WpdaStepAction};
 
+#[cfg(test)]
+mod explicit_floor_tests {
+    use super::*;
+    use crate::wpda_runtime::{lex_w, SymbolKind};
+
+    #[test]
+    fn leading_zero_floor_is_exact_legacy_action_and_weight() {
+        let legacy = singleton_leading_category(7, &11, 2, 3, 2, lex_w);
+        let observed = singleton_leading_category_with_floor(7, &11, 2, 3, 2, 0, lex_w);
+        assert_eq!(format!("{legacy:?}"), format!("{observed:?}"));
+        let mut old = Vec::new();
+        let mut new = Vec::new();
+        push_leading_category(&mut old, 7, &11, 2, 3, 2, lex_w);
+        push_leading_category_with_floor(&mut new, 7, &11, 2, 3, 2, 0, lex_w);
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+
+    #[test]
+    fn leading_explicit_floor_preserves_position_rule_and_caller() {
+        let action = singleton_leading_category_with_floor(1, &11, 2, 3, 2, 2, lex_w);
+        let WpdaStepAction::ReplaceAndPush {
+            replace_symbol,
+            push_symbol,
+            weight,
+            new_state,
+        } = action
+        else {
+            panic!("original leading-category action kind");
+        };
+        assert_eq!(replace_symbol, StackSymbolV2::rule_at(2, 3, 1, Some(1)));
+        assert_eq!(push_symbol, StackSymbolV2::category_entry(2));
+        assert_eq!(weight, lex_w(0.0, 2, 3));
+        assert!(matches!(new_state, WpdaState::PrefixDispatch { pos: 11, cur_bp: 2 }));
+        assert!(matches!(replace_symbol.kind, SymbolKind::RuleAt(1)));
+        let mut branches = Vec::new();
+        push_leading_category_with_floor(&mut branches, 1, &11, 2, 3, 2, 2, lex_w);
+        assert_eq!(branches.len(), 1);
+        assert!(matches!(
+            branches[0].new_state,
+            WpdaState::PrefixDispatch { pos: 11, cur_bp: 2 }
+        ));
+        assert!(
+            matches!(&branches[0].action_kind, ForkActionKind::ReplaceAndPush { replace_symbol: symbol } if *symbol == replace_symbol)
+        );
+    }
+}
+
 pub fn paren_singleton<W: SemiringRef>(
     grouping_src_idx: u16,
     cur_bp: &u8,
@@ -158,6 +205,27 @@ pub fn singleton_leading_category<W: SemiringRef>(
     category_src_idx: u16,
     rule_idx: u16,
     source_src_idx: u16,
+    lex_w: impl FnMut(f64, u16, u16) -> W,
+) -> WpdaStepAction<W> {
+    singleton_leading_category_with_floor(
+        _outer_bp,
+        pos,
+        category_src_idx,
+        rule_idx,
+        source_src_idx,
+        0,
+        lex_w,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn singleton_leading_category_with_floor<W: SemiringRef>(
+    _outer_bp: u8,
+    pos: &usize,
+    category_src_idx: u16,
+    rule_idx: u16,
+    source_src_idx: u16,
+    inner_bp: u8,
     mut lex_w: impl FnMut(f64, u16, u16) -> W,
 ) -> WpdaStepAction<W> {
     {
@@ -170,7 +238,7 @@ pub fn singleton_leading_category<W: SemiringRef>(
             ),
             push_symbol: StackSymbolV2::category_entry(source_src_idx),
             weight: lex_w(0.0, category_src_idx, rule_idx),
-            new_state: WpdaState::PrefixDispatch { pos: *pos, cur_bp: 0 },
+            new_state: WpdaState::PrefixDispatch { pos: *pos, cur_bp: inner_bp },
         };
     }
 }
@@ -390,12 +458,35 @@ pub fn push_leading_category<W: SemiringRef>(
     category_src_idx: u16,
     rule_idx: u16,
     source_src_idx: u16,
+    lex_w: impl FnMut(f64, u16, u16) -> W,
+) {
+    push_leading_category_with_floor(
+        __pd_branches,
+        _outer_bp,
+        pos,
+        category_src_idx,
+        rule_idx,
+        source_src_idx,
+        0,
+        lex_w,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn push_leading_category_with_floor<W: SemiringRef>(
+    __pd_branches: &mut Vec<ForkBranch<W>>,
+    _outer_bp: u8,
+    pos: &usize,
+    category_src_idx: u16,
+    rule_idx: u16,
+    source_src_idx: u16,
+    inner_bp: u8,
     mut lex_w: impl FnMut(f64, u16, u16) -> W,
 ) {
     __pd_branches.push(crate::wpda_walker::ForkBranch {
         symbol: StackSymbolV2::category_entry(source_src_idx),
         weight: lex_w(0.0, category_src_idx, rule_idx),
-        new_state: WpdaState::PrefixDispatch { pos: *pos, cur_bp: 0 },
+        new_state: WpdaState::PrefixDispatch { pos: *pos, cur_bp: inner_bp },
         action_kind: crate::wpda_walker::ForkActionKind::ReplaceAndPush {
             replace_symbol: StackSymbolV2::rule_at(
                 category_src_idx,

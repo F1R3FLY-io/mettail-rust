@@ -545,301 +545,13 @@ pub fn generate_semantic_hash(language: &LanguageDef) -> TokenStream {
 
 fn generate_semantic_sink_support() -> TokenStream {
     quote! {
-        trait __MettailSemanticSink: std::hash::Hasher {
-            const COMPOSES_KEYS: bool;
-
-            fn max_key_bytes(&self) -> usize {
-                usize::MAX
-            }
-
-            fn record_key_error(
-                &mut self,
-                _error: mettail_runtime::exact_semantic_key::ContentKeyCacheError,
-            ) {
-            }
-
-            fn write_exact_key(
-                &mut self,
-                key: mettail_runtime::exact_semantic_key::ContentKey,
-            ) {
-                self.write(key.as_bytes());
-            }
-
-            fn begin_node(
-                &mut self,
-                _identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
-                _cacheable: bool,
-            ) -> bool {
-                false
-            }
-
-            fn finish_node(
-                &mut self,
-                _identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
-                _cacheable: bool,
-            ) {
-            }
-        }
-
-        struct __MettailFlatSemanticSink<'a, H>(&'a mut H);
-
-        impl<H: std::hash::Hasher> std::hash::Hasher for __MettailFlatSemanticSink<'_, H> {
-            fn finish(&self) -> u64 {
-                self.0.finish()
-            }
-            fn write(&mut self, bytes: &[u8]) {
-                self.0.write(bytes);
-            }
-            fn write_u8(&mut self, value: u8) {
-                self.0.write_u8(value);
-            }
-            fn write_u16(&mut self, value: u16) {
-                self.0.write_u16(value);
-            }
-            fn write_u32(&mut self, value: u32) {
-                self.0.write_u32(value);
-            }
-            fn write_u64(&mut self, value: u64) {
-                self.0.write_u64(value);
-            }
-            fn write_u128(&mut self, value: u128) {
-                self.0.write_u128(value);
-            }
-            fn write_usize(&mut self, value: usize) {
-                self.0.write_usize(value);
-            }
-            fn write_i8(&mut self, value: i8) {
-                self.0.write_i8(value);
-            }
-            fn write_i16(&mut self, value: i16) {
-                self.0.write_i16(value);
-            }
-            fn write_i32(&mut self, value: i32) {
-                self.0.write_i32(value);
-            }
-            fn write_i64(&mut self, value: i64) {
-                self.0.write_i64(value);
-            }
-            fn write_i128(&mut self, value: i128) {
-                self.0.write_i128(value);
-            }
-            fn write_isize(&mut self, value: isize) {
-                self.0.write_isize(value);
-            }
-        }
-
-        impl<H: std::hash::Hasher> __MettailSemanticSink
-            for __MettailFlatSemanticSink<'_, H>
-        {
-            const COMPOSES_KEYS: bool = false;
-        }
-
-        impl __MettailSemanticSink
-            for mettail_runtime::exact_semantic_key::SemanticKeyBuilder
-        {
-            const COMPOSES_KEYS: bool = true;
-
-            fn max_key_bytes(&self) -> usize {
-                mettail_runtime::exact_semantic_key::SemanticKeyBuilder::max_key_bytes(self)
-            }
-
-            fn write_exact_key(
-                &mut self,
-                key: mettail_runtime::exact_semantic_key::ContentKey,
-            ) {
-                self.push_framed_key(key);
-            }
-        }
-
-        struct __MettailComposingSemanticSink<'transaction, 'cache> {
-            transaction:
-                &'transaction mut mettail_runtime::exact_semantic_key::ContentKeyCacheTransaction<'cache>,
-            frames: Vec<mettail_runtime::exact_semantic_key::SemanticKeyBuilder>,
-            orphan: mettail_runtime::exact_semantic_key::SemanticKeyBuilder,
-            root: Option<mettail_runtime::exact_semantic_key::ContentKey>,
-            error: Option<mettail_runtime::exact_semantic_key::ContentKeyCacheError>,
-        }
-
-        impl<'transaction, 'cache> __MettailComposingSemanticSink<'transaction, 'cache> {
-            fn new(
-                transaction:
-                    &'transaction mut mettail_runtime::exact_semantic_key::ContentKeyCacheTransaction<'cache>,
-            ) -> Self {
-                let max_key_bytes = transaction.max_key_bytes();
-                Self {
-                    transaction,
-                    frames: Vec::new(),
-                    orphan: mettail_runtime::exact_semantic_key::SemanticKeyBuilder::with_max_bytes(
-                        max_key_bytes,
-                    ),
-                    root: None,
-                    error: None,
-                }
-            }
-
-            fn current(&mut self) -> &mut mettail_runtime::exact_semantic_key::SemanticKeyBuilder {
-                let Some(current) = self.frames.last_mut() else {
-                    self.error.get_or_insert(
-                        mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
-                    );
-                    return &mut self.orphan;
-                };
-                current
-            }
-
-            fn append_key(&mut self, key: mettail_runtime::exact_semantic_key::ContentKey) {
-                if let Some(parent) = self.frames.last_mut() {
-                    parent.push_key(key);
-                } else if self.root.is_none() {
-                    self.root = Some(key);
-                } else {
-                    self.error.get_or_insert(
-                        mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
-                    );
-                }
-            }
-
-            fn into_result(
-                mut self,
-            ) -> Result<
-                mettail_runtime::exact_semantic_key::ContentKey,
-                mettail_runtime::exact_semantic_key::ContentKeyCacheError,
-            > {
-                if !self.frames.is_empty() {
-                    return Err(
-                        mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
-                    );
-                }
-                if let Some(error) = self.error.take() {
-                    return Err(error);
-                }
-                self.root.take().ok_or(
-                    mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
-                )
-            }
-        }
-
-        impl std::hash::Hasher for __MettailComposingSemanticSink<'_, '_> {
-            fn finish(&self) -> u64 {
-                self.frames.last().map_or(0, std::hash::Hasher::finish)
-            }
-            fn write(&mut self, bytes: &[u8]) {
-                self.current().write(bytes);
-            }
-            fn write_u8(&mut self, value: u8) {
-                self.current().write_u8(value);
-            }
-            fn write_u16(&mut self, value: u16) {
-                self.current().write_u16(value);
-            }
-            fn write_u32(&mut self, value: u32) {
-                self.current().write_u32(value);
-            }
-            fn write_u64(&mut self, value: u64) {
-                self.current().write_u64(value);
-            }
-            fn write_u128(&mut self, value: u128) {
-                self.current().write_u128(value);
-            }
-            fn write_usize(&mut self, value: usize) {
-                self.current().write_usize(value);
-            }
-            fn write_i8(&mut self, value: i8) {
-                self.current().write_i8(value);
-            }
-            fn write_i16(&mut self, value: i16) {
-                self.current().write_i16(value);
-            }
-            fn write_i32(&mut self, value: i32) {
-                self.current().write_i32(value);
-            }
-            fn write_i64(&mut self, value: i64) {
-                self.current().write_i64(value);
-            }
-            fn write_i128(&mut self, value: i128) {
-                self.current().write_i128(value);
-            }
-            fn write_isize(&mut self, value: isize) {
-                self.current().write_isize(value);
-            }
-        }
-
-        impl __MettailSemanticSink for __MettailComposingSemanticSink<'_, '_> {
-            const COMPOSES_KEYS: bool = true;
-
-            fn max_key_bytes(&self) -> usize {
-                self.transaction.max_key_bytes()
-            }
-
-            fn record_key_error(
-                &mut self,
-                error: mettail_runtime::exact_semantic_key::ContentKeyCacheError,
-            ) {
-                self.error.get_or_insert(error);
-            }
-
-            fn write_exact_key(
-                &mut self,
-                key: mettail_runtime::exact_semantic_key::ContentKey,
-            ) {
-                self.current().push_framed_key(key);
-            }
-
-            fn begin_node(
-                &mut self,
-                identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
-                cacheable: bool,
-            ) -> bool {
-                if cacheable {
-                    if let Some(key) = self.transaction.get_identity(identity) {
-                        self.append_key(key);
-                        return true;
-                    }
-                }
-                self.frames.push(
-                    mettail_runtime::exact_semantic_key::SemanticKeyBuilder::with_max_bytes(
-                        self.transaction.max_key_bytes(),
-                    ),
-                );
-                false
-            }
-
-            fn finish_node(
-                &mut self,
-                identity: mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity,
-                cacheable: bool,
-            ) {
-                let Some(frame) = self.frames.pop() else {
-                    self.error.get_or_insert(
-                        mettail_runtime::exact_semantic_key::ContentKeyCacheError::ConstructionInvariant,
-                    );
-                    return;
-                };
-                let mut key = match frame.into_key() {
-                    Ok(key) => key,
-                    Err(error) => {
-                        self.error.get_or_insert(error);
-                        return;
-                    },
-                };
-                if cacheable {
-                    // SAFETY: generated tasks mark only nodes transitively
-                    // owned by the transaction's retained immutable AST root.
-                    match unsafe {
-                        self.transaction.stage_identity(identity, key.clone())
-                    } {
-                        Ok(shared) => key = shared,
-                        Err(error) => {
-                            self.error.get_or_insert(error);
-                        },
-                    }
-                }
-                self.append_key(key);
-            }
-        }
+        use mettail_runtime::exact_semantic_key::visitor::{
+            SemanticSink as __MettailSemanticSink,
+            FlatSemanticSink as __MettailFlatSemanticSink,
+            ComposingSemanticSink as __MettailComposingSemanticSink,
+        };
     }
 }
-
 fn generate_semantic_task_enum(language: &LanguageDef, usage: &SemanticTaskUsage) -> TokenStream {
     let sink_support = generate_semantic_sink_support();
     let scratch_target = (!usage.unordered_element_categories.is_empty()).then(|| {
@@ -1148,18 +860,12 @@ fn generate_semantic_engine(
                 })
                 .collect();
             let root_dispatch = quote! {
-                if H::COMPOSES_KEYS {
-                    let identity =
-                        mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity::of_ref(unsafe { &*ptr });
-                    if root_state.begin_node(identity, cacheable) {
-                        return;
-                    }
-                    stack.push(SemanticHashTask::FinishNode {
-                        identity,
-                        cacheable,
-                    });
-                }
-                #visit_fn(stack, root_state, target, ptr, cacheable);
+                mettail_runtime::exact_semantic_key::visitor::visit_node(
+                    stack, root_state, cacheable,
+                    || mettail_runtime::exact_semantic_key::ContentKeyNodeIdentity::of_ref(unsafe { &*ptr }),
+                    |identity, cacheable| SemanticHashTask::FinishNode { identity, cacheable },
+                    |stack, root_state| #visit_fn(stack, root_state, target, ptr, cacheable),
+                );
             };
             let dispatch = if has_scratch_target {
                 quote! {
@@ -1393,7 +1099,7 @@ fn generate_semantic_engine(
             stack: &mut Vec<SemanticHashTask>,
             state: &mut H,
         ) {
-            while let Some(task) = stack.pop() {
+            mettail_runtime::exact_semantic_key::visitor::drain(stack, state, |task, stack, state| {
                 match task {
                     #(#task_arms)*
                     #resume_collection_task_arm
@@ -1412,7 +1118,7 @@ fn generate_semantic_engine(
                         cacheable,
                     } => state.finish_node(identity, cacheable),
                 }
-            }
+            });
         }
     }
 }
@@ -1444,17 +1150,14 @@ fn semantic_hash_collection(
     match coll_type {
         CollectionType::Vec => {
             quote! {
-                for __e in #coll_expr.iter().rev() {
-                    stack.push(SemanticHashTask::#task_variant {
-                        value: __e as *const _,
-                        target,
-                        cacheable,
-                    });
-                }
-                stack.push(SemanticHashTask::AbsorbUsize {
-                    value: #coll_expr.len(),
-                    target,
-                });
+                mettail_runtime::exact_semantic_key::visitor::ordered(
+                    stack, #coll_expr.iter(),
+                    |__e| SemanticHashTask::#task_variant {
+                        value: __e as *const _, target, cacheable,
+                    },
+                    || #coll_expr.len(),
+                    |value| SemanticHashTask::AbsorbUsize { value, target },
+                );
             }
         },
         CollectionType::HashSet => quote! {
@@ -1779,10 +1482,9 @@ fn semantic_hash_numeric_literal_body(native_type: &syn::Type) -> Option<TokenSt
             }
         };
         return Some(quote! {
-            state.write_u8(#NUMERIC_INT_TAG);
-            let __numeric_canon: ::std::vec::Vec<u8> = #canon_bytes;
-            state.write_usize(__numeric_canon.len());
-            state.write(__numeric_canon.as_slice());
+            mettail_runtime::exact_semantic_key::visitor::numeric(
+                state, #NUMERIC_INT_TAG, || #canon_bytes,
+            );
         });
     }
 
@@ -1799,10 +1501,9 @@ fn semantic_hash_numeric_literal_body(native_type: &syn::Type) -> Option<TokenSt
             quote! { v.to_canonical_bytes() }
         };
         return Some(quote! {
-            state.write_u8(#NUMERIC_RAT_TAG);
-            let __numeric_canon: ::std::vec::Vec<u8> = #canon_bytes;
-            state.write_usize(__numeric_canon.len());
-            state.write(__numeric_canon.as_slice());
+            mettail_runtime::exact_semantic_key::visitor::numeric(
+                state, #NUMERIC_RAT_TAG, || #canon_bytes,
+            );
         });
     }
 
@@ -1973,7 +1674,9 @@ fn generate_semantic_variant_arm(
         VariantKind::Nullary { label } => {
             quote! {
                 #category::#label => {
-                    state.write_u8(#variant_idx);
+                    mettail_runtime::exact_semantic_key::visitor::tagged(
+                        stack, state, #variant_idx, |_, _| {},
+                    );
                 }
             }
         },
@@ -2232,8 +1935,9 @@ fn generate_semantic_variant_arm(
                     let _cat_tag = fnv1a64(&category.to_string());
                     quote! {
                         // state.write_u64(#cat_tag);  // ← see the block above
-                        state.write_u8(#variant_idx);
-                        std::hash::Hash::hash(v, state);
+                        mettail_runtime::exact_semantic_key::visitor::literal(
+                            state, #variant_idx, v,
+                        );
                     }
                 });
             quote! {
@@ -2334,24 +2038,20 @@ fn generate_semantic_variant_arm(
             // `Display`'s `_`.
             quote! {
                 #category::#label(v) => {
-                    state.write_u8(0xFBu8);
-                    match &v.0 {
-                        mettail_runtime::Var::Free(__fv) => {
-                            state.write_u8(0u8);
-                            match &__fv.pretty_name {
-                                Some(__name) => {
-                                    state.write_u8(1u8);
-                                    std::hash::Hash::hash(__name.as_str(), state);
-                                },
-                                None => state.write_u8(0u8),
-                            }
-                        },
-                        mettail_runtime::Var::Bound(__bv) => {
-                            state.write_u8(1u8);
-                            std::hash::Hash::hash(&__bv.scope, state);
-                            std::hash::Hash::hash(&__bv.binder, state);
-                        },
-                    }
+                    mettail_runtime::exact_semantic_key::visitor::variable(state, |state| {
+                        match &v.0 {
+                            mettail_runtime::Var::Free(__fv) =>
+                                mettail_runtime::exact_semantic_key::visitor::free_variable(
+                                    state, || __fv.pretty_name.as_deref(),
+                                ),
+                            mettail_runtime::Var::Bound(__bv) =>
+                                mettail_runtime::exact_semantic_key::visitor::bound_variable(
+                                    state,
+                                    |state| std::hash::Hash::hash(&__bv.scope, state),
+                                    |state| std::hash::Hash::hash(&__bv.binder, state),
+                                ),
+                        }
+                    });
                 }
             }
         },
@@ -2451,11 +2151,11 @@ fn generate_semantic_regular_arm(
                 #category::#label(inner) => {
                     // Transparent wrapper: NO discriminant. Just push the
                     // child's semantic_hash task to the stack.
-                    stack.push(SemanticHashTask::#task_variant {
-                        value: &**inner as *const _,
-                        target,
-                        cacheable,
-                    });
+                    mettail_runtime::exact_semantic_key::visitor::transparent(
+                        stack, || SemanticHashTask::#task_variant {
+                            value: &**inner as *const _, target, cacheable,
+                        },
+                    );
                 }
             }
         }
@@ -2470,8 +2170,11 @@ fn generate_semantic_regular_arm(
 
         quote! {
             #category::#label(#(ref #field_names),*) => {
-                state.write_u8(#variant_idx);
-                #(#field_pushes)*
+                mettail_runtime::exact_semantic_key::visitor::tagged(
+                    stack, state, #variant_idx, |stack, state| {
+                        #(#field_pushes)*
+                    },
+                );
             }
         }
     }
@@ -2622,7 +2325,9 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
                 mettail_runtime::exact_semantic_key::ContentKeyCacheError,
             > {
                 let mut transaction = cache.transaction_for_root(owner.clone());
-                let mut sink = __MettailComposingSemanticSink::new(&mut transaction);
+                // SAFETY: cacheable tasks borrow immutable descendants of owner,
+                // which is retained by this transaction for the full cache lifetime.
+                let mut sink = unsafe { __MettailComposingSemanticSink::new(&mut transaction) };
                 let used_tls = SEMANTIC_HASH_TASK_POOL
                     .try_with(|cell| {
                         let mut stack = cell.take();

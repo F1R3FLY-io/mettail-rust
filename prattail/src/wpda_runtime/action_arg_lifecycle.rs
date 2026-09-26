@@ -16,11 +16,12 @@ impl Clone for ActionArg {
         let mut values = Vec::new();
         while let Some(task) = tasks.pop() {
             match task {
-                Task::Visit(ActionArg::Token { kind, text, pos }) => {
+                Task::Visit(ActionArg::Token { kind, text, pos, occurrence }) => {
                     values.push(ActionArg::Token {
                         kind: kind.clone(),
                         text: text.clone(),
                         pos: *pos,
+                        occurrence: *occurrence,
                     });
                 },
                 Task::Visit(ActionArg::Ident { name, pos }) => {

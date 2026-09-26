@@ -65,6 +65,7 @@ fn recipes() -> Vec<SyntheticRule<CollectionKind>> {
             TypeInput {
                 name: expr.into(),
                 is_data: false,
+                admits_variables: true,
                 has_native: true,
                 has_collection: false,
                 source: &expr,
@@ -72,6 +73,7 @@ fn recipes() -> Vec<SyntheticRule<CollectionKind>> {
             TypeInput {
                 name: list.into(),
                 is_data: false,
+                admits_variables: true,
                 has_native: true,
                 has_collection: true,
                 source: &list,

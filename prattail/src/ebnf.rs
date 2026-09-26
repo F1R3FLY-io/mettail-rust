@@ -338,6 +338,7 @@ fn write_precedence_table(
         let assoc = match op.associativity() {
             Associativity::Left => "left",
             Associativity::Right => "right",
+            Associativity::NonAssociative => "nonassociative",
         };
 
         let op_str = if op.is_mixfix {

@@ -44,9 +44,11 @@ use crate::gss::GssNodeId;
 // Collection slot spec (Stage 2 consolidation, 2026-06-27)
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// One collection slot's compile-time descriptor, keyed at runtime by
+/// One collection slot's borrowed descriptor, keyed at runtime by
 /// `(result_src_idx, rule_idx, slot_idx)` through
 /// [`crate::wpda_walker::WpdaEngine::collection_spec`].
+/// Static engines borrow literal data; owned engines borrow their immutable
+/// grammar image. Neither case copies or interns strings during parsing.
 ///
 /// This single record supersedes the five former per-field lookups the
 /// codegen emitted (close, `(close, sep)`, element-src, kv-separator, and the
@@ -74,21 +76,21 @@ use crate::gss::GssNodeId;
 ///   slots carry `""` / `false`; their open side is driven by the binder rule
 ///   machinery, not this record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollectionSpec {
+pub struct CollectionSpec<'grammar> {
     /// First-token slice of the open delimiter (Class-5 literals only;
     /// `""` for binder-internal slots).
-    pub open: &'static str,
+    pub open: &'grammar str,
     /// Whether a synthetic `"("` token follows the open keyword (Class-5
     /// 4-element default form; `false` for binder-internal slots).
     pub has_synth_paren: bool,
     /// Close delimiter literal.
-    pub close: &'static str,
+    pub close: &'grammar str,
     /// Element/pair separator literal.
-    pub sep: &'static str,
+    pub sep: &'grammar str,
     /// Minimum number of elements admitted by this collection occurrence.
     pub min_elements: u8,
     /// Key/value separator for kv-maps (`Some(":")`), else `None`.
-    pub kv_sep: Option<&'static str>,
+    pub kv_sep: Option<&'grammar str>,
     /// Whether the per-entry value is OPTIONAL for this kv-collection
     /// (Pathmap set-form `{| k |}` ≡ `{| k : k |}`, value = key). `true`
     /// ONLY for Pathmap; `false` for HashMap (whose values are mandatory)
@@ -135,23 +137,23 @@ pub struct CollectionSpec {
 /// innermost structural frame, so this may be computed once per merged frontier
 /// and broadcast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct FrameCtx {
+pub struct FrameCtx<'grammar> {
     /// Innermost enclosing collection's close delimiter (`""` when there is no
     /// enclosing collection frame — see [`FrameCtx::has_frame`]).
-    pub close: &'static str,
+    pub close: &'grammar str,
     /// Innermost enclosing collection's element/pair separator (`""` when none).
-    pub sep: &'static str,
+    pub sep: &'grammar str,
     /// Innermost enclosing collection's key/value separator (`Some(":")` for
     /// kv-maps), `None` otherwise.
-    pub kv_sep: Option<&'static str>,
+    pub kv_sep: Option<&'grammar str>,
     /// `true` iff there is an enclosing structural (collection) frame. When
     /// `false`, the delimiter fields are inert and the lex-fork emits no yield.
     pub has_frame: bool,
 }
 
-impl FrameCtx {
+impl<'grammar> FrameCtx<'grammar> {
     /// The empty context: no enclosing structural frame.
-    pub const EMPTY: FrameCtx = FrameCtx {
+    pub const EMPTY: Self = FrameCtx {
         close: "",
         sep: "",
         kv_sep: None,
@@ -1175,6 +1177,11 @@ pub enum WpdaControl {
 /// (via `WpdaWalker::attach_token_source`). The engine's `step()` peeks
 /// the next token to decide BP gating, cross-cat dispatch, etc.
 pub trait WpdaTokenSource {
+    /// Optional identity of the selected accepted edge, local to `pos`.
+    /// Static sources retain their original terminal identity by default.
+    fn token_occurrence(&self, _pos: usize, _alternative: usize) -> Option<u32> {
+        None
+    }
     /// Token at `pos`, or `None` if `pos >= len()`.
     fn peek_kind(&self, pos: usize) -> Option<TokenKind>;
     /// Text slice of the token at `pos`, if known.
@@ -1271,6 +1278,43 @@ pub trait WpdaTokenSource {
     /// trailing-token check.
     fn eof_node(&self) -> usize {
         self.len().saturating_sub(1)
+    }
+
+    /// Whether `pos` is a logical end-of-input boundary for this source.
+    /// This is a position observation, not sufficient evidence of acceptance.
+    /// The default preserves the original walker's sentinel and linear-token
+    /// fallbacks; sources with richer position contexts may override it.
+    #[inline]
+    fn is_logical_eoi(&self, pos: usize) -> bool {
+        // M6c.8.4 (2026-05-14): cursor is at EOI iff `pos` equals the
+        // canonical EOF sentinel index. Linear token sources additionally
+        // keep the legacy "past/trailing EOF token" fallback.
+        //
+        // For `SliceTokenSource` and `MultiTokenSource`, the default
+        // `eof_node()` returns `len() - 1` and the trailing-Eof clause
+        // preserves the pre-M6c.8.4 "pos is at the trailing Eof token"
+        // semantics. The `pos >= len()` clause covers cursors that
+        // advanced past the end (defensive).
+        //
+        // For `LatticeTokenSource`, `eof_node()` returns the canonical
+        // EOF sentinel index from the DAG. Crucially, this is NOT
+        // necessarily `nodes.len() - 1`: orphan nodes (allocated by
+        // M6c.7.1 soft-fail for secondary-alt dead-ends) may sit at
+        // indices BEFORE OR AFTER the EOF sentinel. A cursor parked
+        // at an orphan node MUST NOT be considered EOI even if that
+        // orphan is the final node and `peek_kind` reports Eof.
+        //
+        // The `pos == eof_node` check is precise for every source. The
+        // remaining clauses are valid only for linear token-index sources;
+        // applying them to lattice node ids would convert orphan dead-ends
+        // into false acceptances.
+        if pos == self.eof_node() {
+            return true;
+        }
+        if !self.positions_are_linear_tokens() {
+            return false;
+        }
+        pos >= self.len() || (pos + 1 == self.len() && self.peek_kind(pos) == Some(TokenKind::Eof))
     }
 }
 
@@ -2797,6 +2841,7 @@ pub enum ActionArg {
         kind: TokenKind,
         text: String,
         pos: usize,
+        occurrence: Option<u32>,
     },
     /// An identifier captured from the token stream.
     Ident { name: String, pos: usize },
@@ -3078,11 +3123,12 @@ pub struct GuestBodySourceRange {
 impl fmt::Debug for ActionArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ActionArg::Token { kind, text, pos } => f
+            ActionArg::Token { kind, text, pos, occurrence } => f
                 .debug_struct("Token")
                 .field("kind", kind)
                 .field("text", text)
                 .field("pos", pos)
+                .field("occurrence", occurrence)
                 .finish(),
             ActionArg::Ident { name, pos } => f
                 .debug_struct("Ident")
@@ -3358,6 +3404,16 @@ pub struct ActionSignature<'a> {
     pub output_cat: u16,
 }
 
+/// The completed parent Symbol's original token-source positions. These are
+/// not byte offsets and must not be reconstructed from Terminal `pos + 1`.
+/// A standalone packing has no such witness.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActionContext {
+    pub source_positions: Option<(u32, u32)>,
+    /// Actual parent Symbol category, independent of structural action IDs.
+    pub result_category: Option<u16>,
+}
+
 impl ActionEntry {
     /// Project metadata without changing the static action-table ABI.
     #[inline]
@@ -3606,9 +3662,33 @@ impl SemanticBuilder {
         }
     }
 
+    /// Borrow the last main-stack term and its stored debug tag.
+    ///
+    /// Like `top_term_type_name`, this observes only `self.stack.back()`;
+    /// it neither searches below a non-term nor enters an optional scope.
+    /// Category observers can inspect an explicit carrier without cloning or
+    /// consuming the result before `take_dyn_result`.
+    pub fn top_term(&self) -> Option<(&(dyn Any + Send + Sync), &'static str)> {
+        match self.stack.back() {
+            Some(ActionArg::Term { value, type_name }) => Some((value.as_ref(), *type_name)),
+            _ => None,
+        }
+    }
+
     /// Push a raw token onto the stack.
     pub fn push_token(&mut self, kind: TokenKind, text: String, pos: usize) {
-        self.push_arg_internal(ActionArg::Token { kind, text, pos });
+        self.push_token_occurrence(kind, text, pos, None);
+    }
+
+    /// Preserve selected lexer-edge provenance through action-local replay.
+    pub fn push_token_occurrence(
+        &mut self,
+        kind: TokenKind,
+        text: String,
+        pos: usize,
+        occurrence: Option<u32>,
+    ) {
+        self.push_arg_internal(ActionArg::Token { kind, text, pos, occurrence });
     }
 
     /// Push an identifier (Ident-token's text canonicalised).

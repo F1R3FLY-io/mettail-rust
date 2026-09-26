@@ -20,14 +20,14 @@ use crate::wpda_runtime::{CollectionSpec, StackSymbolV2, WpdaState, WpdaTokenSou
 use crate::wpda_walker::WpdaStepAction;
 
 #[allow(clippy::too_many_arguments)]
-pub fn prefix_dispatch<W: SemiringRef>(
+pub fn prefix_dispatch<'grammar, W: SemiringRef>(
     primary_src_idx: u16,
     pos: &usize,
     cur_bp: &u8,
     frontier_top: Option<&WpdaGssNode>,
     tokens: &dyn WpdaTokenSource,
     lex_fork: impl FnOnce() -> Option<WpdaStepAction<W>>,
-    mut lookup_collection_spec: impl FnMut(u16, u16, u8) -> Option<CollectionSpec>,
+    mut lookup_collection_spec: impl FnMut(u16, u16, u8) -> Option<CollectionSpec<'grammar>>,
     mut collection_element_can_start: impl FnMut(u16, &TokenKind) -> bool,
     mut lex_w: impl FnMut(f64, u16, u16) -> W,
     dispatch: impl FnOnce(u16, u8, Option<TokenKind>) -> WpdaStepAction<W>,
@@ -81,7 +81,7 @@ pub fn prefix_dispatch<W: SemiringRef>(
             // through the CollectionId action argument.
             let slot_idx = node.symbol.bp.unwrap_or(0u8);
             let collection_spec = lookup_collection_spec(result_src_idx, rule_idx, slot_idx);
-            let close_lookup: Option<&'static str> = collection_spec.map(|__s| __s.close);
+            let close_lookup: Option<&str> = collection_spec.map(|__s| __s.close);
             let token_text = tokens.peek_text(*pos).unwrap_or("");
             // #307 ROOT-F G1 site-2 (2026-06-11): the
             // empty-collection close detection is edge

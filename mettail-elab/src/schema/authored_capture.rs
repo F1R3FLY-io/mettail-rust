@@ -18,7 +18,7 @@
 //! contents in Q, plus header-row and literal-selector work in W. Rich schema
 //! carriers stay in the schema/Core; native observations are captured before
 //! lowering. This does not establish native decoder or value parity.
-//! Three additional shallow observations per category are prepaid in W.
+//! Four additional shallow observations per category are prepaid in W.
 //! Collection element roots borrow the current renamed carrier key; their
 //! Name payload copies are paid by the existing capture source, not the header.
 
@@ -186,7 +186,7 @@ impl HeaderCounts {
         }
         let categories = schema.types.len();
         let observation_work = categories
-            .checked_mul(3)
+            .checked_mul(4)
             .ok_or_else(|| failure("authored native observation work overflowed"))?;
         budget.header_content(0, 0, observation_work)?;
         let globals = add(schema.tokens.len(), schema.literals.len())?;
@@ -302,6 +302,9 @@ fn declaration_header<'a>(
         categories.push(AuthoredCategoryDeclaration {
             name: name(&category.name),
             native: category.native,
+            // DDL has no per-type Data/SpannedData role. Variable permission
+            // remains the independent Core category authority.
+            data_observation: SourceObservation::Known(false),
             byte_observation,
             literal_observation,
             element_observation,
@@ -858,6 +861,7 @@ mod tests {
                 carrier: Carrier::Dynamic,
                 native: None,
                 scalar_native: None,
+                native_type_spelling: None,
                 collection: None,
                 refinement: None,
                 admits_variables: true,
@@ -867,6 +871,7 @@ mod tests {
                 carrier: Carrier::Builtin(BuiltinCarrier::Integer),
                 native: Some(NativeKind::Int32),
                 scalar_native: Some(NativeType::Int32),
+                native_type_spelling: Some("i32".into()),
                 collection: None,
                 refinement: None,
                 admits_variables: true,
@@ -880,6 +885,7 @@ mod tests {
                 }),
                 native: Some(NativeKind::Other),
                 scalar_native: None,
+                native_type_spelling: None,
                 collection: Some(super::super::CollectionDecl {
                     kind: CollectionKind::List,
                     open: Some("[".into()),
@@ -951,6 +957,67 @@ mod tests {
         }
         super::super::decode_type(&RhoValue::Map(fields), "$.types")
             .expect("source observation fixture uses an accepted carrier")
+    }
+
+    #[test]
+    fn schema_data_role_is_independent_of_closed_variable_authority() {
+        let mut schema = observation_fixture();
+        for (index, authority) in [false, true].into_iter().enumerate() {
+            let mut declaration =
+                observed_type(&format!("Nat{index}"), RhoValue::String("BigInt".into()), None);
+            declaration.admits_variables = authority;
+            schema.types.push(declaration);
+        }
+        let captured = capture_language(&schema).expect("both variable authorities capture");
+        let header = captured
+            .store
+            .declarations()
+            .expect("category observations retained");
+        for (row, declaration) in header.categories.iter().zip(&schema.types) {
+            assert_eq!(row.data_observation, SourceObservation::Known(false));
+            assert_eq!(
+                row.literal_observation,
+                SourceObservation::Known(Some(LiteralNativeObservation::ExactNativeType(
+                    NativeType::CanonicalBigInt
+                )))
+            );
+            assert_eq!(declaration.admits_variables, declaration.name == "Nat1");
+        }
+    }
+
+    #[test]
+    fn schema_four_observations_per_category_are_prepaid_at_exact_boundary() {
+        let mut schema = observation_fixture();
+        schema
+            .types
+            .push(observed_type("Nat", RhoValue::String("BigInt".into()), None));
+        schema
+            .types
+            .push(observed_type("Text", RhoValue::String("String".into()), None));
+        let observation_work = 4 * schema.types.len();
+        let mut exact = Budget {
+            context_work: MAX_CANONICAL_COLLECTION_ITEMS - observation_work,
+            ..Budget::default()
+        };
+        // Exactly 4C fits the observation debit; the later header-vector debit
+        // then refuses. Neither phase has inspected/copied category payloads.
+        assert!(HeaderCounts::admit(&schema, &mut exact).is_err());
+        assert_eq!(exact.context_work, MAX_CANONICAL_COLLECTION_ITEMS);
+        assert_eq!(
+            (exact.roots, exact.nodes, exact.edges, exact.slots, exact.strings),
+            (0, 0, 0, 0, 0)
+        );
+        let before = MAX_CANONICAL_COLLECTION_ITEMS - observation_work + 1;
+        let mut short = Budget {
+            context_work: before,
+            ..Budget::default()
+        };
+        assert!(HeaderCounts::admit(&schema, &mut short).is_err());
+        assert_eq!(short.context_work, before, "one short refuses the observation debit itself");
+        assert_eq!(
+            (short.roots, short.nodes, short.edges, short.slots, short.strings),
+            (0, 0, 0, 0, 0)
+        );
     }
 
     #[test]
@@ -1160,7 +1227,7 @@ mod tests {
         let mut budget = Budget::default();
         let counts =
             HeaderCounts::admit(&schema, &mut budget).expect("observation logical work fits");
-        assert_eq!((budget.roots, budget.context_work, budget.strings), (1, 4, 0));
+        assert_eq!((budget.roots, budget.context_work, budget.strings), (1, 5, 0));
         let header = declaration_header(&schema, &counts, &mut budget)
             .expect("Other spelling is copied after the original string gate");
         assert_eq!(budget.strings, "OpaqueSource".len());
@@ -1267,7 +1334,7 @@ mod tests {
                 budget.context_work,
                 budget.strings
             ),
-            (15, 0, 0, 56, 24, 0)
+            (15, 0, 0, 56, 27, 0)
         );
         let header =
             declaration_header(&schema, &counts, &mut budget).expect("paid header constructs");
@@ -1287,13 +1354,13 @@ mod tests {
         budget
             .context_event(ContextItemsEvent::Nonterminal(&number))
             .expect("context work adds to prepaid header work");
-        assert_eq!((budget.nodes, budget.edges, budget.slots, budget.context_work), (0, 1, 57, 25));
+        assert_eq!((budget.nodes, budget.edges, budget.slots, budget.context_work), (0, 1, 57, 28));
     }
 
     #[test]
     fn schema_header_budget_exact_boundary_and_refusal_precede_payload_copy() {
         let schema = header_fixture();
-        let total = 15 + 56 + 24;
+        let total = 15 + 56 + 27;
         let mut exact = Budget {
             context_work: MAX_CANONICAL_COLLECTION_ITEMS - total,
             ..Budget::default()

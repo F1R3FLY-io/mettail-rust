@@ -1414,7 +1414,7 @@ pub(crate) fn emit_engine_impl_full(
                 result_src_idx: u16,
                 rule_idx: u16,
                 slot_idx: u8,
-            ) -> Option<mettail_prattail::wpda_runtime::CollectionSpec> {
+            ) -> Option<mettail_prattail::wpda_runtime::CollectionSpec<'static>> {
                 // Stage 2 consolidation (2026-06-27): the single per-slot
                 // CollectionSpec table. kv_separator_for_collection /
                 // collection_element_src_idx and the InfixLoop / PrefixDispatch
@@ -1428,7 +1428,7 @@ pub(crate) fn emit_engine_impl_full(
                 result_src_idx: u16,
                 rule_idx: u16,
                 slot_idx: u8,
-            ) -> Option<&'static str> {
+            ) -> Option<&str> {
                 // Stage 2: projected off the consolidated CollectionSpec
                 // (was the per-(src, rule, slot_idx) kv-separator lookup —
                 // `Some(":")` for kv-maps, `None` otherwise).

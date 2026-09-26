@@ -13,6 +13,7 @@ publish = false
 name = "mettail_grammar_core"
 
 [dependencies]
+moniker = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 blake3 = "1"

@@ -23,6 +23,10 @@ use crate::automata::{
 };
 use crate::{CustomTokenSpec, LiteralPatterns};
 
+/// Original implicit lexer terminals, in source insertion order. Consumers
+/// retain their existing ordered-set canonicalization before assigning IDs.
+pub const IMPLICIT_STRUCTURAL_TERMINALS: &[&str] = &["(", ")", "{", "}", "[", "]", ","];
+
 /// Information about a language's grammar needed for lexer generation.
 pub struct LexerInput {
     /// Language name (for generated code comments/docs).
@@ -332,6 +336,55 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
 // travels as `Err(String)` from here to `macros/src/lib.rs`, which turns it into a
 // `compile_error!` at the `language!` invocation.
 
+/// The original active hybrid codegen roster, before modal concatenation.
+pub(crate) fn mode_token_kinds<T: crate::token_declarations::TokenMetadata>(
+    custom_tokens: &[T],
+) -> Vec<TokenKind> {
+    custom_tokens
+        .iter()
+        .map(|spec| TokenKind::Custom(spec.name().to_owned()))
+        .collect()
+}
+
+pub(crate) fn hybrid_token_kinds(input: &LexerInput) -> Vec<TokenKind> {
+    hybrid_token_kinds_from_metadata(input, &input.custom_tokens)
+}
+
+pub(crate) fn hybrid_token_kinds_from_metadata<T: crate::token_declarations::TokenMetadata>(
+    input: &LexerInput,
+    custom_tokens: &[T],
+) -> Vec<TokenKind> {
+    // Collect all token kinds for enum generation
+    let mut token_kinds: Vec<TokenKind> = vec![TokenKind::Eof];
+    if input.needs.ident {
+        token_kinds.push(TokenKind::Ident);
+    }
+    if input.needs.integer {
+        token_kinds.push(TokenKind::Integer);
+    }
+    if input.needs.float {
+        token_kinds.push(TokenKind::Float);
+    }
+    if input.needs.boolean {
+        token_kinds.push(TokenKind::True);
+        token_kinds.push(TokenKind::False);
+    }
+    if input.needs.string_lit {
+        token_kinds.push(TokenKind::StringLit);
+    }
+    for terminal in &input.terminals {
+        token_kinds.push(terminal.kind.clone());
+    }
+    // Add custom (non-override) token kinds
+    for spec in custom_tokens {
+        if !spec.is_builtin_override() {
+            token_kinds.push(TokenKind::Custom(spec.name().to_owned()));
+        }
+    }
+
+    token_kinds
+}
+
 /// Run the full lexer generation pipeline with AL02 hybrid gating, **returning** the
 /// grammar-level rejection rather than raising it.
 ///
@@ -396,33 +449,7 @@ pub fn try_generate_lexer_as_string_hybrid(
     let num_minimized_states = min_dfa.states.len();
     stage!("minimize_dfa.done", num_minimized_states);
 
-    // Collect all token kinds for enum generation
-    let mut token_kinds: Vec<TokenKind> = vec![TokenKind::Eof];
-    if input.needs.ident {
-        token_kinds.push(TokenKind::Ident);
-    }
-    if input.needs.integer {
-        token_kinds.push(TokenKind::Integer);
-    }
-    if input.needs.float {
-        token_kinds.push(TokenKind::Float);
-    }
-    if input.needs.boolean {
-        token_kinds.push(TokenKind::True);
-        token_kinds.push(TokenKind::False);
-    }
-    if input.needs.string_lit {
-        token_kinds.push(TokenKind::StringLit);
-    }
-    for terminal in &input.terminals {
-        token_kinds.push(terminal.kind.clone());
-    }
-    // Add custom (non-override) token kinds
-    for spec in &input.custom_tokens {
-        if !spec.is_builtin_override {
-            token_kinds.push(TokenKind::Custom(spec.name.clone()));
-        }
-    }
+    let token_kinds = hybrid_token_kinds(input);
 
     // Step 5: Analyze sparsity
     let sparsity = analyze_sparsity(&min_dfa);
@@ -458,11 +485,7 @@ pub fn try_generate_lexer_as_string_hybrid(
                 let mode_dfa = subset_construction(&mode_nfa, &mode_partition);
                 let mode_min_dfa = minimize_dfa(&mode_dfa);
 
-                let mode_token_kinds: Vec<TokenKind> = mode_input
-                    .custom_tokens
-                    .iter()
-                    .map(|spec| TokenKind::Custom(spec.name.clone()))
-                    .collect();
+                let mode_token_kinds = mode_token_kinds(&mode_input.custom_tokens);
 
                 ModeDfaResult {
                     name: mode_input.name.clone(),
@@ -773,6 +796,22 @@ pub fn extract_terminals(
     has_binders: bool,
     category_names: &[String],
 ) -> LexerInput {
+    extract_terminals_from_source(
+        terms.iter().flat_map(|rule| &rule.terminals),
+        types,
+        has_binders,
+        category_names,
+    )
+}
+
+/// Original terminal extraction, accepting source terminal observations without
+/// manufacturing unrelated rule-classification fields.
+pub fn extract_terminals_from_source<'a>(
+    terminals: impl IntoIterator<Item = &'a String>,
+    types: &[TypeInfo],
+    has_binders: bool,
+    category_names: &[String],
+) -> LexerInput {
     let mut terminal_set = std::collections::BTreeSet::new();
     let mut needs = BuiltinNeeds {
         // Almost all grammars use identifiers for variables
@@ -782,7 +821,7 @@ pub fn extract_terminals(
 
     // Always include structural delimiters — the Pratt parser uses ( ) for grouping
     // and the Sep handler checks for closing delimiters
-    for text in &["(", ")", "{", "}", "[", "]", ","] {
+    for text in IMPLICIT_STRUCTURAL_TERMINALS {
         terminal_set.insert(TerminalPattern {
             text: text.to_string(),
             kind: TokenKind::Fixed(text.to_string()),
@@ -865,17 +904,15 @@ pub fn extract_terminals(
     }
 
     // Extract terminals from grammar rules
-    for rule in terms {
-        for terminal in &rule.terminals {
-            let text = terminal.clone();
-            // Determine if this is a keyword (alphanumeric)
-            let is_keyword = text.chars().all(|c| c.is_alphanumeric() || c == '_');
-            terminal_set.insert(TerminalPattern {
-                text: text.clone(),
-                kind: TokenKind::Fixed(text),
-                is_keyword,
-            });
-        }
+    for terminal in terminals {
+        let text = terminal.clone();
+        // Determine if this is a keyword (alphanumeric)
+        let is_keyword = text.chars().all(|c| c.is_alphanumeric() || c == '_');
+        terminal_set.insert(TerminalPattern {
+            text: text.clone(),
+            kind: TokenKind::Fixed(text),
+            is_keyword,
+        });
     }
 
     let language_name = types
@@ -912,6 +949,56 @@ pub struct TypeInfo {
     pub name: String,
     pub language_name: String,
     pub native_type_name: Option<String>,
+}
+
+/// Borrowed fields read by the original terminal collector. Frontends must
+/// establish the source-shape correspondence before supplying an observation.
+pub enum TerminalObservation<'a> {
+    Terminal(&'a String),
+    Collection {
+        separator: &'a String,
+        key_val_separator: Option<&'a String>,
+    },
+    BinderCollection {
+        separator: &'a String,
+    },
+    Sep {
+        separator: &'a String,
+    },
+    Other,
+}
+
+/// Original pipeline::collect_terminals_recursive emission and sort/dedup body.
+/// This is neither a syntax classifier nor an alternative traversal.
+pub fn collect_terminal_observations<'a>(
+    items: impl IntoIterator<Item = TerminalObservation<'a>>,
+) -> Vec<String> {
+    let mut terminals = Vec::new();
+    for item in items {
+        match item {
+            TerminalObservation::Terminal(t) => terminals.push(t.clone()),
+            TerminalObservation::Collection { separator, key_val_separator } => {
+                if !separator.is_empty() {
+                    terminals.push(separator.clone());
+                }
+                if let Some(kv) = key_val_separator {
+                    terminals.push(kv.clone());
+                }
+            },
+            TerminalObservation::BinderCollection { separator } => {
+                if !separator.is_empty() {
+                    terminals.push(separator.clone());
+                }
+            },
+            TerminalObservation::Sep { separator } if !separator.is_empty() => {
+                terminals.push(separator.clone());
+            },
+            _ => {},
+        }
+    }
+    terminals.sort();
+    terminals.dedup();
+    terminals
 }
 
 /// Convert a terminal text to its Token variant name (re-export from codegen).

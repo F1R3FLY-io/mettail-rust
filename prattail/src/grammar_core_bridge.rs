@@ -1,7 +1,9 @@
 //! Staged bridge from the proc-macro-era specification to `GrammarCore`.
 
+use crate::automata::TokenKind;
 use crate::binding_power::Associativity;
 use crate::grammar::ir::CollectionKind;
+use crate::wpda_owned::token_bindings::TokenObservationProducer;
 use crate::{
     BeamWidthConfig, CustomTokenSpec, LanguageSpec, RefinementPredKind, ReservationMode,
     SyntaxItemSpec,
@@ -100,6 +102,9 @@ impl LanguageSpec {
         for rule in &self.rules {
             collect_terminals(&rule.syntax, &mut literal_terminals);
         }
+        literal_terminals.extend(
+            crate::lexer::IMPLICIT_STRUCTURAL_TERMINALS.iter().map(|text| (*text).to_owned()),
+        );
         stage!("collect_terminals.done");
         output.parser_configuration = lower_parser_configuration(self)?;
         output.synchronization = lower_synchronization(self);
@@ -130,9 +135,11 @@ impl LanguageSpec {
         output.guard_configuration = lower_guard_configuration(self, &mut output.capabilities);
 
         stage!("tokens.start");
+        let token_observations = TokenObservationProducer::for_spec(self);
         let mode_names = lower_modes(self, &mut output)?;
         let mut token_ids = BTreeMap::new();
-        let typed_routes = add_builtin_tokens(self, &mut output, &mut token_ids)?;
+        let typed_routes =
+            add_builtin_tokens(self, &mut output, &mut token_ids, &token_observations)?;
         for (index, token) in self.custom_tokens.iter().enumerate() {
             let direct = if !token.is_builtin_override {
                 Some(add_custom_token(
@@ -141,6 +148,7 @@ impl LanguageSpec {
                     &mode_names,
                     &mut output,
                     &mut token_ids,
+                    &token_observations,
                 )?)
             } else if bindings.is_some() {
                 let family = self.authored_token_origins.builtin_overrides[index]
@@ -171,8 +179,14 @@ impl LanguageSpec {
                     .map_err(|error| error.to_string())?;
             }
             for (token_index, token) in mode.token_specs.iter().enumerate() {
-                let direct =
-                    add_custom_token(token, mode_id, &mode_names, &mut output, &mut token_ids)?;
+                let direct = add_custom_token(
+                    token,
+                    mode_id,
+                    &mode_names,
+                    &mut output,
+                    &mut token_ids,
+                    &token_observations,
+                )?;
                 if let (Some(bindings), Some(header)) = (&mut bindings, header) {
                     let source = header.modes[mode_index].tokens[token_index] as usize;
                     bindings
@@ -191,6 +205,7 @@ impl LanguageSpec {
         let mut literal_ids = BTreeMap::new();
         for terminal in literal_terminals {
             let id = core::TokenId(output.tokens.len() as u32);
+            token_observations.record(&mut output, id, &TokenKind::Fixed(terminal.clone()))?;
             literal_ids.insert(terminal.clone(), id);
             let reservation = lower_terminal_reservation(self, &terminal);
             output.tokens.push(core::TokenDefinition {
@@ -262,6 +277,7 @@ impl LanguageSpec {
                     associativity: match rule.associativity {
                         Associativity::Left => core::Associativity::Left,
                         Associativity::Right => core::Associativity::Right,
+                        Associativity::NonAssociative => core::Associativity::NonAssociative,
                     },
                     shares_previous_level: rule.shares_level_with_previous,
                 },
@@ -410,21 +426,34 @@ fn add_builtin_tokens(
     spec: &LanguageSpec,
     output: &mut core::GrammarCoreV1,
     token_ids: &mut BTreeMap<String, core::TokenId>,
+    observations: &TokenObservationProducer,
 ) -> Result<BTreeMap<usize, core::TokenId>, String> {
     let mut typed_routes = BTreeMap::new();
     let definitions = [
-        ("Identifier", spec.literal_patterns.ident.clone(), core::TokenDecoder::Text),
+        (
+            "Identifier",
+            spec.literal_patterns.ident.clone(),
+            core::TokenDecoder::Text,
+            TokenKind::Ident,
+        ),
         (
             "Integer",
             spec.literal_patterns.integer.clone(),
             core::TokenDecoder::Integer { radix: None },
+            TokenKind::Integer,
         ),
         (
             "Float",
             spec.literal_patterns.float.clone(),
             core::TokenDecoder::Capability("builtin/float".into()),
+            TokenKind::Float,
         ),
-        ("String", spec.literal_patterns.string.clone(), core::TokenDecoder::Text),
+        (
+            "String",
+            spec.literal_patterns.string.clone(),
+            core::TokenDecoder::Text,
+            TokenKind::StringLit,
+        ),
         (
             "Boolean",
             spec.literal_patterns
@@ -432,6 +461,7 @@ fn add_builtin_tokens(
                 .clone()
                 .unwrap_or_else(|| "true|false".into()),
             core::TokenDecoder::Capability("builtin/boolean".into()),
+            TokenKind::BooleanLit,
         ),
     ];
     output
@@ -440,8 +470,9 @@ fn add_builtin_tokens(
     output
         .capabilities
         .insert(core::Capability::TokenDecoder("builtin/boolean".into()));
-    for (name, pattern, decoder) in definitions {
+    for (name, pattern, decoder, kind) in definitions {
         let id = core::TokenId(output.tokens.len() as u32);
+        observations.record(output, id, &kind)?;
         output.tokens.push(core::TokenDefinition {
             id,
             name: name.into(),
@@ -473,10 +504,25 @@ fn add_builtin_tokens(
     if let Some(float) = token_ids.get("Float").copied() {
         token_ids.insert("FloatLiteral".into(), float);
     }
-    for (family, patterns, decoder_prefix) in [
-        ("Integer", &spec.literal_patterns.integer_by_category, "builtin/integer"),
-        ("Rational", &spec.literal_patterns.rational_by_category, "builtin/rational"),
-        ("FixedPoint", &spec.literal_patterns.fixed_by_category, "builtin/fixed"),
+    for (family, patterns, decoder_prefix, kind) in [
+        (
+            "Integer",
+            &spec.literal_patterns.integer_by_category,
+            "builtin/integer",
+            TokenKind::IntegerLit as fn(String) -> TokenKind,
+        ),
+        (
+            "Rational",
+            &spec.literal_patterns.rational_by_category,
+            "builtin/rational",
+            TokenKind::RationalLit as fn(String) -> TokenKind,
+        ),
+        (
+            "FixedPoint",
+            &spec.literal_patterns.fixed_by_category,
+            "builtin/fixed",
+            TokenKind::FixedPointLit as fn(String) -> TokenKind,
+        ),
     ] {
         let mut patterns: Vec<_> = patterns.iter().collect();
         patterns.sort_by(|left, right| left.0.cmp(right.0));
@@ -484,6 +530,7 @@ fn add_builtin_tokens(
             let name = format!("{family}/{category}");
             let capability = format!("{decoder_prefix}/{category}");
             let id = core::TokenId(output.tokens.len() as u32);
+            observations.record(output, id, &kind(category.clone()))?;
             output
                 .capabilities
                 .insert(core::Capability::TokenDecoder(capability.clone()));
@@ -525,6 +572,7 @@ fn add_custom_token(
     mode_names: &BTreeMap<String, core::ModeId>,
     output: &mut core::GrammarCoreV1,
     token_ids: &mut BTreeMap<String, core::TokenId>,
+    observations: &TokenObservationProducer,
 ) -> Result<core::TokenId, String> {
     let id = core::TokenId(output.tokens.len() as u32);
     let qualified_name = if mode == core::ModeId(0) {
@@ -556,6 +604,7 @@ fn add_custom_token(
                 .ok_or_else(|| format!("token `{qualified_name}` pushes unknown mode `{name}`"))
         })
         .transpose()?;
+    observations.record(output, id, &TokenKind::Custom(token.name.clone()))?;
     output.tokens.push(core::TokenDefinition {
         id,
         name: qualified_name.clone(),
@@ -970,6 +1019,19 @@ mod tests {
         let core = spec.to_grammar_core().expect("valid core");
         assert_eq!(core.productions[0].label, "Zero");
         assert!(core.validate().is_ok());
+        let bundle = crate::pipeline::extract_lexer_bundle(&spec);
+        let original = crate::pipeline::lexer_input_for_bundle(&bundle);
+        let literals: Vec<_> = core.tokens.iter().filter_map(|token| {
+            let core::TokenPattern::Literal(text) = &token.pattern else { return None; };
+            assert_eq!(
+                core.wpda_token_observations.as_ref().expect("complete token observations")[token.id.0 as usize],
+                Some(core::WpdaTokenObservation::Fixed(text.clone())),
+                "each exact append ID retains its original Fixed observation",
+            );
+            Some(text.clone())
+        }).collect();
+        assert_eq!(literals, original.terminals.iter().map(|terminal| terminal.text.clone()).collect::<Vec<_>>(),
+            "Core retains the original implicit and authored terminal roster in canonical order");
     }
 
     #[test]

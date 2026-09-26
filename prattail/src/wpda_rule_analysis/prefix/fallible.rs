@@ -24,6 +24,11 @@ pub trait TryFirstSetContext<'source, R: BinderRuleReader<'source>> {
     fn try_rule_at(&self, index: usize) -> Result<R::Rule, Self::Error>;
     fn try_find_category(&mut self, name: &str) -> Result<Option<Self::Category>, Self::Error>;
     fn try_is_data(&self, category: Self::Category) -> Result<bool, Self::Error>;
+    /// Macro compatibility observes the original role once. Owned sources may
+    /// supply independent runtime authority without changing source data role.
+    fn try_admits_variables(&self, category: Self::Category) -> Result<bool, Self::Error> {
+        self.try_is_data(category).map(|is_data| !is_data)
+    }
     fn try_collection_open(
         &self,
         category: Self::Category,

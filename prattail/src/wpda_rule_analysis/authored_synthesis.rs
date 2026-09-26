@@ -151,6 +151,7 @@ pub enum AuthoredSynthesisError<E> {
     MissingNormalizedOccurrence(usize),
     UnexpectedSyntheticNormalization,
     MissingCategoryBinding(usize),
+    MissingCategoryRoleObservation(usize),
     UnavailableObservation {
         category: usize,
         probe: NativeProbe,
@@ -322,6 +323,9 @@ where
             name: copy(&mut policy, &reader.rule_reader().name(category.name).payload().spelling)?,
             is_data: reader
                 .is_data(*index)
+                .ok_or(Error::MissingCategoryRoleObservation(*index))?,
+            admits_variables: reader
+                .admits_variables(*index)
                 .ok_or(Error::MissingCategoryBinding(*index))?,
             has_native: category.native.is_some(),
             has_collection: category.collection.is_some(),

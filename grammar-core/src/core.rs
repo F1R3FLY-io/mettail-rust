@@ -47,7 +47,8 @@ pub const GRAMMAR_CORE_ABI_V2: u16 = 2;
 pub const GRAMMAR_CORE_ABI_V3: u16 = 3;
 pub const GRAMMAR_CORE_ABI_V4: u16 = 4;
 pub const GRAMMAR_CORE_ABI_V5: u16 = 5;
-pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V5;
+pub const GRAMMAR_CORE_ABI_V6: u16 = 6;
+pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V6;
 
 /// A source rule retained with its immutable arena owner during frontend
 /// transport. Arena allocation identity is deliberately distinct from equality
@@ -74,6 +75,10 @@ pub struct GrammarCoreV1 {
     /// Final execution IDs for the immutable source declaration header.
     #[serde(deserialize_with = "required_option")]
     pub authored_bindings: Option<AuthoredDeclarationBindings>,
+    /// Original generated token-kind observations, indexed by final TokenId.
+    /// An absent table or row is unavailable, never a name-based fallback.
+    #[serde(deserialize_with = "required_option")]
+    pub wpda_token_observations: Option<Vec<Option<crate::WpdaTokenObservation>>>,
     pub reductions: Vec<ReductionPlan>,
     pub semantic_dependencies: Vec<Vec<ConstructorId>>,
     pub semantic_program: SemanticProgram,
@@ -106,6 +111,7 @@ impl GrammarCoreV1 {
             productions: Vec::new(),
             authored: None,
             authored_bindings: None,
+            wpda_token_observations: None,
             reductions: Vec::new(),
             semantic_dependencies: Vec::new(),
             semantic_program: SemanticProgram::default(),
@@ -163,7 +169,7 @@ impl GrammarCoreV1 {
         }
         let bytes = postcard::to_allocvec(&semantic)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-grammar-core/5\0");
+        hasher.update(b"mettail-grammar-core/6\0");
         hasher.update(&bytes);
         Ok(*hasher.finalize().as_bytes())
     }
@@ -172,6 +178,13 @@ impl GrammarCoreV1 {
         let mut errors = Vec::new();
         if self.abi != GRAMMAR_CORE_ABI_CURRENT {
             errors.push(ValidationError::UnsupportedAbi(self.abi));
+        }
+        if self
+            .wpda_token_observations
+            .as_ref()
+            .is_some_and(|rows| rows.len() != self.tokens.len())
+        {
+            errors.push(ValidationError::InvalidWpdaTokenObservationCount);
         }
         if let Some(store) = &self.authored {
             if let Err(error) = store.validate() {
@@ -1215,6 +1228,7 @@ pub enum Entity {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValidationError {
     UnsupportedAbi(u16),
+    InvalidWpdaTokenObservationCount,
     InvalidAuthoredStore(AuthoredStoreError),
     InvalidAuthoredBindings(AuthoredBindingError),
     InvalidAuthoredRule {
@@ -1322,6 +1336,7 @@ mod tests {
             GRAMMAR_CORE_ABI_V2,
             GRAMMAR_CORE_ABI_V3,
             GRAMMAR_CORE_ABI_V4,
+            GRAMMAR_CORE_ABI_V5,
         ] {
             let mut core = one_category_core();
             core.abi = abi;

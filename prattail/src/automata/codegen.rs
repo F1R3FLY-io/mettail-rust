@@ -83,6 +83,208 @@ macro_rules! w {
     };
 }
 
+#[cfg(test)]
+mod token_kind_projection_tests {
+    use super::*;
+    fn original_write_token_to_kind(
+        buf: &mut String,
+        token_kinds: &[TokenKind],
+        custom_tokens: &[CustomTokenSpec],
+    ) {
+        let mut seen = std::collections::HashSet::<String>::new();
+        buf.push_str(
+            "#[allow(dead_code, non_snake_case)]\n\
+         fn token_to_kind(t: &Token<'_>) -> mettail_prattail::automata::TokenKind {\n\
+             use mettail_prattail::automata::TokenKind;\n\
+             match t {\n",
+        );
+        // Always: Eof, Ident
+        buf.push_str("Token::Eof => TokenKind::Eof,\n");
+        seen.insert("Eof".to_string());
+        buf.push_str("Token::Ident(_) => TokenKind::Ident,\n");
+        seen.insert("Ident".to_string());
+
+        for kind in token_kinds {
+            match kind {
+                TokenKind::Eof | TokenKind::Ident => {},
+                TokenKind::Integer => {
+                    if seen.insert("Integer".to_string()) {
+                        buf.push_str("Token::Integer(_, _) => TokenKind::Integer,\n");
+                    }
+                },
+                TokenKind::Float => {
+                    if seen.insert("Float".to_string()) {
+                        buf.push_str("Token::Float(_) => TokenKind::Float,\n");
+                    }
+                },
+                TokenKind::True | TokenKind::False => {
+                    if seen.insert("Boolean".to_string()) {
+                        // Boolean Token variant carries a payload; map true → True, false → False
+                        buf.push_str("Token::Boolean(true) => TokenKind::True,\n");
+                        buf.push_str("Token::Boolean(false) => TokenKind::False,\n");
+                    }
+                },
+                TokenKind::BooleanLit => {
+                    if seen.insert("Boolean".to_string()) {
+                        // Custom-pattern Boolean: still emit BooleanLit
+                        buf.push_str("Token::Boolean(_) => TokenKind::BooleanLit,\n");
+                    }
+                },
+                TokenKind::StringLit => {
+                    if seen.insert("StringLit".to_string()) {
+                        buf.push_str("Token::StringLit(_) => TokenKind::StringLit,\n");
+                    }
+                },
+                TokenKind::Fixed(text) => {
+                    let variant_name = terminal_to_variant_name(text);
+                    if seen.insert(variant_name.clone()) {
+                        w!(
+                            buf,
+                            "Token::{} => TokenKind::Fixed({:?}.to_string()),\n",
+                            variant_name,
+                            text
+                        );
+                    }
+                },
+                TokenKind::Dollar => {
+                    if seen.insert("Dollar".to_string()) {
+                        buf.push_str("Token::Dollar(_) => TokenKind::Dollar,\n");
+                    }
+                },
+                TokenKind::DoubleDollar => {
+                    if seen.insert("DoubleDollar".to_string()) {
+                        buf.push_str("Token::DoubleDollar(_) => TokenKind::DoubleDollar,\n");
+                    }
+                },
+                TokenKind::Custom(name) => {
+                    if seen.insert(name.clone()) {
+                        let has_payload = custom_tokens
+                            .iter()
+                            .any(|s| s.name == *name && s.payload_type.is_some());
+                        if has_payload {
+                            w!(
+                                buf,
+                                "Token::{}(_) => TokenKind::Custom({:?}.to_string()),\n",
+                                name,
+                                name
+                            );
+                        } else {
+                            w!(
+                                buf,
+                                "Token::{} => TokenKind::Custom({:?}.to_string()),\n",
+                                name,
+                                name
+                            );
+                        }
+                    }
+                },
+                TokenKind::IntegerLit(cat) => {
+                    if seen.insert(cat.clone()) {
+                        w!(
+                            buf,
+                            "Token::{}(_) => TokenKind::IntegerLit({:?}.to_string()),\n",
+                            cat,
+                            cat
+                        );
+                    }
+                },
+                TokenKind::RationalLit(cat) => {
+                    if seen.insert(cat.clone()) {
+                        w!(
+                            buf,
+                            "Token::{}(_) => TokenKind::RationalLit({:?}.to_string()),\n",
+                            cat,
+                            cat
+                        );
+                    }
+                },
+                TokenKind::FixedPointLit(cat) => {
+                    if seen.insert(cat.clone()) {
+                        w!(
+                            buf,
+                            "Token::{}(_) => TokenKind::FixedPointLit({:?}.to_string()),\n",
+                            cat,
+                            cat
+                        );
+                    }
+                },
+                TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("token_to_kind"),
+            }
+        }
+        buf.push_str("}\n}\n");
+    }
+
+    #[test]
+    fn shared_projection_is_byte_identical_to_original_writer() {
+        let custom = vec![
+            CustomTokenSpec {
+                name: "Typed".into(),
+                pattern: ".".into(),
+                category: None,
+                payload_type: Some("str".into()),
+                constructor_code: None,
+                is_builtin_override: false,
+                priority: 2,
+                push_mode: None,
+                is_pop: false,
+                stream: None,
+            },
+            CustomTokenSpec {
+                name: "Unit".into(),
+                pattern: ".".into(),
+                category: None,
+                payload_type: None,
+                constructor_code: None,
+                is_builtin_override: false,
+                priority: 2,
+                push_mode: None,
+                is_pop: false,
+                stream: None,
+            },
+        ];
+        let all = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Integer,
+            TokenKind::Float,
+            TokenKind::True,
+            TokenKind::False,
+            TokenKind::BooleanLit,
+            TokenKind::StringLit,
+            TokenKind::Fixed("+".into()),
+            TokenKind::Dollar,
+            TokenKind::DoubleDollar,
+            TokenKind::Custom("Typed".into()),
+            TokenKind::Custom("Unit".into()),
+            TokenKind::IntegerLit("Int".into()),
+            TokenKind::RationalLit("Rat".into()),
+            TokenKind::FixedPointLit("Fixed".into()),
+        ];
+        let mut reversed = all.clone();
+        reversed.reverse();
+        let cases = vec![
+            vec![],
+            all,
+            reversed,
+            vec![TokenKind::Custom("Typed".into()), TokenKind::IntegerLit("Typed".into())],
+            vec![TokenKind::IntegerLit("Typed".into()), TokenKind::Custom("Typed".into())],
+            vec![TokenKind::BooleanLit, TokenKind::False],
+            vec![TokenKind::False, TokenKind::BooleanLit],
+            vec![TokenKind::Custom("Ident".into()), TokenKind::Custom("Eof".into())],
+        ];
+        for kinds in cases {
+            let mut original = String::new();
+            original_write_token_to_kind(&mut original, &kinds, &custom);
+            let mut shared = String::new();
+            write_token_to_kind(&mut shared, &kinds, &custom);
+            let adapter_end = shared
+                .find("#[allow(dead_code, non_snake_case, unused_variables)]")
+                .expect("following token_text header");
+            assert_eq!(original, shared[..adapter_end], "{kinds:?}");
+        }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // `TokenKind::LexError` at codegen time — the one place its absence is argued
 // ══════════════════════════════════════════════════════════════════════════════
@@ -791,6 +993,72 @@ fn write_token_display(
     buf.push_str("} }");
 }
 
+/// A selected original token_to_kind arm. The roster is first-variant ordered;
+/// Boolean True/False rows denote payload-dependent alternatives, not constants.
+pub(crate) struct TokenKindProjectionRow<'a> {
+    pub variant: String,
+    pub kind: &'a TokenKind,
+    pub has_payload: bool,
+}
+
+/// Visit exactly the original token_to_kind first-variant arms. Payload lookup
+/// stays inside the winning Custom arm; callers do not classify token names.
+pub(crate) fn visit_token_kind_projection<T: crate::token_declarations::TokenMetadata>(
+    token_kinds: &[TokenKind],
+    custom_tokens: &[T],
+    mut emit: impl FnMut(TokenKindProjectionRow<'_>),
+) {
+    let mut seen = std::collections::HashSet::<String>::new();
+    emit(TokenKindProjectionRow {
+        variant: "Eof".into(),
+        kind: &TokenKind::Eof,
+        has_payload: false,
+    });
+    seen.insert("Eof".to_string());
+    emit(TokenKindProjectionRow {
+        variant: "Ident".into(),
+        kind: &TokenKind::Ident,
+        has_payload: true,
+    });
+    seen.insert("Ident".to_string());
+    for kind in token_kinds {
+        if matches!(kind, TokenKind::Eof | TokenKind::Ident) {
+            continue;
+        }
+        let variant = token_projection_variant(kind);
+        if seen.insert(variant.clone()) {
+            let has_payload = match kind {
+                TokenKind::Custom(name) => custom_tokens
+                    .iter()
+                    .any(|s| s.name() == name && s.payload_type().is_some()),
+                TokenKind::Fixed(_) => false,
+                _ => true,
+            };
+            emit(TokenKindProjectionRow { variant, kind, has_payload });
+        }
+    }
+}
+
+/// Exact generated Token variant identity, not a Core token-name classifier.
+pub(crate) fn token_projection_variant(kind: &TokenKind) -> String {
+    match kind {
+        TokenKind::Eof => "Eof".into(),
+        TokenKind::Ident => "Ident".into(),
+        TokenKind::Integer => "Integer".into(),
+        TokenKind::Float => "Float".into(),
+        TokenKind::True | TokenKind::False | TokenKind::BooleanLit => "Boolean".into(),
+        TokenKind::StringLit => "StringLit".into(),
+        TokenKind::Fixed(text) => terminal_to_variant_name(text),
+        TokenKind::Dollar => "Dollar".into(),
+        TokenKind::DoubleDollar => "DoubleDollar".into(),
+        TokenKind::Custom(name)
+        | TokenKind::IntegerLit(name)
+        | TokenKind::RationalLit(name)
+        | TokenKind::FixedPointLit(name) => name.clone(),
+        TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("token_to_kind"),
+    }
+}
+
 /// Stage 2 (2026-04-27): write a `token_to_kind(t: &Token<'_>) -> TokenKind`
 /// function alongside the Token enum. This is the bridge that allows
 /// `Cat::parse(input: &str)` to convert lexer-produced `Token<'a>` values
@@ -801,116 +1069,48 @@ fn write_token_to_kind(
     token_kinds: &[TokenKind],
     custom_tokens: &[CustomTokenSpec],
 ) {
-    let mut seen = std::collections::HashSet::<String>::new();
     buf.push_str(
         "#[allow(dead_code, non_snake_case)]\n\
          fn token_to_kind(t: &Token<'_>) -> mettail_prattail::automata::TokenKind {\n\
              use mettail_prattail::automata::TokenKind;\n\
              match t {\n",
     );
-    // Always: Eof, Ident
-    buf.push_str("Token::Eof => TokenKind::Eof,\n");
-    seen.insert("Eof".to_string());
-    buf.push_str("Token::Ident(_) => TokenKind::Ident,\n");
-    seen.insert("Ident".to_string());
-
-    for kind in token_kinds {
-        match kind {
-            TokenKind::Eof | TokenKind::Ident => {},
-            TokenKind::Integer => {
-                if seen.insert("Integer".to_string()) {
-                    buf.push_str("Token::Integer(_, _) => TokenKind::Integer,\n");
-                }
-            },
-            TokenKind::Float => {
-                if seen.insert("Float".to_string()) {
-                    buf.push_str("Token::Float(_) => TokenKind::Float,\n");
-                }
-            },
-            TokenKind::True | TokenKind::False => {
-                if seen.insert("Boolean".to_string()) {
-                    // Boolean Token variant carries a payload; map true → True, false → False
-                    buf.push_str("Token::Boolean(true) => TokenKind::True,\n");
-                    buf.push_str("Token::Boolean(false) => TokenKind::False,\n");
-                }
-            },
-            TokenKind::BooleanLit => {
-                if seen.insert("Boolean".to_string()) {
-                    // Custom-pattern Boolean: still emit BooleanLit
-                    buf.push_str("Token::Boolean(_) => TokenKind::BooleanLit,\n");
-                }
-            },
-            TokenKind::StringLit => {
-                if seen.insert("StringLit".to_string()) {
-                    buf.push_str("Token::StringLit(_) => TokenKind::StringLit,\n");
-                }
-            },
-            TokenKind::Fixed(text) => {
-                let variant_name = terminal_to_variant_name(text);
-                if seen.insert(variant_name.clone()) {
-                    w!(
-                        buf,
-                        "Token::{} => TokenKind::Fixed({:?}.to_string()),\n",
-                        variant_name,
-                        text
-                    );
-                }
-            },
-            TokenKind::Dollar => {
-                if seen.insert("Dollar".to_string()) {
-                    buf.push_str("Token::Dollar(_) => TokenKind::Dollar,\n");
-                }
-            },
-            TokenKind::DoubleDollar => {
-                if seen.insert("DoubleDollar".to_string()) {
-                    buf.push_str("Token::DoubleDollar(_) => TokenKind::DoubleDollar,\n");
-                }
-            },
-            TokenKind::Custom(name) => {
-                if seen.insert(name.clone()) {
-                    let has_payload = custom_tokens
-                        .iter()
-                        .any(|s| s.name == *name && s.payload_type.is_some());
-                    if has_payload {
-                        w!(
-                            buf,
-                            "Token::{}(_) => TokenKind::Custom({:?}.to_string()),\n",
-                            name,
-                            name
-                        );
-                    } else {
-                        w!(buf, "Token::{} => TokenKind::Custom({:?}.to_string()),\n", name, name);
-                    }
-                }
-            },
-            TokenKind::IntegerLit(cat) => {
-                if seen.insert(cat.clone()) {
-                    w!(buf, "Token::{}(_) => TokenKind::IntegerLit({:?}.to_string()),\n", cat, cat);
-                }
-            },
-            TokenKind::RationalLit(cat) => {
-                if seen.insert(cat.clone()) {
-                    w!(
-                        buf,
-                        "Token::{}(_) => TokenKind::RationalLit({:?}.to_string()),\n",
-                        cat,
-                        cat
-                    );
-                }
-            },
-            TokenKind::FixedPointLit(cat) => {
-                if seen.insert(cat.clone()) {
-                    w!(
-                        buf,
-                        "Token::{}(_) => TokenKind::FixedPointLit({:?}.to_string()),\n",
-                        cat,
-                        cat
-                    );
-                }
-            },
-            TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("token_to_kind"),
-        }
-    }
+    visit_token_kind_projection(token_kinds, custom_tokens, |row| match row.kind {
+        TokenKind::Eof => buf.push_str("Token::Eof => TokenKind::Eof,\n"),
+        TokenKind::Ident => buf.push_str("Token::Ident(_) => TokenKind::Ident,\n"),
+        TokenKind::Integer => buf.push_str("Token::Integer(_, _) => TokenKind::Integer,\n"),
+        TokenKind::Float => buf.push_str("Token::Float(_) => TokenKind::Float,\n"),
+        TokenKind::True | TokenKind::False => {
+            buf.push_str("Token::Boolean(true) => TokenKind::True,\n");
+            buf.push_str("Token::Boolean(false) => TokenKind::False,\n");
+        },
+        TokenKind::BooleanLit => buf.push_str("Token::Boolean(_) => TokenKind::BooleanLit,\n"),
+        TokenKind::StringLit => buf.push_str("Token::StringLit(_) => TokenKind::StringLit,\n"),
+        TokenKind::Fixed(text) => {
+            w!(buf, "Token::{} => TokenKind::Fixed({:?}.to_string()),\n", row.variant, text);
+        },
+        TokenKind::Dollar => buf.push_str("Token::Dollar(_) => TokenKind::Dollar,\n"),
+        TokenKind::DoubleDollar => {
+            buf.push_str("Token::DoubleDollar(_) => TokenKind::DoubleDollar,\n")
+        },
+        TokenKind::Custom(name) => {
+            if row.has_payload {
+                w!(buf, "Token::{}(_) => TokenKind::Custom({:?}.to_string()),\n", name, name);
+            } else {
+                w!(buf, "Token::{} => TokenKind::Custom({:?}.to_string()),\n", name, name);
+            }
+        },
+        TokenKind::IntegerLit(cat) => {
+            w!(buf, "Token::{}(_) => TokenKind::IntegerLit({:?}.to_string()),\n", cat, cat);
+        },
+        TokenKind::RationalLit(cat) => {
+            w!(buf, "Token::{}(_) => TokenKind::RationalLit({:?}.to_string()),\n", cat, cat);
+        },
+        TokenKind::FixedPointLit(cat) => {
+            w!(buf, "Token::{}(_) => TokenKind::FixedPointLit({:?}.to_string()),\n", cat, cat);
+        },
+        TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("token_to_kind"),
+    });
     buf.push_str("}\n}\n");
 
     // token_text — recover string representation per token. For

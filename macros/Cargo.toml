@@ -55,4 +55,5 @@ postcard = { version = "1", features = ["alloc"] }
 [dev-dependencies]
 trybuild = "1.0"
 proptest = "1"
+rand = { workspace = true }
 mettail-elab = { path = "../mettail-elab" }

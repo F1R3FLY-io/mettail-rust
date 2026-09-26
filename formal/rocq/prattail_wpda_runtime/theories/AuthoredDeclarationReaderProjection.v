@@ -27,7 +27,10 @@
     substitution, not another election algorithm. Generic constructor rows are
     delegated unchanged; there is no new pattern enum or formatter policy.
 
-    Category role uses the existing producer law admits_variables = !is_data.
+    The historical category-role projection below uses the MACRO producer law
+    admits_variables = !is_data. It does not apply to DDL, where variable
+    authority is independent. SourceRoleVariableAuthority.v replaces that
+    inference with an explicit retained source-role observation for both paths.
     Checked final indices do not independently prove source provenance or
     semantic/native-value parity. Supplied rule order is a caller boundary;
     no heuristic derives original rules from labels or synthetic productions.

@@ -22,13 +22,13 @@ pub enum InfixProjectionError<E> {
     Allocation,
     InvalidParameterIndex(usize),
     InvalidSyntaxIndex(usize),
-    UnsupportedNonAssociativity,
 }
 
 /// Project exactly the original shallow observations, retaining every position.
 ///
-/// Nonassociativity has no representation in the original right-associative
-/// Boolean and is refused, not silently converted to left associativity.
+/// The lossless enum extends the original right-associative Boolean, retaining
+/// NonAssociative explicitly. `OwnedPrecedenceAdmission.v` states the legacy
+/// preservation and bounded postfix-support laws.
 /// Explicit prefix binding power is deliberately not an input to this worker.
 /// Only complete success publishes a shape. Logical prepayment does not claim
 /// physical allocator-failure recovery for arbitrary Display implementations.
@@ -43,12 +43,10 @@ where
     R: BinderRuleReader<'syntax>,
     <R as BinderSyntaxReader<'syntax>>::Name: std::fmt::Display,
 {
-    let is_right_assoc = match associativity {
-        Associativity::Left => false,
-        Associativity::Right => true,
-        Associativity::NonAssociative => {
-            return Err(InfixProjectionError::UnsupportedNonAssociativity);
-        },
+    let associativity = match associativity {
+        Associativity::Left => crate::binding_power::Associativity::Left,
+        Associativity::Right => crate::binding_power::Associativity::Right,
+        Associativity::NonAssociative => crate::binding_power::Associativity::NonAssociative,
     };
     admit(reader, rule).map_err(InfixProjectionError::Admission)?;
     let label = reader.label(rule).to_string();
@@ -109,7 +107,7 @@ where
     Ok(InfixRuleShape {
         label,
         category,
-        is_right_assoc,
+        associativity,
         shares_level_with_previous,
         term_context,
         syntax_pattern,

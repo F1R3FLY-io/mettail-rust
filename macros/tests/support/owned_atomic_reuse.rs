@@ -227,14 +227,14 @@ mod owned_atomic_reuse {
                 wrapper_variant: "Keyword".into(),
             }
         );
-        let unsupported = derive_authored_atomic(
+        let nonassociative = derive_authored_atomic(
             &reader,
             root,
             Associativity::NonAssociative,
             false,
             |_, _| Ok::<_, Infallible>(()),
-            |_| -> Option<()> { panic!("unsupported flags precede literal callback") },
+            |_| -> Option<()> { panic!("terminal must not invoke literal callback") },
         );
-        assert_eq!(unsupported, Err(InfixProjectionError::UnsupportedNonAssociativity));
+        assert_eq!(nonassociative, Ok(accepted));
     }
 }

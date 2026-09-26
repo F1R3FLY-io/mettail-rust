@@ -329,6 +329,7 @@ fn capture_language_with_elements<'syntax>(
         .zip(elements)
         .map(|(category, element)| AuthoredCategoryDeclaration {
             name: name_id(&category.name),
+            data_observation: SourceObservation::Known(category.is_data()),
             native: category
                 .native_type
                 .as_ref()

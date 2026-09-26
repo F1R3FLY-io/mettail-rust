@@ -206,6 +206,7 @@ fn fixture(adapter: Adapter) -> Result<(Adapter, Vec<Vec<Payload>>), SynthesisEr
         TypeInput {
             name: "A".into(),
             is_data: false,
+            admits_variables: true,
             has_native: true,
             has_collection: false,
             source: &declarations[0],
@@ -213,6 +214,7 @@ fn fixture(adapter: Adapter) -> Result<(Adapter, Vec<Vec<Payload>>), SynthesisEr
         TypeInput {
             name: "B".into(),
             is_data: false,
+            admits_variables: true,
             has_native: false,
             has_collection: true,
             source: &declarations[1],
@@ -220,6 +222,7 @@ fn fixture(adapter: Adapter) -> Result<(Adapter, Vec<Vec<Payload>>), SynthesisEr
         TypeInput {
             name: "Missing".into(),
             is_data: false,
+            admits_variables: true,
             has_native: false,
             has_collection: false,
             source: &declarations[2],
@@ -227,6 +230,7 @@ fn fixture(adapter: Adapter) -> Result<(Adapter, Vec<Vec<Payload>>), SynthesisEr
         TypeInput {
             name: "Data".into(),
             is_data: true,
+            admits_variables: false,
             has_native: false,
             has_collection: false,
             source: &declarations[3],
@@ -360,6 +364,7 @@ fn fallible_synthesis_unused_literal_probe_can_fail_before_no_native_skip() {
     let types = [TypeInput {
         name: "A".into(),
         is_data: false,
+        admits_variables: true,
         has_native: false,
         has_collection: false,
         source: &declaration,

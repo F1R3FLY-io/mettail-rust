@@ -23,8 +23,8 @@ use super::binder::rule::BinderRuleReader;
 use super::binder::traversal::{TraversalBuildError, TraversalMarkerTable};
 use super::binder::{try_build_prefix_bp_map_with, BinderShape};
 use super::collection::assembly::{
-    try_build_collection_specs, CollectionAssemblyContext, CollectionAssemblyError,
-    GeneratedCollectionSpecArm,
+    try_build_collection_specs, try_collect_structural_delimiters, CollectionAssemblyContext,
+    CollectionAssemblyError, GeneratedCollectionSpecArm,
 };
 use super::collection::CollectionShape;
 use super::factoring::emission::{
@@ -33,13 +33,14 @@ use super::factoring::emission::{
 use super::factoring::{self, CategoryFactoring, PrefixAtomicObservation};
 use super::mixfix::{self, MixfixFactoring};
 use super::parikh::{try_build_parikh_descriptors, ParikhDescriptors};
+use super::prefix::{try_first_set_of_category, try_source_ident_first_is_var_only, FirstToken};
 use super::prefix_bucket::{PrefixBuckets, TryPrefixBucketContext};
-use super::prefix_pattern::{NeutralPattern, NeutralPatternKey};
+use super::prefix_pattern::{NeutralPattern, NeutralPatternKey, PrefixPatternObservation};
 use crate::binding_power::{BindingPowerTable, InfixRuleInfo};
 use mettail_ast::grammar_shapes::classify_unary_prefix_shape_in;
 use mettail_ast::types::CollectionType;
 use mettail_grammar_core::GrammarCoreV1;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::Infallible;
 
 /// The original emitter's explicit switches and encoded constant domain.
@@ -61,10 +62,17 @@ pub struct OwnedWpdaDescriptors<P> {
     pub binding_powers: BindingPowerTable,
     pub label_index: HashMap<(String, String), (u16, u16)>,
     pub prefix_binding_powers: HashMap<(u16, u16), u8>,
+    pub leading_binding_powers: HashMap<(u16, u16), crate::binding_power::OperandBindingPowers>,
     pub prefixes: Vec<PrefixBuckets<NeutralPattern, NeutralPatternKey>>,
     pub grouping_sources: Vec<Vec<u16>>,
     pub traversal_markers: TraversalMarkerTable,
     pub collections: Vec<GeneratedCollectionSpecArm>,
+    pub first_sets: Vec<Vec<FirstToken<NeutralPattern>>>,
+    pub structural_delimiters: (BTreeSet<String>, BTreeSet<String>),
+    pub transparent_projections: Vec<(u16, u16, u16)>,
+    pub category_reachability: Vec<(u16, u16)>,
+    pub projection_ident_var_only_sources: Vec<u16>,
+    pub single_hop_coercions: BTreeMap<(u16, u16), Vec<(u16, u16)>>,
     pub prefix_partition: Vec<CategoryFactoring>,
     pub mixfix_partition: Vec<MixfixFactoring>,
     pub factoring_emission: FactoringEmissionDescriptors,
@@ -80,6 +88,7 @@ pub enum AuthoredDescriptorsError<E> {
     Cast(E),
     Factoring(FactoringEmissionError),
     EmissionRefusals(Vec<String>),
+    UnresolvedCoercions(Vec<(String, String)>),
     PositionIndexOverflow {
         category: usize,
         rule: usize,
@@ -174,6 +183,26 @@ pub fn derive_authored_descriptors<P, E>(
             },
             |rule| Ok((reader.category(*rule).to_string(), context.explicit_prefix_bp(*rule)?)),
         )?;
+        let mut leading_binding_powers = HashMap::new();
+        for (category, rows) in synthesis.per_category.iter().enumerate() {
+            for (rule, payload) in rows.iter().enumerate() {
+                let Some(powers) = context.explicit_operands(*payload)? else { continue; };
+                if context.infix_normalized(*payload)?.is_some() { continue; }
+                let Some(shape) = context.binder_shape(*payload)? else { continue; };
+                if shape.leading_category.is_none() { continue; }
+                let super::authored_synthesis::AuthoredRuleOrigin::User { production_index, .. } = payload.origin else {
+                    return Err(Error::Prefix(AuthoredPrefixError::UnsupportedExplicitBinding("synthetic category-leading rule")));
+                };
+                let name = &categories[category];
+                let exact_rhs = matches!(shape.positions.as_slice(),
+                    [super::binder::BinderPosition::ParamParse { cat, collection: None }] if cat == name);
+                if !core.productions[production_index].is_binary_juxtaposition()
+                    || shape.leading_category.as_ref() != Some(name) || !exact_rhs {
+                    return Err(Error::Prefix(AuthoredPrefixError::UnsupportedExplicitBinding("category-leading shape is not homogeneous binary juxtaposition")));
+                }
+                leading_binding_powers.insert((category as u16, rule as u16), powers);
+            }
+        }
         let mut prefixes = Vec::with_capacity(categories.len());
         let mut grouping_sources = Vec::with_capacity(categories.len());
         for (category, _) in categories.iter().enumerate() {
@@ -209,6 +238,85 @@ pub fn derive_authored_descriptors<P, E>(
             .map_err(Error::Traversal)?;
         let collections = try_build_collection_specs(&categories, &synthesis.per_category, context)
             .map_err(Error::Collection)?;
+        // These are the original collection-prefix predicate and delimiter
+        // collector workers, not approximations from dispatch buckets.
+        let mut first_sets = Vec::with_capacity(categories.len());
+        for category in &categories {
+            first_sets.push(try_first_set_of_category(category, reader, context)?);
+        }
+        let structural_delimiters =
+            try_collect_structural_delimiters(&synthesis.per_category, context)
+                .map_err(Error::Collection)?;
+        let transparent_projections = super::rule_observation::transparent_projection_rules(
+            reader,
+            &synthesis.per_category,
+            &categories,
+        );
+        let indexed: Vec<Vec<_>> = synthesis
+            .per_category
+            .iter()
+            .map(|rules| {
+                rules
+                    .iter()
+                    .enumerate()
+                    .map(|(index, rule)| (index as u16, *rule))
+                    .collect()
+            })
+            .collect();
+        let (coercions, refusals) =
+            super::rule_observation::single_hop_coercions(reader, &indexed, |source, rule| {
+                categories
+                    .iter()
+                    .position(|category| category == source)
+                    .map(|index| index as u16)
+                    .ok_or_else(|| (source.to_owned(), reader.label(rule).to_string()))
+            });
+        if !refusals.is_empty() {
+            return Err(Error::UnresolvedCoercions(refusals));
+        }
+        let single_hop_coercions = coercions
+            .into_iter()
+            .map(|((from, to), rules)| {
+                ((from, to), rules.into_iter().map(|rule| (to, rule)).collect())
+            })
+            .collect();
+        let idx_of = |name: &str| {
+            categories
+                .iter()
+                .position(|category| category == name)
+                .map(|i| i as u16)
+        };
+        let mut direct = BTreeSet::new();
+        for rule in context.originals {
+            if let Some(info) = context.infix_original(*rule)? {
+                if info.is_cross_category && info.category != info.result_category {
+                    if let (Some(from), Some(to)) =
+                        (idx_of(&info.category), idx_of(&info.result_category))
+                    {
+                        if from != to {
+                            direct.insert((from, to));
+                        }
+                    }
+                }
+            }
+        }
+        for &(from_cat, to_cat, _) in &transparent_projections {
+            if from_cat != to_cat {
+                direct.insert((from_cat, to_cat));
+            }
+        }
+        let category_reachability =
+            super::rule_observation::non_reflexive_category_reachability(direct);
+        let mut projection_ident_var_only_sources = Vec::new();
+        for (idx, cat) in categories.iter().enumerate() {
+            let fs = try_first_set_of_category(cat, reader, context)?;
+            let has_ident = fs
+                .iter()
+                .any(|ft| ft.pattern.mentions_ident() && ft.extra_guard.is_none());
+            if has_ident && try_source_ident_first_is_var_only(cat, reader, context)? {
+                projection_ident_var_only_sources.push(idx as u16);
+            }
+        }
         let discover = |category, rules: &[_]| {
             factoring::try_discover_prefix_members_with(
                 &categories,
@@ -302,10 +410,17 @@ pub fn derive_authored_descriptors<P, E>(
             binding_powers,
             label_index,
             prefix_binding_powers,
+            leading_binding_powers,
             prefixes,
             grouping_sources,
             traversal_markers,
             collections,
+            first_sets,
+            structural_delimiters,
+            transparent_projections,
+            category_reachability,
+            projection_ident_var_only_sources,
+            single_hop_coercions,
             prefix_partition,
             mixfix_partition,
             factoring_emission,
@@ -317,10 +432,17 @@ pub fn derive_authored_descriptors<P, E>(
         binding_powers,
         label_index,
         prefix_binding_powers,
+        leading_binding_powers,
         prefixes,
         grouping_sources,
         traversal_markers,
         collections,
+        first_sets,
+        structural_delimiters,
+        transparent_projections,
+        category_reachability,
+        projection_ident_var_only_sources,
+        single_hop_coercions,
         prefix_partition,
         mixfix_partition,
         factoring_emission,
@@ -333,10 +455,17 @@ pub fn derive_authored_descriptors<P, E>(
         binding_powers,
         label_index,
         prefix_binding_powers,
+        leading_binding_powers,
         prefixes,
         grouping_sources,
         traversal_markers,
         collections,
+        first_sets,
+        structural_delimiters,
+        transparent_projections,
+        category_reachability,
+        projection_ident_var_only_sources,
+        single_hop_coercions,
         prefix_partition,
         mixfix_partition,
         factoring_emission,

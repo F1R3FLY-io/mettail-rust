@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod authored_capture;
 #[cfg(test)]
 mod authored_declarations_tests;
+mod token_observations;
 
 const TOP_LEVEL_KEYS: &[&str] = &[
     "mettail",
@@ -75,6 +76,8 @@ struct TypeDecl {
     // Only scalar classification is lost by Carrier. Collection keys and
     // canonical extern opacity are observed from the renamed carrier later.
     scalar_native: Option<core::NativeType>,
+    // Exact decoded source spelling for the original lexer-needs/payload reader.
+    native_type_spelling: Option<String>,
     collection: Option<CollectionDecl>,
     refinement: Option<RefinementDecl>,
     admits_variables: bool,
@@ -2348,6 +2351,7 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
             carrier: core::Carrier::Dynamic,
             native: None,
             scalar_native: None,
+            native_type_spelling: None,
             collection: None,
             refinement: None,
             admits_variables: true,
@@ -2386,6 +2390,10 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
         }),
         _ => None,
     };
+    let native_type_spelling = match values.get("carrier") {
+        Some(RhoValue::String(symbol)) => Some(symbol.clone()),
+        _ => None,
+    };
     let collection = values
         .get("collection")
         .map(|value| decode_collection(value, &format!("{path}.collection")))
@@ -2407,6 +2415,7 @@ fn decode_type(value: &RhoValue, path: &str) -> Result<TypeDecl, ValueDecodeErro
         carrier,
         native,
         scalar_native,
+        native_type_spelling,
         collection,
         refinement,
         admits_variables,
@@ -4586,6 +4595,8 @@ impl LanguageSchema {
         })?;
         let mut bindings = core::AuthoredDeclarationBindingsBuilder::try_new(header)
             .map_err(authored_binding_error)?;
+        let token_observations =
+            token_observations::prepare(self, &authored.store, &authored.roots)?;
         let mut output = core::GrammarCoreV1::new(&self.name);
         output.provenance.frontend = format!("rholang-{}", self.notation);
         output.backend_context = self.context.clone();
@@ -4715,6 +4726,12 @@ impl LanguageSchema {
         }
 
         let identifier_id = core::TokenId(0);
+        if let Some(observations) = &token_observations {
+            observations
+                .producer
+                .record(&mut output, identifier_id, &mettail_prattail::automata::TokenKind::Ident)
+                .map_err(|message| ValueDecodeError::new("$", message))?;
+        }
         output.tokens.push(core::TokenDefinition {
             id: identifier_id,
             name: "Identifier".into(),
@@ -4752,6 +4769,16 @@ impl LanguageSchema {
                 "$.literals",
             )?;
             bind_authored_token(&mut bindings, self.tokens.len() + index, id)?;
+            if let Some(observations) = &token_observations {
+                observations
+                    .producer
+                    .record_source_variant(
+                        &mut output,
+                        id,
+                        &observations.source_variants[self.tokens.len() + index],
+                    )
+                    .map_err(|message| ValueDecodeError::new("$.literals", message))?;
+            }
         }
         for (index, token) in self.tokens.iter().enumerate() {
             let id = add_token(
@@ -4764,6 +4791,12 @@ impl LanguageSchema {
                 &format!("$.tokens[{index}]"),
             )?;
             bind_authored_token(&mut bindings, index, id)?;
+            if let Some(observations) = &token_observations {
+                observations
+                    .producer
+                    .record_source_variant(&mut output, id, &observations.source_variants[index])
+                    .map_err(|message| ValueDecodeError::new("$.tokens", message))?;
+            }
         }
         let mut mode_source_index = self.tokens.len() + self.literals.len();
         for (mode_index, mode) in self.modes.iter().enumerate() {
@@ -4778,16 +4811,46 @@ impl LanguageSchema {
                     &format!("$.modes[{mode_index}].tokens[{token_index}]"),
                 )?;
                 bind_authored_token(&mut bindings, mode_source_index, id)?;
+                if let Some(observations) = &token_observations {
+                    observations
+                        .producer
+                        .record_source_variant(
+                            &mut output,
+                            id,
+                            &observations.source_variants[mode_source_index],
+                        )
+                        .map_err(|message| ValueDecodeError::new("$.modes", message))?;
+                }
                 mode_source_index += 1;
             }
         }
         let mut literal_ids = BTreeMap::new();
-        let mut literal_text = BTreeSet::new();
-        for term in &self.terms {
-            collect_term_literals(&term.body, &mut literal_text);
-        }
+        let mut literal_text = if let Some(observations) = &token_observations {
+            observations.terminals.clone()
+        } else {
+            let mut terminals = BTreeSet::new();
+            for term in &self.terms {
+                collect_term_literals(&term.body, &mut terminals);
+            }
+            terminals
+        };
+        literal_text.extend(
+            mettail_prattail::lexer::IMPLICIT_STRUCTURAL_TERMINALS
+                .iter()
+                .map(|text| (*text).to_owned()),
+        );
         for terminal in literal_text {
             let id = core::TokenId(output.tokens.len() as u32);
+            if let Some(observations) = &token_observations {
+                observations
+                    .producer
+                    .record(
+                        &mut output,
+                        id,
+                        &mettail_prattail::automata::TokenKind::Fixed(terminal.clone()),
+                    )
+                    .map_err(|message| ValueDecodeError::new("$.terms", message))?;
+            }
             literal_ids.insert(terminal.clone(), id);
             output.tokens.push(core::TokenDefinition {
                 id,
@@ -5948,6 +6011,57 @@ mod tests {
         };
         values.insert("mettail".into(), s("language/3"));
         value
+    }
+
+    #[test]
+    fn implicit_terminal_roster_matches_original_lexer_without_widening_metadata() {
+        for collection_source in [false, true] {
+            let mut types = vec![s("Expr")];
+            if collection_source {
+                types.push(m([
+                    ("name", s("Exprs")),
+                    ("carrier", l([s("vec"), s("Expr")])),
+                    ("collection", m([("kind", s("list"))])),
+                ]));
+            }
+            let grammar = value_to_core(&language(
+                "ImplicitTerminals",
+                [("types", l(types)), ("terms", l([term("Atom", "Expr", "A")]))],
+            ))
+            .expect("existing schema lowering");
+            let authored = ["A".to_owned()];
+            let original =
+                mettail_prattail::lexer::extract_terminals_from_source(&authored, &[], false, &[]);
+            let literals: Vec<_> = grammar
+                .tokens
+                .iter()
+                .filter_map(|token| {
+                    let core::TokenPattern::Literal(text) = &token.pattern else {
+                        return None;
+                    };
+                    if let Some(observations) = &grammar.wpda_token_observations {
+                        assert_eq!(
+                            observations[token.id.0 as usize],
+                            Some(core::WpdaTokenObservation::Fixed(text.clone()))
+                        );
+                    }
+                    Some(text.clone())
+                })
+                .collect();
+            assert_eq!(
+                literals,
+                original
+                    .terminals
+                    .iter()
+                    .map(|terminal| terminal.text.clone())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                grammar.wpda_token_observations.is_none(),
+                collection_source,
+                "universal terminals do not publish unsupported collection metadata"
+            );
+        }
     }
 
     #[test]

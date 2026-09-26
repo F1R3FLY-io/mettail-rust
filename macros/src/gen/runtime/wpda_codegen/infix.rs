@@ -16,7 +16,7 @@ use crate::gen::native::NativeTypeFromSynType;
 use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
 use mettail_prattail::binding_power::{
-    analyze_binding_powers, BindingPowerTable, InfixOperator, InfixRuleInfo,
+    analyze_binding_powers, BindingPowerTable, InfixRuleInfo,
 };
 use mettail_prattail::wpda_rule_analysis::{InfixRuleShape, IDENT_CAPTURE_KIND_NAME};
 use proc_macro2::TokenStream;
@@ -123,17 +123,19 @@ pub(crate) fn emit_bp_tables(
     // The synth_atom_symbol primitive needs each operand category's literal
     // rule to build atom leaves. `generate_literal_label(native_type)` names
     // the synthetic rule; resolve its local rule_idx via the label index.
-    let cat_lit_rule_idx: std::collections::HashMap<String, u16> = language
-        .types
-        .iter()
-        .filter_map(|td| {
-            let cat_name = td.name.to_string();
-            let nt = td.native_type.as_ref()?;
-            let lit_label = crate::gen::generate_literal_label(nt).to_string();
-            let (_, ri) = label_to_indices.get(&(cat_name.clone(), lit_label))?;
-            Some((cat_name, *ri))
-        })
-        .collect();
+    let cat_lit_rule_idx =
+        mettail_prattail::wpda_rule_analysis::iter_absorption::try_literal_rule_indices(
+            &language.types,
+            &label_to_indices,
+            |td| td.name.to_string(),
+            |td| td.native_type.as_ref(),
+            |nt| {
+                Ok::<_, std::convert::Infallible>(
+                    crate::gen::generate_literal_label(nt).to_string(),
+                )
+            },
+        )
+        .expect("original static native observations are total");
     // C1 D1: per-category value-home rank source — `true` if the category
     // parses its literal operand via a tier-0.0 polymorphic home prefix arm
     // (integer kinds incl. `CanonicalBigInt`), else `false`. This is the
@@ -316,11 +318,12 @@ fn emit_iter_eligible_fn(
     cat_is_value_home: &std::collections::HashMap<String, bool>,
 ) -> TokenStream {
     let _ = (categories, cat_is_value_home);
-    let cat_ops: Vec<&InfixOperator> = bp_table
-        .operators
-        .iter()
-        .filter(|op| op.category == category)
-        .collect();
+    let query = mettail_prattail::wpda_rule_analysis::iter_absorption::query(
+        bp_table,
+        category,
+        label_index,
+        cat_lit_rule_idx,
+    );
     // GEN-1 B-2 (Stage S0) §2.4 — codegen DISJOINTNESS ASSERT.
     //
     // The InfixLoop pre-fork absorption blocks (engine_impl.rs) read the
@@ -333,16 +336,10 @@ fn emit_iter_eligible_fn(
     // uniqueness (I1, below) to plain terminal uniqueness. A breach is a
     // grammar-level GEN-1 precondition violation ⇒ hard `compile_error!`.
     // Vacuous when no op in the category is iterative-eligible (e.g. rholang).
-    let disjointness_errors: Vec<TokenStream> = cat_ops
+    let disjointness_errors: Vec<TokenStream> = query
+        .disjointness
         .iter()
-        .enumerate()
-        .filter(|(_, op)| op.is_iterative_candidate())
-        .filter_map(|(i, op)| {
-            let clash = cat_ops
-                .iter()
-                .enumerate()
-                .find(|(j, other)| *j != i && other.terminal == op.terminal)
-                .map(|(_, other)| other)?;
+        .map(|(op, clash)| {
             let msg = format!(
                 "GEN-1 B-2 disjointness violation: iterative-eligible operator \
                  `{}` (terminal `{}`) in category `{}` shares its terminal with \
@@ -351,47 +348,24 @@ fn emit_iter_eligible_fn(
                  within its category.",
                 op.label, op.terminal, category, clash.label,
             );
-            Some(quote! { compile_error!(#msg); })
+            quote! { compile_error!(#msg); }
         })
         .collect();
-    let arms: Vec<TokenStream> = cat_ops
+    let arms: Vec<TokenStream> = query
+        .arms
         .iter()
-        .filter(|op| op.is_iterative_candidate())
-        .filter_map(|op| {
-            // I1 (within-category): no other operator in this category shares
-            // the same (terminal, left_bp) pair, so the singleton InfixLoop
-            // dispatch is unambiguous.
-            let conflict = cat_ops.iter().any(|other| {
-                !std::ptr::eq(*other as *const _, *op as *const _)
-                    && other.terminal == op.terminal
-                    && other.left_bp == op.left_bp
-            });
-            if conflict {
-                return None;
-            }
-            let (rs, ri) = *label_index.get(&(op.result_category.clone(), op.label.clone()))?;
+        .map(|op| {
+            let rs = op.op_cat_src_idx;
+            let ri = op.op_rule_idx;
             let l = op.left_bp;
             let r = op.right_bp;
-            let assoc_right = op.left_bp > op.right_bp;
+            let assoc_right = op.assoc_right;
             let is_mixfix = op.is_mixfix;
-            // For an iter-candidate (`!is_cross_category`) the operand
-            // category equals the result category, so atom_cat_src_idx == rs.
-            let atom_cat_src_idx = rs;
-            let atom_lit_rule_idx = *cat_lit_rule_idx.get(&op.result_category)?;
-            // Mixfix trigger + inner separator terminals (empty for binary).
-            let (trigger, sep): (String, String) = if op.is_mixfix {
-                let sep = op
-                    .mixfix_parts
-                    .first()
-                    .and_then(|p| p.following_terminals.first().cloned())
-                    .unwrap_or_default();
-                (op.terminal.clone(), sep)
-            } else {
-                (String::new(), String::new())
-            };
-            let trigger_lit = proc_macro2::Literal::string(&trigger);
-            let sep_lit = proc_macro2::Literal::string(&sep);
-            Some(quote! {
+            let atom_cat_src_idx = op.atom_cat_src_idx;
+            let atom_lit_rule_idx = op.atom_lit_rule_idx;
+            let trigger_lit = proc_macro2::Literal::string(op.trigger);
+            let sep_lit = proc_macro2::Literal::string(op.sep);
+            quote! {
                 (#rs, #ri) => Some(mettail_prattail::binding_power::IterAbsorbSpec {
                     left_bp: #l,
                     right_bp: #r,
@@ -404,7 +378,7 @@ fn emit_iter_eligible_fn(
                     trigger: #trigger_lit,
                     sep: #sep_lit,
                 }),
-            })
+            }
         })
         .collect();
     quote! {

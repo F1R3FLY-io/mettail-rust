@@ -49,6 +49,9 @@ fn original_analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable
             let (left_bp, right_bp) = match rule.associativity {
                 Associativity::Left => (precedence, precedence + 1),
                 Associativity::Right => (precedence + 1, precedence),
+                Associativity::NonAssociative => {
+                    panic!("verbatim legacy oracle has no nonassociative input")
+                },
             };
 
             table.operators.push(InfixOperator {
@@ -329,6 +332,94 @@ fn admission_six_addition_sites_preserve_exact_sum_or_report_site() {
             Err(BindingPowerError::Overflow { category_index: 7, site })
         );
     }
+}
+
+#[test]
+fn admission_closed_nonassociative_repeat_reuses_complete_original_routing() {
+    use crate::wpda_rule_analysis::{
+        classify_rule, InfixParamShape, InfixRuleShape, InfixSyntaxShape, InfixTypeShape,
+    };
+    let mut shape = InfixRuleShape {
+        label: "PRepeat".into(),
+        category: "Pattern".into(),
+        associativity: Associativity::Left,
+        shares_level_with_previous: false,
+        term_context: Some(
+            [("p", "Pattern"), ("lo", "Nat"), ("hi", "Nat")]
+                .into_iter()
+                .map(|(name, category)| InfixParamShape::Simple {
+                    name: name.into(),
+                    ty: InfixTypeShape::Base(category.into()),
+                })
+                .collect(),
+        ),
+        syntax_pattern: Some(vec![
+            InfixSyntaxShape::Param("p".into()),
+            InfixSyntaxShape::Literal("{".into()),
+            InfixSyntaxShape::Param("lo".into()),
+            InfixSyntaxShape::Literal(",".into()),
+            InfixSyntaxShape::Param("hi".into()),
+            InfixSyntaxShape::Literal("}".into()),
+        ]),
+    };
+    let legacy = classify_rule(&shape).expect("original closed postfix-mixfix shape");
+    shape.associativity = Associativity::NonAssociative;
+    let retained = classify_rule(&shape).expect("same shape with retained source association");
+    assert!(retained.is_mixfix && !retained.is_postfix);
+    assert_eq!(retained.associativity, Associativity::NonAssociative);
+    assert_eq!(retained.mixfix_parts.len(), 2);
+    for (part, name, following) in retained
+        .mixfix_parts
+        .iter()
+        .zip(["lo", "hi"])
+        .zip([",", "}"])
+        .map(|((part, name), following)| (part, name, following))
+    {
+        assert_eq!(part.operand_category, "Nat");
+        assert_eq!(part.param_name, name);
+        assert_eq!(part.following_terminals, [following]);
+    }
+    let actual = checked(std::slice::from_ref(&retained)).expect("closed edge routing");
+    let original = original_analyze_binding_powers(&[legacy]);
+    assert_eq!(format!("{actual:?}"), format!("{original:?}"));
+    assert_eq!(retained.associativity, Associativity::NonAssociative);
+    assert_eq!(shape.associativity, Associativity::NonAssociative);
+
+    // A preceding comma is not evidence that the FINAL operand is closed.
+    let mut open = retained.clone();
+    open.mixfix_parts
+        .last_mut()
+        .expect("hi part")
+        .following_terminals
+        .clear();
+    assert!(matches!(
+        checked(&[open]),
+        Err(BindingPowerError::NonAssociativeNonPostfix { category_index: 0 })
+    ));
+    let mut binary = retained;
+    binary.is_mixfix = false;
+    assert!(matches!(
+        checked(&[binary]),
+        Err(BindingPowerError::NonAssociativeNonPostfix { category_index: 0 })
+    ));
+}
+
+#[test]
+fn admission_nonassociative_nullary_requires_original_trailing_literals() {
+    let mut retained = rule(0, "Expr", false, false);
+    retained.associativity = Associativity::NonAssociative;
+    retained.mixfix_parts.clear();
+    let mut legacy = retained.clone();
+    legacy.associativity = Associativity::Left;
+    assert_eq!(
+        format!("{:?}", checked(std::slice::from_ref(&retained)).expect("nullary closer")),
+        format!("{:?}", original_analyze_binding_powers(&[legacy])),
+    );
+    retained.nullary_literals.clear();
+    assert!(matches!(
+        checked(&[retained]),
+        Err(BindingPowerError::NonAssociativeNonPostfix { category_index: 0 })
+    ));
 }
 
 #[test]

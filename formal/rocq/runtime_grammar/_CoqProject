@@ -66,6 +66,7 @@ theories/CanonicalSemanticTermImage.v
 theories/CanonicalSemanticArena.v
 theories/KbestCollisionSafeDedup.v
 theories/KbestCompositionalSemanticKey.v
+theories/OwnedSemanticVisitor.v
 theories/ExactCollectionSemanticKey.v
 theories/TerminalVariantIdentity.v
 theories/StructuralProjectionImage.v
@@ -125,3 +126,6 @@ theories/RegexGsltApplication.v
 theories/RegexGsltApplicationMachine.v
 theories/WherePredicateCommit.v
 theories/ParserBackendSelection.v
+theories/OwnedPrecedenceAdmission.v
+theories/OwnedExplicitPrattLevels.v
+theories/OwnedGroupingBoundary.v

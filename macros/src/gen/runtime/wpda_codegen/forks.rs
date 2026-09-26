@@ -636,6 +636,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(
             #primary_src_idx, pos, cur_bp, frontier_top, tokens, frame_ctx,
             |result_src_idx, rule_idx, slot_idx| self.collection_spec(result_src_idx, rule_idx, slot_idx),
             lex_alt_rules_for_prefix,
+            |_, _, _| Some(0u8),
             prefix_crosscat_lhs_trigger_ahead_scoped,
             || { #kwambig_observation },
             |__ccl_trigger_scoped, primary_src, source_src_idx, primary_kind, __pos_has_ident_reading| {

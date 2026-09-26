@@ -213,6 +213,7 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                         text_handle,
                         pos,
                         pushed_via_push_ident: _,
+                        ..
                     }) => {
                         let text = sppf.text(*text_handle);
                         vec![resolver.resolve_terminal(token_kind, text, *pos)]

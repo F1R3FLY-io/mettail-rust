@@ -25,6 +25,7 @@ pub(crate) const PATHMAP_LABEL: &str = "^dynamic-pathmap";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DynamicReflectionError {
+    NativeVariablePublication,
     UnknownConstructor(u32),
     ConflictingConstructorLabel {
         constructor: u32,
@@ -46,6 +47,9 @@ pub enum DynamicReflectionError {
 impl std::fmt::Display for DynamicReflectionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NativeVariablePublication => {
+                formatter.write_str("native variable has no portable identity projection")
+            },
             Self::UnknownConstructor(id) => {
                 write!(formatter, "recognition witness names unknown constructor {id}")
             },
@@ -120,6 +124,9 @@ pub fn dynamic_template_hole_categories(
             },
             DynamicValue::Sequence(values) => pending.extend(values.iter()),
             DynamicValue::Collection { entries, .. } => pending.extend(entries.iter()),
+            DynamicValue::NativeVariable { .. } => {
+                return Err(DynamicReflectionError::NativeVariablePublication)
+            },
             DynamicValue::Text(_)
             | DynamicValue::Integer(_)
             | DynamicValue::Boolean(_)
@@ -176,6 +183,9 @@ pub fn dynamic_syntax_to_ground_term(
     while let Some(task) = tasks.pop() {
         match task {
             Task::Visit(value) => match value {
+                DynamicValue::NativeVariable { .. } => {
+                    return Err(DynamicReflectionError::NativeVariablePublication)
+                },
                 DynamicValue::Term(term) => {
                     tasks.push(Task::AssembleTerm {
                         constructor: term.constructor.0,
@@ -322,6 +332,22 @@ mod tests {
     use mettail_grammar_core::{
         CategoryId, ConstructorId, DynamicTerm, Production, ProductionId, SourceSpan,
     };
+
+    #[test]
+    fn native_variables_are_not_reflected_as_holes_or_scalar_bytes() {
+        let value = DynamicValue::Sequence(vec![DynamicValue::NativeVariable {
+            category: CategoryId(0),
+            variable: mettail_grammar_core::native_variable::get_or_create_var("native-not-hole"),
+        }]);
+        assert_eq!(
+            dynamic_template_hole_categories(&value, 0),
+            Err(DynamicReflectionError::NativeVariablePublication)
+        );
+        assert_eq!(
+            dynamic_syntax_to_ground_term(&value, &GrammarCoreV1::new("Native"), &BTreeMap::new()),
+            Err(DynamicReflectionError::NativeVariablePublication),
+        );
+    }
 
     #[test]
     fn deep_dynamic_syntax_reflects_on_a_small_native_stack() {

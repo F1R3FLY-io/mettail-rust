@@ -1,12 +1,12 @@
 use crate::automata::minimize::minimize_dfa;
 use crate::automata::partition::compute_equivalence_classes;
-use crate::automata::regex::compile_regex;
+use crate::automata::regex::compile_regex_unicode;
 use crate::automata::semiring::TropicalWeight;
 use crate::automata::subset::subset_construction;
 use crate::automata::{CharClass, Nfa, NfaState, TokenKind, DEAD_STATE};
 use mettail_grammar_core as core;
 
-pub const RUNTIME_COMPILER_ABI: &str = "mettail-rtn/4";
+pub const RUNTIME_COMPILER_ABI: &str = "mettail-rtn/5";
 pub const RUNTIME_UNICODE_ABI: &str = "unicode-regex-syntax-0.8";
 
 #[derive(Debug)]
@@ -117,26 +117,28 @@ fn compile_lexer(grammar: &core::GrammarCoreV1) -> Result<core::LexerImage, Runt
                     current
                 },
                 core::TokenPattern::Regex(pattern) => {
-                    let fragment = compile_regex(pattern, &mut nfa, kind).map_err(|error| {
-                        RuntimeCompileError::Regex {
-                            token: token.name.clone(),
-                            position: error.position,
-                            message: error.message,
-                        }
-                    })?;
+                    let fragment =
+                        compile_regex_unicode(pattern, &mut nfa, kind).map_err(|error| {
+                            RuntimeCompileError::Regex {
+                                token: token.name.clone(),
+                                position: error.position,
+                                message: error.message,
+                            }
+                        })?;
                     nfa.add_epsilon(start, fragment.start);
                     fragment.accept
                 },
                 core::TokenPattern::Builtin(builtin) => {
                     let pattern = core::builtin_token_pattern(*builtin)
                         .expect("end-of-input was handled before regex compilation");
-                    let fragment = compile_regex(pattern, &mut nfa, kind).map_err(|error| {
-                        RuntimeCompileError::Regex {
-                            token: token.name.clone(),
-                            position: error.position,
-                            message: error.message,
-                        }
-                    })?;
+                    let fragment =
+                        compile_regex_unicode(pattern, &mut nfa, kind).map_err(|error| {
+                            RuntimeCompileError::Regex {
+                                token: token.name.clone(),
+                                position: error.position,
+                                message: error.message,
+                            }
+                        })?;
                     nfa.add_epsilon(start, fragment.start);
                     fragment.accept
                 },
@@ -232,6 +234,7 @@ mod tests {
     use super::*;
 
     mod postfix;
+    mod regex_profile;
 
     fn category(id: u32, name: &str, primary: bool) -> core::Category {
         core::Category {

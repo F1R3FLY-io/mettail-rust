@@ -19,6 +19,7 @@ pub mod atomic;
 pub mod atomic_prefix;
 pub mod atomic_projection;
 pub mod authored;
+pub mod authored_action;
 pub mod authored_atomic;
 pub mod authored_binder;
 pub mod authored_cast;
@@ -29,8 +30,8 @@ pub mod authored_normalization;
 pub mod authored_prefix;
 pub mod authored_synthesis;
 pub mod binder;
-pub mod census;
 pub mod cast_participation;
+pub mod census;
 pub mod collection;
 pub mod collection_projection;
 pub mod factoring;
@@ -38,6 +39,7 @@ pub mod fork_emission;
 pub mod grouping;
 pub mod guest;
 pub mod infix_projection;
+pub mod iter_absorption;
 pub mod mixfix;
 pub mod native_first;
 pub mod native_literal;
@@ -45,6 +47,7 @@ pub mod parikh;
 pub mod prefix;
 pub mod prefix_bucket;
 pub mod prefix_pattern;
+pub mod rule_observation;
 pub mod synthetic;
 
 #[cfg(test)]
@@ -57,8 +60,8 @@ pub struct InfixRuleShape {
     pub label: String,
     /// Result category, unchanged.
     pub category: String,
-    /// Declared right associativity.
-    pub is_right_assoc: bool,
+    /// Declared associativity, retaining nonassociativity without Boolean loss.
+    pub associativity: Associativity,
     /// Declared sharing of the previous precedence level.
     pub shares_level_with_previous: bool,
     /// Parameters in declaration order, including unsupported markers.
@@ -168,11 +171,7 @@ fn classify_judgement(
                         terminal: op.clone(),
                         category: t1_str,
                         result_category: result_cat,
-                        associativity: if rule.is_right_assoc {
-                            Associativity::Right
-                        } else {
-                            Associativity::Left
-                        },
+                        associativity: rule.associativity,
                         shares_level_with_previous: rule.shares_level_with_previous,
                         is_cross_category,
                         is_postfix: false,
@@ -200,12 +199,10 @@ fn classify_judgement(
                     terminal: op.clone(),
                     category: t1_str,
                     result_category: result_cat,
-                    // A postfix operator has no right operand, so it has no
-                    // associativity to declare; `analyze_binding_powers` lays every
-                    // postfix operator out in a separate pass ABOVE the whole infix
-                    // range, where neither this field nor `shares_level_with_previous`
-                    // is read.
-                    associativity: Associativity::Left,
+                    // Keep the original Left descriptor for legacy Left/Right.
+                    // NonAssociative is retained for semantic admission; the
+                    // original separate postfix BP pass does not read it.
+                    associativity: closed_edge_associativity(rule.associativity),
                     shares_level_with_previous: false,
                     is_cross_category,
                     is_postfix: true,
@@ -422,7 +419,7 @@ fn classify_postfix_mixfix(
             // A NULLARY mixfix (`n "!" "(" ")"`) has no operand after the trigger, so it
             // has no right edge for a chain to nest into and associativity is not
             // observable in its surface. See `classify_mixfix` for the shape where it is.
-            associativity: Associativity::Left,
+            associativity: closed_edge_associativity(rule.associativity),
             shares_level_with_previous: rule.shares_level_with_previous,
             is_cross_category,
             is_postfix: false,
@@ -446,7 +443,7 @@ fn classify_postfix_mixfix(
         // A postfix-mixfix (`n "!" "(" q ")"`) closes with a literal, so its final
         // operand is delimited and the rule has no open right edge — associativity is
         // not observable. `classify_mixfix` handles the shape where it is.
-        associativity: Associativity::Left,
+        associativity: closed_edge_associativity(rule.associativity),
         shares_level_with_previous: rule.shares_level_with_previous,
         is_cross_category,
         is_postfix: false,
@@ -571,10 +568,9 @@ fn classify_mixfix(
         terminal: trigger,
         category: lhs_cat,
         result_category: result_cat,
-        associativity: if rule.is_right_assoc && has_open_right_edge {
-            Associativity::Right
-        } else {
-            Associativity::Left
+        associativity: match rule.associativity {
+            Associativity::Right if has_open_right_edge => Associativity::Right,
+            association => closed_edge_associativity(association),
         },
         shares_level_with_previous: rule.shares_level_with_previous,
         is_cross_category,
@@ -583,6 +579,15 @@ fn classify_mixfix(
         mixfix_parts: parts,
         nullary_literals: Vec::new(),
     })
+}
+
+/// The original closed-edge classifier returned Left for either legacy flag.
+/// The new third observation remains distinct; no false/Left fallback is used.
+fn closed_edge_associativity(association: Associativity) -> Associativity {
+    match association {
+        Associativity::Left | Associativity::Right => Associativity::Left,
+        Associativity::NonAssociative => Associativity::NonAssociative,
+    }
 }
 
 fn base_type_name(ty: &InfixTypeShape) -> Option<String> {
@@ -674,4 +679,47 @@ const GEN1_REP_CLASSIFY_EXCLUDED_CATEGORIES: &[&str] = &[];
 /// into a [`MixfixRep`] part.
 fn gen1_rep_classify_enabled(result_category: &str) -> bool {
     !GEN1_REP_CLASSIFY_EXCLUDED_CATEGORIES.contains(&result_category)
+}
+
+#[cfg(test)]
+mod associativity_tests {
+    use super::*;
+    use crate::binding_power::try_analyze_binding_powers;
+    use std::convert::Infallible;
+
+    #[test]
+    fn nonassociative_postfix_retains_metadata_and_original_binding_power_pass() {
+        let mut shape = InfixRuleShape {
+            label: "Star".into(),
+            category: "Pat".into(),
+            associativity: Associativity::Left,
+            shares_level_with_previous: false,
+            term_context: Some(vec![InfixParamShape::Simple {
+                name: "operand".into(),
+                ty: InfixTypeShape::Base("Pat".into()),
+            }]),
+            syntax_pattern: Some(vec![
+                InfixSyntaxShape::Param("operand".into()),
+                InfixSyntaxShape::Literal("*".into()),
+            ]),
+        };
+        let left = classify_rule(&shape).expect("original postfix shape");
+        shape.associativity = Associativity::Right;
+        let right = classify_rule(&shape).expect("legacy right postfix shape");
+        assert_eq!(
+            format!("{left:?}"),
+            format!("{right:?}"),
+            "legacy classifier returned Left for either Boolean",
+        );
+        shape.associativity = Associativity::NonAssociative;
+        let nonassociative = classify_rule(&shape).expect("lossless nonassociative postfix shape");
+        assert_eq!(nonassociative.associativity, Associativity::NonAssociative);
+        let table = |info| {
+            try_analyze_binding_powers(&[info], |_| Ok::<_, Infallible>(()))
+                .expect("original postfix assignment does not read associativity")
+        };
+        let legacy = table(left);
+        let extended = table(nonassociative);
+        assert_eq!(format!("{legacy:?}"), format!("{extended:?}"));
+    }
 }

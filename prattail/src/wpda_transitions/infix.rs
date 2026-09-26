@@ -18,13 +18,13 @@ use crate::wpda_runtime::{CollectionSpec, StackSymbolV2, WpdaState, WpdaTokenSou
 use crate::wpda_walker::{ForkBranch, WpdaStepAction};
 
 #[allow(clippy::too_many_arguments)]
-pub fn infix_loop<'a, W: SemiringRef, const MIXFIX_ANY: bool>(
+pub fn infix_loop<'grammar, 'a, W: SemiringRef, const MIXFIX_ANY: bool>(
     primary_src_idx: u16,
     cur_bp: &u8,
     frontier_top: Option<&WpdaGssNode>,
     _pos: usize,
     tokens: &dyn WpdaTokenSource,
-    mut collection_spec: impl FnMut(u16, u16, u8) -> Option<CollectionSpec>,
+    mut collection_spec: impl FnMut(u16, u16, u8) -> Option<CollectionSpec<'grammar>>,
     cat_can_reach: impl Fn(u16, u16) -> bool,
     lex_fork: impl FnOnce(u16) -> Option<WpdaStepAction<W>>,
     mut infix_table: impl FnMut(u16, &str) -> &'a [(u8, u8, u16, u16)],
@@ -113,7 +113,7 @@ pub fn infix_loop<'a, W: SemiringRef, const MIXFIX_ANY: bool>(
                 let result_src_idx = node.symbol.category_src_idx;
                 let rule_idx = node.symbol.rule_index_in_category;
                 let slot_idx = node.symbol.bp.unwrap_or(0u8);
-                let close_sep: Option<(&'static str, &'static str)> =
+                let close_sep: Option<(&str, &str)> =
                     collection_spec(result_src_idx, rule_idx, slot_idx)
                         .map(|__s| (__s.close, __s.sep));
                 if let Some((close, sep)) = close_sep {

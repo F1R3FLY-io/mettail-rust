@@ -353,7 +353,7 @@ mod tests {
         AuthoredCategoryDeclaration, AuthoredModeDeclaration, AuthoredName, AuthoredNameId,
         AuthoredTokenDeclaration, Carrier, Category, LexerMode, ModeTransition, NativeKind,
         Reservation, TokenDecoder, TokenDefinition, TokenPattern, ValidationError,
-        GRAMMAR_CORE_ABI_V4, GRAMMAR_CORE_ABI_V5,
+        GRAMMAR_CORE_ABI_V4,
     };
 
     fn fixture() -> GrammarCoreV1 {
@@ -381,6 +381,7 @@ mod tests {
         let header = AuthoredDeclarations {
             categories: vec![AuthoredCategoryDeclaration {
                 name: category,
+                data_observation: crate::SourceObservation::Known(false),
                 native: Some(NativeKind::Other),
                 collection: None,
                 byte_observation: crate::SourceObservation::Unavailable,
@@ -653,7 +654,7 @@ mod tests {
     #[test]
     fn authored_binding_abi_and_fingerprint_commit_the_table() {
         let core = fixture();
-        assert_eq!(core.abi, GRAMMAR_CORE_ABI_V5);
+        assert_eq!(core.abi, crate::GRAMMAR_CORE_ABI_CURRENT);
         let mut old = core.clone();
         old.abi = GRAMMAR_CORE_ABI_V4;
         assert!(old

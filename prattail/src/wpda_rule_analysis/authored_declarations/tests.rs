@@ -65,6 +65,7 @@ impl Fixture {
         };
         self.header.categories.push(AuthoredCategoryDeclaration {
             name,
+            data_observation: SourceObservation::Known(false),
             native,
             collection: None,
             byte_observation: SourceObservation::Unavailable,
@@ -362,11 +363,12 @@ fn authored_declarations_guest_uses_classes_but_raw_opener_spelling() {
 }
 
 #[test]
-fn authored_declarations_bindings_and_data_role_use_final_core_ids() {
+fn authored_declarations_keep_source_role_independent_of_bound_core_authority() {
     let mut f = Fixture::new();
     f.category("Variable", None);
     f.category("Data", None);
     f.core.categories[1].admits_variables = false;
+    f.header.categories[1].data_observation = SourceObservation::Known(true);
     f.token("Raw", None, false, false, None, None);
     let mode_name = f.name("Guest", 50);
     let mode = f.mode(mode_name);
@@ -383,6 +385,9 @@ fn authored_declarations_bindings_and_data_role_use_final_core_ids() {
     assert_eq!(reader.mode_binding(0), Some(&ModeId(1)));
     assert_eq!(reader.is_data(0), Some(false));
     assert_eq!(reader.is_data(1), Some(true));
+    assert_eq!(reader.admits_variables(0), Some(true));
+    assert_eq!(reader.admits_variables(1), Some(false));
+    assert_eq!(reader.admits_variables(2), None);
     assert_eq!(reader.is_data(2), None);
     assert_eq!(reader.category_binding(2), None);
     assert_eq!(reader.token_binding(2), None);

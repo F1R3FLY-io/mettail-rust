@@ -99,18 +99,7 @@ pub(crate) fn collect_structural_delimiters(
 }
 
 fn has_binder_internal_collection_slot(positions: &[BinderPosition]) -> bool {
-    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
-    while let Some(position) = work.pop() {
-        match position {
-            BinderPosition::ParamParse { collection: Some(_), .. }
-            | BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. } => return true,
-            BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
-                work.extend(inner_positions.iter().rev());
-            },
-            _ => {},
-        }
-    }
-    false
+    collection_assembly::has_binder_internal_collection_slot(positions)
 }
 
 /// Stage 3 (2026-06-27): the SINGLE key/value-separator resolver for collection
@@ -676,11 +665,10 @@ pub(crate) fn emit_rule_has_leading_structural_trigger_lookup(
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
-            let leads_with_literal = rule
-                .syntax_pattern
-                .as_ref()
-                .map(|sp| matches!(sp.first(), Some(SyntaxExpr::Literal(_))))
-                .unwrap_or(false);
+            let leads_with_literal =
+                mettail_prattail::wpda_rule_analysis::rule_observation::leading_literal(
+                    &super::binder::MacroBinderSyntaxReader, rule,
+                ).is_some();
             if leads_with_literal {
                 let result_src_idx = cat_i as u16;
                 let rule_idx = rule_i as u16;

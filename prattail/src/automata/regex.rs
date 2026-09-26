@@ -107,6 +107,33 @@ pub fn compile_regex(
     nfa: &mut Nfa,
     token_kind: TokenKind,
 ) -> Result<NfaFragment, RegexError> {
+    compile_regex_in(pattern, nfa, token_kind, CharacterProfile::Bytes)
+}
+
+/// Runtime GrammarCore patterns use the Unicode semantics checked by its
+/// independent image verifier. This selects the existing scalar-range paths
+/// in the same parser and Thompson driver; the macro byte entry is unchanged.
+/// `RegexCharacterProfile.v` models this selection boundary.
+pub(crate) fn compile_regex_unicode(
+    pattern: &str,
+    nfa: &mut Nfa,
+    token_kind: TokenKind,
+) -> Result<NfaFragment, RegexError> {
+    compile_regex_in(pattern, nfa, token_kind, CharacterProfile::Unicode)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CharacterProfile {
+    Bytes,
+    Unicode,
+}
+
+fn compile_regex_in(
+    pattern: &str,
+    nfa: &mut Nfa,
+    token_kind: TokenKind,
+    profile: CharacterProfile,
+) -> Result<NfaFragment, RegexError> {
     let input = pattern.as_bytes();
     let len = input.len();
 
@@ -216,7 +243,7 @@ pub fn compile_regex(
             },
             _ => {
                 /* Parse an atom (literal, escape, char class, dot) */
-                let (atom_frag, new_pos) = parse_atom(nfa, input, pos)?;
+                let (atom_frag, new_pos) = parse_atom(nfa, input, pos, profile)?;
                 pos = new_pos;
 
                 /* Apply quantifier if present */
@@ -493,21 +520,31 @@ pub fn parse_literal_patterns_ebnf(content: &str) -> Result<LiteralPatterns, Reg
 
 /// Parse a single atom (literal, escape, char class, or dot) and return the
 /// NFA fragment and the new position.
-fn parse_atom(nfa: &mut Nfa, input: &[u8], pos: usize) -> Result<(NfaFragment, usize), RegexError> {
+fn parse_atom(
+    nfa: &mut Nfa,
+    input: &[u8],
+    pos: usize,
+    profile: CharacterProfile,
+) -> Result<(NfaFragment, usize), RegexError> {
     let byte = input[pos];
     match byte {
-        b'[' => parse_char_class_atom(nfa, input, pos),
+        b'[' => parse_char_class_atom(nfa, input, pos, profile),
         b'.' => {
             /* Dot: any byte except newline */
             let start = nfa.add_state(NfaState::new());
             let accept = nfa.add_state(NfaState::new());
-            /* [0, 9] ∪ [11, 255] — skip \n (10); high bytes needed for UTF-8 chains */
-            for lo_hi in &[(0u8, 9u8), (11u8, 255u8)] {
-                nfa.add_transition(start, accept, CharClass::Range(lo_hi.0, lo_hi.1));
+            if profile == CharacterProfile::Unicode {
+                utf8::add_codepoint_range(nfa, start, accept, '\0', '\t');
+                utf8::add_codepoint_range(nfa, start, accept, '\u{b}', char::MAX);
+            } else {
+                /* [0, 9] ∪ [11, 255] — skip \n (10); high bytes needed for UTF-8 chains */
+                for lo_hi in &[(0u8, 9u8), (11u8, 255u8)] {
+                    nfa.add_transition(start, accept, CharClass::Range(lo_hi.0, lo_hi.1));
+                }
             }
             Ok((NfaFragment { start, accept }, pos + 1))
         },
-        b'\\' => parse_escape_atom(nfa, input, pos),
+        b'\\' => parse_escape_atom(nfa, input, pos, profile),
         /* Metacharacters that shouldn't appear as bare atoms */
         b'*' | b'+' | b'?' | b'{' => Err(RegexError {
             position: pos,
@@ -532,6 +569,7 @@ fn parse_escape_atom(
     nfa: &mut Nfa,
     input: &[u8],
     pos: usize,
+    profile: CharacterProfile,
 ) -> Result<(NfaFragment, usize), RegexError> {
     if pos + 1 >= input.len() {
         return Err(RegexError {
@@ -543,6 +581,17 @@ fn parse_escape_atom(
     let escaped = input[pos + 1];
     let start = nfa.add_state(NfaState::new());
     let accept = nfa.add_state(NfaState::new());
+
+    if profile == CharacterProfile::Unicode
+        && matches!(escaped, b'd' | b'D' | b'w' | b'W' | b's' | b'S')
+    {
+        let ranges = utf8::resolve_shorthand(escaped)
+            .map_err(|message| RegexError { position: pos, message })?;
+        for (lo, hi) in ranges {
+            utf8::add_codepoint_range(nfa, start, accept, lo, hi);
+        }
+        return Ok((NfaFragment { start, accept }, pos + 2));
+    }
 
     match escaped {
         /* Shorthand classes */
@@ -906,6 +955,7 @@ fn parse_char_class_atom(
     nfa: &mut Nfa,
     input: &[u8],
     pos: usize,
+    profile: CharacterProfile,
 ) -> Result<(NfaFragment, usize), RegexError> {
     debug_assert_eq!(input[pos], b'[');
     let mut i = pos + 1;
@@ -921,7 +971,7 @@ fn parse_char_class_atom(
     // If has_unicode is true, byte_ranges are promoted to cp_ranges at emission time.
     let mut byte_ranges: Vec<(u8, u8)> = Vec::with_capacity(8);
     let mut cp_ranges: Vec<(char, char)> = Vec::new();
-    let mut has_unicode = false;
+    let mut has_unicode = profile == CharacterProfile::Unicode;
 
     /* Special case: ] as first char (or first after ^) is literal */
     if i < len && input[i] == b']' {
@@ -938,6 +988,16 @@ fn parse_char_class_atom(
                 });
             }
             let esc = input[i + 1];
+            if profile == CharacterProfile::Unicode
+                && matches!(esc, b'd' | b'D' | b'w' | b'W' | b's' | b'S')
+            {
+                cp_ranges.extend(
+                    utf8::resolve_shorthand(esc)
+                        .map_err(|message| RegexError { position: i, message })?,
+                );
+                i += 2;
+                continue;
+            }
             match esc {
                 /* Shorthand classes (always byte-level, continue) */
                 b'd' => {
@@ -2169,9 +2229,16 @@ mod tests {
 
     /// Helper: compile a regex and test if it accepts given bytes.
     fn regex_accepts_bytes(pattern: &str, input: &[u8]) -> bool {
+        regex_accepts_bytes_in(pattern, input, CharacterProfile::Bytes)
+    }
+
+    fn regex_accepts_bytes_in(pattern: &str, input: &[u8], profile: CharacterProfile) -> bool {
         let mut nfa = Nfa::new();
-        let frag =
-            compile_regex(pattern, &mut nfa, TokenKind::Ident).expect("regex compilation failed");
+        let frag = match profile {
+            CharacterProfile::Bytes => compile_regex(pattern, &mut nfa, TokenKind::Ident),
+            CharacterProfile::Unicode => compile_regex_unicode(pattern, &mut nfa, TokenKind::Ident),
+        }
+        .expect("regex compilation failed");
         nfa.add_epsilon(nfa.start, frag.start);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
@@ -2374,6 +2441,36 @@ mod tests {
         assert!(regex_accepts_bytes("[^a]", &[0x80]));
         assert!(regex_accepts_bytes("[^a]", &[0xFF]));
         assert!(!regex_accepts_bytes("[^a]", b"a"));
+    }
+
+    #[test]
+    fn runtime_unicode_profile_preserves_original_byte_entry_witnesses() {
+        for pattern in [".", "[^a]"] {
+            assert!(regex_accepts_bytes(pattern, &[0xFF]), "original byte profile for {pattern}");
+            assert!(!regex_accepts_bytes(pattern, "é".as_bytes()), "original atom is one byte");
+            assert!(!regex_accepts_bytes_in(pattern, &[0xFF], CharacterProfile::Unicode));
+            assert!(regex_accepts_bytes_in(pattern, "é".as_bytes(), CharacterProfile::Unicode));
+        }
+        let string = LiteralPatterns::default().string;
+        let invalid_utf8_string = [b'"', 0xFF, b'"'];
+        assert!(
+            regex_accepts_bytes(&string, &invalid_utf8_string),
+            "original String mismatch witness"
+        );
+        assert!(!regex_accepts_bytes_in(
+            &string,
+            &invalid_utf8_string,
+            CharacterProfile::Unicode
+        ));
+        for profile in [CharacterProfile::Bytes, CharacterProfile::Unicode] {
+            assert!(regex_accepts_bytes_in(&string, "\"é\"".as_bytes(), profile));
+            assert!(regex_accepts_bytes_in(r"\p{Letter}", "é".as_bytes(), profile));
+        }
+        assert!(
+            !regex_accepts_bytes(r"\s", &[0x0C]),
+            "macro whitespace shorthand stays byte-profile exact"
+        );
+        assert!(regex_accepts_bytes_in(r"\s", &[0x0C], CharacterProfile::Unicode));
     }
 
     /* ── Unicode identifier pattern ──────────────────────────────────── */

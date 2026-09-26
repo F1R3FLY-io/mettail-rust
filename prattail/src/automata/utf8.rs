@@ -98,14 +98,43 @@ pub fn codepoint_ranges_to_fragment(nfa: &mut Nfa, ranges: &[(char, char)]) -> N
 /// Property names are case-insensitive and support aliases (e.g., `L` for
 /// `Letter`, `Ll` for `Lowercase_Letter`).
 pub fn resolve_property(name: &str) -> Result<Vec<(char, char)>, String> {
-    use regex_syntax::hir::{Class, HirKind};
-
     // Use the regex-syntax parser's public API to resolve Unicode properties.
     // Parsing `\p{Name}` yields an HIR with a Unicode class containing all
     // codepoint ranges for the property.
     let pattern = format!(r"\p{{{}}}", name);
-    let hir = regex_syntax::parse(&pattern)
-        .map_err(|e| format!("unknown Unicode property '{}': {}", name, e))?;
+    resolve_unicode_class(
+        &pattern,
+        |e| format!("unknown Unicode property '{}': {}", name, e),
+        || format!("unexpected HIR for property '{}'", name),
+    )
+}
+
+/// Resolve fixed Unicode shorthand atoms through the same authoritative class
+/// resolver used for properties. No complete user pattern is reparsed.
+pub(crate) fn resolve_shorthand(escaped: u8) -> Result<Vec<(char, char)>, String> {
+    let pattern = match escaped {
+        b'd' => r"\d",
+        b'D' => r"\D",
+        b'w' => r"\w",
+        b'W' => r"\W",
+        b's' => r"\s",
+        b'S' => r"\S",
+        _ => return Err(format!("unsupported Unicode shorthand byte {escaped}")),
+    };
+    resolve_unicode_class(
+        pattern,
+        |e| format!("unavailable Unicode shorthand '{pattern}': {e}"),
+        || format!("unexpected HIR for shorthand '{pattern}'"),
+    )
+}
+
+fn resolve_unicode_class(
+    pattern: &str,
+    parse_error: impl FnOnce(regex_syntax::Error) -> String,
+    non_class: impl FnOnce() -> String,
+) -> Result<Vec<(char, char)>, String> {
+    use regex_syntax::hir::{Class, HirKind};
+    let hir = regex_syntax::parse(pattern).map_err(parse_error)?;
 
     match hir.into_kind() {
         HirKind::Class(Class::Unicode(class)) => Ok(class
@@ -113,7 +142,7 @@ pub fn resolve_property(name: &str) -> Result<Vec<(char, char)>, String> {
             .iter()
             .map(|r| (r.start(), r.end()))
             .collect()),
-        _ => Err(format!("unexpected HIR for property '{}'", name)),
+        _ => Err(non_class()),
     }
 }
 

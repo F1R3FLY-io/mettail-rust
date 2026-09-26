@@ -22,6 +22,7 @@ use super::authored_atomic::{try_derive_authored_atomic, AuthoredAtomicError};
 use super::authored_binder::{derive_authored_binder, AuthoredBinderError};
 use super::authored_declarations::{AuthoredDeclarationReader, AuthoredDeclarationReaderError};
 use super::authored_synthesis::{AuthoredRuleOrigin, AuthoredRulePayload, AuthoredSynthesisOutput};
+use super::binder::rule::BinderRuleReader;
 use super::binder::BinderShape;
 use super::infix_projection::{try_project_infix_rule_in, InfixProjectionError};
 use super::native_first::{literal_patterned_pattern_and_guard_for_kind, EmissionContext};
@@ -31,7 +32,8 @@ use super::prefix_pattern::{
     neutral_predicate_parts, NeutralNativeFirstConstructors, NeutralPattern, NeutralPatternKey,
 };
 use crate::binding_power::{
-    try_analyze_binding_powers, BindingPowerError, BindingPowerTable, InfixRuleInfo,
+    try_analyze_binding_powers_with_explicit, BindingPowerError, BindingPowerTable,
+    ExplicitPrattError, ExplicitPrattLevels, InfixRuleInfo, OperandBindingPowers,
 };
 pub use literal::LiteralError;
 use literal::OwnedLiteral;
@@ -58,6 +60,7 @@ pub enum AuthoredPrefixError<E> {
     CategoryIndexOverflow,
     RuleIndexOverflow(usize),
     MissingCategoryBinding(usize),
+    MissingCategoryRoleObservation(usize),
     MissingCollectionOpen(usize),
     PrefixBindingPowerOverflow(u16),
     Allocation,
@@ -66,6 +69,8 @@ pub enum AuthoredPrefixError<E> {
     Binder(AuthoredBinderError<Infallible>),
     Collection(super::authored_collection::AuthoredCollectionError<Infallible>),
     BindingPower(BindingPowerError<Infallible>),
+    ExplicitBindingPower(ExplicitPrattError),
+    UnsupportedExplicitBinding(&'static str),
 }
 
 /// Produce the actual ordered neutral bucket artifact consumed by WPDA planning.
@@ -172,6 +177,27 @@ pub(super) fn with_authored_context<'store, P, E, T>(
         }
     }
     let reader = OccurrenceReader::new(&rules);
+    let mut source_levels: std::collections::BTreeMap<String, Vec<u16>> =
+        std::collections::BTreeMap::new();
+    for payload in &synthesis.source_order {
+        let AuthoredRuleOrigin::User { production_index, .. } = payload.origin else {
+            continue;
+        };
+        if let Some(power) = core.productions[production_index].precedence.binding_power {
+            source_levels
+                .entry(rules.category(payload.rule).to_string())
+                .or_default()
+                .push(power);
+        }
+    }
+    let explicit_levels = source_levels
+        .into_iter()
+        .map(|(category, powers)| {
+            ExplicitPrattLevels::new(powers)
+                .map(|levels| (category, levels))
+                .map_err(Error::ExplicitBindingPower)
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
     let mut context = Context {
         core,
         declarations,
@@ -179,6 +205,7 @@ pub(super) fn with_authored_context<'store, P, E, T>(
         originals: &originals,
         normalized: &synthesis.source_order,
         expected_categories: &synthesis.categories,
+        explicit_levels,
         error: PhantomData,
     };
     Ok(consume(&reader, &mut context))
@@ -223,6 +250,7 @@ pub(super) struct Context<'reader, 'store, E> {
     pub(super) originals: &'reader [AuthoredRulePayload],
     pub(super) normalized: &'store [AuthoredRulePayload],
     expected_categories: &'store [String],
+    explicit_levels: std::collections::BTreeMap<String, ExplicitPrattLevels>,
     error: PhantomData<E>,
 }
 
@@ -271,6 +299,13 @@ impl<'store, E> Context<'_, 'store, E> {
         &self,
         rule: AuthoredRulePayload,
     ) -> Result<Option<u8>, AuthoredPrefixError<E>> {
+        if let Some(powers) = self.explicit_operands(rule)? {
+            return Ok(Some(if self.precedence(rule)?.binding_power.is_some() {
+                powers.entry
+            } else {
+                0
+            }));
+        }
         self.precedence(rule)?
             .binding_power
             .map(|power| {
@@ -278,6 +313,26 @@ impl<'store, E> Context<'_, 'store, E> {
                     .map_err(|_| AuthoredPrefixError::PrefixBindingPowerOverflow(power))
             })
             .transpose()
+    }
+
+    pub(super) fn explicit_operands(
+        &self,
+        rule: AuthoredRulePayload,
+    ) -> Result<Option<OperandBindingPowers>, AuthoredPrefixError<E>> {
+        let category = self.rules.category(rule.rule);
+        let Some(levels) = self.explicit_levels.get(&category.to_string()) else {
+            return Ok(None);
+        };
+        let precedence = self.precedence(rule)?;
+        let assoc = match precedence.associativity {
+            Associativity::Left => crate::binding_power::Associativity::Left,
+            Associativity::Right => crate::binding_power::Associativity::Right,
+            Associativity::NonAssociative => crate::binding_power::Associativity::NonAssociative,
+        };
+        levels
+            .operands(precedence.binding_power, assoc)
+            .map(Some)
+            .map_err(AuthoredPrefixError::ExplicitBindingPower)
     }
 
     pub(super) fn precedence(
@@ -360,6 +415,11 @@ impl<'reader, 'store, E> TryFirstSetContext<'store, OccurrenceReader<'reader, 's
     fn try_is_data(&self, category: usize) -> Result<bool, Self::Error> {
         self.declarations
             .is_data(category)
+            .ok_or(AuthoredPrefixError::MissingCategoryRoleObservation(category))
+    }
+    fn try_admits_variables(&self, category: usize) -> Result<bool, Self::Error> {
+        self.declarations
+            .admits_variables(category)
             .ok_or(AuthoredPrefixError::MissingCategoryBinding(category))
     }
     fn try_collection_open(&self, category: usize) -> Result<Option<&'store str>, Self::Error> {
@@ -497,12 +557,50 @@ impl<'reader, 'store, E> TryPrefixBucketContext<'store, OccurrenceReader<'reader
     }
     fn try_binding_power_table(&mut self) -> Result<BindingPowerTable, Self::Error> {
         let mut infix = Vec::new();
+        let mut explicit = std::collections::BTreeMap::new();
         for &payload in self.normalized {
             if let Some(info) = self.infix_normalized(payload)? {
+                if let Some(powers) = self.explicit_operands(payload)? {
+                    if info.is_cross_category {
+                        return Err(AuthoredPrefixError::UnsupportedExplicitBinding(
+                            "cross-category operator floor transport",
+                        ));
+                    }
+                    if info.is_mixfix
+                        && info
+                            .mixfix_parts
+                            .last()
+                            .is_some_and(|part| part.following_terminals.is_empty())
+                    {
+                        return Err(AuthoredPrefixError::UnsupportedExplicitBinding(
+                            "open mixfix operand floor transport",
+                        ));
+                    }
+                    explicit.insert((info.category.clone(), info.label.clone()), powers);
+                }
                 infix.push(info);
             }
         }
-        try_analyze_binding_powers(&infix, |_| Ok::<_, Infallible>(()))
+        if !self.explicit_levels.is_empty() {
+            for &payload in self.normalized {
+                if let AtomicDescriptor::CrossCatProjection { source_cat_name, .. } =
+                    self.atomic(payload)?
+                {
+                    let result = self.rules.category(payload.rule).to_string();
+                    if (self.explicit_levels.contains_key(&result)
+                        || self.explicit_levels.contains_key(&source_cat_name))
+                        && infix
+                            .iter()
+                            .any(|operator| operator.category == source_cat_name)
+                    {
+                        return Err(AuthoredPrefixError::UnsupportedExplicitBinding(
+                            "projection into operator-bearing category needs typed floor transport",
+                        ));
+                    }
+                }
+            }
+        }
+        try_analyze_binding_powers_with_explicit(&infix, &explicit, |_| Ok::<_, Infallible>(()))
             .map_err(AuthoredPrefixError::BindingPower)
     }
     fn try_explicit_prefix_bp(&self, rule: AuthoredRulePayload) -> Result<Option<u8>, Self::Error> {

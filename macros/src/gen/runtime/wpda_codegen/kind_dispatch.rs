@@ -766,51 +766,12 @@ fn transparent_projection_rules(
     per_cat: &[Vec<GrammarRule>],
     categories: &[String],
 ) -> Vec<(u16, u16, u16)> {
-    use mettail_ast::grammar::TermParam;
-    use mettail_ast::types::TypeExpr;
-
-    let mut out = Vec::new();
-    for (to_cat_idx, rules) in per_cat.iter().enumerate() {
-        let to_cat = to_cat_idx as u16;
-        for (rule_idx, rule) in rules.iter().enumerate() {
-            let Some(term_context) = rule.term_context.as_ref() else {
-                continue;
-            };
-            if term_context.len() != 1 {
-                continue;
-            }
-            let TermParam::Simple { name: param_name, ty } = &term_context[0] else {
-                continue;
-            };
-            let TypeExpr::Base(source_ident) = ty else {
-                continue;
-            };
-            let source_cat_name = source_ident.to_string();
-            if source_cat_name == rule.category.to_string() {
-                continue;
-            }
-            let Some(syntax_pattern) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            let is_transparent = syntax_pattern.len() == 1
-                && matches!(
-                    syntax_pattern.first(),
-                    Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
-                );
-            if !is_transparent {
-                continue;
-            }
-            let Some(from_cat) = categories
-                .iter()
-                .position(|category| category == &source_cat_name)
-                .map(|idx| idx as u16)
-            else {
-                continue;
-            };
-            out.push((from_cat, to_cat, rule_idx as u16));
-        }
-    }
-    out
+    let borrowed: Vec<Vec<_>> = per_cat.iter().map(|rules| rules.iter().collect()).collect();
+    mettail_prattail::wpda_rule_analysis::rule_observation::transparent_projection_rules(
+        &super::binder::MacroBinderSyntaxReader,
+        &borrowed,
+        categories,
+    )
 }
 
 /// GEN-1 goal-gate (2026-06-28): emit the engine's associated
@@ -880,31 +841,10 @@ pub(crate) fn emit_cat_can_reach(
         }
     }
     // 2. Transitive closure (reflexivity handled at the call site).
-    let mut reach: BTreeSet<(u16, u16)> = direct.clone();
-    loop {
-        let mut added = false;
-        let snapshot: Vec<(u16, u16)> = reach.iter().copied().collect();
-        for &(a, b) in &snapshot {
-            for &(c, d) in &snapshot {
-                if b == c && a != d && reach.insert((a, d)) {
-                    added = true;
-                }
-            }
-        }
-        if !added {
-            break;
-        }
-    }
-    // 3. Conservative-over-approximation guard (FV point 2): the emitted
-    //    relation MUST contain every direct edge. True by construction
-    //    (`reach ⊇ direct`); asserted at codegen time to catch any future
-    //    regression in the closure computation — never wrongly drops.
-    debug_assert!(
-        direct.iter().all(|edge| reach.contains(edge)),
-        "cat_can_reach RTC must contain every direct cross-cat edge (conservative over-approximation)"
-    );
+    // 3. The original conservative-over-approximation assertion lives with
+    //    the relocated closure body.
+    let pairs = mettail_prattail::wpda_rule_analysis::rule_observation::non_reflexive_category_reachability(direct);
     // 4. Emit `matches!` over the non-reflexive pairs (or `false`).
-    let pairs: Vec<(u16, u16)> = reach.into_iter().filter(|(a, b)| a != b).collect();
     if pairs.is_empty() {
         quote! { false }
     } else {

@@ -715,6 +715,7 @@ mod tests {
                         name: core::AuthoredNameId(1),
                         native: None,
                         collection: None,
+                        data_observation: core::SourceObservation::Known(false),
                         byte_observation: core::SourceObservation::Known(false),
                         literal_observation: core::SourceObservation::Known(None),
                         element_observation: core::SourceObservation::Known(None),
@@ -753,6 +754,7 @@ mod tests {
             "authored_bindings",
             "declarations",
             "typed_literal",
+            "data_observation",
             "byte_observation",
             "literal_observation",
             "element_observation",
@@ -777,7 +779,10 @@ mod tests {
                     };
                     assert!(store.remove(field).is_some());
                 },
-                "byte_observation" | "literal_observation" | "element_observation" => {
+                "data_observation"
+                | "byte_observation"
+                | "literal_observation"
+                | "element_observation" => {
                     let RhoValue::Map(store) = grammar.get_mut("authored").expect("store") else {
                         panic!("map store")
                     };

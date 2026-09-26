@@ -192,7 +192,7 @@ fn run_path<E: WpdaEngine<LexicographicWeight>>(
             })
         },
         Path::Selected => walker
-            .cgll_apply_selected_action(packing, rule, vec![term(2)], weight)
+            .cgll_apply_selected_action(packing, rule, vec![term(2)], weight, Default::default())
             .map(|(arg, actual)| {
                 assert_eq!(actual, weight);
                 arg.try_into_term::<i64>().expect("selected result")
@@ -200,6 +200,7 @@ fn run_path<E: WpdaEngine<LexicographicWeight>>(
         Path::Witness => walker
             .finish_packing_term_witness(
                 PackingWitnessContext {
+                    action_context: Default::default(),
                     cat: OUTPUT_CATEGORY,
                     local_rule_idx: local_rule,
                     arity: 1,
@@ -322,6 +323,25 @@ fn selected_collection() -> ActionArg {
 }
 
 #[test]
+fn contextual_default_ignores_context_and_calls_original_once() {
+    for source_positions in [None, Some((u32::MAX, 0))] {
+        let engine = OwnedEngine::new(40, Behavior::Value);
+        let mut builder = SemanticBuilder::new();
+        engine
+            .execute_action_with_context(
+                OUTPUT_CATEGORY,
+                LOCAL_RULE,
+                &mut builder,
+                vec![term(2)],
+                crate::wpda_runtime::ActionContext { source_positions, result_category: None },
+            )
+            .expect("default must not observe source context");
+        assert_eq!(engine.calls.load(Ordering::Relaxed), 1);
+        assert_eq!(builder.take_dyn_result().unwrap().downcast_ref::<i64>(), Some(&42));
+    }
+}
+
+#[test]
 fn action_dispatch_owned_callback_retains_selected_collection_frame() {
     let mut engine = OwnedEngine::new(40, Behavior::Drain);
     engine.categories[0] = ANY_CAT;
@@ -329,7 +349,13 @@ fn action_dispatch_owned_callback_retains_selected_collection_frame() {
     let weight = LexicographicWeight::one();
     let packing = walker.sppf.intern_packing(RULE, Vec::new(), weight);
     let result = walker
-        .cgll_apply_selected_action(packing, RULE, vec![selected_collection()], weight)
+        .cgll_apply_selected_action(
+            packing,
+            RULE,
+            vec![selected_collection()],
+            weight,
+            Default::default(),
+        )
         .expect("owned callback must drain the existing selected frame");
     assert_eq!(result.0.try_into_term::<i64>().expect("collection result"), 43);
     assert_eq!(walker.engine.calls.load(Ordering::Relaxed), 1);
@@ -348,8 +374,13 @@ fn action_dispatch_selected_collection_refusal_and_protocol_failure_remain_disti
         let mut walker = WpdaWalker::new(engine, 0);
         let weight = LexicographicWeight::one();
         let packing = walker.sppf.intern_packing(RULE, Vec::new(), weight);
-        let result =
-            walker.cgll_apply_selected_action(packing, RULE, vec![selected_collection()], weight);
+        let result = walker.cgll_apply_selected_action(
+            packing,
+            RULE,
+            vec![selected_collection()],
+            weight,
+            Default::default(),
+        );
         assert!(result.is_none());
         assert_eq!(walker.realization_failed(), fails);
         assert_eq!(walker.engine.calls.load(Ordering::Relaxed), 1);
@@ -362,7 +393,7 @@ fn action_dispatch_selected_arity_rejection_precedes_owned_callback() {
     let weight = LexicographicWeight::one();
     let packing = walker.sppf.intern_packing(RULE, Vec::new(), weight);
     assert!(walker
-        .cgll_apply_selected_action(packing, RULE, Vec::new(), weight)
+        .cgll_apply_selected_action(packing, RULE, Vec::new(), weight, Default::default())
         .is_none());
     assert_eq!(walker.engine.calls.load(Ordering::Relaxed), 0);
     assert!(!walker.realization_failed());

@@ -3378,168 +3378,176 @@ pub(crate) fn collect_category_variants(
     }
 
     // Auto-generated Var variant (if no explicit Var rule)
-    let has_var = variants
-        .iter()
-        .any(|v| matches!(v, VariantKind::Var { .. }));
-    if !has_var && crate::gen::category_emits_implicit_var(category, language) {
-        variants.push(VariantKind::Var { label: generate_var_label(category) });
-    }
-
-    // Auto-generated Literal variant (for native types).
-    //
-    // COLLECTION LITERALS (record corrected 2026-07-25; supersedes the
-    // 2026-06-30 "GROUP B deferred" note that stood here).
-    //
-    // Collection-literal categories (List/Bag/Set/Map/Pathmap) are declared as
-    // native-type aliases (`![Vec<Proc>] as List`) with NO grammar rule, so they
-    // reach this fallback. They are NOT opaque leaves: their payload contains
-    // element terms. Classifying them `Literal` makes every term op clone the
-    // wrapper whole and never recurse — e.g. `subst([a,b,c], a:=1,b:=2,c:=3)`
-    // returns `[a,b,c]` unchanged.
-    //
-    // History, so the reverted attempt is not re-attempted:
-    //
-    //  * ATTEMPT #1 (2026-06-30) reclassified these categories to
-    //    `VariantKind::Collection` and REVERTED. Two independent causes:
-    //    (i) `Collection`'s arms were authored for category-DIRECT collection
-    //    FIELDS (`PPar . ps:HashBag(Proc)`), whose payload is the bare iterable
-    //    container — against the literal wrappers they produced 15 compile
-    //    errors (`HashSetLit` is not `HashSet`; no `insert_into_baglit`);
-    //    (ii) for `List` (`Vec`) it compiled but was NET-NEGATIVE, because
-    //    flipping an EXISTING discriminant silently re-routed ~13 consumers at
-    //    once, changing depth/ground/normalize/semantic-hash semantics and
-    //    regressing zipper/map tests without fixing the polyadic target.
-    //
-    //  * SOLVED FOR `subst` (2026-06-30, in tree and green): rather than flip
-    //    the shared discriminant, `subst` detects these categories LOCALLY via
-    //    [`collection_literal_info`] and emits recursing Visit/Assemble arms
-    //    ([`generate_collection_literal_visit_arm`],
-    //    [`generate_collection_literal_assemble_arm`]) with the correct
-    //    per-wrapper constructors. The hard part — the assemble side that
-    //    defeated attempt #1 — is therefore already solved and validated.
-    //
-    //  * THE ROOT FIX (this change): promote that local classification to a
-    //    first-class discriminant, [`VariantKind::CollectionLiteral`]. It has NO
-    //    pre-existing arm anywhere, so it cannot silently re-route anybody the
-    //    way attempt #1 did; instead the exhaustiveness checker forces every
-    //    consumer to declare its intent. Consumers that must keep leaf
-    //    behaviour stay on the `Literal` arm PERMANENTLY and deliberately —
-    //    that set is exactly the one whose implicit flip caused attempt #1's
-    //    regressions.
-    //
-    // See [[empty-receiver-polyadic-cluster-roots]].
-    if let Some(lang_type) = language.get_type(category) {
-        if let Some(native_type) = &lang_type.native_type {
-            let has_lit = variants.iter().any(|v| {
-                matches!(v, VariantKind::Literal { .. } | VariantKind::CollectionLiteral { .. })
-            });
-            if !has_lit {
-                let label = generate_literal_label(native_type);
-                match native_recursive_carrier_for_category(category, language) {
-                    Ok(Some(carrier)) => {
-                        variants.push(VariantKind::RecursiveNativeLiteral { label, carrier })
-                    },
-                    Err(message) => variants.push(VariantKind::Refused { label, message }),
-                    Ok(None) => match collection_literal_info(category, language) {
-                        Some((coll_type, element_cat)) if COLLECTION_LITERAL_KIND_GATE => {
-                            variants.push(VariantKind::CollectionLiteral {
-                                label,
-                                element_cat,
-                                coll_type,
-                            });
-                        },
-                        _ => variants.push(VariantKind::Literal { label }),
-                    },
+    mettail_grammar_core::variant_roster::complete_category_variants(
+        variants,
+        |v| matches!(v, VariantKind::Var { .. }),
+        || crate::gen::category_emits_implicit_var(category, language),
+        || VariantKind::Var { label: generate_var_label(category) },
+        |variants| {
+            // Auto-generated Literal variant (for native types).
+            //
+            // COLLECTION LITERALS (record corrected 2026-07-25; supersedes the
+            // 2026-06-30 "GROUP B deferred" note that stood here).
+            //
+            // Collection-literal categories (List/Bag/Set/Map/Pathmap) are declared as
+            // native-type aliases (`![Vec<Proc>] as List`) with NO grammar rule, so they
+            // reach this fallback. They are NOT opaque leaves: their payload contains
+            // element terms. Classifying them `Literal` makes every term op clone the
+            // wrapper whole and never recurse — e.g. `subst([a,b,c], a:=1,b:=2,c:=3)`
+            // returns `[a,b,c]` unchanged.
+            //
+            // History, so the reverted attempt is not re-attempted:
+            //
+            //  * ATTEMPT #1 (2026-06-30) reclassified these categories to
+            //    `VariantKind::Collection` and REVERTED. Two independent causes:
+            //    (i) `Collection`'s arms were authored for category-DIRECT collection
+            //    FIELDS (`PPar . ps:HashBag(Proc)`), whose payload is the bare iterable
+            //    container — against the literal wrappers they produced 15 compile
+            //    errors (`HashSetLit` is not `HashSet`; no `insert_into_baglit`);
+            //    (ii) for `List` (`Vec`) it compiled but was NET-NEGATIVE, because
+            //    flipping an EXISTING discriminant silently re-routed ~13 consumers at
+            //    once, changing depth/ground/normalize/semantic-hash semantics and
+            //    regressing zipper/map tests without fixing the polyadic target.
+            //
+            //  * SOLVED FOR `subst` (2026-06-30, in tree and green): rather than flip
+            //    the shared discriminant, `subst` detects these categories LOCALLY via
+            //    [`collection_literal_info`] and emits recursing Visit/Assemble arms
+            //    ([`generate_collection_literal_visit_arm`],
+            //    [`generate_collection_literal_assemble_arm`]) with the correct
+            //    per-wrapper constructors. The hard part — the assemble side that
+            //    defeated attempt #1 — is therefore already solved and validated.
+            //
+            //  * THE ROOT FIX (this change): promote that local classification to a
+            //    first-class discriminant, [`VariantKind::CollectionLiteral`]. It has NO
+            //    pre-existing arm anywhere, so it cannot silently re-route anybody the
+            //    way attempt #1 did; instead the exhaustiveness checker forces every
+            //    consumer to declare its intent. Consumers that must keep leaf
+            //    behaviour stay on the `Literal` arm PERMANENTLY and deliberately —
+            //    that set is exactly the one whose implicit flip caused attempt #1's
+            //    regressions.
+            //
+            // See [[empty-receiver-polyadic-cluster-roots]].
+            if let Some(lang_type) = language.get_type(category) {
+                if let Some(native_type) = &lang_type.native_type {
+                    let has_lit = variants.iter().any(|v| {
+                        matches!(
+                            v,
+                            VariantKind::Literal { .. } | VariantKind::CollectionLiteral { .. }
+                        )
+                    });
+                    if !has_lit {
+                        let label = generate_literal_label(native_type);
+                        match native_recursive_carrier_for_category(category, language) {
+                            Ok(Some(carrier)) => variants
+                                .push(VariantKind::RecursiveNativeLiteral { label, carrier }),
+                            Err(message) => variants.push(VariantKind::Refused { label, message }),
+                            Ok(None) => match collection_literal_info(category, language) {
+                                Some((coll_type, element_cat)) if COLLECTION_LITERAL_KIND_GATE => {
+                                    variants.push(VariantKind::CollectionLiteral {
+                                        label,
+                                        element_cat,
+                                        coll_type,
+                                    });
+                                },
+                                _ => variants.push(VariantKind::Literal { label }),
+                            },
+                        }
+                    }
                 }
             }
-        }
-    }
+        },
+        |variants| {
+            // Auto-generated lambda/Apply variants (post-HOL-B: only for pairs
+            // that `compute_hol_domain_pairs` flagged).
+            let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+            let category_str = category.to_string();
 
-    // Auto-generated lambda/Apply variants (post-HOL-B: only for pairs
-    // that `compute_hol_domain_pairs` flagged).
-    let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
-    let category_str = category.to_string();
+            for domain_lang_type in &language.types {
+                let domain_name = &domain_lang_type.name;
+                let domain_str = domain_name.to_string();
 
-    for domain_lang_type in &language.types {
-        let domain_name = &domain_lang_type.name;
-        let domain_str = domain_name.to_string();
+                if !hol_pairs.contains(&(category_str.clone(), domain_str.clone())) {
+                    continue;
+                }
 
-        if !hol_pairs.contains(&(category_str.clone(), domain_str.clone())) {
-            continue;
-        }
+                // Single-binder lambda: Lam{Domain}
+                let lam_label =
+                    syn::Ident::new(&format!("Lam{}", domain_name), proc_macro2::Span::call_site());
+                variants.push(VariantKind::Binder {
+                    label: lam_label,
+                    pre_scope_fields: vec![],
+                    binder_cat: domain_name.clone(),
+                    body_cat: category.clone(),
+                });
 
-        // Single-binder lambda: Lam{Domain}
-        let lam_label =
-            syn::Ident::new(&format!("Lam{}", domain_name), proc_macro2::Span::call_site());
-        variants.push(VariantKind::Binder {
-            label: lam_label,
-            pre_scope_fields: vec![],
-            binder_cat: domain_name.clone(),
-            body_cat: category.clone(),
-        });
+                // Multi-binder lambda: MLam{Domain}
+                let mlam_label = syn::Ident::new(
+                    &format!("MLam{}", domain_name),
+                    proc_macro2::Span::call_site(),
+                );
+                variants.push(VariantKind::MultiBinder {
+                    label: mlam_label,
+                    pre_scope_fields: vec![],
+                    binder_cat: domain_name.clone(),
+                    body_cat: category.clone(),
+                });
 
-        // Multi-binder lambda: MLam{Domain}
-        let mlam_label =
-            syn::Ident::new(&format!("MLam{}", domain_name), proc_macro2::Span::call_site());
-        variants.push(VariantKind::MultiBinder {
-            label: mlam_label,
-            pre_scope_fields: vec![],
-            binder_cat: domain_name.clone(),
-            body_cat: category.clone(),
-        });
+                // Application variant: Apply{Domain}
+                let apply_label = syn::Ident::new(
+                    &format!("Apply{}", domain_name),
+                    proc_macro2::Span::call_site(),
+                );
+                variants.push(VariantKind::Regular {
+                    label: apply_label,
+                    fields: vec![
+                        FieldInfo {
+                            category: category.clone(),
+                            is_collection: false,
+                            coll_type: None,
+                            is_predicate: false,
+                            is_optional: false,
+                            opaque_leaf: None,
+                        },
+                        FieldInfo {
+                            category: domain_name.clone(),
+                            is_collection: false,
+                            coll_type: None,
+                            is_predicate: false,
+                            is_optional: false,
+                            opaque_leaf: None,
+                        },
+                    ],
+                });
 
-        // Application variant: Apply{Domain}
-        let apply_label =
-            syn::Ident::new(&format!("Apply{}", domain_name), proc_macro2::Span::call_site());
-        variants.push(VariantKind::Regular {
-            label: apply_label,
-            fields: vec![
-                FieldInfo {
-                    category: category.clone(),
-                    is_collection: false,
-                    coll_type: None,
-                    is_predicate: false,
-                    is_optional: false,
-                    opaque_leaf: None,
-                },
-                FieldInfo {
-                    category: domain_name.clone(),
-                    is_collection: false,
-                    coll_type: None,
-                    is_predicate: false,
-                    is_optional: false,
-                    opaque_leaf: None,
-                },
-            ],
-        });
-
-        // Multi-application variant: MApply{Domain}
-        let mapply_label =
-            syn::Ident::new(&format!("MApply{}", domain_name), proc_macro2::Span::call_site());
-        variants.push(VariantKind::Regular {
-            label: mapply_label,
-            fields: vec![
-                FieldInfo {
-                    category: category.clone(),
-                    is_collection: false,
-                    coll_type: None,
-                    is_predicate: false,
-                    is_optional: false,
-                    opaque_leaf: None,
-                },
-                FieldInfo {
-                    category: domain_name.clone(),
-                    is_collection: true,
-                    coll_type: Some(CollectionType::Vec),
-                    is_predicate: false,
-                    is_optional: false,
-                    opaque_leaf: None,
-                },
-            ],
-        });
-    }
-
-    variants
+                // Multi-application variant: MApply{Domain}
+                let mapply_label = syn::Ident::new(
+                    &format!("MApply{}", domain_name),
+                    proc_macro2::Span::call_site(),
+                );
+                variants.push(VariantKind::Regular {
+                    label: mapply_label,
+                    fields: vec![
+                        FieldInfo {
+                            category: category.clone(),
+                            is_collection: false,
+                            coll_type: None,
+                            is_predicate: false,
+                            is_optional: false,
+                            opaque_leaf: None,
+                        },
+                        FieldInfo {
+                            category: domain_name.clone(),
+                            is_collection: true,
+                            coll_type: Some(CollectionType::Vec),
+                            is_predicate: false,
+                            is_optional: false,
+                            opaque_leaf: None,
+                        },
+                    ],
+                });
+            }
+        },
+    )
 }
 
 /// Convert a grammar rule to a VariantKind

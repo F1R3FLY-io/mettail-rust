@@ -51,12 +51,17 @@ pub(crate) fn build_per_category_rules(
     let types: Vec<_> = language
         .types
         .iter()
-        .map(|ty| TypeInput {
-            name: ty.name.to_string(),
-            is_data: ty.is_data(),
-            has_native: ty.native_type.is_some(),
-            has_collection: ty.collection_kind.is_some(),
-            source: ty,
+        .map(|ty| {
+            let name = ty.name.to_string();
+            let is_data = ty.is_data();
+            TypeInput {
+                name,
+                is_data,
+                admits_variables: !is_data,
+                has_native: ty.native_type.is_some(),
+                has_collection: ty.collection_kind.is_some(),
+                source: ty,
+            }
         })
         .collect();
     let mut adapter = MacroSynthesisAdapter { language };

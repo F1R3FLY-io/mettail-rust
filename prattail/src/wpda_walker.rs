@@ -1041,6 +1041,7 @@ const KBEST_OCCURRENCE_WORK_LIMIT: usize = 100_000;
 /// explicit-worklist closure supplies realization order, so nested containers
 /// cannot drift from coordinate layout.
 struct KbestWalkPlan<W> {
+    action_context: crate::wpda_runtime::ActionContext,
     packing: crate::sppf::SppfId,
     rule_idx: u32,
     pk_weight: W,
@@ -1222,6 +1223,30 @@ pub trait WpdaEngine<W: SemiringRef> {
         (entry.action_fn)(builder, args);
         Ok(())
     }
+
+    /// Static engines retain exactly one original call, ignoring context.
+    /// Owned engines consume the completed parent Symbol witness instead.
+    fn execute_action_with_context(
+        &self,
+        src_idx: u16,
+        rule_idx: u16,
+        builder: &mut SemanticBuilder,
+        args: Vec<ActionArg>,
+        _context: crate::wpda_runtime::ActionContext,
+    ) -> Result<(), ActionInvocationError> {
+        self.execute_action(src_idx, rule_idx, builder, args)
+    }
+
+    /// Optional action for an already-observed universal grouping close.
+    /// Static engines retain the original forest passthrough exactly.
+    fn grouping_boundary_rule(&self) -> Option<u32> {
+        None
+    }
+
+    /// Admitted category edge: exact endpoint and explicit structural action.
+    /// Default engines have no hole input; this never fabricates a token.
+    fn structural_hole_edge(&self, _category: u16, _pos: usize) -> Option<(usize, u32)> { None }
+    fn supports_structural_holes(&self) -> bool { false }
 
     /// SPPF-realize observational-dedup hook (2026-06-28).
     ///
@@ -1534,7 +1559,7 @@ pub trait WpdaEngine<W: SemiringRef> {
         result_src_idx: u16,
         rule_idx: u16,
         slot_idx: u8,
-    ) -> Option<CollectionSpec> {
+    ) -> Option<CollectionSpec<'_>> {
         let _ = (result_src_idx, rule_idx, slot_idx);
         None
     }
@@ -1560,7 +1585,7 @@ pub trait WpdaEngine<W: SemiringRef> {
         result_src_idx: u16,
         rule_idx: u16,
         slot_idx: u8,
-    ) -> Option<&'static str> {
+    ) -> Option<&str> {
         let _ = (result_src_idx, rule_idx, slot_idx);
         None
     }
@@ -1607,6 +1632,16 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn cat_of_type_name(&self, name: &str) -> Option<u16> {
         let _ = name;
         None
+    }
+
+    /// Observe the category of a realized term before the builder consumes it.
+    ///
+    /// The default preserves the original type-name lookup exactly. Engines
+    /// using an explicit term carrier can override this hook to read its
+    /// category index from the borrowed payload instead of its debug tag.
+    fn term_category(&self, value: &(dyn Any + Send + Sync), type_name: &str) -> Option<u16> {
+        let _ = value;
+        self.cat_of_type_name(type_name)
     }
 
     /// Pass-2c token-soundness backstop (2026-05-30): the minimum number of
@@ -1793,7 +1828,7 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// wrappers such as `sin(<Float>)`. Multiple rules may share the same
     /// `(from_cat, to_cat)` pair; callers must use keyword and action evidence
     /// instead of selecting a source-order default.
-    fn trigger_unary_wrappers_into(&self, from_cat: u16, to_cat: u16) -> &'static [u16] {
+    fn trigger_unary_wrappers_into(&self, from_cat: u16, to_cat: u16) -> &[u16] {
         let _ = (from_cat, to_cat);
         &[]
     }
@@ -1808,7 +1843,7 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// trigger-bearing Int producer) would be synthesized with the enclosing
     /// `int` keyword, fabricating a token-unsound parse (e.g. `int(a)` yielding
     /// `|a|`). PURE static lookup, O(1). Default `None` (test engines).
-    fn prefix_cast_keyword(&self, to_cat: u16, rule_idx: u16) -> Option<&'static str> {
+    fn prefix_cast_keyword(&self, to_cat: u16, rule_idx: u16) -> Option<&str> {
         let _ = (to_cat, rule_idx);
         None
     }
@@ -2808,6 +2843,7 @@ struct SppfSymbolTerm {
 }
 
 struct PackingWitnessContext {
+    action_context: crate::wpda_runtime::ActionContext,
     cat: u16,
     local_rule_idx: u16,
     arity: usize,
@@ -4091,6 +4127,13 @@ impl<'a> CgllRepairSource<'a> {
 }
 
 impl<'a> crate::wpda_runtime::WpdaTokenSource for CgllRepairSource<'a> {
+    fn token_occurrence(&self, pos: usize, alternative: usize) -> Option<u32> {
+        if self.virtual_at(pos).is_some() {
+            None
+        } else {
+            self.inner.token_occurrence(pos, alternative)
+        }
+    }
     fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
         match self.virtual_at(pos) {
             Some(v) => Some(v.kind.clone()),
@@ -9143,6 +9186,7 @@ where
                 token_kind,
                 text_handle,
                 pos,
+                occurrence,
                 pushed_via_push_ident,
             }) => {
                 let text = self.sppf.text(*text_handle).to_string();
@@ -9164,6 +9208,7 @@ where
                         kind: token_kind.clone(),
                         text,
                         pos: pos_usize,
+                        occurrence: *occurrence,
                     }
                 };
                 // Phase C.6: leaf node — weight is `W::one_ref()` per §2.5.
@@ -9393,13 +9438,14 @@ where
                                 ..
                             }) = self.sppf.node(p)
                             {
-                                recomputed_storage = self.realize_packing_call(
+                                recomputed_storage = self.realize_packing_call_with_context(
                                     p,
                                     *prule,
                                     pchildren,
                                     pweight.clone(),
                                     memo,
                                     limit,
+                                    self.completed_action_context(id),
                                 );
                                 &recomputed_storage
                             } else {
@@ -9603,6 +9649,30 @@ where
         packing_weight: W,
         memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
         limit: Option<usize>,
+    ) -> Vec<(ActionArg, W)>
+    where
+        W: StarSemiringRef,
+    {
+        self.realize_packing_call_with_context(
+            packing,
+            rule_idx,
+            children,
+            packing_weight,
+            memo,
+            limit,
+            Default::default(),
+        )
+    }
+
+    fn realize_packing_call_with_context(
+        &self,
+        packing: crate::sppf::SppfId,
+        rule_idx: u32,
+        children: &[crate::sppf::SppfId],
+        packing_weight: W,
+        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+        limit: Option<usize>,
+        action_context: crate::wpda_runtime::ActionContext,
     ) -> Vec<(ActionArg, W)>
     where
         W: StarSemiringRef,
@@ -9830,8 +9900,8 @@ where
             // pop_args call shape is preserved.
             for arg in &args {
                 match arg {
-                    ActionArg::Token { kind, text, pos } => {
-                        sb.push_token(kind.clone(), text.clone(), *pos);
+                    ActionArg::Token { kind, text, pos, occurrence } => {
+                        sb.push_token_occurrence(kind.clone(), text.clone(), *pos, *occurrence);
                     },
                     ActionArg::Ident { name, pos } => {
                         sb.push_ident(name.clone(), *pos);
@@ -9897,10 +9967,13 @@ where
                     ActionArg::UnsetCollectionValue => "UnsetCollectionValue",
                 })
                 .collect();
-            if let Err(cause) = self
-                .engine
-                .execute_action(cat, local_rule_idx, &mut sb, popped)
-            {
+            if let Err(cause) = self.engine.execute_action_with_context(
+                cat,
+                local_rule_idx,
+                &mut sb,
+                popped,
+                action_context,
+            ) {
                 self.record_realization_error(RealizationError::Action { rule_idx, cause });
                 return Vec::new();
             }
@@ -10114,36 +10187,7 @@ where
     /// that `parse_<Cat>::parse_via_wpda` uses on its outer `pos` check.
     #[inline]
     fn is_logical_eoi(&self, pos: usize, tokens: &dyn WpdaTokenSource) -> bool {
-        // M6c.8.4 (2026-05-14): cursor is at EOI iff `pos` equals the
-        // canonical EOF sentinel index. Linear token sources additionally
-        // keep the legacy "past/trailing EOF token" fallback.
-        //
-        // For `SliceTokenSource` and `MultiTokenSource`, the default
-        // `eof_node()` returns `len() - 1` and the trailing-Eof clause
-        // preserves the pre-M6c.8.4 "pos is at the trailing Eof token"
-        // semantics. The `pos >= len()` clause covers cursors that
-        // advanced past the end (defensive).
-        //
-        // For `LatticeTokenSource`, `eof_node()` returns the canonical
-        // EOF sentinel index from the DAG. Crucially, this is NOT
-        // necessarily `nodes.len() - 1`: orphan nodes (allocated by
-        // M6c.7.1 soft-fail for secondary-alt dead-ends) may sit at
-        // indices BEFORE OR AFTER the EOF sentinel. A cursor parked
-        // at an orphan node MUST NOT be considered EOI even if that
-        // orphan is the final node and `peek_kind` reports Eof.
-        //
-        // The `pos == eof_node` check is precise for every source. The
-        // remaining clauses are valid only for linear token-index sources;
-        // applying them to lattice node ids would convert orphan dead-ends
-        // into false acceptances.
-        if pos == tokens.eof_node() {
-            return true;
-        }
-        if !tokens.positions_are_linear_tokens() {
-            return false;
-        }
-        pos >= tokens.len()
-            || (pos + 1 == tokens.len() && tokens.peek_kind(pos) == Some(TokenKind::Eof))
+        tokens.is_logical_eoi(pos)
     }
 
     #[inline]
@@ -11453,13 +11497,17 @@ where
                                     // (`None`) so cross-dedup parents see full
                                     // input (no false NON-fire).
                                     let pk_limit = if top { limit } else { None };
-                                    let terms = self.realize_packing_call(
+                                    let terms = self.realize_packing_call_with_context(
                                         bp.packing,
                                         bp.rule_idx,
                                         flat,
                                         bp.weight.times_ref(flat_weight),
                                         memo,
                                         pk_limit,
+                                        crate::wpda_runtime::ActionContext {
+                                            source_positions: Some((sym_lo, sym_hi)),
+                                            result_category: self.sppf_symbol_category(sym),
+                                        },
                                     );
                                     // ── R-D A1 over-accept EXACT fix (task #18b) ──
                                     // The committed drain compared RAW `out.len()`
@@ -14075,6 +14123,7 @@ where
             return self.cgll_reconstruction_failed(pk, ReconstructionFailure::UnexpectedNodeKind);
         };
         let mut plan = KbestWalkPlan {
+            action_context: self.completed_action_context(node),
             packing: pk,
             rule_idx: *rule_idx,
             pk_weight: weight.clone(),
@@ -14372,6 +14421,7 @@ where
                             *rule_idx,
                             args,
                             weight.times_ref(local_weight),
+                            Default::default(),
                         )?,
                         _ => {
                             return self.cgll_reconstruction_failed(
@@ -14406,7 +14456,24 @@ where
             plan.rule_idx,
             args,
             combo.times_ref(&plan.pk_weight.times_ref(&plan.flat_weight)),
+            plan.action_context,
         )
+    }
+
+    /// Retain the existing completed Symbol witness without traversing children.
+    fn completed_action_context(
+        &self,
+        node: crate::sppf::SppfId,
+    ) -> crate::wpda_runtime::ActionContext {
+        crate::wpda_runtime::ActionContext {
+            result_category: self.sppf_symbol_category(node),
+            source_positions: match self.sppf.node(node) {
+                Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) => {
+                    Some((*lo_pos, *hi_pos))
+                },
+                _ => None,
+            },
+        }
     }
 
     fn cgll_apply_selected_action(
@@ -14415,6 +14482,7 @@ where
         rule_idx: u32,
         args: Vec<ActionArg>,
         weight: W,
+        action_context: crate::wpda_runtime::ActionContext,
     ) -> Option<(ActionArg, W)> {
         if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
             return Some((ActionArg::Optional(Some(args)), weight));
@@ -14435,11 +14503,12 @@ where
             return None;
         }
         match SemanticBuilder::invoke_selected_action_with(entry, args, |builder, args| {
-            self.engine.execute_action(
+            self.engine.execute_action_with_context(
                 (rule_idx >> 16) as u16,
                 (rule_idx & 0xffff) as u16,
                 builder,
                 args,
+                action_context,
             )
         }) {
             Ok(Some(arg)) => Some((arg, weight)),
@@ -16551,7 +16620,7 @@ where
     fn cgll_pure_project_frame_ctx(
         &self,
         key: CgllPureFrameKey,
-    ) -> Option<crate::wpda_runtime::FrameCtx> {
+    ) -> Option<crate::wpda_runtime::FrameCtx<'_>> {
         self.engine
             .collection_spec(key.category_src_idx, key.rule_index_in_category, key.slot_idx)
             .map(|spec| crate::wpda_runtime::FrameCtx {
@@ -16566,7 +16635,7 @@ where
         &self,
         v_parent: &rustc_hash::FxHashMap<crate::gss::GssNodeId, CgllPureParentCtx>,
         d: &CgllPureDescriptor,
-    ) -> crate::wpda_runtime::FrameCtx {
+    ) -> crate::wpda_runtime::FrameCtx<'_> {
         use crate::wpda_runtime::FrameCtx;
         // (1) The descriptor's own frame is the innermost when it IS a marker
         // (standalone collections dispatch elements in-frame).
@@ -17166,12 +17235,35 @@ where
         }
     }
 
-    /// REDUCE (pure form of Pop / ConsumeAndPop / ConsumeAtAndPop and the
-    /// Fork pop kinds). `i_pop` = the POST-consume position (so the interned
-    /// `z` span `hi`, the recorded P entry, and the resume position agree —
-    /// the coherent reading of plan §1 R1; the classic fire interns
-    /// `hi = cursor.pos` AFTER the consume, GT-dump-confirmed root span
-    /// `(0,7)` over spine `(0,6)` for `@Nil!(0)`).
+    /// Retain the already-observed grouping close only for opted-in engines.
+    /// The wrapper is structural, carries unit weight, and uses the existing
+    /// realization protocol. It is not an authored grammar production.
+    fn cgll_retain_grouping_boundary(
+        &mut self,
+        descriptor: &CgllPureDescriptor,
+        close_hi: usize,
+    ) -> crate::sppf::SppfId {
+        if descriptor.cur_sym.kind != SymbolKind::GroupingMarker {
+            return descriptor.w;
+        }
+        let Some(rule) = self.engine.grouping_boundary_rule() else {
+            return descriptor.w;
+        };
+        let Some(category) = self.sppf_symbol_category(descriptor.w) else {
+            return descriptor.w;
+        };
+        // gll_create stores caller.pos at the consumed opener; close_hi is
+        // the actual consume target. Neither position is reconstructed.
+        let lo = self.gss.node(descriptor.u)
+            .expect("grouping close retains its canonical GSS frame").pos as u32;
+        let symbol = self.sppf
+            .intern_symbol(u32::from(category) | CGLL_BIN_TAG, lo, close_hi as u32);
+        let packing = self.sppf
+            .intern_packing(rule, vec![descriptor.w], W::one_ref());
+        self.sppf.link_packing_to_symbol(symbol, packing);
+        symbol
+    }
+
     fn cgll_pure_publish_completed_root(
         &mut self,
         run: &mut CgllPureRun,
@@ -17755,9 +17847,9 @@ where
                 },
                 other => other.clone(),
             };
-            let z = d.w;
-            // Task #10 item 3: `W::one_ref()` — structural passthrough pop
-            // (`z := w`): no packing is interned and nothing is charged.
+            let z = self.cgll_retain_grouping_boundary(d, i_pop);
+            // Structural pop remains unit-weight. Default engines passthrough;
+            // opted-in grouping retains only the unit structural wrapper.
             let returns = self
                 .gss
                 .gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, &W::one_ref());
@@ -18342,6 +18434,29 @@ where
                 }
                 if matches!(d.state, WpdaState::Accepted | WpdaState::Error { .. }) {
                     continue; // terminal states never step
+                }
+                if self.engine.supports_structural_holes() {
+                if let WpdaState::PrefixDispatch { cur_bp, .. } = d.state {
+                    // Complete category edge -> existing category continuation.
+                    // Keep all ordinary prefix alternatives below unchanged.
+                    let category = if d.cur_sym.kind == SymbolKind::CollectionMarker {
+                        self.engine.collection_spec(d.cur_sym.category_src_idx,
+                            d.cur_sym.rule_index_in_category, d.cur_sym.bp.unwrap_or(0))
+                            .and_then(|spec| spec.element_src_idx)
+                    } else { Some(d.cur_sym.category_src_idx) };
+                    if let Some(category) = category {
+                        if let Some((end, action)) = self.engine.structural_hole_edge(category, d.pos) {
+                            let symbol = self.sppf.intern_symbol(u32::from(category) | CGLL_BIN_TAG,
+                                d.pos as u32, end as u32);
+                            let packing = self.sppf.intern_packing(action, Vec::new(), W::one_ref());
+                            self.sppf.link_packing_to_symbol(symbol, packing);
+                            self.cgll_pure_descend(&mut run, &d, d.cur_sym,
+                                StackSymbolV2::category_entry(category),
+                                WpdaState::InfixLoop { cur_bp }, end, CgllFrameClass::D1,
+                                symbol, 0, CgllPrattHandoff::new(None, Some(cur_bp)));
+                        }
+                    }
+                }
                 }
                 // ── Transition: the SAME generated engine tables, fed a
                 // SYNTHESIZED frontier node (AV7: no emitter reads
@@ -19196,7 +19311,7 @@ where
         &self,
         run: &mut CgllPureRun,
         u: crate::gss::GssNodeId,
-    ) -> Option<&'static str> {
+    ) -> Option<&str> {
         run.v_parent
             .get(&u)
             .and_then(|ctx| ctx.direct_separator_frame)
@@ -20078,11 +20193,12 @@ where
                         Some(kind) => {
                             let text = tokens.peek_text(d.pos).unwrap_or("");
                             let text_opt = if text.is_empty() { None } else { Some(text) };
-                            self.sppf.intern_terminal(
+                            self.sppf.intern_terminal_occurrence(
                                 kind,
                                 crate::sppf::PosOrSynth::Real(d.pos as u32),
                                 text_opt,
                                 false,
+                                tokens.token_occurrence(d.pos, 0),
                             )
                         },
                         None => crate::sppf::SPPF_ID_NONE,
@@ -20313,10 +20429,13 @@ where
             },
             WpdaStepAction::ConsumeAndReplace { symbol, weight: _, new_state } => {
                 // Discard-literal: no leaf (mirrors classic 14966-14972).
+                let pos = next_of(d.pos);
+                let w = self.cgll_retain_grouping_boundary(d, pos);
                 run.worklist.push_back(CgllPureDescriptor {
                     state: new_state,
                     cur_sym: symbol,
-                    pos: next_of(d.pos),
+                    pos,
+                    w,
                     ..d.clone()
                 });
             },
@@ -20821,11 +20940,12 @@ where
                 Some(kind) => {
                     let text = tokens.peek_text(pos).unwrap_or("");
                     let text_opt = if text.is_empty() { None } else { Some(text) };
-                    self.sppf.intern_terminal(
+                    self.sppf.intern_terminal_occurrence(
                         kind,
                         crate::sppf::PosOrSynth::Real(pos as u32),
                         text_opt,
                         false,
+                        tokens.token_occurrence(pos, 0),
                     )
                 },
                 None => crate::sppf::SPPF_ID_NONE,
@@ -21198,7 +21318,7 @@ where
                 });
             },
             ForkActionKind::LexAlt {
-                alt_idx: _,
+                alt_idx,
                 kind,
                 text,
                 next_pos,
@@ -21214,11 +21334,12 @@ where
                 } else {
                     Some(text.as_str())
                 };
-                let leaf = self.sppf.intern_terminal(
+                let leaf = self.sppf.intern_terminal_occurrence(
                     kind,
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
                     text_opt,
                     false,
+                    tokens.token_occurrence(pos_after, usize::from(alt_idx)),
                 );
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
                 let w0 =
@@ -21310,11 +21431,12 @@ where
                     Some(kind) => {
                         let text = tokens.peek_text(pos_after).unwrap_or("");
                         let text_opt = if text.is_empty() { None } else { Some(text) };
-                        self.sppf.intern_terminal(
+                        self.sppf.intern_terminal_occurrence(
                             kind,
                             crate::sppf::PosOrSynth::Real(pos_after as u32),
                             text_opt,
                             false,
+                            tokens.token_occurrence(pos_after, 0),
                         )
                     },
                     None => crate::sppf::SPPF_ID_NONE,
@@ -21381,11 +21503,12 @@ where
                     return;
                 }
                 let text = tokens.peek_text(pos_after).unwrap_or("");
-                let leaf = self.sppf.intern_terminal(
+                let leaf = self.sppf.intern_terminal_occurrence(
                     actual_kind,
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
                     Some(text),
                     false,
+                    tokens.token_occurrence(pos_after, 0),
                 );
                 let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
                 let w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
@@ -21423,11 +21546,12 @@ where
                 if !edge_matches || !token_kind_matches_capture_name(&kind_name, &kind) {
                     return;
                 }
-                let leaf = self.sppf.intern_terminal(
+                let leaf = self.sppf.intern_terminal_occurrence(
                     kind.clone(),
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
                     Some(text.as_str()),
                     false,
+                    tokens.token_occurrence(pos_after, alt_idx),
                 );
                 let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
                 let w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
@@ -21454,11 +21578,12 @@ where
                     return;
                 }
                 let text = tokens.peek_text(pos_after).unwrap_or("");
-                let leaf = self.sppf.intern_terminal(
+                let leaf = self.sppf.intern_terminal_occurrence(
                     actual_kind,
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
                     Some(text),
                     false,
+                    tokens.token_occurrence(pos_after, 0),
                 );
                 let child_pos = next_of(pos_after);
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
@@ -21502,11 +21627,12 @@ where
                 if !edge_matches || !token_kind_matches_capture_name(&kind_name, &kind) {
                     return;
                 }
-                let leaf = self.sppf.intern_terminal(
+                let leaf = self.sppf.intern_terminal_occurrence(
                     kind.clone(),
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
                     Some(text.as_str()),
                     false,
+                    tokens.token_occurrence(pos_after, alt_idx),
                 );
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
                 let w0 = self.cgll_pure_weight_carrier(run, child_slot, leaf, next_pos, &br_weight);
@@ -22638,7 +22764,7 @@ where
         enum Request {
             Arg(SppfId),
             Symbol(SppfId),
-            Packing(SppfId),
+            Packing(SppfId, crate::wpda_runtime::ActionContext),
         }
 
         enum Value {
@@ -22684,6 +22810,7 @@ where
                                 token_kind,
                                 text_handle,
                                 pos,
+                                occurrence,
                                 pushed_via_push_ident,
                             }) => {
                                 let pos = match pos {
@@ -22694,7 +22821,12 @@ where
                                 Some(Value::Arg(if *pushed_via_push_ident {
                                     ActionArg::Ident { name: text, pos }
                                 } else {
-                                    ActionArg::Token { kind: token_kind.clone(), text, pos }
+                                    ActionArg::Token {
+                                        kind: token_kind.clone(),
+                                        text,
+                                        pos,
+                                        occurrence: *occurrence,
+                                    }
                                 }))
                             },
                             Some(SppfNode::Symbol { non_terminal_tag, .. }) => {
@@ -22793,7 +22925,10 @@ where
                                             non_terminal_tag: *non_terminal_tag,
                                             remaining,
                                         });
-                                        request = Some(Request::Packing(packing_id));
+                                        request = Some(Request::Packing(
+                                            packing_id,
+                                            self.completed_action_context(symbol_id),
+                                        ));
                                         continue;
                                     },
                                     None => {
@@ -22805,7 +22940,7 @@ where
                             _ => None,
                         };
                     },
-                    Request::Packing(packing_id) => {
+                    Request::Packing(packing_id, action_context) => {
                         outcome = match self.sppf.node(packing_id) {
                             Some(SppfNode::Packing { rule_idx, children, .. })
                                 if *rule_idx != Self::OPTIONAL_PRESENT_RULE_IDX =>
@@ -22846,6 +22981,7 @@ where
                                     None
                                 } else {
                                     let context = PackingWitnessContext {
+                                        action_context,
                                         cat,
                                         local_rule_idx,
                                         arity,
@@ -22925,7 +23061,10 @@ where
                             non_terminal_tag,
                             remaining,
                         });
-                        request = Some(Request::Packing(packing_id));
+                        request = Some(Request::Packing(
+                            packing_id,
+                            self.completed_action_context(symbol_id),
+                        ));
                         continue;
                     } else {
                         visiting.remove(&symbol_id);
@@ -23024,8 +23163,8 @@ where
         }
         for arg in &context.args {
             match arg {
-                ActionArg::Token { kind, text, pos } => {
-                    builder.push_token(kind.clone(), text.clone(), *pos);
+                ActionArg::Token { kind, text, pos, occurrence } => {
+                    builder.push_token_occurrence(kind.clone(), text.clone(), *pos, *occurrence);
                 },
                 ActionArg::Ident { name, pos } => builder.push_ident(name.clone(), *pos),
                 ActionArg::Term { value, .. } => builder.push_term_arc(Arc::clone(value)),
@@ -23046,10 +23185,13 @@ where
             return None;
         }
         let popped = builder.pop_args(context.arity);
-        if let Err(cause) =
-            self.engine
-                .execute_action(context.cat, context.local_rule_idx, &mut builder, popped)
-        {
+        if let Err(cause) = self.engine.execute_action_with_context(
+            context.cat,
+            context.local_rule_idx,
+            &mut builder,
+            popped,
+            context.action_context,
+        ) {
             let rule_idx = (u32::from(context.cat) << 16) | u32::from(context.local_rule_idx);
             self.record_realization_error(RealizationError::Action { rule_idx, cause });
             return None;
@@ -23058,8 +23200,8 @@ where
             return None;
         }
         let output_cat = builder
-            .top_term_type_name()
-            .and_then(|type_name| self.engine.cat_of_type_name(type_name));
+            .top_term()
+            .and_then(|(value, type_name)| self.engine.term_category(value, type_name));
         let value = builder.take_dyn_result()?;
         Some(SppfSymbolTerm { value, output_cat })
     }
@@ -23223,8 +23365,8 @@ where
         // original arg shape while still having a drainable slot.
         for arg in &args {
             match arg {
-                ActionArg::Token { kind, text, pos } => {
-                    sb.push_token(kind.clone(), text.clone(), *pos);
+                ActionArg::Token { kind, text, pos, occurrence } => {
+                    sb.push_token_occurrence(kind.clone(), text.clone(), *pos, *occurrence);
                 },
                 ActionArg::Ident { name, pos } => {
                     sb.push_ident(name.clone(), *pos);
@@ -23276,8 +23418,8 @@ where
         let drains_count = pre_collection_len.saturating_sub(post_collection_len);
         // Capture output_cat BEFORE take_dyn_result drains the top Term.
         let output_cat = sb
-            .top_term_type_name()
-            .and_then(|tn| self.engine.cat_of_type_name(tn));
+            .top_term()
+            .and_then(|(value, type_name)| self.engine.term_category(value, type_name));
         // Take the result Arc. take_dyn_result returns the top of the
         // builder.stack as an Arc<dyn Any>. Mirror semantic with
         // realize_packing_call line 3955+.
@@ -23627,6 +23769,15 @@ where
 
 #[cfg(test)]
 mod action_dispatch_tests;
+
+#[cfg(test)]
+mod term_category_tests;
+
+#[cfg(test)]
+mod grouping_boundary_tests;
+
+#[cfg(test)]
+mod borrowed_descriptor_tests;
 
 #[cfg(test)]
 #[path = "../tests/support/wpda_witness_recursive_oracle.rs"]
@@ -24403,6 +24554,78 @@ mod tests {
             !walker.is_logical_eoi(2, &tokens),
             "nonlinear orphan nodes must not satisfy slice-style trailing-Eof fallback"
         );
+    }
+
+    #[test]
+    fn logical_eoi_default_preserves_observation_order_and_short_circuiting() {
+        struct ObservedSource {
+            eof: usize,
+            linear: bool,
+            length: usize,
+            calls: std::cell::RefCell<Vec<&'static str>>,
+        }
+        impl WpdaTokenSource for ObservedSource {
+            fn peek_kind(&self, _pos: usize) -> Option<TokenKind> {
+                self.calls.borrow_mut().push("peek");
+                Some(TokenKind::Eof)
+            }
+            fn peek_text(&self, _pos: usize) -> Option<&str> {
+                panic!("logical EOI must not read token text")
+            }
+            fn len(&self) -> usize {
+                self.calls.borrow_mut().push("len");
+                self.length
+            }
+            fn eof_node(&self) -> usize {
+                self.calls.borrow_mut().push("eof");
+                self.eof
+            }
+            fn positions_are_linear_tokens(&self) -> bool {
+                self.calls.borrow_mut().push("linear");
+                self.linear
+            }
+        }
+        let walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        for (pos, eof, linear, length, expected, calls) in [
+            (7, 7, false, 10, true, vec!["eof"]),
+            (9, 7, false, 10, false, vec!["eof", "linear"]),
+            (10, 7, true, 10, true, vec!["eof", "linear", "len"]),
+            (9, 7, true, 10, true, vec!["eof", "linear", "len", "len", "peek"]),
+            (8, 7, true, 10, false, vec!["eof", "linear", "len", "len"]),
+            (usize::MAX, 7, true, usize::MAX, true, vec!["eof", "linear", "len"]),
+        ] {
+            let source = ObservedSource {
+                eof,
+                linear,
+                length,
+                calls: std::cell::RefCell::new(Vec::new()),
+            };
+            assert_eq!(walker.is_logical_eoi(pos, &source), expected);
+            assert_eq!(*source.calls.borrow(), calls);
+        }
+    }
+
+    #[test]
+    fn logical_eoi_walker_uses_source_override_without_default_observations() {
+        struct ContextualSource;
+        impl WpdaTokenSource for ContextualSource {
+            fn peek_kind(&self, _pos: usize) -> Option<TokenKind> {
+                panic!("override must not peek")
+            }
+            fn peek_text(&self, _pos: usize) -> Option<&str> {
+                panic!("override must not read text")
+            }
+            fn len(&self) -> usize {
+                panic!("override must not read length")
+            }
+            fn is_logical_eoi(&self, pos: usize) -> bool {
+                matches!(pos, 4 | 8)
+            }
+        }
+        let walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        assert!(walker.is_logical_eoi(4, &ContextualSource));
+        assert!(walker.is_logical_eoi(8, &ContextualSource));
+        assert!(!walker.is_logical_eoi(5, &ContextualSource));
     }
 
     #[test]
@@ -26452,6 +26675,7 @@ mod tests {
                 .expect("nested selected summary");
             let plan = KbestWalkPlan {
                 packing: optional,
+                action_context: Default::default(),
                 rule_idx: KbestWalker::OPTIONAL_PRESENT_RULE_IDX,
                 pk_weight: LexicographicWeight::one(),
                 flat: vec![optional],
@@ -27316,6 +27540,7 @@ mod tests {
             );
             let plan = KbestWalkPlan {
                 packing,
+                action_context: Default::default(),
                 rule_idx: kbest_rule(1, 2),
                 pk_weight: lex(0.125, 1, 2),
                 flat: vec![trigger, marker],

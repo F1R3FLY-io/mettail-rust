@@ -78,6 +78,7 @@ fn declaration<'input>(
     TypeInput {
         name: (*source).to_string(),
         is_data,
+        admits_variables: !is_data,
         has_native: false,
         has_collection: false,
         source,

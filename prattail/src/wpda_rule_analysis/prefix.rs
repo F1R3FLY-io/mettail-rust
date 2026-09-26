@@ -168,7 +168,7 @@ where
             break;
         }
     }
-    Ok(has_user_var || !context.try_is_data(lang_type)?)
+    Ok(has_user_var || context.try_admits_variables(lang_type)?)
 }
 
 /// Original identifier closure: authored rule order, duplicate reverse edges,
@@ -200,7 +200,7 @@ where
     let mut reached: std::collections::HashSet<String> = std::collections::HashSet::new();
     for index in 0..context.try_categories_len()? {
         let ty = context.try_category_at(index)?;
-        if !context.try_is_data(ty)? {
+        if context.try_admits_variables(ty)? {
             reached.insert(context.try_category_spelling(ty)?);
         }
     }
@@ -536,7 +536,7 @@ where
             }
         }
         if let Some(lang_type) = context.try_find_category(&current_cat_name)? {
-            if !context.try_is_data(lang_type)? {
+            if context.try_admits_variables(lang_type)? {
                 let mut has_user_var = false;
                 for index in 0..context.try_rules_len()? {
                     let rule = context.try_rule_at(index)?;

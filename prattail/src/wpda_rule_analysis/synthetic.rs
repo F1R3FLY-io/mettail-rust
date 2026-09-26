@@ -26,6 +26,8 @@ pub struct UserInput<'a, U> {
 pub struct TypeInput<'a, T> {
     pub name: String,
     pub is_data: bool,
+    /// Independent runtime permission; legacy callers use `!is_data`.
+    pub admits_variables: bool,
     pub has_native: bool,
     pub has_collection: bool,
     pub source: &'a T,
@@ -505,7 +507,7 @@ pub fn try_build_per_category_rules<A: TrySynthesisAdapter>(
     // 3. Missing Var rules, including native and collection categories.
     for type_def in types {
         admit(&mut adapter, SynthesisEvent::Visit(SynthesisPhase::Variables))?;
-        if type_def.is_data {
+        if type_def.is_data || !type_def.admits_variables {
             continue;
         }
         let cat_name = &type_def.name;
@@ -823,6 +825,7 @@ mod tests {
         TypeInput {
             name: source.name.into(),
             is_data: false,
+            admits_variables: true,
             has_native: native,
             has_collection: false,
             source,

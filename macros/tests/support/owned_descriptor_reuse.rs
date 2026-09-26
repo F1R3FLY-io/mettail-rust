@@ -120,6 +120,76 @@ mod owned_descriptor_reuse {
         assert_eq!(actual.original_occurrences, occurrences);
         assert_eq!(actual.synthesis.categories, categories);
         assert_eq!(actual.synthesis.source_order.len(), occurrences.len());
+        assert_eq!(actual.structural_delimiters,
+            original::collection::collect_structural_delimiters(&selected, &per_cat));
+        for (category, first) in categories.iter().zip(&actual.first_sets) {
+            let expected = original::prefix::first_set_of_category(category, &selected);
+            assert_eq!(
+                first.iter().map(|row| (original_quote(&row.pattern).to_string(), row.extra_guard.as_ref().map(|guard| original_quote(guard).to_string()), row.leading_literal.clone(), row.is_var_contribution)).collect::<Vec<_>>(),
+                expected.iter().map(|row| (row.pattern.to_string(), row.extra_guard.as_ref().map(ToString::to_string), row.leading_literal.clone(), row.is_var_contribution)).collect::<Vec<_>>(),
+                "collection FIRST predicate retains original rows/order for {category}",
+            );
+        }
+        // Independent original kind_dispatch census, retained here as the
+        // source oracle after production forwards to the shared reader body.
+        let mut projections = Vec::new();
+        for (to, rules) in per_cat.iter().enumerate() {
+            for (rule_idx, rule) in rules.iter().enumerate() {
+                let Some(tc) = rule.term_context.as_ref() else { continue };
+                if tc.len() != 1 { continue; }
+                let mettail_ast::grammar::TermParam::Simple { name, ty } = &tc[0] else { continue };
+                let mettail_ast::types::TypeExpr::Base(source) = ty else { continue };
+                let source_name = source.to_string();
+                if source_name == rule.category.to_string() { continue; }
+                let Some(sp) = rule.syntax_pattern.as_ref() else { continue };
+                if !(sp.len() == 1 && matches!(sp.first(), Some(SyntaxExpr::Param(syn_name)) if syn_name == name)) { continue; }
+                let Some(from) = categories.iter().position(|category| category == &source_name) else { continue };
+                projections.push((from as u16, to as u16, rule_idx as u16));
+            }
+        }
+        assert_eq!(actual.transparent_projections, projections);
+        let mut coercions: std::collections::BTreeMap<_, Vec<_>> = std::collections::BTreeMap::new();
+        for &(from, to, rule) in &projections {
+            if !mettail_ast::grammar::NonTerminalKind::classify(&categories[usize::from(from)]).is_builtin() {
+                coercions.entry((from, to)).or_default().push((to, rule));
+            }
+        }
+        assert_eq!(actual.single_hop_coercions, coercions);
+        let mut direct = std::collections::BTreeSet::new();
+        for rule in &selected.terms {
+            if let Some(info) = original::infix::classify_rule_public(rule) {
+                if info.is_cross_category && info.category != info.result_category {
+                    if let (Some(from), Some(to)) = (
+                        categories.iter().position(|cat| cat == &info.category),
+                        categories.iter().position(|cat| cat == &info.result_category),
+                    ) {
+                        if from != to { direct.insert((from as u16, to as u16)); }
+                    }
+                }
+            }
+        }
+        for &(from, to, _) in &projections {
+            if from != to { direct.insert((from, to)); }
+        }
+        let mut reach = direct.clone();
+        loop {
+            let mut added = false;
+            let snapshot: Vec<_> = reach.iter().copied().collect();
+            for &(a, b) in &snapshot {
+                for &(c, d) in &snapshot {
+                    if b == c && a != d && reach.insert((a, d)) { added = true; }
+                }
+            }
+            if !added { break; }
+        }
+        assert!(direct.iter().all(|edge| reach.contains(edge)));
+        assert_eq!(actual.category_reachability, reach.into_iter().filter(|(a,b)| a != b).collect::<Vec<_>>());
+        let ident_var_only: Vec<_> = categories.iter().enumerate().filter_map(|(index, category)| {
+            let fs = original::prefix::first_set_of_category(category, &selected);
+            (fs.iter().any(|ft| ft.pattern.to_string().contains("Ident") && ft.extra_guard.is_none())
+                && original::prefix::source_ident_first_is_var_only(category, &selected)).then_some(index as u16)
+        }).collect();
+        assert_eq!(actual.projection_ident_var_only_sources, ident_var_only);
 
         let bp = original::infix::build_bp_table(&selected);
         // These Debug implementations expose every field in ordered vectors;

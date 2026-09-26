@@ -12,6 +12,9 @@
 //! keep equal-weight distinct alternatives both alive, in a deterministic order.
 
 use rustc_hash::FxHashMap as HashMap;
+mod framed;
+pub use framed::FramedSemanticKeyHasher;
+pub mod visitor;
 use std::any::{Any, TypeId};
 use std::cmp::Ordering;
 use std::fmt;

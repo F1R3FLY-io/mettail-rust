@@ -11,8 +11,10 @@ use super::{
 use crate::{visit_lexical_survivors, BuiltinToken, LexicalSelectionError, ModeTransition};
 use std::collections::{BTreeMap, VecDeque};
 
+/// A logical input offset paired with its complete opaque lexer-mode context.
+/// Equality, ordering, and hashing include the context, not just the offset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(super) struct LexPosition {
+pub struct LexPosition {
     pub offset: usize,
     context: usize,
 }
@@ -29,8 +31,9 @@ impl LexPosition {
     }
 }
 
+/// One original ordered lexical candidate, including explicit refutations.
 #[derive(Clone, Debug)]
-pub(super) enum LexicalEdge {
+pub enum LexicalEdge {
     Accepted {
         token: TokenId,
         target: LexPosition,
@@ -45,8 +48,9 @@ pub(super) enum LexicalEdge {
     },
 }
 
+/// Borrowed sessions expose these original records without reselecting edges.
 #[derive(Clone, Default)]
-pub(super) struct LexicalNode {
+pub struct LexicalNode {
     pub edges: Vec<LexicalEdge>,
     pub trivia: Option<LexPosition>,
     primary_successor: Option<LexPosition>,
@@ -59,14 +63,91 @@ struct NodeState {
     expanded: Option<LexicalNode>,
 }
 
+#[cfg(test)]
+mod logical_eoi_tests {
+    use super::*;
+
+    #[test]
+    fn balanced_end_does_not_require_a_node_but_post_eof_does() {
+        let mut lattice = LexicalLattice::default();
+        let end = LexPosition::START.at(3);
+        let after = end.at(4);
+        assert!(lattice.is_logical_eoi(end, 3));
+        assert!(!lattice.is_logical_eoi(after, 3));
+        lattice.nodes.insert(after, NodeState::default());
+        assert!(!lattice.is_logical_eoi(after, 3), "unexpanded is not an existing node");
+        lattice.nodes.insert(
+            after,
+            NodeState {
+                primary: false,
+                expanded: Some(LexicalNode::default()),
+            },
+        );
+        assert!(lattice.is_logical_eoi(after, 3));
+        assert!(!lattice.is_logical_eoi(end.at(5), 3));
+    }
+
+    #[test]
+    fn full_position_lookup_and_balance_do_not_alias_equal_offsets() {
+        let mut lattice = LexicalLattice::default();
+        let unbalanced = LexPosition { offset: 4, context: 1 };
+        lattice.nodes.insert(
+            unbalanced,
+            NodeState {
+                primary: false,
+                expanded: Some(LexicalNode::default()),
+            },
+        );
+        assert!(!lattice.is_logical_eoi(LexPosition::START.at(4), 3));
+        assert!(!lattice.is_logical_eoi(unbalanced, 3));
+        assert!(!lattice.is_logical_eoi(unbalanced.at(3), 3));
+        assert!(lattice.is_logical_eoi(LexPosition::START.at(3), 3));
+    }
+
+    #[test]
+    fn input_end_overflow_does_not_wrap_the_post_eof_boundary() {
+        let mut lattice = LexicalLattice::default();
+        lattice.nodes.insert(
+            LexPosition::START,
+            NodeState {
+                primary: false,
+                expanded: Some(LexicalNode::default()),
+            },
+        );
+        assert!(lattice.is_logical_eoi(LexPosition::START.at(usize::MAX), usize::MAX));
+        assert!(!lattice.is_logical_eoi(LexPosition::START, usize::MAX));
+    }
+}
+
 #[derive(Default)]
 pub(super) struct LexicalLattice {
     nodes: BTreeMap<LexPosition, NodeState>,
 }
 
 impl LexicalLattice {
+    pub fn nodes(&self) -> impl Iterator<Item = (LexPosition, &LexicalNode)> {
+        self.nodes
+            .iter()
+            .filter_map(|(position, state)| state.expanded.as_ref().map(|node| (*position, node)))
+    }
+
     pub fn node(&self, position: LexPosition) -> Option<&LexicalNode> {
         self.nodes.get(&position)?.expanded.as_ref()
+    }
+
+    /// The original forest root's full-position end-of-input predicate.
+    pub fn is_logical_eoi(&self, node_end: LexPosition, input_end: usize) -> bool {
+        let at_end = node_end.offset == input_end;
+        let after_eof =
+            Some(node_end.offset) == input_end.checked_add(1) && self.node(node_end).is_some();
+        node_end.is_balanced() && (at_end || after_eof)
+    }
+
+    pub fn canonical_position(&self, mut position: LexPosition) -> LexPosition {
+        while let Some(target) = self.node(position).and_then(|node| node.trivia) {
+            position = target;
+        }
+        position
     }
 
     pub fn build(

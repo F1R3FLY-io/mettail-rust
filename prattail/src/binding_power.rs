@@ -16,6 +16,10 @@ use crate::automata::codegen::terminal_to_variant_name;
 pub enum Associativity {
     Left,
     Right,
+    /// Retained semantic strictness. The original postfix assignment does not
+    /// inspect this field. Closed mixfix reuses its original Left routing pair;
+    /// open-right-edge nonpostfix assignment is explicitly unsupported.
+    NonAssociative,
 }
 
 /// H3 chain-absorption descriptor for ONE canonical iterative-eligible
@@ -659,6 +663,12 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
         Err(BindingPowerError::Overflow { category_index, site }) => {
             panic!("binding power overflow in category {category_index} at {site:?}")
         },
+        Err(BindingPowerError::NonAssociativeNonPostfix { category_index }) => {
+            panic!("nonassociative nonpostfix binding power in category {category_index}")
+        },
+        Err(BindingPowerError::IncompleteExplicitCategory { category_index }) => {
+            panic!("incomplete explicit binding observations in category {category_index}")
+        },
     }
 }
 
@@ -677,6 +687,13 @@ pub enum BindingPowerSite {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingPowerError<E> {
     Admission(E),
+    IncompleteExplicitCategory {
+        category_index: usize,
+    },
+    /// No binary or open-right-edge mixfix encoding is inferred from postfix support.
+    NonAssociativeNonPostfix {
+        category_index: usize,
+    },
     Overflow {
         /// Ordinal in the original sorted category grouping, not a Core CategoryId.
         category_index: usize,
@@ -692,6 +709,86 @@ fn checked_binding_power_add<E>(
 ) -> Result<u8, BindingPowerError<E>> {
     left.checked_add(right)
         .ok_or(BindingPowerError::Overflow { category_index, site })
+}
+
+/// Finite order representation of Core's declared powers, not a new precedence
+/// policy. Zero is unrestricted; 255 is the original unranked-child case.
+/// `OwnedExplicitPrattLevels.v` proves the sorted enumeration and strict floors.
+#[derive(Debug, Clone)]
+pub struct ExplicitPrattLevels {
+    entries: std::collections::BTreeMap<u16, u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExplicitPrattError {
+    TooManyLevels(usize),
+    MissingLevel(u16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperandBindingPowers {
+    pub entry: u8,
+    pub left: u8,
+    pub right: u8,
+}
+
+impl ExplicitPrattLevels {
+    pub fn new(powers: impl IntoIterator<Item = u16>) -> Result<Self, ExplicitPrattError> {
+        let levels: std::collections::BTreeSet<_> = powers.into_iter().collect();
+        if levels.len() > 254 {
+            return Err(ExplicitPrattError::TooManyLevels(levels.len()));
+        }
+        let entries = levels
+            .into_iter()
+            .enumerate()
+            .map(|(index, power)| {
+                let lower = u8::try_from(index).expect("admitted explicit level count");
+                let entry = checked_binding_power_add::<std::convert::Infallible>(
+                    lower,
+                    1,
+                    0,
+                    BindingPowerSite::InfixSlot,
+                )
+                .expect("admitted explicit level successor");
+                (power, entry)
+            })
+            .collect();
+        Ok(Self { entries })
+    }
+
+    pub fn operands(
+        &self,
+        power: Option<u16>,
+        associativity: Associativity,
+    ) -> Result<OperandBindingPowers, ExplicitPrattError> {
+        let Some(power) = power else {
+            return Ok(OperandBindingPowers { entry: 255, left: 0, right: 0 });
+        };
+        let entry = *self
+            .entries
+            .get(&power)
+            .ok_or(ExplicitPrattError::MissingLevel(power))?;
+        let strict = checked_binding_power_add::<std::convert::Infallible>(
+            entry,
+            1,
+            0,
+            BindingPowerSite::InfixSlot,
+        )
+        .expect("admitted explicit strict floor");
+        Ok(OperandBindingPowers {
+            entry,
+            left: if associativity == Associativity::Left {
+                entry
+            } else {
+                strict
+            },
+            right: if associativity == Associativity::Right {
+                entry
+            } else {
+                strict
+            },
+        })
+    }
 }
 
 /// Execute the original assignment loop with checked arithmetic.
@@ -714,6 +811,17 @@ pub fn try_analyze_binding_powers<E>(
     rules: &[InfixRuleInfo],
     admit: impl FnOnce(&[InfixRuleInfo]) -> Result<(), E>,
 ) -> Result<BindingPowerTable, BindingPowerError<E>> {
+    try_analyze_binding_powers_with_explicit(rules, &std::collections::BTreeMap::new(), admit)
+}
+
+/// The original grouping, two passes and descriptor constructors, with optional
+/// checked observations at their power-assignment sites. Empty observations
+/// execute every original relative-arithmetic site in its original order.
+pub fn try_analyze_binding_powers_with_explicit<E>(
+    rules: &[InfixRuleInfo],
+    explicit: &std::collections::BTreeMap<(String, String), OperandBindingPowers>,
+    admit: impl FnOnce(&[InfixRuleInfo]) -> Result<(), E>,
+) -> Result<BindingPowerTable, BindingPowerError<E>> {
     admit(rules).map_err(BindingPowerError::Admission)?;
     let mut table = BindingPowerTable::new();
 
@@ -732,6 +840,12 @@ pub fn try_analyze_binding_powers<E>(
     // 2. Postfix operators above the non-postfix range, leaving a gap for
     //    unary prefix (which gets max_non_postfix_bp + 2 in lib.rs)
     for (category_index, cat_rules) in by_category.values().enumerate() {
+        let observed =
+            |rule: &InfixRuleInfo| explicit.get(&(rule.category.clone(), rule.label.clone()));
+        let explicit_category = cat_rules.iter().any(|rule| observed(rule).is_some());
+        if explicit_category && cat_rules.iter().any(|rule| observed(rule).is_none()) {
+            return Err(BindingPowerError::IncompleteExplicitCategory { category_index });
+        }
         // The level of the rule currently being assigned. Starts at 2 to leave room for
         // 0 (entry) and 1. A level occupies exactly two binding-power slots — `p` and
         // `p + 1` — so the next level is `p + 2`.
@@ -746,7 +860,7 @@ pub fn try_analyze_binding_powers<E>(
         // order. The counter advances once per LEVEL — a `same`-marked rule joins the
         // level its predecessor opened instead of starting a tighter one.
         for rule in cat_rules.iter().filter(|r| !r.is_postfix) {
-            if level_is_open && !rule.shares_level_with_previous {
+            if !explicit_category && level_is_open && !rule.shares_level_with_previous {
                 precedence = checked_binding_power_add(
                     precedence,
                     2,
@@ -760,25 +874,55 @@ pub fn try_analyze_binding_powers<E>(
             // level's two slots faces left. `min(left_bp, right_bp) == precedence` holds
             // for both arms, which is what lets operators of DIFFERENT associativity
             // share one level.
-            let (left_bp, right_bp) = match rule.associativity {
-                Associativity::Left => (
-                    precedence,
-                    checked_binding_power_add(
+            let (left_bp, right_bp) = if let Some(powers) = observed(rule) {
+                (powers.entry, powers.right)
+            } else {
+                match rule.associativity {
+                    Associativity::Left => (
                         precedence,
-                        1,
-                        category_index,
-                        BindingPowerSite::InfixSlot,
-                    )?,
-                ),
-                Associativity::Right => (
-                    checked_binding_power_add(
+                        checked_binding_power_add(
+                            precedence,
+                            1,
+                            category_index,
+                            BindingPowerSite::InfixSlot,
+                        )?,
+                    ),
+                    Associativity::Right => (
+                        checked_binding_power_add(
+                            precedence,
+                            1,
+                            category_index,
+                            BindingPowerSite::InfixSlot,
+                        )?,
                         precedence,
-                        1,
-                        category_index,
-                        BindingPowerSite::InfixSlot,
-                    )?,
-                    precedence,
-                ),
+                    ),
+                    Associativity::NonAssociative => {
+                        // The original closed-edge classifier used Left routing.
+                        // Keep its mixfix payload/pass, not the plain postfix pass
+                        // (which discards parts). Core retains NonAssociative for
+                        // the original semantic precedence worker. Closure must be
+                        // witnessed by the final part, or by nullary trailing text.
+                        let closed = rule.is_mixfix
+                            && match rule.mixfix_parts.last() {
+                                Some(part) => !part.following_terminals.is_empty(),
+                                None => !rule.nullary_literals.is_empty(),
+                            };
+                        if !closed {
+                            return Err(BindingPowerError::NonAssociativeNonPostfix {
+                                category_index,
+                            });
+                        }
+                        (
+                            precedence,
+                            checked_binding_power_add(
+                                precedence,
+                                1,
+                                category_index,
+                                BindingPowerSite::InfixSlot,
+                            )?,
+                        )
+                    },
+                }
             };
 
             table.operators.push(InfixOperator {
@@ -808,24 +952,30 @@ pub fn try_analyze_binding_powers<E>(
         // loop used to end on (`max_infix_bp + 1`, or the untouched initial 2 when the
         // category declares no non-postfix operator at all), keeping this layout — and
         // every prefix/postfix binding power derived from it — exactly as it was.
-        let first_free_bp = if level_is_open {
+        let first_free_bp = if explicit_category {
+            0
+        } else if level_is_open {
             checked_binding_power_add(precedence, 2, category_index, BindingPowerSite::FirstFree)?
         } else {
             precedence
         };
-        let mut postfix_prec = checked_binding_power_add(
-            first_free_bp,
-            2,
-            category_index,
-            BindingPowerSite::PostfixStart,
-        )?;
+        let mut postfix_prec = if explicit_category {
+            0
+        } else {
+            checked_binding_power_add(
+                first_free_bp,
+                2,
+                category_index,
+                BindingPowerSite::PostfixStart,
+            )?
+        };
         // `same` has the same relative-level meaning in the postfix pass as it does in
         // the infix/mixfix pass. Keeping a separate open-level bit is essential: the
         // first postfix operator cannot share the final infix level, because postfix
         // lives above the reserved prefix gap.
         let mut postfix_level_is_open = false;
         for rule in cat_rules.iter().filter(|r| r.is_postfix) {
-            if postfix_level_is_open && !rule.shares_level_with_previous {
+            if !explicit_category && postfix_level_is_open && !rule.shares_level_with_previous {
                 postfix_prec = checked_binding_power_add(
                     postfix_prec,
                     2,
@@ -838,12 +988,16 @@ pub fn try_analyze_binding_powers<E>(
                 terminal: rule.terminal.clone(),
                 category: rule.category.clone(),
                 result_category: rule.result_category.clone(),
-                left_bp: checked_binding_power_add(
-                    postfix_prec,
-                    1,
-                    category_index,
-                    BindingPowerSite::PostfixSlot,
-                )?,
+                left_bp: if let Some(powers) = observed(rule) {
+                    powers.entry
+                } else {
+                    checked_binding_power_add(
+                        postfix_prec,
+                        1,
+                        category_index,
+                        BindingPowerSite::PostfixSlot,
+                    )?
+                },
                 right_bp: 0, // unused for postfix (no right recursive call)
                 label: rule.label.clone(),
                 is_cross_category: rule.is_cross_category,
@@ -928,6 +1082,115 @@ mod tests {
             mixfix_parts: Vec::new(),
             nullary_literals: Vec::new(),
         }
+    }
+
+    #[test]
+    fn explicit_pratt_levels_preserve_adjacent_maximum_and_associativity() {
+        let levels = ExplicitPrattLevels::new([65535, 11, 10, 11]).expect("three distinct levels");
+        for (source, entry) in [(10, 1), (11, 2), (65535, 3)] {
+            assert_eq!(
+                levels
+                    .operands(Some(source), Associativity::Left)
+                    .expect("known level"),
+                OperandBindingPowers { entry, left: entry, right: entry + 1 }
+            );
+            assert_eq!(
+                levels
+                    .operands(Some(source), Associativity::Right)
+                    .expect("known level"),
+                OperandBindingPowers { entry, left: entry + 1, right: entry }
+            );
+            assert_eq!(
+                levels
+                    .operands(Some(source), Associativity::NonAssociative)
+                    .expect("known level"),
+                OperandBindingPowers { entry, left: entry + 1, right: entry + 1 }
+            );
+        }
+        assert_eq!(
+            levels
+                .operands(None, Associativity::NonAssociative)
+                .expect("unranked"),
+            OperandBindingPowers { entry: 255, left: 0, right: 0 }
+        );
+        assert_eq!(
+            levels.operands(Some(12), Associativity::Left),
+            Err(ExplicitPrattError::MissingLevel(12))
+        );
+    }
+
+    #[test]
+    fn explicit_pratt_levels_capacity_is_distinct_levels_not_source_magnitude() {
+        let levels = ExplicitPrattLevels::new(0..254).expect("254 levels fit");
+        let top = levels
+            .operands(Some(253), Associativity::Left)
+            .expect("largest level");
+        assert_eq!((top.entry, top.right), (254, 255));
+        assert_eq!(
+            ExplicitPrattLevels::new(0..255).expect_err("255 levels refuse"),
+            ExplicitPrattError::TooManyLevels(255)
+        );
+        ExplicitPrattLevels::new(std::iter::repeat_n(u16::MAX, 1000))
+            .expect("one distinct maximum level");
+    }
+
+    #[test]
+    fn explicit_table_none_is_original_and_mixed_tiers_share_core_scale() {
+        let alt = make_rule("Alt", "|", "Pattern", Associativity::Left);
+        let mut star = make_rule("Star", "*", "Pattern", Associativity::NonAssociative);
+        star.is_postfix = true;
+        let rows = [alt, star];
+        let old = try_analyze_binding_powers(&rows, |_| Ok::<(), std::convert::Infallible>(()))
+            .expect("legacy table");
+        let empty = std::collections::BTreeMap::new();
+        let unchanged = try_analyze_binding_powers_with_explicit(&rows, &empty, |_| {
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .expect("legacy delegation");
+        assert_eq!(format!("{old:?}"), format!("{unchanged:?}"));
+        let levels =
+            ExplicitPrattLevels::new([10, 20, 30]).expect("Regex levels including juxtaposition");
+        let explicit = std::collections::BTreeMap::from([
+            (
+                ("Pattern".into(), "Alt".into()),
+                levels.operands(Some(10), Associativity::Left).expect("Alt"),
+            ),
+            (
+                ("Pattern".into(), "Star".into()),
+                levels
+                    .operands(Some(30), Associativity::NonAssociative)
+                    .expect("Star"),
+            ),
+        ]);
+        let actual = try_analyze_binding_powers_with_explicit(&rows, &explicit, |_| {
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .expect("explicit table");
+        let mut partial = explicit.clone();
+        partial.remove(&("Pattern".into(), "Star".into()));
+        assert!(matches!(
+            try_analyze_binding_powers_with_explicit(&rows, &partial, |_| Ok::<
+                _,
+                std::convert::Infallible,
+            >(())),
+            Err(BindingPowerError::IncompleteExplicitCategory { category_index: 0 })
+        ));
+        let mut expected = old;
+        expected.operators[0].left_bp = 1;
+        expected.operators[0].right_bp = 2;
+        expected.operators[1].left_bp = 3;
+        expected.operators[1].right_bp = 0;
+        assert_eq!(
+            format!("{actual:?}"),
+            format!("{expected:?}"),
+            "all non-power descriptor fields and order retained"
+        );
+        let concat = levels
+            .operands(Some(20), Associativity::Left)
+            .expect("Concat");
+        assert!(actual.operators[0].left_bp < concat.right);
+        assert!(actual.operators[1].left_bp >= concat.right);
+        assert_eq!((concat.entry, concat.left, concat.right), (2, 2, 3));
     }
 
     /// Helper to create an InfixOperator directly (for filter tests that bypass analyze).

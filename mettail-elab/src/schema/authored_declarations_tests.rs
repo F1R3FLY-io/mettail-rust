@@ -268,6 +268,170 @@ fn authored_declarations_bind_source_order_to_actual_execution_ids_and_modes() {
 }
 
 #[test]
+fn ddl_token_observations_follow_append_receipts_and_unqualified_mode_variants() {
+    use mettail_prattail::automata::TokenKind as K;
+    use mettail_prattail::wpda_owned::token_bindings::OwnedTokenBindings;
+    let grammar = value_to_core(&modal_value()).expect("modal declaration source lowers");
+    let observations =
+        OwnedTokenBindings::new(&grammar).expect("flat DDL retains complete token observations");
+    let expected = [
+        K::Ident,
+        K::Integer,
+        K::Custom("Word".into()),
+        K::Custom("Bare".into()),
+        K::Custom("End".into()),
+        K::Custom("Nest".into()),
+        K::Custom("End".into()),
+    ];
+    for (index, expected) in expected.into_iter().enumerate() {
+        assert_eq!(
+            observations
+                .resolve(core::TokenId(index as u32), "text")
+                .expect("each append has its source observation"),
+            expected
+        );
+    }
+    assert_eq!(grammar.tokens[1].name, "literal/Number/0");
+    assert_eq!(grammar.tokens[4].name, "Quoted/End");
+}
+
+#[test]
+fn ddl_token_observations_preserve_boolean_value_and_original_variant_winner() {
+    use mettail_prattail::automata::TokenKind as K;
+    use mettail_prattail::wpda_owned::token_bindings::OwnedTokenBindings;
+    let grammar = value_to_core(&language([
+        ("types", l([native_type("Flag", "bool"), native_type("Number", "i64")])),
+        ("literals", l([literal("Flag")])),
+        (
+            "tokens",
+            l([m([
+                ("name", s("Integer")),
+                ("pattern", s("words")),
+                ("priority", RhoValue::Integer(-300)),
+            ])]),
+        ),
+    ]))
+    .expect("DDL execution priority remains signed and unchanged");
+    let observations = OwnedTokenBindings::new(&grammar)
+        .expect("source projection does not fabricate an eight-bit priority");
+    assert_eq!(
+        observations
+            .resolve(core::TokenId(1), "true")
+            .expect("Boolean source receipt"),
+        K::True
+    );
+    assert_eq!(
+        observations
+            .resolve(core::TokenId(1), "false")
+            .expect("Boolean source receipt"),
+        K::False
+    );
+    assert_eq!(
+        observations
+            .resolve(core::TokenId(1), "other")
+            .expect("original Boolean text expression"),
+        K::False
+    );
+    assert_eq!(
+        observations
+            .resolve(core::TokenId(2), "words")
+            .expect("original builtin variant wins the Custom collision"),
+        K::Integer
+    );
+    assert_eq!(grammar.tokens[2].priority, -300);
+    assert_eq!(grammar.tokens[2].pattern, core::TokenPattern::Regex("words".into()));
+}
+
+#[test]
+fn ddl_token_observations_do_not_publish_partial_collection_metadata() {
+    use mettail_prattail::wpda_owned::token_bindings::{OwnedTokenBindings, TokenBindingError};
+    let grammar = value_to_core(&language([(
+        "types",
+        l([
+            s("Expr"),
+            m([
+                ("name", s("Exprs")),
+                ("carrier", l([s("vec"), s("Expr")])),
+                ("collection", m([("kind", s("list"))])),
+            ]),
+        ]),
+    )]))
+    .expect("existing collection lowering remains accepted");
+    assert!(
+        grammar.wpda_token_observations.is_none(),
+        "collection-source lexer projection is not yet retained"
+    );
+    assert!(matches!(
+        OwnedTokenBindings::new(&grammar),
+        Err(TokenBindingError::MissingTable)
+    ));
+}
+
+#[test]
+fn ddl_token_observations_reuse_original_simple_list_separator_roster() {
+    use mettail_prattail::automata::TokenKind;
+    use mettail_prattail::wpda_owned::token_bindings::OwnedTokenBindings;
+    for separator in [";", "::", "λ", ""] {
+        let value = language([
+            ("types", l([s("Expr")])),
+            (
+                "terms",
+                l([
+                    m([
+                        ("label", s("Atom")),
+                        ("category", s("Expr")),
+                        ("context", l([])),
+                        ("syntax", l([l([s("lit"), s("a")])])),
+                    ]),
+                    m([
+                        ("label", s("Pieces")),
+                        ("category", s("Expr")),
+                        ("context", l([l([s("param"), s("pieces"), l([s("vec"), s("Expr")])])])),
+                        (
+                            "syntax",
+                            l([
+                                l([s("lit"), s("box(")]),
+                                l([s("sep"), s("pieces"), s(separator)]),
+                                l([s("lit"), s(")")]),
+                            ]),
+                        ),
+                    ]),
+                ]),
+            ),
+        ]);
+        let grammar = value_to_core(&value).expect("nonbinding typed list source lowers unchanged");
+        let observations = OwnedTokenBindings::new(&grammar)
+            .expect("direct List(Base) Sep has original source projection");
+        let actual: std::collections::BTreeSet<_> = grammar
+            .tokens
+            .iter()
+            .filter_map(|token| {
+                let core::TokenPattern::Literal(text) = &token.pattern else {
+                    return None;
+                };
+                assert_eq!(
+                    observations
+                        .resolve(token.id, text)
+                        .expect("exact fixed-token append receipt"),
+                    TokenKind::Fixed(text.clone())
+                );
+                Some(text.as_str())
+            })
+            .collect();
+        let mut expected: std::collections::BTreeSet<_> =
+            mettail_prattail::lexer::IMPLICIT_STRUCTURAL_TERMINALS
+                .iter()
+                .copied()
+                .collect();
+        expected.extend(["a", "box("]);
+        if !separator.is_empty() {
+            expected.insert(separator);
+        }
+        assert_eq!(actual, expected, "source separator {separator:?} reaches the actual Core token census, not metadata alone");
+    }
+}
+
+#[test]
 fn authored_declarations_keep_independent_collection_delimiters() {
     let grammar = value_to_core(&language([(
         "types",

@@ -280,7 +280,7 @@ mod tests {
         InfixRuleShape {
             label: "Wrapper".into(),
             category: "Int".into(),
-            is_right_assoc: false,
+            associativity: crate::binding_power::Associativity::Left,
             shares_level_with_previous: false,
             term_context: None,
             syntax_pattern: None,

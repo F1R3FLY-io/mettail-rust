@@ -181,14 +181,22 @@ impl<'core> AuthoredDeclarationReader<'core> {
         self.bindings.modes.get(index)
     }
 
-    /// Reuse the existing producer relation `admits_variables = !is_data`.
-    /// A missing source row is not guessed to be either role.
+    /// Read the retained source role, never infer it from variable authority.
+    /// Unavailable source knowledge is not a known object category.
     pub fn is_data(&self, index: usize) -> Option<bool> {
+        match self.header.categories.get(index)?.data_observation {
+            mettail_grammar_core::SourceObservation::Known(role) => Some(role),
+            mettail_grammar_core::SourceObservation::Unavailable => None,
+        }
+    }
+
+    /// Runtime variable authority uses the checked final category binding.
+    pub fn admits_variables(&self, index: usize) -> Option<bool> {
         let target = self.category_binding(index)?;
         self.core
             .categories
             .get(target.0 as usize)
-            .map(|category| !category.admits_variables)
+            .map(|category| category.admits_variables)
     }
 }
 

@@ -33,6 +33,7 @@ impl Fixture {
         let header = AuthoredDeclarations {
             categories: vec![AuthoredCategoryDeclaration {
                 name: category,
+                data_observation: SourceObservation::Known(data),
                 native,
                 collection: None,
                 byte_observation: SourceObservation::Known(false),
@@ -216,6 +217,66 @@ fn authored_synthesis_empty_roster_keeps_declarations_and_synthetic_origins() {
         .iter()
         .all(|row| row.origin == AuthoredRuleOrigin::Synthetic));
     assert!(output.source_order.is_empty());
+}
+
+#[test]
+fn authored_synthesis_native_role_and_variable_authority_are_independent() {
+    use crate::wpda_rule_analysis::{authored_prefix, prefix};
+    for authority in [false, true] {
+        let mut fixture = Fixture::new(Some(NativeKind::Int32), false);
+        fixture.core.categories[0].admits_variables = authority;
+        let core = fixture.finish();
+        let output = derive_authored_rules(&core, &[], |_| Ok::<_, Infallible>(()))
+            .expect("native declaration is not a source data category");
+        let labels = output.per_category[0]
+            .iter()
+            .map(|row| label(&output.store, row))
+            .collect::<Vec<_>>();
+        assert_eq!(labels, if authority { vec!["NumLit", "EVar"] } else { vec!["NumLit"] });
+        assert_eq!(core.categories[0].admits_variables, authority);
+        assert_eq!(
+            output.store.declarations().expect("retained header").categories[0]
+                .data_observation,
+            SourceObservation::Known(false),
+        );
+        authored_prefix::with_authored_context::<_, Infallible, _>(
+            &core,
+            &[],
+            &output,
+            |reader, context| {
+                assert_eq!(
+                    prefix::try_result_has_home_var_reading("Expr", reader, context)
+                        .expect("checked home variable query"),
+                    authority,
+                );
+                assert_eq!(
+                    prefix::try_ident_first_categories(reader, context)
+                        .expect("checked identifier summary")
+                        .contains("Expr"),
+                    authority,
+                );
+                let first = prefix::try_first_set_of_category("Expr", reader, context)
+                    .expect("original FIRST worker");
+                assert!(first.iter().any(|row| !row.is_var_contribution));
+                assert_eq!(first.iter().any(|row| row.is_var_contribution), authority);
+            },
+        )
+        .expect("same retained source context");
+    }
+}
+
+#[test]
+fn authored_synthesis_missing_role_is_not_inferred_from_variable_authority() {
+    for authority in [false, true] {
+        let mut fixture = Fixture::new(Some(NativeKind::Int32), false);
+        fixture.header.categories[0].data_observation = SourceObservation::Unavailable;
+        fixture.core.categories[0].admits_variables = authority;
+        let core = fixture.finish();
+        assert!(matches!(
+            derive_authored_rules(&core, &[], |_| Ok::<_, Infallible>(())),
+            Err(AuthoredSynthesisError::MissingCategoryRoleObservation(0)),
+        ));
+    }
 }
 
 #[test]

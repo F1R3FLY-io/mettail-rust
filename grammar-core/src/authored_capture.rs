@@ -521,6 +521,7 @@ mod tests {
         let declarations = || AuthoredDeclarations {
             categories: vec![AuthoredCategoryDeclaration {
                 name: AuthoredNameId(2),
+                data_observation: crate::SourceObservation::Known(false),
                 native: None,
                 collection: None,
                 byte_observation: crate::SourceObservation::Unavailable,
@@ -549,6 +550,7 @@ mod tests {
         assert_eq!(source.reads, old_source.reads, "all declaration names were already memoized");
         assert_eq!(captured.store.len(), baseline.store.len());
         let header = captured.store.declarations().expect("retained header");
+        assert_eq!(header.categories[0].data_observation, crate::SourceObservation::Known(false));
         assert_eq!(header.categories[0].name, header.tokens[0].category.expect("source category"));
         assert_eq!(header.modes[0].name, header.tokens[0].push.expect("source push"));
         let mut source = graph();
@@ -572,6 +574,7 @@ mod tests {
             name(header.tokens[0].name).equality_class
         );
         let mut extended = declarations();
+        extended.categories[0].data_observation = crate::SourceObservation::Known(true);
         extended.categories[0].element_observation =
             crate::SourceObservation::Known(Some(AuthoredNameId(7)));
         let mut extended_source = graph();
@@ -580,6 +583,10 @@ mod tests {
                 .expect("element uses the same capture table");
         assert_eq!(extended_source.reads, [2, 7, 1]);
         let extended_header = extended.store.declarations().expect("extended header");
+        assert_eq!(
+            extended_header.categories[0].data_observation,
+            crate::SourceObservation::Known(true),
+        );
         assert_eq!(
             extended_header.categories[0].element_observation,
             crate::SourceObservation::Known(Some(extended_header.modes[0].name))

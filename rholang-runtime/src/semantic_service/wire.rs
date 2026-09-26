@@ -165,6 +165,7 @@ fn boundary_diagnostic(error: DynamicReflectionError) -> ReplyBody {
         Cancelled => return ReplyBody::Undetermined(DiagnosticDomain::Boundary, 9),
         AllocationFailed => return ReplyBody::Undetermined(DiagnosticDomain::Boundary, 10),
         InvalidFingerprint => 11,
+        NativeVariablePublication => 12,
     };
     ReplyBody::Error(DiagnosticDomain::Boundary, code)
 }

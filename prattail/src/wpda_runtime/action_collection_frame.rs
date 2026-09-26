@@ -35,21 +35,61 @@ impl SelectedCollection {
 /// a grammar's semantic action is undefined on a particular combination.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionInvocationError {
-    MissingAction { category: u16, rule: u16 },
-    Arity { expected: usize, actual: usize },
-    CollectionLimit { limit: usize, actual: usize },
-    UnboundCollectionReference { id: u8 },
-    MissingCollection { id: u8 },
-    RepeatedCollectionDrain { id: u8 },
-    UndrainedCollection { id: u8 },
+    MissingTokenOccurrence,
+    InvalidTokenOccurrence,
+    MissingActionContext,
+    InvalidActionContext,
+    MissingAction {
+        category: u16,
+        rule: u16,
+    },
+    Arity {
+        expected: usize,
+        actual: usize,
+    },
+    CollectionLimit {
+        limit: usize,
+        actual: usize,
+    },
+    UnboundCollectionReference {
+        id: u8,
+    },
+    MissingCollection {
+        id: u8,
+    },
+    RepeatedCollectionDrain {
+        id: u8,
+    },
+    UndrainedCollection {
+        id: u8,
+    },
     OpenParserState,
-    ResultCount { actual: usize },
-    NonTermResult { found: &'static str },
+    ResultCount {
+        actual: usize,
+    },
+    NonTermResult {
+        found: &'static str,
+    },
+    /// Preserve the original decoder/evaluator fault, including capability
+    /// authorization and post-callback revalidation failures.
+    RuntimeSemantic(mettail_grammar_core::RuntimeError),
 }
 
 impl std::fmt::Display for ActionInvocationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::MissingTokenOccurrence => {
+                write!(formatter, "semantic token has no selected lexical occurrence")
+            },
+            Self::InvalidTokenOccurrence => {
+                write!(formatter, "semantic token lexical occurrence is invalid")
+            },
+            Self::MissingActionContext => {
+                write!(formatter, "semantic action has no completed source context")
+            },
+            Self::InvalidActionContext => {
+                write!(formatter, "semantic action source context is invalid")
+            },
             Self::MissingAction { category, rule } => {
                 write!(formatter, "no semantic action exists for category {category}, rule {rule}")
             },
@@ -79,6 +119,9 @@ impl std::fmt::Display for ActionInvocationError {
             },
             Self::NonTermResult { found } => {
                 write!(formatter, "action requires a term result, but produced {found}")
+            },
+            Self::RuntimeSemantic(error) => {
+                write!(formatter, "runtime semantic action failed: {error:?}")
             },
         }
     }

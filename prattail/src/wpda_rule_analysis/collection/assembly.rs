@@ -27,6 +27,24 @@ pub struct GeneratedCollectionSpec {
     pub close_resumes_via_unwinding: bool,
 }
 
+impl GeneratedCollectionSpec {
+    /// Borrow the original descriptor without copying or interning delimiters.
+    /// Every field has the same meaning as in the generated static record.
+    pub fn as_borrowed(&self) -> crate::wpda_runtime::CollectionSpec<'_> {
+        crate::wpda_runtime::CollectionSpec {
+            open: &self.open,
+            has_synth_paren: self.has_synth_paren,
+            close: &self.close,
+            sep: &self.sep,
+            min_elements: self.min_elements,
+            kv_sep: self.kv_sep.as_deref(),
+            kv_value_optional: self.kv_value_optional,
+            element_src_idx: self.element_src_idx,
+            close_resumes_via_unwinding: self.close_resumes_via_unwinding,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GeneratedCollectionSpecArm {
     pub key: CollectionSpecKey,
@@ -120,6 +138,22 @@ pub fn binder_collection_infos(shape: &BinderShape) -> Vec<&CollectionSepInfo> {
     let mut infos = Vec::new();
     collect_binder_collection_infos(&shape.positions, &mut infos);
     infos
+}
+
+/// Original per-rule collection-finalize suppression query from collection.rs.
+pub fn has_binder_internal_collection_slot(positions: &[BinderPosition]) -> bool {
+    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
+    while let Some(position) = work.pop() {
+        match position {
+            BinderPosition::ParamParse { collection: Some(_), .. }
+            | BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. } => return true,
+            BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
+                work.extend(inner_positions.iter().rev());
+            },
+            _ => {},
+        }
+    }
+    false
 }
 
 pub fn try_lookup_element_src_idx<E>(

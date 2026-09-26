@@ -218,52 +218,14 @@ pub fn emit_min_terminal_span_body(
     categories: &[String],
     per_cat: &[Vec<(u16, &GrammarRule)>],
 ) -> TokenStream {
-    use mettail_ast::grammar::SyntaxExpr;
     let mut arms: Vec<TokenStream> = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let cat_u16 = cat_i as u16;
         for (rule_idx, rule) in rules {
-            let Some(sp) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            // Skip patterns containing meta-syntax Op (collections): their
-            // span is not a fixed literal count.
-            if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(_))) {
-                continue;
-            }
-            // Emit the constraint ONLY for rules whose `term_context` params
-            // are ALL `Simple` (a plain typed operand `a:Y` that parses to a
-            // Symbol child carrying a real input span). Any non-Simple param —
-            // `^x.body` Abstraction / MultiAbstraction (the bound variable is a
-            // BinderScope/Ident with NO span), GuardBody, or Optional — makes
-            // the realize-time `slack = sym_span - Σ child spans` arithmetic
-            // undercount the children (no span for the binder var) and would
-            // wrongly reject sound derivations (observed: ambient PNew
-            // `"new" "(" x "," p ")"` → `nested_new`). The Pass-2c fabrication
-            // this backstop targets is a SIMPLE unary cast
-            // (`<Y>To<X> . a:Y |- "t" "(" a ")"`) — all-Simple params — never a
-            // binder; binders/guards parse soundly via their own machinery.
-            let all_simple_params = rule
-                .term_context
-                .as_ref()
-                .map(|tc| {
-                    tc.iter()
-                        .all(|p| matches!(p, mettail_ast::grammar::TermParam::Simple { .. }))
-                })
-                .unwrap_or(true);
-            if !all_simple_params {
-                continue;
-            }
-            // Count literals strictly after the first Param.
-            let mut seen_param = false;
-            let mut post_param_literals: u32 = 0;
-            for e in sp.iter() {
-                match e {
-                    SyntaxExpr::Param(_) => seen_param = true,
-                    SyntaxExpr::Literal(_) if seen_param => post_param_literals += 1,
-                    _ => {},
-                }
-            }
+            let post_param_literals =
+                mettail_prattail::wpda_rule_analysis::rule_observation::min_terminal_span(
+                    &super::binder::MacroBinderSyntaxReader, *rule,
+                );
             if post_param_literals > 0 {
                 let r = *rule_idx;
                 arms.push(quote! { (#cat_u16, #r) => #post_param_literals, });
@@ -308,15 +270,13 @@ pub fn emit_min_terminal_span_body(
 /// `false`, so the generated impl is byte-identical for grammars with no
 /// literal-led rules.
 pub fn emit_rule_leads_with_literal_body(per_cat: &[Vec<(u16, &GrammarRule)>]) -> TokenStream {
-    use mettail_ast::grammar::SyntaxExpr;
     let mut arms: Vec<TokenStream> = Vec::new();
     for (ci, rules) in per_cat.iter().enumerate() {
         let cat_u16 = ci as u16;
         for (rule_idx, rule) in rules {
-            let Some(sp) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            if matches!(sp.first(), Some(SyntaxExpr::Literal(_))) {
+            if mettail_prattail::wpda_rule_analysis::rule_observation::leading_literal(
+                &super::binder::MacroBinderSyntaxReader, *rule,
+            ).is_some() {
                 let r = *rule_idx;
                 arms.push(quote! { (#cat_u16, #r) => true, });
             }
@@ -562,74 +522,20 @@ pub fn emit_single_hop_coercion_body(
     per_cat: &[Vec<(u16, &GrammarRule)>],
     language: &LanguageDef,
 ) -> TokenStream {
-    use mettail_ast::grammar::{SyntaxExpr, TermParam};
-    use mettail_ast::types::TypeExpr;
     let _ = language;
     // Collect `(from_cat, to_cat) -> Vec<rule_idx>` so co-bridging rules
     // accumulate into one arm (Ambiguous).
-    let mut table: std::collections::BTreeMap<(u16, u16), Vec<u16>> =
-        std::collections::BTreeMap::new();
-    let mut refusals: Vec<TokenStream> = Vec::new();
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        let to_cat = cat_i as u16;
-        for (rule_idx, rule) in rules {
-            // Both shapes require a single Simple param of a foreign Base
-            // category. Read the operand (`a:Y`) category name.
-            let Some(tc) = rule.term_context.as_ref() else {
-                continue;
-            };
-            if tc.len() != 1 {
-                continue;
-            }
-            let TermParam::Simple { name: param_name, ty } = &tc[0] else {
-                continue;
-            };
-            let TypeExpr::Base(source_ident) = ty else {
-                continue;
-            };
-            let source_cat_name = source_ident.to_string();
-            if source_cat_name == rule.category.to_string() {
-                continue;
-            }
-            let Some(sp) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            // Pass-2a CrossCatProjection: sp.len()==1, the lone element is
-            // `Param(name)` matching the param (transparent projection
-            // `ProcFloat . f:Float |- f : Proc`, span-0, min_terminal_span 0).
-            let is_pass2a = sp.len() == 1
-                && matches!(
-                    sp.first(),
-                    Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
-                );
-            if !is_pass2a {
-                continue;
-            }
-            // ★ #141 — a builtin token class is not a coercion source at all; see
-            // `is_builtin_token_class`.
-            if is_builtin_token_class(&source_cat_name) {
-                continue;
-            }
-            // ★ #141 — sibling 4 of 7. `.unwrap_or(0)` here made an undeclared
-            // SOURCE category key the table at index 0, the first declared
-            // category, so `single_hop_coercion(0, to)` reported a coercion the
-            // grammar never declared — and, worse, could collide with a real
-            // entry for category 0. See `coercion_table_refusal`.
-            let from_cat = match super::binder::resolve_cat_idx(
-                &source_cat_name,
+    let (table, refusals) =
+        mettail_prattail::wpda_rule_analysis::rule_observation::single_hop_coercions(
+            &super::binder::MacroBinderSyntaxReader,
+            per_cat,
+            |source_cat_name, rule| super::binder::resolve_cat_idx(
+                source_cat_name,
                 categories,
                 "a single-hop coercion's source position",
                 &rule.label.to_string(),
-            ) {
-                Ok(idx) => idx,
-                Err(unresolved) => {
-                    refusals.push(unresolved.compile_error(rule.label.span()));
-                    continue;
-                },
-            };
-            table.entry((from_cat, to_cat)).or_default().push(*rule_idx);
-        }
-    }
+            ).map_err(|unresolved| unresolved.compile_error(rule.label.span())),
+        );
     if let Some(refusal) = coercion_table_refusal(&refusals, quote! { &[] }) {
         return refusal;
     }
@@ -2291,6 +2197,47 @@ mod tests {
     use mettail_ast::language::{LangType, TokenDef};
     use proc_macro2::Span;
     use syn::{parse_quote, Ident};
+
+    #[test]
+    fn shared_rule_observations_match_original_query_bodies() {
+        use mettail_ast::grammar::{PatternOp, SyntaxExpr, TermParam};
+        use mettail_prattail::wpda_rule_analysis::rule_observation;
+        let mut fixture = rule_fixture(parse_quote!(R), parse_quote!(Term));
+        let patterns = vec![
+            None, Some(vec![]),
+            Some(vec![SyntaxExpr::Literal("head".into())]),
+            Some(vec![SyntaxExpr::Literal("head".into()), SyntaxExpr::Param(parse_quote!(p)), SyntaxExpr::Literal("tail".into()), SyntaxExpr::Literal("end".into())]),
+            Some(vec![SyntaxExpr::Param(parse_quote!(p)), SyntaxExpr::Literal("tail".into())]),
+            Some(vec![SyntaxExpr::Param(parse_quote!(p)), SyntaxExpr::Literal("tail".into()), SyntaxExpr::Op(PatternOp::Opt { inner: vec![] })]),
+        ];
+        let contexts = vec![None, Some(vec![]), Some(vec![TermParam::Simple { name: parse_quote!(p), ty: mettail_ast::types::TypeExpr::Base(parse_quote!(Term)) }]), Some(vec![TermParam::GuardBody { name: parse_quote!(g) }]), Some(vec![TermParam::Optional { params: vec![] }])];
+        for pattern in &patterns {
+            for context in &contexts {
+                fixture.syntax_pattern = pattern.clone();
+                fixture.term_context = context.clone();
+                // Original bodies, retained as an independent source oracle.
+                let old_leading = fixture.syntax_pattern.as_ref().and_then(|sp| match sp.first() {
+                    Some(SyntaxExpr::Literal(text)) => Some(text.as_str()), _ => None,
+                });
+                let old_span = fixture.syntax_pattern.as_ref().map_or(0, |sp| {
+                    if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(_))) { return 0; }
+                    if !fixture.term_context.as_ref().map(|tc| tc.iter().all(|p| matches!(p, TermParam::Simple { .. }))).unwrap_or(true) { return 0; }
+                    let mut seen_param = false;
+                    let mut count = 0;
+                    for item in sp {
+                        match item {
+                            SyntaxExpr::Param(_) => seen_param = true,
+                            SyntaxExpr::Literal(_) if seen_param => count += 1,
+                            _ => {},
+                        }
+                    }
+                    count
+                });
+                assert_eq!(rule_observation::leading_literal(&super::super::binder::MacroBinderSyntaxReader, &fixture), old_leading);
+                assert_eq!(rule_observation::min_terminal_span(&super::super::binder::MacroBinderSyntaxReader, &fixture), old_span);
+            }
+        }
+    }
 
     fn rule(label: &str, cat: &str, kind: NonTerminalKind) -> GrammarRule {
         GrammarRule {

@@ -171,6 +171,7 @@ fn rich_fixture() -> (AuthoredRuleStore, AuthoredRuleId) {
         .with_declarations(AuthoredDeclarations {
             categories: vec![AuthoredCategoryDeclaration {
                 name: result,
+                data_observation: SourceObservation::Known(false),
                 native: None,
                 collection: None,
                 byte_observation: SourceObservation::Unavailable,

@@ -20,30 +20,20 @@ pub(crate) fn generate_lexer_code_with_map(
     bundle: &LexerBundle,
     hybrid_lexer: bool,
 ) -> Result<(String, TokenVariantMap, LexerAmbiguityInfo), String> {
+    let lexer_input = lexer_input_for_bundle(bundle);
+    let (lexer_str, stats) = try_generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer)?;
+    Ok((lexer_str, stats.variant_map, stats.ambiguity_info))
+}
+
+/// Original lexer input preparation, without constructing any automaton.
+pub(crate) fn lexer_input_for_bundle(bundle: &LexerBundle) -> crate::lexer::LexerInput {
     let mut lexer_input = extract_terminals(
         &bundle.grammar_rules,
         &bundle.type_infos,
         bundle.has_binders,
         &bundle.category_names,
     );
-    lexer_input.literal_patterns = bundle.literal_patterns.clone();
-    // Enable rational / fixed-point literal handling in the lexer when the
-    // corresponding `literal_patterns` maps are populated. Without this, the
-    // lexer would skip emission of the rational/fixed-point token arms even
-    // though the grammar declares them.
-    if !lexer_input.literal_patterns.rational_by_category.is_empty() {
-        lexer_input.needs.rational = true;
-    }
-    if !lexer_input.literal_patterns.fixed_by_category.is_empty() {
-        lexer_input.needs.fixed_point = true;
-    }
-    // If a boolean literal pattern is registered, remove the built-in
-    // `True`/`False` keyword terminals so the custom pattern drives matching.
-    if bundle.literal_patterns.boolean.is_some() {
-        lexer_input.terminals.retain(|t| {
-            !matches!(t.kind, crate::automata::TokenKind::True | crate::automata::TokenKind::False)
-        });
-    }
+    crate::token_declarations::prepare_literal_patterns(&mut lexer_input, &bundle.literal_patterns);
     lexer_input.custom_tokens = bundle.custom_tokens.clone();
     lexer_input.modes = bundle
         .modes
@@ -64,8 +54,7 @@ pub(crate) fn generate_lexer_code_with_map(
         .reservation_policy
         .reserved_kinds(&lexer_input.terminals);
 
-    let (lexer_str, stats) = try_generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer)?;
-    Ok((lexer_str, stats.variant_map, stats.ambiguity_info))
+    lexer_input
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

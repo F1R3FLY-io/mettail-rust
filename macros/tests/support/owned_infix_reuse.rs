@@ -97,7 +97,7 @@ mod owned_infix_reuse {
     }
 
     #[test]
-    fn owned_infix_projection_keeps_admission_and_unrepresentable_flags_explicit() {
+    fn owned_infix_projection_keeps_admission_and_nonassociativity_explicit() {
         let rule = infix_rule("Denied", "Int", "Int", "+");
         let captured = crate::gen::runtime::wpda_codegen::authored_capture::capture_rules(&[rule])
             .expect("capture fixture");
@@ -107,16 +107,35 @@ mod owned_infix_reuse {
             try_project_infix_rule_in(&reader, root, CoreAssociativity::Left, false, |_, _| Err(7)),
             Err(InfixProjectionError::Admission(7))
         );
+        let nonassociative = try_project_infix_rule_in(
+            &reader,
+            root,
+            CoreAssociativity::NonAssociative,
+            false,
+            |_, _| Ok::<_, Infallible>(()),
+        )
+        .expect("nonassociative metadata has a lossless representation");
         assert_eq!(
-            try_project_infix_rule_in(
-                &reader,
-                root,
-                CoreAssociativity::NonAssociative,
-                false,
-                |_, _| Ok::<_, Infallible>(())
-            ),
-            Err(InfixProjectionError::UnsupportedNonAssociativity)
+            nonassociative.associativity,
+            mettail_prattail::binding_power::Associativity::NonAssociative
         );
+        let info = mettail_prattail::wpda_rule_analysis::classify_rule(&nonassociative)
+            .expect("binary shape remains classified");
+        assert_eq!(
+            info.associativity,
+            mettail_prattail::binding_power::Associativity::NonAssociative
+        );
+        assert!(matches!(
+            mettail_prattail::binding_power::try_analyze_binding_powers(&[info], |_| Ok::<
+                _,
+                Infallible,
+            >(
+                ()
+            )),
+            Err(mettail_prattail::binding_power::BindingPowerError::NonAssociativeNonPostfix {
+                category_index: 0
+            })
+        ));
     }
 
     #[test]

@@ -147,6 +147,9 @@ pub enum SppfNode<W: SemiringRef> {
         /// Position. `Real` for input tokens, `Synthesized` for recovery
         /// insertions.
         pos: PosOrSynth,
+        /// Selected accepted edge within the token-source node, when supplied.
+        /// Runtime decoder identity must survive coincident kind/text leaves.
+        occurrence: Option<u32>,
         /// Bug E fix (Phase 3.1.3, 2026-05-15): discriminator indicating
         /// which builder push-helper produced this Terminal. `true` =
         /// `emit_push_ident` (builder pushed `ActionArg::Ident{name,pos}`).
@@ -425,7 +428,7 @@ pub struct Sppf<W: SemiringRef> {
     /// `(kind, pos, origin)` key had no text, later same-position terminals
     /// with real text deduped to the empty-text node and their actions elided.
     /// Token text is semantic payload, so it is part of Terminal identity.
-    dedup_terminal: FxHashMap<(TokenKind, PosOrSynth, Option<String>, bool), SppfId>,
+    dedup_terminal: FxHashMap<(TokenKind, PosOrSynth, Option<String>, bool, Option<u32>), SppfId>,
     dedup_symbol: FxHashMap<(u32, u32, u32), SppfId>,
     /// Phase C R6 fix: full-list key (not a 64-bit hash digest) eliminates
     /// the silent-collision soundness risk. Memory cost is negligible
@@ -527,11 +530,25 @@ impl<W: SemiringRef> Sppf<W> {
         text: Option<&str>,
         pushed_via_push_ident: bool,
     ) -> SppfId {
+        self.intern_terminal_occurrence(token_kind, pos, text, pushed_via_push_ident, None)
+    }
+
+    /// Same interner with the selected source-edge identity retained.
+    /// `TerminalOccurrence.v` specifies identity preservation and the unchanged
+    /// equivalence relation of the original entry (all origins are None).
+    pub fn intern_terminal_occurrence(
+        &mut self,
+        token_kind: TokenKind,
+        pos: PosOrSynth,
+        text: Option<&str>,
+        pushed_via_push_ident: bool,
+        occurrence: Option<u32>,
+    ) -> SppfId {
         // Dedup key: (kind, pos, text, pushed_via_push_ident). Text is
         // semantic payload for token-capturing actions, not recoverable from
         // kind+pos once terminals are shared across speculative branches.
         let text_key = text.map(str::to_owned);
-        let key = (token_kind.clone(), pos, text_key.clone(), pushed_via_push_ident);
+        let key = (token_kind.clone(), pos, text_key.clone(), pushed_via_push_ident, occurrence);
         if let Some(&id) = self.dedup_terminal.get(&key) {
             return id;
         }
@@ -544,6 +561,7 @@ impl<W: SemiringRef> Sppf<W> {
             token_kind,
             text_handle,
             pos,
+            occurrence,
             pushed_via_push_ident,
         });
         self.dedup_terminal.insert(key, id);
@@ -1441,6 +1459,47 @@ mod tests {
     }
 
     // ── intern_terminal ─────────────────────────────────────────────────────
+
+    #[test]
+    fn terminal_occurrences_preserve_coincident_decoder_choices_and_legacy_identity() {
+        let mut s: Sppf<W> = Sppf::new();
+        let old = s.intern_terminal(TokenKind::Integer, PosOrSynth::Real(0), Some("7"), false);
+        let absent = s.intern_terminal_occurrence(
+            TokenKind::Integer,
+            PosOrSynth::Real(0),
+            Some("7"),
+            false,
+            None,
+        );
+        let first = s.intern_terminal_occurrence(
+            TokenKind::Integer,
+            PosOrSynth::Real(0),
+            Some("7"),
+            false,
+            Some(0),
+        );
+        let second = s.intern_terminal_occurrence(
+            TokenKind::Integer,
+            PosOrSynth::Real(0),
+            Some("7"),
+            false,
+            Some(1),
+        );
+        assert_eq!(old, absent);
+        assert_ne!(old, first);
+        assert_ne!(first, second);
+        assert_eq!(
+            first,
+            s.intern_terminal_occurrence(
+                TokenKind::Integer,
+                PosOrSynth::Real(0),
+                Some("7"),
+                false,
+                Some(0)
+            )
+        );
+        assert!(matches!(s.node(second), Some(SppfNode::Terminal { occurrence: Some(1), .. })));
+    }
 
     #[test]
     fn intern_terminal_returns_same_id_for_same_key() {

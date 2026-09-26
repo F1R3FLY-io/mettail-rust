@@ -129,9 +129,17 @@ retained spelling, while pushed-mode matching uses retained name-equality
 classes. Thus `r#Open` is not silently treated as `Open`, and matching displayed
 mode names do not override the source's equality relation.
 
-Category roles use the existing producer relation
-`admits_variables = !is_data` through the checked category binding. Missing
-source rows return no role rather than guessing. The low-level census callbacks,
+Source data role and runtime variable permission are independent observations.
+The macro retains its exact `is_data` source probe and its existing relation
+`admits_variables = !is_data`. The DDL schema has no `Data`/`SpannedData` category
+role: it retains a known non-data role, while `admits_variables` independently
+controls variable authority. For example, closed `Nat` still needs its declared
+numeric literal without admitting variables. The original native/collection
+synthesis gates read the source role; variable synthesis and its FIRST gates
+also respect the independent authority. Missing role observations are refused,
+never inferred from a carrier, literal pattern or variable permission. The
+[source-role model](../../formal/rocq/prattail_wpda_runtime/theories/SourceRoleVariableAuthority.v)
+states the macro specialization, callback-order and prepayment laws. The low-level census callbacks,
 like the original rule-reader callbacks, require handles from the validated
 owner; the checked census entrypoint validates externally supplied rule IDs.
 
@@ -187,7 +195,7 @@ instruction accounting.
 ## Commitments and trust boundaries
 
 The arena affects the grammar commitment because it contains classifier inputs.
-It is not diagnostic provenance. GrammarCore ABI 5, LanguageCore ABI 6, and the exact
+It is not diagnostic provenance. GrammarCore ABI 6, LanguageCore ABI 6, and the exact
 `mettail-language-core-value/7` envelope require the authored fields to be
 present. Explicit unavailability is allowed; silently missing fields are not.
 See [identity and compatibility](observation-predicate-roles.md#identity-and-compatibility).
@@ -861,8 +869,8 @@ proves the callback order, exact error propagation, and preservation of the
 existing state, result, and trace for total observations. These interface laws
 do not establish decoder equivalence or installed-parser integration.
 
-Each retained category carries three independent `SourceObservation` fields:
-the byte-vector predicate, the optional literal-native observation, and the
+Each retained category carries four independent `SourceObservation` fields:
+the source data-role predicate, the byte-vector predicate, the optional literal-native observation, and the
 optional native collection element. `Unavailable` differs from `Known(None)`.
 The macro captures the existing source probes directly, including the original
 clone-returning element probe; the temporary identifiers live through the same
@@ -877,7 +885,7 @@ immediately after its category name, using the existing typed name resolver and
 store validation. Original rule-root positions and final declaration bindings
 are unchanged, although additional name nodes can change arena indices.
 
-Runtime header admission prepays three shallow-observation work units per
+Runtime header admission prepays four shallow-observation work units per
 category and the exact extra element-root count before building the roster.
 An `Other` payload uses the existing string-copy gate; name payloads are charged
 once by ordinary capture. These are logical content bounds, not physical memory
@@ -979,6 +987,31 @@ grammar rule index is not a branch ordinal. The owned image must subsequently
 use the existing WPDA walker and installed-language entrypoint. No independent
 recognizer or textual reconstruction is part of this artifact.
 
+### Borrowed walker descriptors and term categories
+
+The existing `CollectionSpec` and `FrameCtx` records borrow their delimiter
+strings from the grammar owner. Generated engines retain static literal
+storage; owned engines can return views of their immutable descriptor storage.
+`GeneratedCollectionSpec::as_borrowed` projects every field without copying or
+interning strings. Wrapper-rule slices, cast keywords, and collection separators
+likewise borrow from the engine. These lifetime changes do not alter transition
+decisions, delimiter precedence, or the innermost-frame lookup.
+
+After an action produces a term, `SemanticBuilder::top_term` borrows the last
+main-stack payload and its stored debug tag. It does not clone, consume, search
+below a non-term, or enter an optional scope. `WpdaEngine::term_category` defaults
+to the original type-name lookup, preserving generated-engine behavior. An
+engine whose categories share one Rust carrier can instead inspect that
+carrier's explicit category index; a debug tag is not category evidence.
+
+Both existing walker observation sites retain their order: execute the action,
+check its result, observe the output category, then consume the result. The
+[category-observation model](../../formal/rocq/prattail_wpda_runtime/theories/TermCategoryObservation.v)
+proves static-default equivalence including lookup state, and conditional
+carrier-index observation without guessing from tags. Rust tests exercise both
+actual walker sites and verify exact payload borrows. These interface laws do
+not establish the complete owned engine or installed-language integration.
+
 ## Verification boundaries
 
 The Rocq models separate obligations rather than treating an interface test as
@@ -1007,7 +1040,8 @@ an end-to-end proof:
 - [Declaration reader](../../formal/rocq/prattail_wpda_runtime/theories/AuthoredDeclarationReaderProjection.v)
   composes existing validation results with ordered rule checks, original
   census/native/guest worker substitution, source-position lookup, and the
-  category-role producer relation. It does not reprove the Core validator or
+  macro-only category-role producer relation. The source-role model above
+  separates this relation from DDL variable authority. Neither model reproves the Core validator or
   establish runtime resource admission. The [reader tests](../../prattail/src/wpda_rule_analysis/authored_declarations/tests.rs)
   exercise these boundaries with validated fixtures, nonidentity final token
   bindings, duplicate source rows, raw names, and rejection cases.

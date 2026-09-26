@@ -39,6 +39,7 @@ fn declaration(
 ) -> AuthoredCategoryDeclaration {
     AuthoredCategoryDeclaration {
         name,
+        data_observation: SourceObservation::Known(false),
         native: None,
         collection: kind.map(|kind| AuthoredCollectionDeclaration {
             kind,

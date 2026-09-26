@@ -12,15 +12,16 @@ use crate::wpda_walker::WpdaStepAction;
 
 /// Run the original prefix lexical fork; None retains the caller's fall-through.
 #[allow(clippy::too_many_arguments)]
-pub fn prefix<W: SemiringRef, K: Copy>(
+pub fn prefix<'grammar, W: SemiringRef, K: Copy>(
     primary_src_idx: u16,
     pos: &usize,
     cur_bp: &u8,
     frontier_top: Option<&WpdaGssNode>,
     tokens: &dyn WpdaTokenSource,
     frame_ctx: FrameCtx,
-    mut collection_spec: impl FnMut(u16, u16, u8) -> Option<CollectionSpec>,
+    mut collection_spec: impl FnMut(u16, u16, u8) -> Option<CollectionSpec<'grammar>>,
     mut lex_alt_rules_for_prefix: impl FnMut(u16, &TokenKind) -> Vec<LexAltRuleInfo>,
+    mut leading_category_floor: impl FnMut(u16, u16, u8) -> Option<u8>,
     mut prefix_crosscat_lhs_trigger_ahead_scoped: impl FnMut(u16, &dyn WpdaTokenSource, usize) -> bool,
     kwambig_observation: impl FnOnce() -> K,
     mut primary_projection_keep: impl FnMut(bool, u16, u16, &TokenKind, K) -> bool,
@@ -411,11 +412,19 @@ pub fn prefix<W: SemiringRef, K: Copy>(
                         }
                     },
                     crate::wpda_runtime::LexAltRuleKind::LeadingCategory { source_src_idx } => {
+                        let Some(inner_bp) =
+                            leading_category_floor(primary_src, info.rule_idx, *cur_bp)
+                        else {
+                            continue;
+                        };
                         if __leading_category_seen.insert((info.rule_idx, source_src_idx)) {
                             __branches.push(crate::wpda_walker::ForkBranch {
                                 symbol: StackSymbolV2::category_entry(source_src_idx),
                                 weight: lex_w(0.0, primary_src, info.rule_idx),
-                                new_state: WpdaState::PrefixDispatch { pos: *pos, cur_bp: 0 },
+                                new_state: WpdaState::PrefixDispatch {
+                                    pos: *pos,
+                                    cur_bp: inner_bp,
+                                },
                                 action_kind: crate::wpda_walker::ForkActionKind::ReplaceAndPush {
                                     replace_symbol: StackSymbolV2::rule_at(
                                         primary_src,
@@ -709,12 +718,20 @@ pub fn prefix<W: SemiringRef, K: Copy>(
                         }
                     },
                     crate::wpda_runtime::LexAltRuleKind::LeadingCategory { source_src_idx } => {
+                        let Some(inner_bp) =
+                            leading_category_floor(primary_src, info.rule_idx, *cur_bp)
+                        else {
+                            continue;
+                        };
                         if __leading_category_seen.insert((info.rule_idx, source_src_idx)) {
                             __secondary_survived = true;
                             __branches.push(crate::wpda_walker::ForkBranch {
                                 symbol: StackSymbolV2::category_entry(source_src_idx),
                                 weight: lex_w(0.0, primary_src, info.rule_idx),
-                                new_state: WpdaState::PrefixDispatch { pos: *pos, cur_bp: 0 },
+                                new_state: WpdaState::PrefixDispatch {
+                                    pos: *pos,
+                                    cur_bp: inner_bp,
+                                },
                                 action_kind: crate::wpda_walker::ForkActionKind::ReplaceAndPush {
                                     replace_symbol: StackSymbolV2::rule_at(
                                         primary_src,

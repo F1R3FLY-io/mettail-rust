@@ -1,6 +1,6 @@
 use crate::{
-    runtime_capability_requirements, Associativity, CategoryId, DerivationRank, DynamicValue,
-    ExactParseCost, GrammarCoreV1, ModeId, NativeEvaluation, ParserImageV1, ProductionId,
+    runtime_capability_requirements, CategoryId, DerivationRank, DynamicValue, ExactParseCost,
+    GrammarCoreV1, ModeId, NativeEvaluation, ParserImageV1, ProductionId,
     RuntimeCapabilityBindings, RuntimeCapabilityError, RuntimeCapabilityKey,
     RuntimeCapabilityManifest, RuntimeRule, RuntimeRuleSemantic, RuntimeSymbol, SourceRuleRank,
     SourceSpan, TokenDecoder, TokenId, TokenPattern,
@@ -9,7 +9,8 @@ use rigail::Semiring;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 mod lexical;
-use lexical::{LexPosition, LexicalEdge, LexicalLattice};
+use lexical::LexicalLattice;
+pub use lexical::{LexPosition, LexicalEdge, LexicalNode};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeightedParse {
@@ -57,6 +58,7 @@ pub enum RuntimeError {
     LexerWorkLimit,
     ForeignNestingLimit { byte: usize },
     InvalidCategory(CategoryId),
+    InvalidToken(TokenId),
     InvalidTokenValue { token: TokenId, text: String },
     MissingCapability(String),
     NativeSourceForbidden,
@@ -69,12 +71,33 @@ pub enum RuntimeError {
     Reduction(String),
     InvalidRuntimePolicy(&'static str),
     DynamicValueEncoding(String),
+    NativeVariablePublication,
     InvalidTemplate(&'static str),
     InvalidTemplateHole { id: u32 },
     TemplateHoleCategoryConflict { id: u32 },
     TemplateCacheCycle,
     Capability(RuntimeCapabilityError),
     NoParse,
+}
+
+impl From<crate::DynamicValueEncodingError> for RuntimeError {
+    fn from(error: crate::DynamicValueEncodingError) -> Self {
+        match error {
+            crate::DynamicValueEncodingError::NativeVariable => Self::NativeVariablePublication,
+            crate::DynamicValueEncodingError::Encode(error) => {
+                Self::DynamicValueEncoding(error.to_string())
+            },
+        }
+    }
+}
+
+impl From<crate::DynamicCollectionError> for RuntimeError {
+    fn from(error: crate::DynamicCollectionError) -> Self {
+        match error {
+            crate::DynamicCollectionError::NativeVariable => Self::NativeVariablePublication,
+            error => Self::Reduction(format!("{error:?}")),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,6 +226,101 @@ pub struct RuntimeParser<'a> {
     limits: EffectiveRuntimeLimits,
 }
 
+/// Borrowed input and semantic context for consumers of the existing lexer.
+///
+/// Construction runs the runtime lexer once, with the parser's existing
+/// capabilities and limits. This session does not recognize productions or
+/// build a parse forest. Positions retain their full opaque mode context;
+/// their byte offsets alone are not node identities. Template holes remain
+/// structural occurrences, separate from borrowed text fragments.
+pub struct RuntimeLexicalSession<'parser, 'input, 'grammar> {
+    parser: &'parser RuntimeParser<'grammar>,
+    input: InputText<'input>,
+    holes: BTreeMap<usize, TemplateHoleOccurrence>,
+    lexemes: LexicalLattice,
+}
+
+impl<'input, 'grammar> RuntimeLexicalSession<'_, 'input, 'grammar> {
+    /// The same admitted grammar borrowed by the parser.
+    pub fn grammar(&self) -> &'grammar GrammarCoreV1 {
+        self.parser.grammar
+    }
+
+    /// The same executable image borrowed by the parser.
+    pub fn image(&self) -> &'grammar ParserImageV1 {
+        self.parser.image
+    }
+
+    /// Existing nodes in full-position order, without filtering edge outcomes.
+    pub fn nodes(&self) -> impl Iterator<Item = (LexPosition, &LexicalNode)> {
+        self.lexemes.nodes()
+    }
+
+    pub fn node(&self, position: LexPosition) -> Option<&LexicalNode> {
+        self.lexemes.node(position)
+    }
+
+    /// Follow only the lexer's existing trivia aliases.
+    pub fn canonical_position(&self, position: LexPosition) -> LexPosition {
+        self.lexemes.canonical_position(position)
+    }
+
+    /// Logical input extent: bytes of text plus width-one structural holes.
+    pub fn input_end(&self) -> usize {
+        self.input.end
+    }
+
+    /// Observe the original forest root boundary, retaining the complete
+    /// lexer-mode context. This does not canonicalize trivia or prove that a
+    /// completed root exists or covers the requested category and start.
+    pub fn is_logical_eoi(&self, position: LexPosition) -> bool {
+        self.lexemes.is_logical_eoi(position, self.input.end)
+    }
+
+    /// Borrow one existing text fragment's slice. This cannot cross a hole or
+    /// fragment boundary; the existing logical EOF edge has empty text.
+    pub fn input_slice(&self, start: usize, end: usize) -> Option<&'input str> {
+        self.input.slice(start, end)
+    }
+
+    pub fn hole_at(&self, offset: usize) -> Option<&TemplateHoleOccurrence> {
+        self.holes.get(&offset)
+    }
+
+    /// Original category-edge admission used by forest completion. Positions
+    /// retain the full lexer context through `at` and trivia canonicalization.
+    pub fn structural_hole_edge(
+        &self,
+        nonterminal: u32,
+        position: LexPosition,
+    ) -> Option<StructuralHoleEdge> {
+        structural_hole_edge(self.parser.grammar, &self.lexemes, &self.holes, nonterminal, position)
+    }
+
+    /// Decode a token from this session's admitted grammar using the original
+    /// decoder, including its declared evaluation and capability checks.
+    ///
+    /// An identifier outside [`Self::grammar`]'s token table is rejected
+    /// before decoding or invoking host capabilities.
+    pub fn decode_token(&self, token: TokenId, text: &str) -> Result<DynamicValue, RuntimeError> {
+        if self.parser.grammar.tokens.get(token.0 as usize).is_none() {
+            return Err(RuntimeError::InvalidToken(token));
+        }
+        self.parser.decode_token(token, text)
+    }
+
+    /// Invoke the original native worker without changing authorization,
+    /// callback order, source-code rejection, or error mapping.
+    pub fn evaluate_native(
+        &self,
+        evaluation: &NativeEvaluation,
+        inputs: &[DynamicValue],
+        span: SourceSpan,
+    ) -> Result<DynamicValue, RuntimeError> {
+        self.parser.evaluate_native(evaluation, inputs, span)
+    }
+}
+
 impl<'a> RuntimeParser<'a> {
     pub fn new(
         grammar: &'a GrammarCoreV1,
@@ -288,6 +406,44 @@ impl<'a> RuntimeParser<'a> {
                 lexer_edges: policy.max_lexer_edges as usize,
                 lexer_work: policy.max_lexer_work,
             },
+        })
+    }
+
+    /// Lex borrowed source with the same input guard and lexical worker used
+    /// by parsing, without invoking the recognizer.
+    pub fn lexical_session<'parser, 'input>(
+        &'parser self,
+        source: &'input str,
+    ) -> Result<RuntimeLexicalSession<'parser, 'input, 'a>, RuntimeError> {
+        if source.len() > self.limits.input_bytes {
+            return Err(RuntimeError::InputTooLarge);
+        }
+        let lexemes = self.lex(source)?;
+        Ok(RuntimeLexicalSession {
+            parser: self,
+            input: InputText::source(source),
+            holes: BTreeMap::new(),
+            lexemes,
+        })
+    }
+
+    /// Lex existing structural template pieces without rendering their holes
+    /// into source. Declaration checks, budgets, and mode propagation remain
+    /// in the same template-lexing worker used by [`Self::parse_template`].
+    pub fn lexical_template_session<'parser, 'input>(
+        &'parser self,
+        pieces: &'input [RuntimeTemplatePiece],
+        holes: &[RuntimeTemplateHole],
+    ) -> Result<RuntimeLexicalSession<'parser, 'input, 'a>, RuntimeError> {
+        let input = self.lex_template(pieces, holes)?;
+        Ok(RuntimeLexicalSession {
+            parser: self,
+            input: InputText {
+                fragments: input.fragments,
+                end: input.end,
+            },
+            holes: input.holes,
+            lexemes: input.lexemes,
         })
     }
 
@@ -595,15 +751,9 @@ fn normalize_weighted_output(
 ) -> Result<Vec<WeightedParse>, RuntimeError> {
     let mut keyed = output
         .map(|result| {
-            let value_key = result
-                .value
-                .semantic_key()
-                .map_err(|error| RuntimeError::DynamicValueEncoding(error.to_string()))?;
-            let syntax_key = result
-                .syntax
-                .semantic_key()
-                .map_err(|error| RuntimeError::DynamicValueEncoding(error.to_string()))?;
-            Ok((
+            let value_key = result.value.semantic_key().map_err(RuntimeError::from)?;
+            let syntax_key = result.syntax.semantic_key().map_err(RuntimeError::from)?;
+            Ok::<_, RuntimeError>((
                 result.cost,
                 result.rank.clone(),
                 result.production,
@@ -664,6 +814,7 @@ fn validate_template_hole_categories(
             DynamicValue::Sequence(values) => pending.extend(values.iter()),
             DynamicValue::Collection { entries, .. } => pending.extend(entries.iter()),
             DynamicValue::Text(_)
+            | DynamicValue::NativeVariable { .. }
             | DynamicValue::Integer(_)
             | DynamicValue::Boolean(_)
             | DynamicValue::Bytes(_)
@@ -696,11 +847,46 @@ fn lexer_transition(lexer: &crate::LexerImage, state: u32, byte: u8) -> Option<u
         .map(|index| transitions[index].target)
 }
 
+/// Existing width-one structural edge in a template's logical input.
 #[derive(Clone, Copy)]
-struct TemplateHoleOccurrence {
-    id: u32,
-    category: Option<CategoryId>,
-    end: usize,
+pub struct TemplateHoleOccurrence {
+    pub id: u32,
+    pub category: Option<CategoryId>,
+    pub end: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StructuralHoleEdge {
+    pub id: u32,
+    pub category: CategoryId,
+    pub start: LexPosition,
+    pub end: LexPosition,
+}
+
+fn structural_hole_edge(
+    grammar: &GrammarCoreV1,
+    lexemes: &LexicalLattice,
+    holes: &BTreeMap<usize, TemplateHoleOccurrence>,
+    nonterminal: u32,
+    position: LexPosition,
+) -> Option<StructuralHoleEdge> {
+    let position = lexemes.canonical_position(position);
+    let hole = holes.get(&position.offset).copied()?;
+    let category = grammar.categories.get(nonterminal as usize)?;
+    if !category.admits_variables
+        || hole
+            .category
+            .is_some_and(|expected| expected.0 != nonterminal)
+    {
+        return None;
+    }
+    let end = lexemes.canonical_position(position.at(hole.end));
+    Some(StructuralHoleEdge {
+        id: hole.id,
+        category: CategoryId(nonterminal),
+        start: position,
+        end,
+    })
 }
 
 struct TemplateLexing<'a> {
@@ -938,10 +1124,7 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                     ForestNode::Nonterminal { end, .. } => *end,
                     _ => unreachable!(),
                 };
-                let at_end = node_end.offset == self.input.end;
-                let after_eof = Some(node_end.offset) == self.input.end.checked_add(1)
-                    && self.lexemes.node(node_end).is_some();
-                if node_end.is_balanced() && (at_end || after_eof) {
+                if self.lexemes.is_logical_eoi(node_end, self.input.end) {
                     roots.push(*node);
                 }
             }
@@ -1147,21 +1330,17 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
         nonterminal: u32,
         position: LexPosition,
     ) -> Result<(), RuntimeError> {
-        let position = self.canonical_position(position);
-        let Some(hole) = self.holes.get(&position.offset).copied() else {
+        let Some(hole) = structural_hole_edge(
+            self.parser.grammar,
+            &self.lexemes,
+            &self.holes,
+            nonterminal,
+            position,
+        ) else {
             return Ok(());
         };
-        let Some(category) = self.parser.grammar.categories.get(nonterminal as usize) else {
-            return Ok(());
-        };
-        if !category.admits_variables
-            || hole
-                .category
-                .is_some_and(|expected| expected.0 != nonterminal)
-        {
-            return Ok(());
-        }
-        let end = self.canonical_position(position.at(hole.end));
+        let position = hole.start;
+        let end = hole.end;
         let key = (nonterminal, position, end);
         if !self.hole_nonterminals.insert(key) {
             return Ok(());
@@ -1201,11 +1380,8 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
         Ok(())
     }
 
-    fn canonical_position(&self, mut position: LexPosition) -> LexPosition {
-        while let Some(target) = self.lexemes.node(position).and_then(|node| node.trivia) {
-            position = target;
-        }
-        position
+    fn canonical_position(&self, position: LexPosition) -> LexPosition {
+        self.lexemes.canonical_position(position)
     }
 
     fn push_node(&mut self, node: ForestNode) -> Result<NodeId, RuntimeError> {
@@ -1524,7 +1700,7 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                         Vec::new(),
                     )
                     .map_err(|error| RuntimeError::Reduction(format!("{error:?}")))?;
-                    Ok(SemanticValue::same(value))
+                    Ok::<_, RuntimeError>(SemanticValue::same(value))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             RuntimeRuleSemantic::PresentOptional { slots } => {
@@ -1624,10 +1800,9 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                                         .into(),
                                 ));
                             }
-                            DynamicValue::collection(kind, entries)
-                                .map_err(|error| RuntimeError::Reduction(format!("{error:?}")))
+                            DynamicValue::collection(kind, entries).map_err(RuntimeError::from)
                         };
-                        Ok(SemanticValue {
+                        Ok::<_, RuntimeError>(SemanticValue {
                             syntax: finalize(value.syntax)?,
                             value: finalize(value.value)?,
                         })
@@ -1658,60 +1833,27 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
     }
 
     fn precedence_valid(&self, rule: &RuntimeRule, child_tops: &[Option<ProductionId>]) -> bool {
-        let Some(parent_id) = rule.production else {
-            return true;
-        };
-        let parent = &self.parser.grammar.productions[parent_id.0 as usize];
-        let Some(parent_bp) = parent.precedence.binding_power else {
-            return true;
-        };
-        let start = rule.symbol_start as usize;
-        let end = start + rule.symbol_len as usize;
-        let category_children = self.parser.image.engine.runtime_symbols[start..end]
-            .iter()
-            .enumerate()
-            .filter_map(|(index, symbol)| match symbol {
-                RuntimeSymbol::Nonterminal { nonterminal, .. }
-                    if *nonterminal == parent.result.0 =>
-                {
-                    Some(index)
-                },
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let tighter = |child: Option<ProductionId>, allow_equal: bool| {
-            child
-                .and_then(|id| self.parser.grammar.productions.get(id.0 as usize))
-                .and_then(|production| production.precedence.binding_power)
-                .is_none_or(|binding_power| {
-                    binding_power > parent_bp || (allow_equal && binding_power == parent_bp)
-                })
-        };
-        if (parent.classification.infix || parent.is_binary_juxtaposition())
-            && category_children.len() >= 2
-        {
-            let left = child_tops.get(category_children[0]).copied().flatten();
-            let right = child_tops
-                .get(*category_children.last().expect("two children"))
-                .copied()
-                .flatten();
-            match parent.precedence.associativity {
-                Associativity::Left => tighter(left, true) && tighter(right, false),
-                Associativity::Right => tighter(left, false) && tighter(right, true),
-                Associativity::NonAssociative => tighter(left, false) && tighter(right, false),
-            }
-        } else if parent.classification.prefix {
-            category_children
-                .last()
-                .is_none_or(|index| tighter(child_tops.get(*index).copied().flatten(), true))
-        } else if parent.classification.postfix {
-            let allow_equal = parent.precedence.associativity != Associativity::NonAssociative;
-            category_children
-                .first()
-                .is_none_or(|index| tighter(child_tops.get(*index).copied().flatten(), allow_equal))
-        } else {
-            true
-        }
+        crate::production_precedence_valid(
+            self.parser.grammar,
+            rule.production,
+            child_tops,
+            |parent| {
+                let start = rule.symbol_start as usize;
+                let end = start + rule.symbol_len as usize;
+                self.parser.image.engine.runtime_symbols[start..end]
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, symbol)| match symbol {
+                        RuntimeSymbol::Nonterminal { nonterminal, .. }
+                            if *nonterminal == parent.result.0 =>
+                        {
+                            Some(index)
+                        },
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
     }
 }
 
@@ -2043,7 +2185,12 @@ fn evaluate_operator(operator: &str, inputs: &[DynamicValue]) -> Result<DynamicV
             ] if left_kind == right_kind => {
                 let mut entries = left.clone();
                 entries.extend(right.iter().cloned());
-                DynamicValue::collection(*left_kind, entries).ok()
+                match DynamicValue::collection(*left_kind, entries) {
+                    Err(crate::DynamicCollectionError::NativeVariable) => {
+                        return Err(crate::DynamicValueEncodingError::NativeVariable.to_string());
+                    },
+                    original => original.ok(),
+                }
             },
             _ => None,
         },
@@ -2072,6 +2219,41 @@ mod tests {
         Precedence, Production, ProductionClass, ReductionPlan, Reservation, RuntimeRule,
         RuntimeRuleSemantic, RuntimeSymbol, TokenDefinition,
     };
+
+    #[test]
+    fn native_variable_publication_is_not_no_parse_or_silently_pruned() {
+        let native = DynamicValue::NativeVariable {
+            category: CategoryId(0),
+            variable: crate::native_variable::get_or_create_var("runtime-native-publication"),
+        };
+        let result = |value: DynamicValue| WeightedParse {
+            syntax: value.clone(),
+            value,
+            cost: ExactParseCost::one(),
+            rank: DerivationRank::default(),
+            production: None,
+        };
+        assert_eq!(
+            normalize_weighted_output(
+                [result(DynamicValue::Unit), result(native.clone())].into_iter()
+            ),
+            Err(RuntimeError::NativeVariablePublication),
+        );
+        let collections = [
+            DynamicValue::Collection {
+                kind: crate::CollectionKind::Set,
+                entries: vec![native],
+            },
+            DynamicValue::Collection {
+                kind: crate::CollectionKind::Set,
+                entries: vec![],
+            },
+        ];
+        assert_eq!(
+            default_evaluate(&NativeEvaluation::Operator("concat".into()), &collections),
+            Err(crate::DynamicValueEncodingError::NativeVariable.to_string()),
+        );
+    }
 
     #[test]
     fn token_output_contract_covers_the_existing_closed_unary_evaluator() {
@@ -2310,6 +2492,175 @@ mod tests {
         image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
         image.engine = crate::normalize_runtime_engine(&grammar).expect("normalize");
         (grammar, image)
+    }
+
+    #[test]
+    fn lexical_session_borrows_original_nodes_and_semantic_workers() {
+        let (grammar, image) = integer_grammar();
+        let parser = RuntimeParser::new(&grammar, &image, "test", "test", &BuiltinOverrideHost)
+            .expect("parser");
+        let session = parser.lexical_session("123").expect("session");
+        assert!(std::ptr::eq(session.grammar(), &grammar));
+        assert!(std::ptr::eq(session.image(), &image));
+        assert_eq!(session.input_end(), 3);
+        assert_eq!(session.input_slice(0, 3), Some("123"));
+        assert_eq!(session.input_slice(3, 4), Some(""));
+        assert!(session.hole_at(0).is_none());
+        let node = session.node(LexPosition::START).expect("start node");
+        let [LexicalEdge::Accepted { token, target, alternative }] = node.edges.as_slice() else {
+            panic!("original singleton integer edge");
+        };
+        assert_eq!((*token, target.offset, *alternative), (TokenId(0), 3, 0));
+        assert!(target.is_balanced());
+        assert_eq!(session.canonical_position(*target), *target);
+        assert!(session.is_logical_eoi(*target));
+        assert!(!session.is_logical_eoi(LexPosition::START));
+        assert!(!session.is_logical_eoi(target.at(4)), "no post-EOF node exists");
+        assert_eq!(session.nodes().count(), 2);
+        for (position, original) in session.nodes() {
+            assert!(std::ptr::eq(original, session.node(position).expect("same node")));
+        }
+        assert_eq!(session.decode_token(*token, "123"), Ok(DynamicValue::Integer(123)));
+        let evaluation = NativeEvaluation::Carrier {
+            kind: "int".into(),
+            parameters: BTreeMap::new(),
+        };
+        assert_eq!(
+            session.evaluate_native(
+                &evaluation,
+                &[DynamicValue::Integer(123)],
+                SourceSpan::default()
+            ),
+            Ok(DynamicValue::Integer(123)),
+        );
+        assert_eq!(
+            session.evaluate_native(
+                &NativeEvaluation::Source {
+                    semantics: vec!["Rust".into()],
+                    text: "()".into()
+                },
+                &[],
+                SourceSpan::default(),
+            ),
+            Err(RuntimeError::NativeSourceForbidden),
+        );
+    }
+
+    #[test]
+    fn lexical_template_session_preserves_fragments_and_structural_occurrences() {
+        let (mut grammar, mut image) = integer_grammar();
+        grammar.categories[0].admits_variables = true;
+        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        let parser = RuntimeParser::new(&grammar, &image, "test", "test", &DefaultRuntimeHost)
+            .expect("parser");
+        let pieces = [
+            RuntimeTemplatePiece::Text("1".into()),
+            RuntimeTemplatePiece::Hole(0),
+            RuntimeTemplatePiece::Text("2".into()),
+        ];
+        let holes = [RuntimeTemplateHole { id: 0, category: Some(CategoryId(0)) }];
+        let session = parser
+            .lexical_template_session(&pieces, &holes)
+            .expect("session");
+        assert_eq!(session.input_end(), 3);
+        assert_eq!(session.input_slice(0, 1), Some("1"));
+        assert_eq!(session.input_slice(0, 3), None);
+        assert_eq!(session.input_slice(1, 2), None);
+        assert_eq!(session.input_slice(2, 3), Some("2"));
+        let hole = session.hole_at(1).expect("structural edge");
+        assert_eq!((hole.id, hole.category, hole.end), (0, Some(CategoryId(0)), 2));
+        assert_eq!(
+            session.structural_hole_edge(0, LexPosition::START.at(1)),
+            Some(StructuralHoleEdge {
+                id: 0,
+                category: CategoryId(0),
+                start: LexPosition::START.at(1),
+                end: LexPosition::START.at(2)
+            })
+        );
+        assert_eq!(
+            session.structural_hole_edge(1, LexPosition::START.at(1)),
+            None,
+            "unknown categories do not acquire hole edges"
+        );
+        assert_eq!(
+            session.structural_hole_edge(0, LexPosition::START),
+            None,
+            "ordinary token positions do not acquire hole edges"
+        );
+        let hole_node = session.node(LexPosition::START.at(1)).expect("hole node");
+        assert!(hole_node.edges.is_empty());
+        assert!(hole_node.trivia.is_none(), "a hole is not a trivia alias");
+        assert!(session.node(LexPosition::START.at(2)).is_some());
+        assert!(matches!(
+            parser.lexical_template_session(&pieces, &[]),
+            Err(RuntimeError::InvalidTemplateHole { id: 0 }),
+        ));
+    }
+
+    #[test]
+    fn lexical_session_keeps_input_and_lexer_budget_failures() {
+        let (grammar, image) = integer_grammar();
+        for (policy, expected) in [
+            (
+                RuntimePolicy {
+                    max_input_bytes: 0,
+                    ..RuntimePolicy::default()
+                },
+                RuntimeError::InputTooLarge,
+            ),
+            (
+                RuntimePolicy {
+                    max_lexer_work: 0,
+                    ..RuntimePolicy::default()
+                },
+                RuntimeError::LexerWorkLimit,
+            ),
+        ] {
+            let parser = RuntimeParser::new_with_policy(
+                &grammar,
+                &image,
+                "test",
+                "test",
+                &DefaultRuntimeHost,
+                policy,
+            )
+            .expect("parser");
+            assert!(matches!(parser.lexical_session("1"), Err(error) if error == expected));
+            let pieces = [RuntimeTemplatePiece::Text("1".into())];
+            assert!(
+                matches!(parser.lexical_template_session(&pieces, &[]), Err(error) if error == expected)
+            );
+        }
+    }
+
+    #[test]
+    fn lexical_session_retains_capability_revalidation() {
+        let (mut grammar, mut image) = integer_grammar();
+        grammar.tokens[0].decoder = TokenDecoder::Capability("test/decoder".into());
+        grammar
+            .capabilities
+            .insert(crate::Capability::TokenDecoder("test/decoder".into()));
+        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        let host = RevokingDecoderHost {
+            changed: std::sync::atomic::AtomicBool::new(false),
+        };
+        let parser = RuntimeParser::new(&grammar, &image, "test", "test", &host).expect("bind");
+        let session = parser
+            .lexical_session("123")
+            .expect("lexing invokes no decoder");
+        assert!(!host.changed.load(std::sync::atomic::Ordering::SeqCst));
+        for invalid in [TokenId(grammar.tokens.len() as u32), TokenId(u32::MAX)] {
+            assert_eq!(
+                session.decode_token(invalid, "123"),
+                Err(RuntimeError::InvalidToken(invalid))
+            );
+            assert!(!host.changed.load(std::sync::atomic::Ordering::SeqCst));
+        }
+        assert!(matches!(
+            session.decode_token(TokenId(0), "123"),
+            Err(RuntimeError::Capability(RuntimeCapabilityError::Changed(_))),
+        ));
     }
 
     #[test]

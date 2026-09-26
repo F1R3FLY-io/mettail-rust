@@ -221,6 +221,8 @@ pub enum SourceObservation<T> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthoredCategoryDeclaration<I = u32> {
     pub name: AuthoredNameId<I>,
+    /// Source Data/SpannedData role, independent of runtime variable authority.
+    pub data_observation: SourceObservation<bool>,
     pub native: Option<NativeKind>,
     pub collection: Option<AuthoredCollectionDeclaration>,
     pub byte_observation: SourceObservation<bool>,
@@ -295,6 +297,7 @@ impl<I> AuthoredDeclarations<I> {
             .map(|row| {
                 Ok(AuthoredCategoryDeclaration {
                     name: resolve(row.name)?,
+                    data_observation: row.data_observation,
                     native: row.native,
                     collection: row.collection,
                     byte_observation: row.byte_observation,
@@ -952,6 +955,7 @@ mod tests {
         let header = AuthoredDeclarations {
             categories: vec![AuthoredCategoryDeclaration {
                 name: AuthoredNameId(1),
+                data_observation: SourceObservation::Known(false),
                 native: Some(NativeKind::Bool),
                 byte_observation: SourceObservation::Known(false),
                 literal_observation: SourceObservation::Known(Some(
@@ -1030,6 +1034,7 @@ mod tests {
     fn native_observation_roots_remap_in_order_and_stop_on_first_failure() {
         let row = |category, element| AuthoredCategoryDeclaration {
             name: AuthoredNameId(category),
+            data_observation: SourceObservation::Known(false),
             native: None,
             collection: None,
             byte_observation: SourceObservation::Known(false),
@@ -1133,6 +1138,7 @@ mod tests {
             let header = AuthoredDeclarations {
                 categories: vec![AuthoredCategoryDeclaration {
                     name: AuthoredNameId(1),
+                    data_observation: SourceObservation::Known(false),
                     native: None,
                     collection: None,
                     byte_observation: SourceObservation::Known(false),
