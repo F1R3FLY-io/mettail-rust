@@ -97,6 +97,12 @@ use std::hash::{Hash, Hasher};
 /// Index into the SPPF node arena. `u32::MAX` is a sentinel (`SPPF_ID_NONE`).
 pub type SppfId = u32;
 
+/// A fresh forest node was refused before its payload or node was stored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForestNodeLimit {
+    pub limit: usize,
+}
+
 /// Sentinel "no node" value.
 pub const SPPF_ID_NONE: SppfId = u32::MAX;
 
@@ -507,6 +513,16 @@ impl<W: SemiringRef> Default for Sppf<W> {
 }
 
 impl<W: SemiringRef> Sppf<W> {
+    /// Admission at the existing interner miss boundary. This does not charge
+    /// dedup hits or change their original weight aggregation.
+    fn reserve_node(&self, limit: Option<usize>) -> Result<(), ForestNodeLimit> {
+        if let Some(limit) = limit {
+            if self.nodes.len() >= limit {
+                return Err(ForestNodeLimit { limit });
+            }
+        }
+        Ok(())
+    }
     /// Create an empty SPPF.
     pub fn new() -> Self {
         Self::default()
@@ -533,6 +549,24 @@ impl<W: SemiringRef> Sppf<W> {
         self.intern_terminal_occurrence(token_kind, pos, text, pushed_via_push_ident, None)
     }
 
+    pub fn try_intern_terminal(
+        &mut self,
+        token_kind: TokenKind,
+        pos: PosOrSynth,
+        text: Option<&str>,
+        pushed_via_push_ident: bool,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
+        self.try_intern_terminal_occurrence(
+            token_kind,
+            pos,
+            text,
+            pushed_via_push_ident,
+            None,
+            limit,
+        )
+    }
+
     /// Same interner with the selected source-edge identity retained.
     /// `TerminalOccurrence.v` specifies identity preservation and the unchanged
     /// equivalence relation of the original entry (all origins are None).
@@ -544,14 +578,35 @@ impl<W: SemiringRef> Sppf<W> {
         pushed_via_push_ident: bool,
         occurrence: Option<u32>,
     ) -> SppfId {
+        self.try_intern_terminal_occurrence(
+            token_kind,
+            pos,
+            text,
+            pushed_via_push_ident,
+            occurrence,
+            None,
+        )
+        .expect("unbounded original terminal interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_terminal_occurrence(
+        &mut self,
+        token_kind: TokenKind,
+        pos: PosOrSynth,
+        text: Option<&str>,
+        pushed_via_push_ident: bool,
+        occurrence: Option<u32>,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         // Dedup key: (kind, pos, text, pushed_via_push_ident). Text is
         // semantic payload for token-capturing actions, not recoverable from
         // kind+pos once terminals are shared across speculative branches.
         let text_key = text.map(str::to_owned);
         let key = (token_kind.clone(), pos, text_key.clone(), pushed_via_push_ident, occurrence);
         if let Some(&id) = self.dedup_terminal.get(&key) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let text_handle = match text_key.as_deref() {
             Some(s) => self.intern_text(s),
             None => TEXT_HANDLE_NONE,
@@ -565,7 +620,7 @@ impl<W: SemiringRef> Sppf<W> {
             pushed_via_push_ident,
         });
         self.dedup_terminal.insert(key, id);
-        id
+        Ok(id)
     }
 
     /// Phase F.8 (2026-05-18): intern a `TriggerTerminal` for a consumed
@@ -586,10 +641,24 @@ impl<W: SemiringRef> Sppf<W> {
         owner_cat: u16,
         owner_rule_idx: u16,
     ) -> SppfId {
+        self.try_intern_trigger_terminal(token_kind, pos, text, owner_cat, owner_rule_idx, None)
+            .expect("unbounded original trigger interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_trigger_terminal(
+        &mut self,
+        token_kind: TokenKind,
+        pos: PosOrSynth,
+        text: Option<&str>,
+        owner_cat: u16,
+        owner_rule_idx: u16,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         let key = (token_kind.clone(), pos, owner_cat, owner_rule_idx);
         if let Some(&id) = self.dedup_trigger_terminal.get(&key) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let text_handle = match text {
             Some(s) => self.intern_text(s),
             None => TEXT_HANDLE_NONE,
@@ -603,7 +672,7 @@ impl<W: SemiringRef> Sppf<W> {
             owner_rule_idx,
         });
         self.dedup_trigger_terminal.insert(key, id);
-        id
+        Ok(id)
     }
 
     /// Intern a Symbol identity node. Returns the existing id if `(nt, lo, hi)`
@@ -618,10 +687,22 @@ impl<W: SemiringRef> Sppf<W> {
     /// `⊕`-identity). Each subsequent `link_packing_to_symbol` updates it
     /// monotonically by `⊕`-ing in the linked packing's `weight`.
     pub fn intern_symbol(&mut self, nt_tag: u32, lo_pos: u32, hi_pos: u32) -> SppfId {
+        self.try_intern_symbol(nt_tag, lo_pos, hi_pos, None)
+            .expect("unbounded original symbol interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_symbol(
+        &mut self,
+        nt_tag: u32,
+        lo_pos: u32,
+        hi_pos: u32,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         let key = (nt_tag, lo_pos, hi_pos);
         if let Some(&id) = self.dedup_symbol.get(&key) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let id = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::Symbol {
             non_terminal_tag: nt_tag,
@@ -630,7 +711,7 @@ impl<W: SemiringRef> Sppf<W> {
             weight_sum: W::zero_ref(),
         });
         self.dedup_symbol.insert(key, id);
-        id
+        Ok(id)
     }
 
     /// Look up an already-interned Symbol identity node without allocating.
@@ -651,10 +732,22 @@ impl<W: SemiringRef> Sppf<W> {
     /// Reached from `WpdaWalker::cgll_get_node_p` on every parse — the
     /// binarized canonical-GLL path is the sole parser.
     pub fn intern_intermediate(&mut self, slot_id: u32, lo_pos: u32, hi_pos: u32) -> SppfId {
+        self.try_intern_intermediate(slot_id, lo_pos, hi_pos, None)
+            .expect("unbounded original intermediate interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_intermediate(
+        &mut self,
+        slot_id: u32,
+        lo_pos: u32,
+        hi_pos: u32,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         let key = (slot_id, lo_pos, hi_pos);
         if let Some(&id) = self.dedup_intermediate.get(&key) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let id = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::Intermediate {
             slot_id,
@@ -663,7 +756,7 @@ impl<W: SemiringRef> Sppf<W> {
             weight_sum: W::zero_ref(),
         });
         self.dedup_intermediate.insert(key, id);
-        id
+        Ok(id)
     }
 
     /// Intern a Packing (one derivation). Returns the existing id if a
@@ -676,6 +769,17 @@ impl<W: SemiringRef> Sppf<W> {
     /// at the same span via different lex-Fork branches contribute their
     /// branch weights additively.
     pub fn intern_packing(&mut self, rule_idx: u32, children: Vec<SppfId>, weight: W) -> SppfId {
+        self.try_intern_packing(rule_idx, children, weight, None)
+            .expect("unbounded original packing interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_packing(
+        &mut self,
+        rule_idx: u32,
+        children: Vec<SppfId>,
+        weight: W,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         // Phase C R6: full-list key, no hash truncation.
         let key = (rule_idx, children.clone());
         if let Some(&id) = self.dedup_packing.get(&key) {
@@ -683,13 +787,14 @@ impl<W: SemiringRef> Sppf<W> {
             if let Some(SppfNode::Packing { weight: w, .. }) = self.nodes.get_mut(id as usize) {
                 *w = w.plus_ref(&weight);
             }
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let id = self.nodes.len() as SppfId;
         self.nodes
             .push(SppfNode::Packing { rule_idx, children, weight });
         self.dedup_packing.insert(key, id);
-        id
+        Ok(id)
     }
 
     /// RC-B (2026-06-17): does a Packing with exactly `(rule_idx, children)`
@@ -705,13 +810,23 @@ impl<W: SemiringRef> Sppf<W> {
 
     /// Intern an Epsilon (empty production) at the given position.
     pub fn intern_epsilon(&mut self, pos: u32) -> SppfId {
+        self.try_intern_epsilon(pos, None)
+            .expect("unbounded original epsilon interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_epsilon(
+        &mut self,
+        pos: u32,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         if let Some(&id) = self.dedup_epsilon.get(&pos) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let id = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::Epsilon { pos });
         self.dedup_epsilon.insert(pos, id);
-        id
+        Ok(id)
     }
 
     /// Intern a `CollectionId` marker for slot `id` carrying its
@@ -725,57 +840,108 @@ impl<W: SemiringRef> Sppf<W> {
     /// children)` still collapses truly-identical derivations and now
     /// correctly separates derivations whose collections differ.
     pub fn intern_collection_id(&mut self, id: u32, items: Vec<SppfId>) -> SppfId {
+        self.try_intern_collection_id(id, items, None)
+            .expect("unbounded original collection interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_collection_id(
+        &mut self,
+        id: u32,
+        items: Vec<SppfId>,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         // Dedup by (id, items): identical collections merge (bounds node
         // growth, prevents the realize cartesian blow-up); collections with
         // differing elements stay distinct (preserves disambiguation).
         let key = (id, items.clone());
         if let Some(&sid) = self.dedup_collection_id.get(&key) {
-            return sid;
+            return Ok(sid);
         }
+        self.reserve_node(limit)?;
         let sid = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::CollectionId { id, items });
         self.dedup_collection_id.insert(key, sid);
-        sid
+        Ok(sid)
     }
 
     /// Intern an `OptAbsent` leaf at the given position. Dedup'd by `pos`.
     pub fn intern_opt_absent(&mut self, pos: u32) -> SppfId {
+        self.try_intern_opt_absent(pos, None)
+            .expect("unbounded original absent interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_opt_absent(
+        &mut self,
+        pos: u32,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         if let Some(&id) = self.dedup_opt_absent.get(&pos) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let id = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::OptAbsent { pos });
         self.dedup_opt_absent.insert(pos, id);
-        id
+        Ok(id)
     }
 
     /// Intern a `Predicate` payload reference. Dedup'd by `handle`.
     pub fn intern_predicate(&mut self, handle: u32) -> SppfId {
+        self.try_intern_predicate(handle, None)
+            .expect("unbounded original predicate interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_predicate(
+        &mut self,
+        handle: u32,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         if let Some(&id) = self.dedup_predicate.get(&handle) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let id = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::Predicate { handle });
         self.dedup_predicate.insert(handle, id);
-        id
+        Ok(id)
     }
 
     /// L9-4: intern a `GuestBody` payload reference. Dedup'd by `handle`.
     /// Mirrors `intern_predicate`.
     pub fn intern_guest_body(&mut self, handle: u32) -> SppfId {
+        self.try_intern_guest_body(handle, None)
+            .expect("unbounded original guest interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_guest_body(
+        &mut self,
+        handle: u32,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         if let Some(&id) = self.dedup_guest_body.get(&handle) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let id = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::GuestBody { handle });
         self.dedup_guest_body.insert(handle, id);
-        id
+        Ok(id)
     }
 
     /// Intern a `BinderScope` leaf (Bug N fix). Names are interned via
     /// `intern_text`; the returned SppfId references a `SppfNode::BinderScope`
     /// containing `Vec<TextHandle>` + depth. Dedup'd by `(depth, hash(names))`.
     pub fn intern_binder_scope(&mut self, names: &[String], depth: u16) -> SppfId {
+        self.try_intern_binder_scope(names, depth, None)
+            .expect("unbounded original binder interner cannot exhaust a node limit")
+    }
+
+    pub fn try_intern_binder_scope(
+        &mut self,
+        names: &[String],
+        depth: u16,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
         use rustc_hash::FxHasher;
         let mut h = FxHasher::default();
         for n in names {
@@ -783,13 +949,14 @@ impl<W: SemiringRef> Sppf<W> {
         }
         let key = (depth, h.finish());
         if let Some(&id) = self.dedup_binder_scope.get(&key) {
-            return id;
+            return Ok(id);
         }
+        self.reserve_node(limit)?;
         let names_text: Vec<TextHandle> = names.iter().map(|n| self.intern_text(n)).collect();
         let id = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::BinderScope { names_text, depth });
         self.dedup_binder_scope.insert(key, id);
-        id
+        Ok(id)
     }
 
     /// Link a Packing to a Symbol. Idempotent (O(1) check). The link is
@@ -1456,6 +1623,69 @@ mod tests {
 
     fn one() -> W {
         W::one_ref()
+    }
+
+    #[test]
+    fn installed_node_limit_refuses_every_fresh_kind_before_storage() {
+        let mut s: Sppf<W> = Sppf::new();
+        let results = [
+            s.try_intern_terminal_occurrence(
+                TokenKind::Ident,
+                PosOrSynth::Real(0),
+                Some("x"),
+                false,
+                Some(0),
+                Some(0),
+            ),
+            s.try_intern_trigger_terminal(
+                TokenKind::Ident,
+                PosOrSynth::Real(0),
+                Some("x"),
+                0,
+                0,
+                Some(0),
+            ),
+            s.try_intern_symbol(0, 0, 1, Some(0)),
+            s.try_intern_intermediate(0, 0, 1, Some(0)),
+            s.try_intern_packing(0, vec![], one(), Some(0)),
+            s.try_intern_epsilon(0, Some(0)),
+            s.try_intern_collection_id(0, vec![], Some(0)),
+            s.try_intern_opt_absent(0, Some(0)),
+            s.try_intern_predicate(0, Some(0)),
+            s.try_intern_guest_body(0, Some(0)),
+            s.try_intern_binder_scope(&["x".into()], 0, Some(0)),
+        ];
+        assert!(results
+            .into_iter()
+            .all(|result| result == Err(ForestNodeLimit { limit: 0 })));
+        assert!(s.nodes.is_empty());
+        assert!(s.text_arena.is_empty());
+        assert!(s.text_index.is_empty());
+        assert_eq!(s.link_count(), 0);
+    }
+
+    #[test]
+    fn installed_node_limit_keeps_exact_capacity_dedup_and_original_weight_update() {
+        let mut s: Sppf<W> = Sppf::new();
+        let first = W::from_cost(2.0, 0, 0);
+        let second = W::from_cost(1.0, 0, 1);
+        let id = s
+            .try_intern_packing(0, vec![], first, Some(1))
+            .expect("exact capacity admits node");
+        assert_eq!(s.try_intern_packing(0, vec![], second, Some(1)), Ok(id));
+        assert_eq!(s.len(), 1, "dedup is not another node charge");
+        assert!(
+            matches!(s.node(id), Some(SppfNode::Packing { weight, .. }) if *weight == first.plus_ref(&second))
+        );
+        assert_eq!(
+            s.try_intern_packing(1, vec![], one(), Some(1)),
+            Err(ForestNodeLimit { limit: 1 })
+        );
+        assert_eq!(s.len(), 1);
+        let mut old: Sppf<W> = Sppf::new();
+        assert_eq!(old.intern_packing(0, vec![], first), id);
+        assert_eq!(old.intern_packing(0, vec![], second), id);
+        assert_eq!(old.node(id), s.node(id));
     }
 
     // ── intern_terminal ─────────────────────────────────────────────────────

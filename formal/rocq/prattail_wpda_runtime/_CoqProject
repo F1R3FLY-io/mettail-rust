@@ -186,3 +186,5 @@ theories/SeparatedTerminalObservation.v
 theories/OwnedSeparatedCollectionSlot.v
 theories/IterAbsorptionObservation.v
 theories/SourceRoleVariableAuthority.v
+theories/InstalledWalkerResources.v
+theories/OwnedBackendPreparation.v

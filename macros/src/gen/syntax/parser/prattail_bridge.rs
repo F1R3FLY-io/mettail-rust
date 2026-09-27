@@ -409,6 +409,17 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
     );
     spec.semantic_dependency_groups = semantic_dependency_groups;
     spec.authored = Some(authored_store);
+    // This receipt is created at the original source producer, not recovered
+    // later from optional authored handles or from appended helper rules.
+    spec.wpda_original_occurrences = Some(
+        (0..language.terms.len())
+            .map(|index| {
+                u32::try_from(index)
+                    .map(mettail_grammar_core::ProductionId)
+                    .map_err(|_| "original production occurrence exceeds u32".to_owned())
+            })
+            .collect::<Result<_, _>>()?,
+    );
     spec.authored_token_origins = authored_token_origins;
     spec.custom_tokens = custom_tokens;
     spec.modes = modes;
@@ -1437,6 +1448,8 @@ mod collection_projection_tests {
             },
         });
         let specification = language_def_to_spec(&language).expect("project original rules");
+        assert_eq!(specification.wpda_original_occurrences,
+            Some(vec![mettail_grammar_core::ProductionId(0), mettail_grammar_core::ProductionId(1)]));
         let owner = &specification.rules[0]
             .authored
             .as_ref()
@@ -1470,6 +1483,7 @@ mod collection_projection_tests {
             .to_grammar_core()
             .expect("validate retained rule associations");
         assert_eq!(core.authored.as_ref(), Some(owner.as_ref()));
+        assert_eq!(core.wpda_original_occurrences, specification.wpda_original_occurrences);
         assert_eq!(core.productions.len(), specification.rules.len());
         for (production, rule) in core.productions.iter().zip(&specification.rules) {
             assert_eq!(production.authored, rule.authored.as_ref().map(|value| value.rule));
@@ -1490,6 +1504,9 @@ mod collection_projection_tests {
             terms { PZero . |- "0" : Proc; },
         });
         let specification = language_def_to_spec(&language).expect("project synthetic collection");
+        assert_eq!(specification.wpda_original_occurrences,
+            Some(vec![mettail_grammar_core::ProductionId(0)]),
+            "the exact original prefix excludes appended collection helper productions");
         let original = specification
             .rules
             .iter()
@@ -1505,6 +1522,9 @@ mod collection_projection_tests {
         let core = specification
             .to_grammar_core()
             .expect("project mixed authored availability");
+        assert_eq!(core.wpda_original_occurrences, specification.wpda_original_occurrences);
+        assert!(core.productions.len() > core.wpda_original_occurrences.as_ref()
+            .expect("explicit original prefix").len());
         assert!(core
             .productions
             .iter()

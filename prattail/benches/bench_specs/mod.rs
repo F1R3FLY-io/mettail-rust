@@ -235,6 +235,7 @@ fn collection_rule(
 pub fn minimal_spec() -> LanguageSpec {
     LanguageSpec {
         authored: None,
+        wpda_original_occurrences: None,
         authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Lambda".to_string(),
@@ -283,6 +284,7 @@ pub fn minimal_spec() -> LanguageSpec {
 pub fn small_spec() -> LanguageSpec {
     LanguageSpec {
         authored: None,
+        wpda_original_occurrences: None,
         authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Calculator".to_string(),
@@ -342,6 +344,7 @@ pub fn small_spec() -> LanguageSpec {
 pub fn medium_spec() -> LanguageSpec {
     LanguageSpec {
         authored: None,
+        wpda_original_occurrences: None,
         authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Ambient".to_string(),
@@ -398,6 +401,7 @@ pub fn medium_spec() -> LanguageSpec {
 pub fn complex_spec() -> LanguageSpec {
     LanguageSpec {
         authored: None,
+        wpda_original_occurrences: None,
         authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Rholang".to_string(),
@@ -500,6 +504,7 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
 
     LanguageSpec {
         authored: None,
+        wpda_original_occurrences: None,
         authored_token_origins: Default::default(),
         reservation_policy: Default::default(),
         name: "Synthetic".to_string(),

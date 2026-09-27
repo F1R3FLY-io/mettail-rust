@@ -6,8 +6,8 @@ use crate::wpda_owned::{engine::OwnedEngineActions, source::OwnedTokenSource};
 use crate::wpda_rule_analysis::{
     atomic_prefix::UnifiedDescriptor,
     authored_action::{
-        authored_action_categories, derive_authored_action_shapes, AuthoredActionInput,
-        AuthoredActionShape,
+        authored_action_categories_admitted, derive_authored_action_shapes_admitted,
+        AuthoredActionInput, AuthoredActionShape,
     },
     authored_descriptors::OwnedWpdaDescriptors,
     authored_synthesis::AuthoredRuleOrigin,
@@ -124,10 +124,11 @@ impl<'source, 'session, 'parser, 'input, 'grammar>
                 "reserved structural category collision".into(),
             ));
         }
-        let grammar = source.session().grammar();
-        let shapes = derive_authored_action_shapes(grammar, descriptors)
+        let admitted = source.session().admitted_grammar();
+        let grammar = admitted.grammar();
+        let shapes = derive_authored_action_shapes_admitted(admitted, descriptors)
             .map_err(|error| OwnedActionBuildError::Source(format!("{error:?}")))?;
-        let core_categories = authored_action_categories(grammar, descriptors)
+        let core_categories = authored_action_categories_admitted(admitted, descriptors)
             .map_err(|error| OwnedActionBuildError::Source(format!("{error:?}")))?;
         let mut rows = Vec::with_capacity(shapes.len());
         for (cat, shapes) in shapes.into_iter().enumerate() {

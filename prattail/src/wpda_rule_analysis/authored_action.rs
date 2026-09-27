@@ -4,8 +4,9 @@
 
 use super::atomic::AtomicDescriptor;
 use super::authored_collection::derive_authored_collection;
+use super::authored_declarations::AuthoredDeclarationReader;
 use super::authored_descriptors::OwnedWpdaDescriptors;
-use super::authored_prefix::{with_authored_context, AuthoredPrefixError};
+use super::authored_prefix::{with_authored_context_reader, AuthoredPrefixError};
 use super::binder::ActionArgKind;
 use mettail_grammar_core::{CategoryId, CollectionKind, GrammarCoreV1};
 use std::convert::Infallible;
@@ -36,8 +37,24 @@ pub fn authored_action_categories<P>(
     core: &GrammarCoreV1,
     descriptors: &OwnedWpdaDescriptors<P>,
 ) -> Result<Vec<CategoryId>, AuthoredPrefixError<Infallible>> {
-    let declarations = super::authored_declarations::AuthoredDeclarationReader::new(core)
+    let declarations =
+        AuthoredDeclarationReader::new(core).map_err(AuthoredPrefixError::Declaration)?;
+    authored_action_categories_with_reader(declarations, descriptors)
+}
+
+pub(crate) fn authored_action_categories_admitted<P>(
+    admitted: mettail_grammar_core::AdmittedRuntimeGrammar<'_>,
+    descriptors: &OwnedWpdaDescriptors<P>,
+) -> Result<Vec<CategoryId>, AuthoredPrefixError<Infallible>> {
+    let declarations = AuthoredDeclarationReader::new_admitted(admitted)
         .map_err(AuthoredPrefixError::Declaration)?;
+    authored_action_categories_with_reader(declarations, descriptors)
+}
+
+fn authored_action_categories_with_reader<P>(
+    declarations: AuthoredDeclarationReader<'_>,
+    descriptors: &OwnedWpdaDescriptors<P>,
+) -> Result<Vec<CategoryId>, AuthoredPrefixError<Infallible>> {
     descriptors
         .synthesis
         .categories
@@ -79,8 +96,26 @@ pub fn derive_authored_action_shapes<P>(
     core: &GrammarCoreV1,
     descriptors: &OwnedWpdaDescriptors<P>,
 ) -> Result<Vec<Vec<AuthoredActionShape>>, AuthoredPrefixError<Infallible>> {
-    with_authored_context(
-        core,
+    let declarations =
+        AuthoredDeclarationReader::new(core).map_err(AuthoredPrefixError::Declaration)?;
+    derive_authored_action_shapes_with_reader(declarations, descriptors)
+}
+
+pub(crate) fn derive_authored_action_shapes_admitted<P>(
+    admitted: mettail_grammar_core::AdmittedRuntimeGrammar<'_>,
+    descriptors: &OwnedWpdaDescriptors<P>,
+) -> Result<Vec<Vec<AuthoredActionShape>>, AuthoredPrefixError<Infallible>> {
+    let declarations = AuthoredDeclarationReader::new_admitted(admitted)
+        .map_err(AuthoredPrefixError::Declaration)?;
+    derive_authored_action_shapes_with_reader(declarations, descriptors)
+}
+
+fn derive_authored_action_shapes_with_reader<P>(
+    declarations: AuthoredDeclarationReader<'_>,
+    descriptors: &OwnedWpdaDescriptors<P>,
+) -> Result<Vec<Vec<AuthoredActionShape>>, AuthoredPrefixError<Infallible>> {
+    with_authored_context_reader(
+        declarations,
         &descriptors.original_occurrences,
         &descriptors.synthesis,
         |reader, context| {

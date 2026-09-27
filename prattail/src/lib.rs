@@ -908,6 +908,9 @@ impl ReservationPolicy {
 pub struct LanguageSpec {
     /// Explicit source owner also preserves declarations for zero-rule grammars.
     pub authored: Option<std::sync::Arc<mettail_grammar_core::AuthoredRuleStore>>,
+    /// Producer-supplied original production occurrences, before helper rules.
+    /// Absence is unavailable source evidence, not an empty roster.
+    pub wpda_original_occurrences: Option<Vec<mettail_grammar_core::ProductionId>>,
     /// Source-site results of original token lowering; not inferred from names.
     pub authored_token_origins: AuthoredTokenOrigins,
     /// Language name.
@@ -1329,6 +1332,7 @@ impl LanguageSpec {
             .collect();
         LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: AuthoredTokenOrigins::default(),
             name,
             types,

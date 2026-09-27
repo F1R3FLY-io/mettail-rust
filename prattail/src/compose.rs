@@ -599,6 +599,7 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
     if specs.is_empty() {
         return Ok(LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "empty".to_string(),
             types: Vec::new(),
@@ -1125,6 +1126,7 @@ mod tests {
 
         LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: name.to_string(),
             types,
@@ -1261,6 +1263,7 @@ mod tests {
         )];
         let spec_b = LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "B".to_string(),
             types: types_b,
@@ -1494,6 +1497,7 @@ mod tests {
 
         let spec_b = LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "B".to_string(),
             types: vec![CategorySpec {
@@ -1605,6 +1609,7 @@ mod tests {
             )];
             let mut spec = LanguageSpec {
                 authored: None,
+                wpda_original_occurrences: None,
                 authored_token_origins: Default::default(),
                 name: "A".to_string(),
                 types,
@@ -1650,6 +1655,7 @@ mod tests {
             )];
             let mut spec = LanguageSpec {
                 authored: None,
+                wpda_original_occurrences: None,
                 authored_token_origins: Default::default(),
                 name: "B".to_string(),
                 types,
@@ -1708,6 +1714,7 @@ mod tests {
             )];
             let mut spec = LanguageSpec {
                 authored: None,
+                wpda_original_occurrences: None,
                 authored_token_origins: Default::default(),
                 name: "A".to_string(),
                 types,
@@ -1751,6 +1758,7 @@ mod tests {
             )];
             let mut spec = LanguageSpec {
                 authored: None,
+                wpda_original_occurrences: None,
                 authored_token_origins: Default::default(),
                 name: "B".to_string(),
                 types,

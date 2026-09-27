@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime_backend::{compile_parser_image, RUNTIME_COMPILER_ABI, RUNTIME_UNICODE_ABI};
 use mettail_grammar_core::*;
 use std::cell::RefCell;
 use std::convert::Infallible;
@@ -145,6 +146,24 @@ fn authored_synthesis_preserves_explicit_occurrences_duplicates_metadata_and_pre
     let core = f.finish();
     let output = derive_authored_rules(&core, &[1, 0, 1], |_| Ok::<_, Infallible>(()))
         .expect("original worker succeeds");
+    let image = compile_parser_image(&core).expect("compile existing synthesis fixture");
+    let admission = RuntimeParserAdmission::verify(
+        &core,
+        &image,
+        RUNTIME_COMPILER_ABI,
+        RUNTIME_UNICODE_ABI,
+        ParserImageAdmissionLimits::default(),
+    )
+    .expect("admit existing synthesis fixture");
+    let admitted_output =
+        derive_authored_rules_admitted(admission.admitted_grammar(), &[1, 0, 1], |_| {
+            Ok::<_, Infallible>(())
+        })
+        .expect("admitted entry shares the original worker");
+    assert_eq!(admitted_output.store, output.store);
+    assert_eq!(admitted_output.categories, output.categories);
+    assert_eq!(admitted_output.per_category, output.per_category);
+    assert_eq!(admitted_output.source_order, output.source_order);
     assert_eq!(output.categories, ["Expr"]);
     let rows = &output.per_category[0];
     assert_eq!(
@@ -179,6 +198,57 @@ fn authored_synthesis_preserves_explicit_occurrences_duplicates_metadata_and_pre
     assert!(matches!(
         derive_authored_rules(&core, &[3], |_| Ok::<_, Infallible>(())),
         Err(AuthoredSynthesisError::InvalidOccurrence(3))
+    ));
+}
+
+#[test]
+fn admitted_synthesis_source_refusal_and_untrusted_core_validation_remain_gated() {
+    let mut fixture = Fixture::new(None, true);
+    let rule = fixture.rule(vec![AuthoredLegacyItem::Terminal("original".into())]);
+    fixture.production(Some(rule), "Original");
+    let core = fixture.finish();
+    let image = compile_parser_image(&core).expect("compile existing synthesis fixture");
+    let admission = RuntimeParserAdmission::verify(
+        &core,
+        &image,
+        RUNTIME_COMPILER_ABI,
+        RUNTIME_UNICODE_ABI,
+        ParserImageAdmissionLimits::default(),
+    )
+    .expect("admit existing synthesis fixture");
+    let mut calls = 0;
+    let result = derive_authored_rules_admitted(admission.admitted_grammar(), &[0], |event| {
+        calls += 1;
+        let AuthoredSynthesisEvent::ValidateSource(source) = event else {
+            panic!("source refusal must precede every synthesis helper event")
+        };
+        assert!(std::ptr::eq(source, &core));
+        Err("source denied")
+    });
+    assert!(matches!(result, Err(AuthoredSynthesisError::Admission("source denied"))));
+    assert_eq!(calls, 1);
+
+    let mut invalid = core.clone();
+    invalid.abi = GRAMMAR_CORE_ABI_V6;
+    assert!(matches!(
+        derive_authored_rules(&invalid, &[0], |_| Err("source denied")),
+        Err(AuthoredSynthesisError::Admission("source denied"))
+    ));
+    assert!(matches!(
+        derive_authored_rules(&invalid, &[0], |_| Ok::<_, Infallible>(())),
+        Err(AuthoredSynthesisError::Declaration(
+            AuthoredDeclarationReaderError::InvalidCore(_)
+        ))
+    ));
+    assert!(matches!(
+        RuntimeParserAdmission::verify(
+            &invalid,
+            &image,
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            ParserImageAdmissionLimits::default(),
+        ),
+        Err(ImageError::InvalidGrammar(_))
     ));
 }
 
@@ -232,10 +302,21 @@ fn authored_synthesis_native_role_and_variable_authority_are_independent() {
             .iter()
             .map(|row| label(&output.store, row))
             .collect::<Vec<_>>();
-        assert_eq!(labels, if authority { vec!["NumLit", "EVar"] } else { vec!["NumLit"] });
+        assert_eq!(
+            labels,
+            if authority {
+                vec!["NumLit", "EVar"]
+            } else {
+                vec!["NumLit"]
+            }
+        );
         assert_eq!(core.categories[0].admits_variables, authority);
         assert_eq!(
-            output.store.declarations().expect("retained header").categories[0]
+            output
+                .store
+                .declarations()
+                .expect("retained header")
+                .categories[0]
                 .data_observation,
             SourceObservation::Known(false),
         );

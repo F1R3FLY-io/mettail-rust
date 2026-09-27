@@ -37,6 +37,7 @@ theories/CategoricalPrattFloor.v
 theories/JuxtapositionPrecedence.v
 theories/UnaryPostfixPrecedence.v
 theories/StructuralTemplate.v
+theories/InstalledRuntimeBackend.v
 theories/StructuralConstructMatch.v
 theories/WireAdmission.v
 theories/StringLiteralTransducer.v

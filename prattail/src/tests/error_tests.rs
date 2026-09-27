@@ -20,6 +20,7 @@ fn calculator_spec() -> LanguageSpec {
 
     LanguageSpec {
         authored: None,
+        wpda_original_occurrences: None,
         authored_token_origins: Default::default(),
         name: "Calculator".to_string(),
         types: vec![CategorySpec {

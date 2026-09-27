@@ -18,6 +18,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.RegistryModuleClosure \
 	RuntimeGrammar.WpdaDispatchPartition \
 	RuntimeGrammar.StructuralTemplate \
+	RuntimeGrammar.InstalledRuntimeBackend \
 	RuntimeGrammar.StructuralConstructMatch \
 	RuntimeGrammar.WireAdmission \
 	RuntimeGrammar.StringLiteralTransducer \

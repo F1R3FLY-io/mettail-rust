@@ -337,7 +337,9 @@ impl LanguageInstallService {
         policy.refresh_fingerprint();
         Self {
             registry,
-            table: Arc::new(InstalledLanguageTable::new()),
+            table: Arc::new(InstalledLanguageTable::with_runtime_factory(Arc::new(
+                mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
+            ))),
             policy,
             revocations: RwLock::new(BTreeMap::new()),
         }

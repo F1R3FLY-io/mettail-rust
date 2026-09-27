@@ -156,7 +156,11 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
         &host,
     )
     .expect("existing host admission; native actions remain generated Rust");
-    let occurrences: Vec<_> = (0..grammar.productions.len()).collect();
+    let receipt = grammar.wpda_original_occurrences.as_ref()
+        .expect("real macro producer retains its original occurrence receipt");
+    assert_eq!(receipt, &[core::ProductionId(0), core::ProductionId(1),
+        core::ProductionId(2), core::ProductionId(3)]);
+    let occurrences: Vec<_> = receipt.iter().map(|id| id.0 as usize).collect();
     let synthesis = derive_authored_rules(&grammar, &occurrences, |_| Ok::<_, Infallible>(()))
         .expect("original native fixture synthesis");
     let descriptors = derive_authored_descriptors(
@@ -572,6 +576,8 @@ fn owned_and_generated_engines_drive_the_same_walker_to_real_terms() {
     let grammar: core::GrammarCoreV1 =
         postcard::from_bytes(artifacts.grammar_core_postcard).expect("captured grammar decodes");
     let source_occurrences = [0, 1, 2, 3, 4, 5, 6, 7];
+    assert_eq!(grammar.wpda_original_occurrences,
+        Some(source_occurrences.iter().map(|id| core::ProductionId(*id as u32)).collect()));
     assert_eq!(
         grammar
             .productions

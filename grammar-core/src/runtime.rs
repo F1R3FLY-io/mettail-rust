@@ -12,6 +12,43 @@ mod lexical;
 use lexical::LexicalLattice;
 pub use lexical::{LexPosition, LexicalEdge, LexicalNode};
 
+/// Unchanged weight evidence from the parser that produced a reading.
+///
+/// The original shared WPDA weight is not an exact-cost/derivation-rank pair.
+/// Keep both representations intact; in particular this enum deliberately has
+/// no global ordering and performs no floating-point or provenance conversion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParseWeight {
+    Exact {
+        cost: ExactParseCost,
+        rank: DerivationRank,
+    },
+    SharedWpda(rigail::LexicographicWeight),
+}
+
+impl ParseWeight {
+    pub fn exact(&self) -> Option<(&ExactParseCost, &DerivationRank)> {
+        match self {
+            Self::Exact { cost, rank } => Some((cost, rank)),
+            Self::SharedWpda(_) => None,
+        }
+    }
+
+    pub fn shared_wpda(&self) -> Option<&rigail::LexicographicWeight> {
+        match self {
+            Self::SharedWpda(weight) => Some(weight),
+            Self::Exact { .. } => None,
+        }
+    }
+
+    pub(crate) fn retained_heap_weight(&self) -> usize {
+        match self {
+            Self::Exact { rank, .. } => rank.retained_heap_weight(),
+            Self::SharedWpda(_) => 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WeightedParse {
     /// Recognition witness before native evaluation. Constructor and hole
@@ -19,10 +56,8 @@ pub struct WeightedParse {
     pub syntax: DynamicValue,
     /// Semantic value after the grammar's declared native evaluation.
     pub value: DynamicValue,
-    /// Lawful scalar min-plus path cost. It carries no derivation provenance.
-    pub cost: ExactParseCost,
-    /// Canonical provenance used only to refine equal-cost output order.
-    pub rank: DerivationRank,
+    /// Exact original parser weight, without conversion between profiles.
+    pub weight: ParseWeight,
     /// Root production witness. A template consisting solely of one admitted
     /// hole has no constructor production and therefore carries `None`.
     pub production: Option<ProductionId>,
@@ -48,6 +83,9 @@ pub struct RuntimeTemplateHole {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeError {
     Image(String),
+    UnexpectedWeightProfile,
+    SemanticKeyEntryLimit { limit: usize, requested: usize },
+    SemanticKeyByteLimit { limit: usize, requested: usize },
     InputTooLarge,
     Lex { byte: usize },
     LexerModeUnderflow { byte: usize },
@@ -226,6 +264,24 @@ pub struct RuntimeParser<'a> {
     limits: EffectiveRuntimeLimits,
 }
 
+/// Immutable grammar already checked by the original executable-image verifier.
+/// This receipt grants neither language rights nor host capability bindings.
+/// It can only be projected from image admission or a verified parser session.
+#[derive(Clone, Copy)]
+pub struct AdmittedRuntimeGrammar<'a> {
+    grammar: &'a GrammarCoreV1,
+}
+
+impl<'a> AdmittedRuntimeGrammar<'a> {
+    pub(crate) fn from_admission(admission: &crate::RuntimeParserAdmission<'a>) -> Self {
+        Self { grammar: admission.grammar() }
+    }
+
+    pub fn grammar(self) -> &'a GrammarCoreV1 {
+        self.grammar
+    }
+}
+
 /// Borrowed input and semantic context for consumers of the existing lexer.
 ///
 /// Construction runs the runtime lexer once, with the parser's existing
@@ -244,6 +300,11 @@ impl<'input, 'grammar> RuntimeLexicalSession<'_, 'input, 'grammar> {
     /// The same admitted grammar borrowed by the parser.
     pub fn grammar(&self) -> &'grammar GrammarCoreV1 {
         self.parser.grammar
+    }
+
+    /// Retain the original parser construction's successful Core validation.
+    pub fn admitted_grammar(&self) -> AdmittedRuntimeGrammar<'grammar> {
+        AdmittedRuntimeGrammar { grammar: self.parser.grammar }
     }
 
     /// The same executable image borrowed by the parser.
@@ -456,10 +517,22 @@ impl<'a> RuntimeParser<'a> {
         source: &str,
         category: CategoryId,
     ) -> Result<Vec<WeightedParse>, RuntimeError> {
-        if category.0 as usize >= self.grammar.categories.len() {
-            return Err(RuntimeError::InvalidCategory(category));
-        }
+        self.validate_category(Some(category))?;
         self.parse_categories(source, &[category.0])
+    }
+
+    /// The original category guard, shared with installed backend dispatch so
+    /// an invalid request cannot invoke lexical host callbacks first.
+    pub(crate) fn validate_category(
+        &self,
+        category: Option<CategoryId>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(category) = category {
+            if category.0 as usize >= self.grammar.categories.len() {
+                return Err(RuntimeError::InvalidCategory(category));
+            }
+        }
+        Ok(())
     }
 
     /// Parse an FLT template without rendering holes into guest source.
@@ -474,11 +547,7 @@ impl<'a> RuntimeParser<'a> {
         holes: &[RuntimeTemplateHole],
         category: Option<CategoryId>,
     ) -> Result<Vec<WeightedParse>, RuntimeError> {
-        if let Some(category) = category {
-            if category.0 as usize >= self.grammar.categories.len() {
-                return Err(RuntimeError::InvalidCategory(category));
-            }
-        }
+        self.validate_category(category)?;
         let input = self.lex_template(pieces, holes)?;
         let categories = category
             .map(|category| vec![category.0])
@@ -486,23 +555,7 @@ impl<'a> RuntimeParser<'a> {
         let mut forest = ForestBuilder::new_template(self, input);
         let roots = forest.recognize(&categories)?;
         let output = forest.realize_weighted(roots)?;
-        let mut conflict = None;
-        let consistent =
-            output.into_iter().filter(|result| {
-                match validate_template_hole_categories(&result.syntax, holes) {
-                    Ok(()) => true,
-                    Err(id) => {
-                        conflict.get_or_insert(id);
-                        false
-                    },
-                }
-            });
-        match normalize_weighted_output(consistent) {
-            Err(RuntimeError::NoParse) if conflict.is_some() => {
-                Err(RuntimeError::TemplateHoleCategoryConflict { id: conflict.expect("checked") })
-            },
-            result => result,
-        }
+        normalize_weighted_output(consistent_template_parses(output, holes)?.into_iter())
     }
 
     fn parse_categories(
@@ -751,11 +804,15 @@ fn normalize_weighted_output(
 ) -> Result<Vec<WeightedParse>, RuntimeError> {
     let mut keyed = output
         .map(|result| {
+            let (cost, rank) = result
+                .weight
+                .exact()
+                .ok_or(RuntimeError::UnexpectedWeightProfile)?;
             let value_key = result.value.semantic_key().map_err(RuntimeError::from)?;
             let syntax_key = result.syntax.semantic_key().map_err(RuntimeError::from)?;
             Ok::<_, RuntimeError>((
-                result.cost,
-                result.rank.clone(),
+                *cost,
+                rank.clone(),
                 result.production,
                 syntax_key,
                 value_key,
@@ -780,6 +837,30 @@ fn normalize_weighted_output(
         .collect::<Vec<_>>();
     if output.is_empty() {
         Err(RuntimeError::NoParse)
+    } else {
+        Ok(output)
+    }
+}
+
+/// Apply the original repeated-hole consistency check to already recognized
+/// syntax. This does not normalize weights or require portable value keys.
+pub(crate) fn consistent_template_parses(
+    mut output: Vec<WeightedParse>,
+    holes: &[RuntimeTemplateHole],
+) -> Result<Vec<WeightedParse>, RuntimeError> {
+    let mut conflict = None;
+    output.retain(|result| match validate_template_hole_categories(&result.syntax, holes) {
+        Ok(()) => true,
+        Err(id) => {
+            conflict.get_or_insert(id);
+            false
+        },
+    });
+    if output.is_empty() {
+        Err(match conflict {
+            Some(id) => RuntimeError::TemplateHoleCategoryConflict { id },
+            None => RuntimeError::NoParse,
+        })
     } else {
         Ok(output)
     }
@@ -1410,8 +1491,7 @@ impl<'a, 'b> ForestBuilder<'a, 'b> {
                     output.push(WeightedParse {
                         syntax: path.values[0].syntax.clone(),
                         value: path.values[0].value.clone(),
-                        cost: path.cost,
-                        rank: path.rank,
+                        weight: ParseWeight::Exact { cost: path.cost, rank: path.rank },
                         production: path.top_production,
                     });
                 }
@@ -2229,8 +2309,10 @@ mod tests {
         let result = |value: DynamicValue| WeightedParse {
             syntax: value.clone(),
             value,
-            cost: ExactParseCost::one(),
-            rank: DerivationRank::default(),
+            weight: ParseWeight::Exact {
+                cost: ExactParseCost::one(),
+                rank: DerivationRank::default(),
+            },
             production: None,
         };
         assert_eq!(
@@ -2826,17 +2908,24 @@ mod tests {
 
         assert_eq!(parsed.len(), 2);
         assert_eq!(
-            parsed.iter().map(|result| result.cost).collect::<Vec<_>>(),
+            parsed
+                .iter()
+                .map(|result| *result.weight.exact().expect("legacy exact weight").0)
+                .collect::<Vec<_>>(),
             vec![
                 ExactParseCost::from_ticks(7).expect("finite"),
                 ExactParseCost::from_ticks(7).expect("finite"),
             ]
         );
-        assert_ne!(parsed[0].rank, parsed[1].rank);
+        assert_ne!(
+            parsed[0].weight.exact().expect("exact").1,
+            parsed[1].weight.exact().expect("exact").1
+        );
         assert_eq!(
             parsed
                 .iter()
-                .map(|result| result.rank.positions()[0].productions[0].declaration)
+                .map(|result| result.weight.exact().expect("exact").1.positions()[0].productions[0]
+                    .declaration)
                 .collect::<Vec<_>>(),
             vec![0, 1]
         );

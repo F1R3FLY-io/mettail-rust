@@ -4868,6 +4868,7 @@ impl LanguageSchema {
             output.modes[0].token_ids.push(id);
         }
 
+        let mut original_occurrences = Vec::with_capacity(self.terms.len());
         for (index, term) in self.terms.iter().enumerate() {
             let path = format!("$.terms[{index}]");
             let result = category_id(&categories, &term.category, &format!("{path}.category"))?;
@@ -4904,9 +4905,12 @@ impl LanguageSchema {
                 tier: term.tier.clone(),
             });
             let classification = classify_production(&syntax, &term.context);
+            let production_id = core::ProductionId(u32::try_from(index).map_err(|_| {
+                ValueDecodeError::new(&path, "original production occurrence exceeds u32")
+            })?);
             output.productions.push(core::Production {
                 authored: Some(core::AuthoredRuleId(authored.roots[index])),
-                id: core::ProductionId(index as u32),
+                id: production_id,
                 constructor,
                 label: term.label.clone(),
                 result,
@@ -4920,8 +4924,12 @@ impl LanguageSchema {
                 reduction: index as u32,
                 provenance: None,
             });
+            original_occurrences.push(production_id);
         }
         output.authored_bindings = Some(bindings.finish(header).map_err(authored_binding_error)?);
+        // One exact original occurrence per source term, in the same order.
+        // Unlike the macro producer, this lowerer appends no helper rules.
+        output.wpda_original_occurrences = Some(original_occurrences);
         output.authored = Some(authored.store);
         let constructors: BTreeMap<_, _> = output
             .productions

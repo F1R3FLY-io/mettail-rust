@@ -1,9 +1,10 @@
 use crate::{
     runtime_capability_requirements, CategoryId, DefaultRuntimeHost, GrammarCoreV1, ImageError,
     LanguageCoreV1, ParserImageAdmissionLimits, ParserImageV1, RuntimeCapabilityBindings,
-    RuntimeCapabilityError, RuntimeEffect, RuntimeError, RuntimeHost, RuntimeParser, RuntimePolicy,
-    RuntimeTemplateHole, RuntimeTemplatePiece, SyntaxItem, TheoryImageAdmissionLimits,
-    TheoryImageError, TheorySemanticImageV1, TokenDecoder, WeightedParse,
+    RuntimeCapabilityError, RuntimeEffect, RuntimeError, RuntimeHost, RuntimeLexicalSession,
+    RuntimeParser, RuntimePolicy, RuntimeTemplateHole, RuntimeTemplatePiece, SyntaxItem,
+    TheoryImageAdmissionLimits, TheoryImageError, TheorySemanticImageV1, TokenDecoder,
+    WeightedParse,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -256,6 +257,9 @@ pub struct InstallCommitment {
     pub parser_image_fingerprint: Option<[u8; 32]>,
     pub semantic_image_fingerprint: Option<[u8; 32]>,
     pub parser_kind: InstalledParserKind,
+    /// Semantic epoch of the injected runtime implementation. Static adapters
+    /// retain their existing ABI/cache commitment and carry no runtime epoch.
+    pub runtime_backend_commitment: Option<[u8; 32]>,
     pub compiler_abi: String,
     pub unicode_abi: String,
     pub semantic_image_abi: Option<u16>,
@@ -274,7 +278,7 @@ pub struct InstallCommitment {
 
 /// Adapter used by compile-time grammars. Implementations may call their
 /// generated typed parser directly; registration adds no branch to that hot
-/// path. The dynamic adapter is provided internally by the table.
+/// path. Runtime parsers use the separate admitted factory boundary below.
 pub trait StaticParserAdapter: Send + Sync {
     fn parse(
         &self,
@@ -312,8 +316,81 @@ pub trait StaticParserAdapter: Send + Sync {
     }
 }
 
+/// Borrowed receipt from the original executable-image admission gate.
+/// Private fields prevent unchecked construction; immutable borrows keep the
+/// verified grammar/image pair fixed while a factory prepares its backend.
+/// This receipt confers no language rights or host capability bindings.
+pub struct RuntimeParserAdmission<'a> {
+    grammar: &'a GrammarCoreV1,
+    image: &'a ParserImageV1,
+    limits: ParserImageAdmissionLimits,
+}
+
+impl<'a> RuntimeParserAdmission<'a> {
+    /// Admit an input for direct factory use through the same verifier used by
+    /// installed languages. Backend preparation does not repeat verification.
+    /// Limits cover the verifier's executable-image structure checks; the
+    /// separate encoded-byte limit belongs to wire decoding, not this gate.
+    pub fn verify(
+        grammar: &'a GrammarCoreV1,
+        image: &'a ParserImageV1,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        limits: ParserImageAdmissionLimits,
+    ) -> Result<Self, ImageError> {
+        image.verify_executable_with_limits(grammar, compiler_abi, unicode_abi, limits)?;
+        Ok(Self { grammar, image, limits })
+    }
+
+    pub fn grammar(&self) -> &'a GrammarCoreV1 {
+        self.grammar
+    }
+
+    pub fn admitted_grammar(&self) -> crate::AdmittedRuntimeGrammar<'a> {
+        crate::AdmittedRuntimeGrammar::from_admission(self)
+    }
+
+    pub fn image(&self) -> &'a ParserImageV1 {
+        self.image
+    }
+
+    pub fn limits(&self) -> ParserImageAdmissionLimits {
+        self.limits
+    }
+}
+
+/// Trusted implementation injected by an upper crate. Preparation receives the
+/// already-verified artifact and must own all retained metadata before return.
+/// It executes before the table write lock and cannot publish partial batches.
+pub trait RuntimeParserFactory: Send + Sync {
+    /// Must change whenever equal admitted inputs can have different semantics.
+    /// The table snapshots this epoch into installation and template-cache keys.
+    fn semantic_commitment(&self) -> [u8; 32];
+
+    fn prepare(
+        &self,
+        admission: RuntimeParserAdmission<'_>,
+    ) -> Result<Arc<dyn RuntimeParserBackend>, RuntimeError>;
+}
+
+/// A prepared recognizer borrowing the original authorized lexical session.
+/// The session exposes the existing token decoder and native reduction worker;
+/// this interface neither rebinds host capabilities nor rebuilds descriptors.
+pub trait RuntimeParserBackend: Send + Sync {
+    fn parse(
+        &self,
+        session: &RuntimeLexicalSession<'_, '_, '_>,
+        category: Option<CategoryId>,
+        policy: RuntimePolicy,
+    ) -> Result<Vec<WeightedParse>, RuntimeError>;
+}
+
 enum InstalledParser {
-    Runtime(Arc<ParserImageV1>),
+    Runtime {
+        image: Arc<ParserImageV1>,
+        backend: Arc<dyn RuntimeParserBackend>,
+        epoch: [u8; 32],
+    },
     Static(Arc<dyn StaticParserAdapter>),
 }
 
@@ -478,7 +555,7 @@ fn symbolic_template_weight(parses: &Vec<WeightedParse>) -> usize {
         weight = weight
             .saturating_add(parse.syntax.retained_heap_weight())
             .saturating_add(parse.value.retained_heap_weight())
-            .saturating_add(parse.rank.retained_heap_weight());
+            .saturating_add(parse.weight.retained_heap_weight());
     }
     weight
 }
@@ -512,7 +589,7 @@ impl InstalledLanguage {
 
     pub fn parser_image(&self) -> Option<&ParserImageV1> {
         match &self.parser {
-            InstalledParser::Runtime(image) => Some(image),
+            InstalledParser::Runtime { image, .. } => Some(image),
             InstalledParser::Static(_) => None,
         }
     }
@@ -535,7 +612,8 @@ impl InstalledLanguage {
         policy: RuntimePolicy,
     ) -> Result<Vec<WeightedParse>, RuntimeError> {
         match &self.parser {
-            InstalledParser::Runtime(image) => {
+            InstalledParser::Runtime { image, backend, .. } => {
+                let policy = self.effective_runtime_policy(policy);
                 let parser = RuntimeParser::new_with_policy_and_bindings(
                     &self.language.grammar,
                     image,
@@ -545,10 +623,9 @@ impl InstalledLanguage {
                     policy,
                     self.capability_bindings.clone(),
                 )?;
-                match category {
-                    Some(category) => parser.parse_category(source, category),
-                    None => parser.parse(source),
-                }
+                parser.validate_category(category)?;
+                let session = parser.lexical_session(source)?;
+                backend.parse(&session, category, policy)
             },
             InstalledParser::Static(adapter) => adapter.parse(source, category, host, policy),
         }
@@ -563,16 +640,22 @@ impl InstalledLanguage {
         policy: RuntimePolicy,
     ) -> Result<Vec<WeightedParse>, RuntimeError> {
         match &self.parser {
-            InstalledParser::Runtime(image) => RuntimeParser::new_with_policy_and_bindings(
-                &self.language.grammar,
-                image,
-                &self.commitment.compiler_abi,
-                &self.commitment.unicode_abi,
-                host,
-                policy,
-                self.capability_bindings.clone(),
-            )?
-            .parse_template(pieces, holes, category),
+            InstalledParser::Runtime { image, backend, .. } => {
+                let policy = self.effective_runtime_policy(policy);
+                let parser = RuntimeParser::new_with_policy_and_bindings(
+                    &self.language.grammar,
+                    image,
+                    &self.commitment.compiler_abi,
+                    &self.commitment.unicode_abi,
+                    host,
+                    policy,
+                    self.capability_bindings.clone(),
+                )?;
+                parser.validate_category(category)?;
+                let session = parser.lexical_template_session(pieces, holes)?;
+                let parsed = backend.parse(&session, category, policy)?;
+                crate::runtime::consistent_template_parses(parsed, holes)
+            },
             InstalledParser::Static(adapter) => {
                 adapter.parse_template(pieces, holes, category, host, policy)
             },
@@ -584,15 +667,22 @@ impl InstalledLanguage {
         host: &dyn RuntimeHost,
     ) -> Option<TemplateSemanticCommitments> {
         let parser = match &self.parser {
-            InstalledParser::Runtime(_) => {
-                *blake3::hash(b"mettail-runtime-image-symbolic-template/1").as_bytes()
-            },
+            InstalledParser::Runtime { epoch, .. } => *epoch,
             InstalledParser::Static(adapter) => adapter.template_cache_commitment()?,
         };
         Some(TemplateSemanticCommitments {
             parser,
             host: host.semantic_cache_commitment()?,
         })
+    }
+
+    fn effective_runtime_policy(&self, mut policy: RuntimePolicy) -> RuntimePolicy {
+        let limits = self.language.grammar.limits;
+        policy.max_input_bytes = policy.max_input_bytes.min(limits.max_input_bytes);
+        policy.max_parse_items = policy.max_parse_items.min(limits.max_parse_items);
+        policy.max_forest_nodes = policy.max_forest_nodes.min(limits.max_forest_nodes);
+        policy.max_semantic_results = policy.max_semantic_results.min(limits.max_semantic_results);
+        policy
     }
 
     fn parse_template(
@@ -823,6 +913,7 @@ struct InstalledState {
 pub struct InstalledLanguageTable {
     registry_id: u64,
     state: RwLock<InstalledState>,
+    runtime_factory: Option<Arc<dyn RuntimeParserFactory>>,
 }
 
 impl Default for InstalledLanguageTable {
@@ -838,6 +929,16 @@ impl InstalledLanguageTable {
         Self {
             registry_id,
             state: RwLock::new(InstalledState::default()),
+            runtime_factory: None,
+        }
+    }
+
+    /// Supply the runtime implementation without adding an upward dependency
+    /// to grammar-core. `new()` remains valid for static-only installations.
+    pub fn with_runtime_factory(factory: Arc<dyn RuntimeParserFactory>) -> Self {
+        Self {
+            runtime_factory: Some(factory),
+            ..Self::new()
         }
     }
 
@@ -1088,15 +1189,14 @@ impl InstalledLanguageTable {
                 .validate()
                 .map_err(InstallLanguageError::InvalidLanguage)?;
             reject_runtime_source(&request.language.grammar)?;
-            request
-                .parser_image
-                .verify_executable_with_limits(
-                    &request.language.grammar,
-                    compiler_abi,
-                    unicode_abi,
-                    parser_limits,
-                )
-                .map_err(InstallLanguageError::InvalidImage)?;
+            let admission = RuntimeParserAdmission::verify(
+                &request.language.grammar,
+                &request.parser_image,
+                compiler_abi,
+                unicode_abi,
+                parser_limits,
+            )
+            .map_err(InstallLanguageError::InvalidImage)?;
             let language_fingerprint = request
                 .language
                 .fingerprint()
@@ -1150,6 +1250,14 @@ impl InstalledLanguageTable {
                 .map_err(InstallLanguageError::Capability)?;
             let effect_rights =
                 runtime_effect_rights(&request.language.grammar, &capability_bindings);
+            let factory = self
+                .runtime_factory
+                .as_ref()
+                .ok_or(InstallLanguageError::MissingRuntimeFactory)?;
+            let epoch = factory.semantic_commitment();
+            let backend = factory
+                .prepare(admission)
+                .map_err(InstallLanguageError::RuntimeBackend)?;
             let commitment = InstallCommitment {
                 language_fingerprint,
                 grammar_fingerprint,
@@ -1157,6 +1265,7 @@ impl InstalledLanguageTable {
                 parser_image_fingerprint: Some(parser_image_fingerprint),
                 semantic_image_fingerprint,
                 parser_kind: InstalledParserKind::RuntimeImage,
+                runtime_backend_commitment: Some(epoch),
                 compiler_abi: compiler_abi.into(),
                 unicode_abi: unicode_abi.into(),
                 semantic_image_abi,
@@ -1174,7 +1283,11 @@ impl InstalledLanguageTable {
                 request.granted_rights,
                 InstalledLanguage {
                     language: Arc::new(request.language),
-                    parser: InstalledParser::Runtime(Arc::new(request.parser_image)),
+                    parser: InstalledParser::Runtime {
+                        image: Arc::new(request.parser_image),
+                        backend,
+                        epoch,
+                    },
                     semantic_image: request.semantic_image.map(Arc::new),
                     commitment,
                     effect_rights,
@@ -1222,6 +1335,7 @@ impl InstalledLanguageTable {
             parser_image_fingerprint: None,
             semantic_image_fingerprint: None,
             parser_kind: InstalledParserKind::StaticTyped { adapter_abi: adapter_abi.into() },
+            runtime_backend_commitment: None,
             compiler_abi: compiler_abi.into(),
             unicode_abi: unicode_abi.into(),
             semantic_image_abi: None,
@@ -1452,7 +1566,10 @@ impl InstalledLanguageTable {
         requests: impl IntoIterator<Item = (&'a InstalledLanguageHandle, &'a [LanguageRight])>,
         operation: impl FnOnce() -> R,
     ) -> Result<R, LanguageAccessError> {
-        let state = self.state.read().map_err(|_| LanguageAccessError::Poisoned)?;
+        let state = self
+            .state
+            .read()
+            .map_err(|_| LanguageAccessError::Poisoned)?;
         for (handle, rights) in requests {
             self.valid_entry(&state, handle)?;
             for right in rights {
@@ -1680,6 +1797,8 @@ impl LanguageAliasScope {
 
 #[derive(Debug)]
 pub enum InstallLanguageError {
+    MissingRuntimeFactory,
+    RuntimeBackend(RuntimeError),
     InvalidGrammar(Vec<crate::ValidationError>),
     InvalidLanguage(Vec<crate::LanguageCoreValidationError>),
     NativeSourceForbidden(String),
@@ -1722,6 +1841,7 @@ pub enum AliasError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod runtime_backend;
     use crate::{
         normalize_runtime_engine, AdmissionBudget, AdmissionCertificate, AdmissionChecker,
         AdmissionDecision, AdmissionRefutation, AdmissionRequest, AdmissionTheorem,
@@ -1733,6 +1853,14 @@ mod tests {
 
     const COMPILER: &str = "registry-test/1";
     const UNICODE: &str = "unicode-test/1";
+
+    /// Registry/authority fixtures explicitly inject a recording backend.
+    /// They do not exercise or stand in for shared WPDA recognition tests.
+    fn runtime_test_table() -> InstalledLanguageTable {
+        InstalledLanguageTable::with_runtime_factory(Arc::new(
+            runtime_backend::RecordingFactory::default(),
+        ))
+    }
 
     fn core(name: &str) -> GrammarCoreV1 {
         let mut core = GrammarCoreV1::new(name);
@@ -1828,7 +1956,7 @@ mod tests {
 
     #[test]
     fn runtime_installation_binds_exact_host_manifests_atomically() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grammar = capability_core();
         let mut parser_image = image(&grammar);
         parser_image.lexer.states = vec![
@@ -1892,7 +2020,7 @@ mod tests {
 
     #[test]
     fn attenuation_cannot_amplify_or_invent_rights() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([LanguageRight::Parse, LanguageRight::Match]),
@@ -1916,7 +2044,7 @@ mod tests {
 
     #[test]
     fn revocation_invalidates_every_preexisting_handle_epoch() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(&table, LanguageRights::all());
         let clone = grant.handle.clone();
         table.revoke(grant.revocation).expect("revoke");
@@ -1928,7 +2056,7 @@ mod tests {
 
     #[test]
     fn identical_install_is_single_flight_with_per_request_rights() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let semantic_core = core("T");
         let parser_image = image(&semantic_core);
         let first = table
@@ -1970,7 +2098,7 @@ mod tests {
 
     #[test]
     fn conflicting_policy_commitment_cannot_replace_an_installed_entry() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let semantic_core = core("T");
         let parser_image = image(&semantic_core);
         let first = table
@@ -1999,7 +2127,7 @@ mod tests {
 
     #[test]
     fn runtime_batch_publishes_every_language_in_one_commit() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let left = core("Left");
         let right = core("Right");
         let grants = table
@@ -2032,7 +2160,7 @@ mod tests {
 
     #[test]
     fn runtime_batch_with_a_late_invalid_image_publishes_no_prefix() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let left = core("Left");
         let right = core("Right");
         let mut invalid_right_image = image(&right);
@@ -2063,7 +2191,7 @@ mod tests {
 
     #[test]
     fn runtime_batch_conflict_publishes_nothing_and_changes_no_rights() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let existing_core = core("Existing");
         let existing = table
             .install_runtime(
@@ -2109,7 +2237,7 @@ mod tests {
 
     #[test]
     fn revoked_language_can_be_reinstalled_with_a_fresh_seal() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let first = install(&table, LanguageRights::all());
         let stale = first.handle.clone();
         table
@@ -2129,7 +2257,7 @@ mod tests {
 
     #[test]
     fn aliases_are_lexical_capability_bindings_not_fingerprint_lookups() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(&table, LanguageRights::all());
         let mut scope = LanguageAliasScope::default();
         scope.bind("calc", grant.handle.clone()).expect("bind");
@@ -2150,8 +2278,10 @@ mod tests {
             Ok(vec![WeightedParse {
                 syntax: crate::DynamicValue::Unit,
                 value: crate::DynamicValue::Unit,
-                cost: crate::ExactParseCost::default(),
-                rank: crate::DerivationRank::default(),
+                weight: crate::ParseWeight::Exact {
+                    cost: crate::ExactParseCost::default(),
+                    rank: crate::DerivationRank::default(),
+                },
                 production: Some(crate::ProductionId(0)),
             }])
         }
@@ -2315,8 +2445,10 @@ mod tests {
         WeightedParse {
             syntax: crate::DynamicValue::Unit,
             value: crate::DynamicValue::Unit,
-            cost: crate::ExactParseCost::default(),
-            rank: crate::DerivationRank::default(),
+            weight: crate::ParseWeight::Exact {
+                cost: crate::ExactParseCost::default(),
+                rank: crate::DerivationRank::default(),
+            },
             production: Some(crate::ProductionId(0)),
         }
     }
@@ -2731,8 +2863,10 @@ mod tests {
             Ok(vec![WeightedParse {
                 syntax: crate::DynamicValue::Unit,
                 value: crate::DynamicValue::Unit,
-                cost: crate::ExactParseCost::default(),
-                rank: crate::DerivationRank::default(),
+                weight: crate::ParseWeight::Exact {
+                    cost: crate::ExactParseCost::default(),
+                    rank: crate::DerivationRank::default(),
+                },
                 production: Some(crate::ProductionId(0)),
             }])
         }
@@ -2859,7 +2993,7 @@ mod tests {
 
     #[test]
     fn theorem_channel_revalidates_space_epoch_before_mutation() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([
@@ -2883,7 +3017,7 @@ mod tests {
 
     #[test]
     fn proof_cache_hit_cannot_bypass_language_revocation() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([
@@ -2909,7 +3043,7 @@ mod tests {
 
     #[test]
     fn proof_cache_hit_cannot_replace_check_authority() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
@@ -2932,7 +3066,7 @@ mod tests {
 
     #[test]
     fn bounded_admission_exhaustion_is_undetermined_and_fails_closed() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
@@ -2957,7 +3091,7 @@ mod tests {
 
     #[test]
     fn theorem_channel_dispatches_through_the_neutral_checker_interface() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
@@ -2987,7 +3121,7 @@ mod tests {
 
     #[test]
     fn neutral_checker_can_return_bounded_evidence_across_the_module_boundary() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
@@ -3021,7 +3155,7 @@ mod tests {
 
     #[test]
     fn presented_certificate_mismatch_is_refuted_before_prepare() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
@@ -3052,7 +3186,7 @@ mod tests {
 
     #[test]
     fn language_revocation_cannot_interleave_with_atomic_commit_callback() {
-        let table = Arc::new(InstalledLanguageTable::new());
+        let table = Arc::new(runtime_test_table());
         let grant = install(
             &table,
             LanguageRights::from_rights([LanguageRight::Publish, LanguageRight::Check]),
@@ -3106,7 +3240,7 @@ mod tests {
 
     #[test]
     fn theorem_channel_rejects_a_capable_handle_for_another_language() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let channel_language = install(
             &table,
             LanguageRights::from_rights([
@@ -3163,7 +3297,7 @@ mod tests {
 
     #[test]
     fn typed_consume_carries_checked_message_and_capture_evidence() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([
@@ -3205,7 +3339,7 @@ mod tests {
 
     #[test]
     fn zero_capacity_proof_cache_is_semantics_inert() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([
@@ -3246,7 +3380,7 @@ mod tests {
 
     #[test]
     fn theorem_reindexing_checks_the_target_predicate_and_recertifies() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([
@@ -3299,7 +3433,7 @@ mod tests {
 
     #[test]
     fn consume_revalidates_space_epoch_before_mutation() {
-        let table = InstalledLanguageTable::new();
+        let table = runtime_test_table();
         let grant = install(
             &table,
             LanguageRights::from_rights([

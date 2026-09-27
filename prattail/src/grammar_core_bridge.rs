@@ -47,6 +47,7 @@ impl LanguageSpec {
             }
         }
         output.authored = authored_owner.map(|store| store.as_ref().clone());
+        output.wpda_original_occurrences = self.wpda_original_occurrences.clone();
         let header = authored_owner.and_then(|store| store.declarations());
         let mut bindings = header
             .map(core::AuthoredDeclarationBindingsBuilder::try_new)
@@ -103,7 +104,9 @@ impl LanguageSpec {
             collect_terminals(&rule.syntax, &mut literal_terminals);
         }
         literal_terminals.extend(
-            crate::lexer::IMPLICIT_STRUCTURAL_TERMINALS.iter().map(|text| (*text).to_owned()),
+            crate::lexer::IMPLICIT_STRUCTURAL_TERMINALS
+                .iter()
+                .map(|text| (*text).to_owned()),
         );
         stage!("collect_terminals.done");
         output.parser_configuration = lower_parser_configuration(self)?;
@@ -1021,17 +1024,32 @@ mod tests {
         assert!(core.validate().is_ok());
         let bundle = crate::pipeline::extract_lexer_bundle(&spec);
         let original = crate::pipeline::lexer_input_for_bundle(&bundle);
-        let literals: Vec<_> = core.tokens.iter().filter_map(|token| {
-            let core::TokenPattern::Literal(text) = &token.pattern else { return None; };
-            assert_eq!(
-                core.wpda_token_observations.as_ref().expect("complete token observations")[token.id.0 as usize],
-                Some(core::WpdaTokenObservation::Fixed(text.clone())),
-                "each exact append ID retains its original Fixed observation",
-            );
-            Some(text.clone())
-        }).collect();
-        assert_eq!(literals, original.terminals.iter().map(|terminal| terminal.text.clone()).collect::<Vec<_>>(),
-            "Core retains the original implicit and authored terminal roster in canonical order");
+        let literals: Vec<_> = core
+            .tokens
+            .iter()
+            .filter_map(|token| {
+                let core::TokenPattern::Literal(text) = &token.pattern else {
+                    return None;
+                };
+                assert_eq!(
+                    core.wpda_token_observations
+                        .as_ref()
+                        .expect("complete token observations")[token.id.0 as usize],
+                    Some(core::WpdaTokenObservation::Fixed(text.clone())),
+                    "each exact append ID retains its original Fixed observation",
+                );
+                Some(text.clone())
+            })
+            .collect();
+        assert_eq!(
+            literals,
+            original
+                .terminals
+                .iter()
+                .map(|terminal| terminal.text.clone())
+                .collect::<Vec<_>>(),
+            "Core retains the original implicit and authored terminal roster in canonical order"
+        );
     }
 
     #[test]

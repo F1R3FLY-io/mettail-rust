@@ -255,7 +255,35 @@ where
 pub fn derive_authored_rules<P, E>(
     core: &GrammarCoreV1,
     original_occurrences: &[usize],
+    policy: P,
+) -> Outcome<AuthoredSynthesisOutput<P>, E>
+where
+    P: for<'event> FnMut(AuthoredSynthesisEvent<'event>) -> Result<(), E>,
+{
+    derive_authored_rules_with_reader(core, original_occurrences, policy, || {
+        AuthoredDeclarationReader::new(core)
+    })
+}
+
+pub(crate) fn derive_authored_rules_admitted<P, E>(
+    admitted: mettail_grammar_core::AdmittedRuntimeGrammar<'_>,
+    original_occurrences: &[usize],
+    policy: P,
+) -> Outcome<AuthoredSynthesisOutput<P>, E>
+where
+    P: for<'event> FnMut(AuthoredSynthesisEvent<'event>) -> Result<(), E>,
+{
+    derive_authored_rules_with_reader(admitted.grammar(), original_occurrences, policy, || {
+        AuthoredDeclarationReader::new_admitted(admitted)
+    })
+}
+
+fn derive_authored_rules_with_reader<'core, P, E>(
+    core: &'core GrammarCoreV1,
+    original_occurrences: &[usize],
     mut policy: P,
+    make_reader: impl FnOnce()
+        -> Result<AuthoredDeclarationReader<'core>, AuthoredDeclarationReaderError>,
 ) -> Outcome<AuthoredSynthesisOutput<P>, E>
 where
     P: for<'event> FnMut(AuthoredSynthesisEvent<'event>) -> Result<(), E>,
@@ -263,7 +291,7 @@ where
     use AuthoredSynthesisError as Error;
     use AuthoredSynthesisEvent as Event;
     admit(&mut policy, Event::ValidateSource(core))?;
-    let mut reader = AuthoredDeclarationReader::new(core).map_err(Error::Declaration)?;
+    let mut reader = make_reader().map_err(Error::Declaration)?;
     let store = core
         .authored
         .as_ref()

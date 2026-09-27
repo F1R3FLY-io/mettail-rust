@@ -558,9 +558,15 @@ mod tests {
             .expect("literal");
         assert_eq!(scalar.value, core::DynamicValue::Integer(123));
         assert_eq!(scalar.syntax, scalar.value);
-        assert_eq!(scalar.cost, core::ExactParseCost::default());
+        assert_eq!(
+            *scalar.weight.exact().expect("legacy exact weight").0,
+            core::ExactParseCost::default()
+        );
         assert!(scalar
-            .rank
+            .weight
+            .exact()
+            .expect("legacy exact weight")
+            .1
             .positions()
             .iter()
             .all(|position| position.productions.is_empty()));
@@ -572,8 +578,11 @@ mod tests {
             panic!("Int term")
         };
         assert_eq!(term.fields, vec![core::DynamicValue::Integer(123)]);
-        assert_eq!(constructor.cost, declared_cost);
-        assert_eq!(scalar.rank.positions()[0].lexical, constructor.rank.positions()[0].lexical);
+        assert_eq!(*constructor.weight.exact().expect("legacy exact weight").0, declared_cost);
+        assert_eq!(
+            scalar.weight.exact().expect("exact").1.positions()[0].lexical,
+            constructor.weight.exact().expect("exact").1.positions()[0].lexical
+        );
 
         // The same token must also work in a category with no explicit terms.
         grammar.productions.clear();
@@ -843,7 +852,10 @@ mod tests {
             .expect("two token witnesses");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].value, results[1].value);
-        assert_ne!(results[0].rank, results[1].rank);
+        assert_ne!(
+            results[0].weight.exact().expect("exact").1,
+            results[1].weight.exact().expect("exact").1
+        );
     }
 
     #[test]

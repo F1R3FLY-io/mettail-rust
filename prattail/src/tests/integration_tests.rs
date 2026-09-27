@@ -22,6 +22,7 @@ fn calculator_spec() -> LanguageSpec {
 
     LanguageSpec {
         authored: None,
+        wpda_original_occurrences: None,
         authored_token_origins: Default::default(),
         name: "Calculator".to_string(),
         types,
@@ -805,6 +806,7 @@ mod wfst_lexer_weight_tests {
 
         let spec = LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "Arith".to_string(),
             types,

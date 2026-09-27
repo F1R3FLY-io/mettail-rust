@@ -61,8 +61,25 @@ pub fn derive_absorption_rows<P>(
     core: &GrammarCoreV1,
     descriptors: &OwnedWpdaDescriptors<P>,
 ) -> Result<AbsorptionRows, AbsorptionObservationError> {
+    let declarations =
+        AuthoredDeclarationReader::new(core).map_err(AbsorptionObservationError::Declarations)?;
+    derive_absorption_rows_with_reader(declarations, descriptors)
+}
+
+pub(crate) fn derive_absorption_rows_admitted<P>(
+    admitted: mettail_grammar_core::AdmittedRuntimeGrammar<'_>,
+    descriptors: &OwnedWpdaDescriptors<P>,
+) -> Result<AbsorptionRows, AbsorptionObservationError> {
+    let declarations = AuthoredDeclarationReader::new_admitted(admitted)
+        .map_err(AbsorptionObservationError::Declarations)?;
+    derive_absorption_rows_with_reader(declarations, descriptors)
+}
+
+fn derive_absorption_rows_with_reader<P>(
+    mut declarations: AuthoredDeclarationReader<'_>,
+    descriptors: &OwnedWpdaDescriptors<P>,
+) -> Result<AbsorptionRows, AbsorptionObservationError> {
     use AbsorptionObservationError as Error;
-    let mut declarations = AuthoredDeclarationReader::new(core).map_err(Error::Declarations)?;
     let literal_indices = iter_absorption::try_literal_rule_indices(
         &declarations.header().categories,
         &descriptors.label_index,

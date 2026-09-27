@@ -632,6 +632,7 @@ mod tests {
         let cat_names = vec!["Expr".to_string()];
         LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "Calc".to_string(),
             types: vec![CategorySpec {

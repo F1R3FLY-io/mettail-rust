@@ -769,6 +769,7 @@ mod tests {
     fn make_simple_spec() -> LanguageSpec {
         LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "Calc".to_string(),
             types: vec![CategorySpec {

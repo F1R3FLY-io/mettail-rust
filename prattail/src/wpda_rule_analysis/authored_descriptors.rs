@@ -13,9 +13,10 @@
 use super::atomic::AtomicDescriptor;
 use super::authored::{AuthoredNameRef, AuthoredRuleReader};
 use super::authored_collection::derive_authored_collection;
+use super::authored_declarations::{AuthoredDeclarationReader, AuthoredDeclarationReaderError};
 use super::authored_prefix::reader::OccurrenceReader;
 use super::authored_prefix::{
-    derive_category_prefix, with_authored_context, AuthoredPrefixError, Context,
+    derive_category_prefix, with_authored_context_reader, AuthoredPrefixError, Context,
 };
 use super::authored_synthesis::{AuthoredRulePayload, AuthoredSynthesisOutput};
 use super::binder::optional::{BinderSyntaxObservation, BinderSyntaxReader};
@@ -146,11 +147,62 @@ pub fn derive_authored_descriptors<P, E>(
         &AuthoredSynthesisOutput<P>,
         DescriptorOptions,
     ) -> Result<(), E>,
+    cast_participates: impl FnMut(&AuthoredRuleReader<'_>, AuthoredRulePayload) -> Result<bool, E>,
+) -> Result<OwnedWpdaDescriptors<P>, AuthoredDescriptorsError<E>> {
+    derive_authored_descriptors_with_reader(
+        core,
+        original_occurrences,
+        synthesis,
+        options,
+        admit,
+        cast_participates,
+        || AuthoredDeclarationReader::new(core),
+    )
+}
+
+pub(crate) fn derive_authored_descriptors_admitted<P, E>(
+    admitted: mettail_grammar_core::AdmittedRuntimeGrammar<'_>,
+    original_occurrences: &[usize],
+    synthesis: AuthoredSynthesisOutput<P>,
+    options: DescriptorOptions,
+    admit: impl FnOnce(
+        &GrammarCoreV1,
+        &[usize],
+        &AuthoredSynthesisOutput<P>,
+        DescriptorOptions,
+    ) -> Result<(), E>,
+    cast_participates: impl FnMut(&AuthoredRuleReader<'_>, AuthoredRulePayload) -> Result<bool, E>,
+) -> Result<OwnedWpdaDescriptors<P>, AuthoredDescriptorsError<E>> {
+    derive_authored_descriptors_with_reader(
+        admitted.grammar(),
+        original_occurrences,
+        synthesis,
+        options,
+        admit,
+        cast_participates,
+        || AuthoredDeclarationReader::new_admitted(admitted),
+    )
+}
+
+fn derive_authored_descriptors_with_reader<'core, P, E>(
+    core: &'core GrammarCoreV1,
+    original_occurrences: &[usize],
+    synthesis: AuthoredSynthesisOutput<P>,
+    options: DescriptorOptions,
+    admit: impl FnOnce(
+        &GrammarCoreV1,
+        &[usize],
+        &AuthoredSynthesisOutput<P>,
+        DescriptorOptions,
+    ) -> Result<(), E>,
     mut cast_participates: impl FnMut(&AuthoredRuleReader<'_>, AuthoredRulePayload) -> Result<bool, E>,
+    make_reader: impl FnOnce()
+        -> Result<AuthoredDeclarationReader<'core>, AuthoredDeclarationReaderError>,
 ) -> Result<OwnedWpdaDescriptors<P>, AuthoredDescriptorsError<E>> {
     use AuthoredDescriptorsError as Error;
     admit(core, original_occurrences, &synthesis, options).map_err(Error::Admission)?;
-    let parts = with_authored_context(core, original_occurrences, &synthesis, |reader, context| {
+    let declarations = make_reader().map_err(AuthoredPrefixError::Declaration)?;
+    let parts = with_authored_context_reader(declarations, original_occurrences, &synthesis, |reader, context| {
         // Check the actual Parikh positional encoding; do not wrap source positions.
         for (category, rules) in synthesis.per_category.iter().enumerate() {
             for (rule_index, rule) in rules.iter().enumerate() {

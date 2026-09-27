@@ -211,3 +211,161 @@ fn authored_transport_binary_roundtrip_retains_store_and_references() {
             .contains(&ValidationError::UnsupportedAbi(old_abi)));
     }
 }
+
+#[test]
+fn original_occurrence_receipt_preserves_order_multiplicity_and_semantic_identity() {
+    let mut grammar = fixture();
+    let mut second = grammar.productions[0].clone();
+    second.id = ProductionId(1);
+    grammar.productions.push(second);
+    let unavailable = grammar.fingerprint().expect("fingerprint");
+    grammar.wpda_original_occurrences = Some(vec![]);
+    grammar.validate().expect("explicit empty receipt");
+    assert_ne!(unavailable, grammar.fingerprint().expect("fingerprint"));
+
+    let roster = vec![ProductionId(1), ProductionId(0), ProductionId(1)];
+    grammar.wpda_original_occurrences = Some(roster.clone());
+    grammar
+        .validate()
+        .expect("duplicate occurrences are original evidence");
+    let fingerprint = grammar.fingerprint().expect("fingerprint");
+    let bytes = postcard::to_allocvec(&grammar).expect("encode receipt");
+    let decoded: GrammarCoreV1 = postcard::from_bytes(&bytes).expect("decode receipt");
+    decoded.validate().expect("receipt remains valid");
+    assert_eq!(decoded.wpda_original_occurrences, Some(roster));
+    assert_eq!(decoded.fingerprint().expect("fingerprint"), fingerprint);
+    for changed in [
+        vec![ProductionId(1), ProductionId(1), ProductionId(0)],
+        vec![ProductionId(1), ProductionId(0)],
+    ] {
+        grammar.wpda_original_occurrences = Some(changed);
+        grammar.validate().expect("ordered receipt");
+        assert_ne!(grammar.fingerprint().expect("fingerprint"), fingerprint);
+    }
+}
+
+#[test]
+fn original_occurrence_receipt_checks_bounds_ids_and_retained_authored_references() {
+    let original = fixture();
+    let mut changed = original.clone();
+    changed.wpda_original_occurrences = Some(vec![ProductionId(u32::MAX)]);
+    assert!(changed.validate().expect_err("out of range").contains(
+        &ValidationError::InvalidWpdaOriginalOccurrence {
+            occurrence: 0,
+            production: ProductionId(u32::MAX),
+            field: "production"
+        }
+    ));
+    let mut changed = original.clone();
+    changed.wpda_original_occurrences = Some(vec![ProductionId(0)]);
+    changed.productions[0].id = ProductionId(1);
+    assert!(changed.validate().expect_err("mismatched index").contains(
+        &ValidationError::InvalidWpdaOriginalOccurrence {
+            occurrence: 0,
+            production: ProductionId(0),
+            field: "id"
+        }
+    ));
+    let mut changed = original.clone();
+    changed.wpda_original_occurrences = Some(vec![ProductionId(0)]);
+    changed.productions[0].authored = None;
+    assert!(changed
+        .validate()
+        .expect_err("missing authored reference")
+        .contains(&ValidationError::InvalidWpdaOriginalOccurrence {
+            occurrence: 0,
+            production: ProductionId(0),
+            field: "authored"
+        }));
+    changed.productions[0].authored = Some(AuthoredRuleId(u32::MAX));
+    assert_association_error(&changed, "rule");
+
+    let mut grammar = original;
+    let mut helper = grammar.productions[0].clone();
+    helper.id = ProductionId(1);
+    helper.authored = None;
+    grammar.productions.push(helper);
+    grammar.wpda_original_occurrences = Some(vec![ProductionId(0)]);
+    grammar
+        .validate()
+        .expect("unlisted helper is not inferred into the receipt");
+}
+
+/// Feed named fields through Serde while reusing postcard to deserialize each
+/// field value. This tests missing-vs-null without another wire dependency.
+struct NamedFields<'a> {
+    fields: std::slice::Iter<'a, (&'static str, Vec<u8>)>,
+    pending: Option<&'a [u8]>,
+}
+
+impl<'de> serde::de::MapAccess<'de> for NamedFields<'de> {
+    type Error = serde::de::value::Error;
+
+    fn next_key_seed<K: serde::de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: K,
+    ) -> Result<Option<K::Value>, Self::Error> {
+        use serde::de::IntoDeserializer;
+        let Some((name, bytes)) = self.fields.next() else {
+            return Ok(None);
+        };
+        self.pending = Some(bytes);
+        seed.deserialize((*name).into_deserializer()).map(Some)
+    }
+
+    fn next_value_seed<V: serde::de::DeserializeSeed<'de>>(
+        &mut self,
+        seed: V,
+    ) -> Result<V::Value, Self::Error> {
+        let bytes = self.pending.take().expect("named key precedes value");
+        seed.deserialize(&mut postcard::Deserializer::from_bytes(bytes))
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+#[test]
+fn original_occurrence_receipt_missing_named_field_is_not_unavailable() {
+    use serde::Deserialize;
+    let grammar = fixture();
+    macro_rules! fields {
+        ($($field:ident),+ $(,)?) => { vec![$(
+            (stringify!($field), postcard::to_allocvec(&grammar.$field).expect("field encodes"))
+        ),+] };
+    }
+    let mut fields = fields![
+        abi,
+        name,
+        backend_context,
+        documentation,
+        categories,
+        tokens,
+        modes,
+        productions,
+        authored,
+        authored_bindings,
+        wpda_token_observations,
+        wpda_original_occurrences,
+        reductions,
+        semantic_dependencies,
+        semantic_program,
+        parser_configuration,
+        synchronization,
+        tree_invariants,
+        refinement_types,
+        guard_configuration,
+        capabilities,
+        provenance,
+        limits,
+        weight_profile,
+    ];
+    let decode = |fields: &[(&'static str, Vec<u8>)]| {
+        GrammarCoreV1::deserialize(serde::de::value::MapAccessDeserializer::new(NamedFields {
+            fields: fields.iter(),
+            pending: None,
+        }))
+    };
+    assert_eq!(decode(&fields).expect("explicit None is supported"), grammar);
+    fields.retain(|(name, _)| *name != "wpda_original_occurrences");
+    let error = decode(&fields).expect_err("missing receipt field is rejected");
+    assert!(error.to_string().contains("wpda_original_occurrences"), "{error}");
+}

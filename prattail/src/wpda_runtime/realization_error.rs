@@ -72,6 +72,10 @@ impl std::error::Error for ReconstructionFailure {}
 /// Successful bounded requests still require separate completeness evidence.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RealizationError {
+    Resource(crate::wpda_walker::WalkerResourceError),
+    ResultOverflow {
+        limit: usize,
+    },
     SemanticKey(mettail_semantic_key::ContentKeyCacheError),
     Reconstruction {
         node: crate::sppf::SppfId,
@@ -92,6 +96,10 @@ impl From<mettail_semantic_key::ContentKeyCacheError> for RealizationError {
 impl fmt::Display for RealizationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Resource(error) => fmt::Display::fmt(error, formatter),
+            Self::ResultOverflow { limit } => {
+                write!(formatter, "complete realization exceeds result limit {limit}")
+            },
             Self::SemanticKey(error) => fmt::Display::fmt(error, formatter),
             Self::Reconstruction { node, cause } => {
                 write!(formatter, "reconstruction at forest node {node} failed: {cause}")
@@ -106,6 +114,8 @@ impl fmt::Display for RealizationError {
 impl std::error::Error for RealizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Resource(error) => Some(error),
+            Self::ResultOverflow { .. } => None,
             Self::SemanticKey(error) => Some(error),
             Self::Reconstruction { cause, .. } => Some(cause),
             Self::Action { cause, .. } => Some(cause),

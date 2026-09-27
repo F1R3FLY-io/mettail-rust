@@ -60,6 +60,22 @@ pub struct AuthoredDeclarationReader<'core> {
 
 impl<'core> AuthoredDeclarationReader<'core> {
     pub fn new(core: &'core GrammarCoreV1) -> Result<Self, AuthoredDeclarationReaderError> {
+        Self::with_validation(core, || {
+            core.validate()
+                .map_err(AuthoredDeclarationReaderError::InvalidCore)
+        })
+    }
+
+    pub(crate) fn new_admitted(
+        admitted: mettail_grammar_core::AdmittedRuntimeGrammar<'core>,
+    ) -> Result<Self, AuthoredDeclarationReaderError> {
+        Self::with_validation(admitted.grammar(), || Ok(()))
+    }
+
+    fn with_validation(
+        core: &'core GrammarCoreV1,
+        validate: impl FnOnce() -> Result<(), AuthoredDeclarationReaderError>,
+    ) -> Result<Self, AuthoredDeclarationReaderError> {
         let store = core
             .authored
             .as_ref()
@@ -71,11 +87,14 @@ impl<'core> AuthoredDeclarationReader<'core> {
             .authored_bindings
             .as_ref()
             .ok_or(AuthoredDeclarationReaderError::MissingBindings)?;
-        core.validate()
-            .map_err(AuthoredDeclarationReaderError::InvalidCore)?;
+        validate()?;
         let rules =
             AuthoredRuleReader::new(store).map_err(AuthoredDeclarationReaderError::RuleReader)?;
         Ok(Self { rules, header, bindings, core })
+    }
+
+    pub(super) fn core(&self) -> &'core GrammarCoreV1 {
+        self.core
     }
 
     pub fn header(&self) -> &'core AuthoredDeclarations {

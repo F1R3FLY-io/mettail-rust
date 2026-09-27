@@ -55,6 +55,59 @@ Staged module programs remain ordered data until installation succeeds. Their
 later execution, metering and rollback belong to the host execution boundary;
 installation success alone does not execute a module's subprograms.
 
+## Shared parser preparation and invocation
+
+`LanguageInstallService` supplies
+[`SharedWpdaRuntimeFactory`](../../prattail/src/wpda_owned/backend.rs) to the
+installed table. A table without a runtime factory refuses runtime installation;
+it does not select the older recognizer as a fallback. Compile-time adapters
+retain their generated typed-parser path.
+
+The existing executable-image verifier produces a borrowed
+`RuntimeParserAdmission`. Its private fields retain the exact immutable grammar,
+image and admission limits. Direct factory callers must obtain the same receipt
+through that verifier. The factory also checks its own compiler and Unicode
+ABIs, then prepares owned descriptors through the original synthetic-rule,
+classification, grouping and routing workers. All backends are prepared before
+the installed-table batch is published. A preparation failure publishes none of
+the earlier private backends.
+
+`wpda_original_occurrences` is an explicit producer receipt in the canonical
+grammar. The macro producer records original terms before appended collection
+helpers; the DDL producer records its emitted original terms. Order and repeated
+occurrences are preserved. An unavailable receipt is not an empty receipt and
+is not recovered by filtering productions or reconstructing source.
+
+An invocation borrows the existing capability-bound lexical session. Its
+`AdmittedRuntimeGrammar` view lets declaration/action helpers reuse the checked
+immutable Core without repeating whole-Core validation. Existing untrusted
+helper constructors still validate; appended authored stores retain their own
+validation and original provenance checks. These receipts establish data
+admission, not installed-language authority.
+
+Recognition and realization run the original weighted pushdown automaton (WPDA)
+walker, graph-structured stack and shared packed parse forest. Per-invocation
+limits check descriptor work and new forest nodes at their original work sites.
+Result publication requires exhaustion of every accepting root's requested
+family, no truncation among demanded nodes, and an aggregate result count within
+the cap. Overflow or a semantic-action/key/resource failure is an error, never a
+successful candidate prefix. Existing handle revalidation still precedes
+publication, including after host callbacks.
+
+The result's `ParseWeight` carries either the older exact cost/rank pair or the
+complete original `LexicographicWeight`, without conversion or fabricated rank.
+There is no cross-profile ordering. These parsing weights are distinct from
+semantic cost grades and node funding/settlement.
+
+Scoped interface laws are checked in
+[`InstalledRuntimeBackend`](../../formal/rocq/runtime_grammar/theories/InstalledRuntimeBackend.v),
+[`InstalledWalkerResources`](../../formal/rocq/prattail_wpda_runtime/theories/InstalledWalkerResources.v)
+and [`OwnedBackendPreparation`](../../formal/rocq/prattail_wpda_runtime/theories/OwnedBackendPreparation.v).
+They cover admission ordering, unchanged inputs/weights, cumulative logical
+capacity and success-only publication. They do not prove the complete parser
+algorithm, universal grammar equivalence, physical memory bounds or public-node
+execution. Source correspondence and actual consumer tests remain necessary.
+
 ## Cache rejection is not installation rejection
 
 Parser and semantic images are replaceable caches. An invalid unsigned cache
@@ -86,6 +139,7 @@ these boundaries directly:
 | Obligation | Regression |
 |---|---|
 | Real inline Regex syntax and both executable images | `regex_gslt_module_compiles_and_installs_both_runtime_images_atomically` |
+| Installed dispatch preserves original weighted Regex families, typed holes and explicit exhaustion | `practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata` |
 | Surface/value agreement | `greg_surface_and_canonical_value_lower_to_the_exact_same_language_core` |
 | Equal grammar, distinct full theories | `identical_grammar_with_distinct_theories_installs_distinct_full_language_handles` |
 | Action rights cannot amplify the manifest | `theory_actions_cannot_amplify_the_installation_manifest` |

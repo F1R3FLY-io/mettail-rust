@@ -48,7 +48,8 @@ pub const GRAMMAR_CORE_ABI_V3: u16 = 3;
 pub const GRAMMAR_CORE_ABI_V4: u16 = 4;
 pub const GRAMMAR_CORE_ABI_V5: u16 = 5;
 pub const GRAMMAR_CORE_ABI_V6: u16 = 6;
-pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V6;
+pub const GRAMMAR_CORE_ABI_V7: u16 = 7;
+pub const GRAMMAR_CORE_ABI_CURRENT: u16 = GRAMMAR_CORE_ABI_V7;
 
 /// A source rule retained with its immutable arena owner during frontend
 /// transport. Arena allocation identity is deliberately distinct from equality
@@ -79,6 +80,11 @@ pub struct GrammarCoreV1 {
     /// An absent table or row is unavailable, never a name-based fallback.
     #[serde(deserialize_with = "required_option")]
     pub wpda_token_observations: Option<Vec<Option<crate::WpdaTokenObservation>>>,
+    /// Exact original source-production occurrences retained by the producer.
+    /// Order and multiplicity are meaningful; bridge-generated helpers are not
+    /// inferred into this roster. None is unavailable, not an empty source.
+    #[serde(deserialize_with = "required_option")]
+    pub wpda_original_occurrences: Option<Vec<ProductionId>>,
     pub reductions: Vec<ReductionPlan>,
     pub semantic_dependencies: Vec<Vec<ConstructorId>>,
     pub semantic_program: SemanticProgram,
@@ -112,6 +118,7 @@ impl GrammarCoreV1 {
             authored: None,
             authored_bindings: None,
             wpda_token_observations: None,
+            wpda_original_occurrences: None,
             reductions: Vec::new(),
             semantic_dependencies: Vec::new(),
             semantic_program: SemanticProgram::default(),
@@ -169,7 +176,7 @@ impl GrammarCoreV1 {
         }
         let bytes = postcard::to_allocvec(&semantic)?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"mettail-grammar-core/6\0");
+        hasher.update(b"mettail-grammar-core/7\0");
         hasher.update(&bytes);
         Ok(*hasher.finalize().as_bytes())
     }
@@ -178,6 +185,23 @@ impl GrammarCoreV1 {
         let mut errors = Vec::new();
         if self.abi != GRAMMAR_CORE_ABI_CURRENT {
             errors.push(ValidationError::UnsupportedAbi(self.abi));
+        }
+        if let Some(occurrences) = &self.wpda_original_occurrences {
+            for (occurrence, &id) in occurrences.iter().enumerate() {
+                let field = match self.productions.get(id.0 as usize) {
+                    None => Some("production"),
+                    Some(production) if production.id != id => Some("id"),
+                    Some(production) if production.authored.is_none() => Some("authored"),
+                    Some(_) => None,
+                };
+                if let Some(field) = field {
+                    errors.push(ValidationError::InvalidWpdaOriginalOccurrence {
+                        occurrence,
+                        production: id,
+                        field,
+                    });
+                }
+            }
         }
         if self
             .wpda_token_observations
@@ -1228,6 +1252,11 @@ pub enum Entity {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValidationError {
     UnsupportedAbi(u16),
+    InvalidWpdaOriginalOccurrence {
+        occurrence: usize,
+        production: ProductionId,
+        field: &'static str,
+    },
     InvalidWpdaTokenObservationCount,
     InvalidAuthoredStore(AuthoredStoreError),
     InvalidAuthoredBindings(AuthoredBindingError),
@@ -1337,6 +1366,7 @@ mod tests {
             GRAMMAR_CORE_ABI_V3,
             GRAMMAR_CORE_ABI_V4,
             GRAMMAR_CORE_ABI_V5,
+            GRAMMAR_CORE_ABI_V6,
         ] {
             let mut core = one_category_core();
             core.abi = abi;

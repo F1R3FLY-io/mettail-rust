@@ -111,8 +111,22 @@ pub(super) fn with_authored_context<'store, P, E, T>(
         &mut Context<'reader, 'store, E>,
     ) -> T,
 ) -> Result<T, AuthoredPrefixError<E>> {
+    let declarations =
+        AuthoredDeclarationReader::new(core).map_err(AuthoredPrefixError::Declaration)?;
+    with_authored_context_reader(declarations, original_occurrences, synthesis, consume)
+}
+
+pub(super) fn with_authored_context_reader<'store, P, E, T>(
+    declarations: AuthoredDeclarationReader<'store>,
+    original_occurrences: &[usize],
+    synthesis: &'store AuthoredSynthesisOutput<P>,
+    consume: impl for<'reader> FnOnce(
+        &OccurrenceReader<'reader, 'store>,
+        &mut Context<'reader, 'store, E>,
+    ) -> T,
+) -> Result<T, AuthoredPrefixError<E>> {
     use AuthoredPrefixError as Error;
-    let declarations = AuthoredDeclarationReader::new(core).map_err(Error::Declaration)?;
+    let core = declarations.core();
     let rules = AuthoredRuleReader::new(&synthesis.store).map_err(Error::Reader)?;
     let source_store = core.authored.as_ref().ok_or(Error::MissingSourceStore)?;
     if synthesis.store.len() < source_store.len()

@@ -1204,6 +1204,7 @@ mod tests {
     fn calculator_spec() -> LanguageSpec {
         LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "Calculator".to_string(),
             types: vec![CategorySpec {
@@ -1730,6 +1731,7 @@ mod tests {
     fn test_ebnf_binder_notation() {
         let spec = LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "Lambda".to_string(),
             types: vec![CategorySpec {
@@ -1798,6 +1800,7 @@ mod tests {
     fn test_ebnf_collection_notation() {
         let spec = LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "ListLang".to_string(),
             types: vec![
@@ -1887,6 +1890,7 @@ mod tests {
     fn test_ebnf_optional_notation() {
         let spec = LanguageSpec {
             authored: None,
+            wpda_original_occurrences: None,
             authored_token_origins: Default::default(),
             name: "OptLang".to_string(),
             types: vec![CategorySpec {

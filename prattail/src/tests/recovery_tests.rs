@@ -17,6 +17,7 @@ fn calculator_spec() -> LanguageSpec {
     let category_names = vec!["Int".to_string()];
     LanguageSpec {
         authored: None,
+        wpda_original_occurrences: None,
         authored_token_origins: Default::default(),
         name: "Calculator".to_string(),
         types: vec![CategorySpec {

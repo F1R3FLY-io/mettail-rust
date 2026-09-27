@@ -3,8 +3,8 @@ use mettail_grammar_core::{DynamicTerm, DynamicValue, GrammarCoreV1, SourceSpan}
 
 const SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt.rho");
 
-/// Exercise the actual DDL producer and complete owned adapter together.
-/// This is an adapter gate, not an assertion that installed dispatch has cut over.
+/// Exercise the actual DDL producer, original owned adapter and installed
+/// dispatch together. This library gate does not establish public-node cutover.
 #[test]
 fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
     use mettail_prattail::runtime_backend::{RUNTIME_COMPILER_ABI, RUNTIME_UNICODE_ABI};
@@ -59,7 +59,12 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         );
         assert_eq!(production.precedence.binding_power, Some(30), "{label}");
     }
-    let occurrences: Vec<_> = (0..core.productions.len()).collect();
+    let receipt = core
+        .wpda_original_occurrences
+        .as_ref()
+        .expect("actual DDL producer retains its exact original term roster");
+    assert_eq!(receipt.len(), core.productions.len(), "this DDL producer appends no helpers");
+    let occurrences: Vec<_> = receipt.iter().map(|id| id.0 as usize).collect();
     let synthesis = derive_authored_rules(core, &occurrences, |_| Ok::<_, Infallible>(()))
         .expect("complete actual Regex declaration uses original synthesis");
     let descriptors = derive_authored_descriptors(
@@ -124,11 +129,7 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         let mut actual = Vec::new();
         for root in roots {
             let readings = walker
-                .realize_root_to_terms_with_weights(
-                    root,
-                    Some(256),
-                    RealizeRequestMode::BoundedEnumeration,
-                )
+                .realize_root_complete_with_weights(root, 256)
                 .expect("complete bounded candidate extraction");
             assert!(readings.len() < 256, "{input:?}: reaching the cap is not exhaustive evidence");
             for (value, weight) in readings {
@@ -143,6 +144,32 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         }
         eprintln!("{input:?}: retained {} weighted readings", actual.len());
         Ok(actual)
+    };
+    let assert_installed_family =
+        |actual: &[(OwnedTerm, mettail_prattail::automata::lex_weight::LexicographicWeight)],
+         installed: &[mettail_grammar_core::WeightedParse],
+         input: &str| {
+            assert_eq!(installed.len(), actual.len(), "installed complete family for {input:?}");
+            for (term, weight) in actual {
+                assert_eq!(
+                    installed
+                        .iter()
+                        .filter(|candidate| {
+                            candidate.syntax == term.syntax
+                                && candidate.value == term.value
+                                && candidate.production == term.production
+                                && candidate.weight.shared_wpda() == Some(weight)
+                        })
+                        .count(),
+                    1,
+                    "unchanged original syntax/value/production/full weight for {input:?}"
+                );
+            }
+        };
+    let policy = mettail_grammar_core::RuntimePolicy {
+        max_parse_items: 100_000,
+        max_semantic_results: 256,
+        ..Default::default()
     };
     // The old normalizer has neither implicit variable rules nor the original
     // constructor-free grouping branch. It witnesses the authored ground term,
@@ -213,6 +240,12 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         .expect("retained DDL token observations");
         let actual = collect(&source, primary_for(category_name), input)
             .expect("original walker accepts the complete Regex input");
+        let installed_results = runtime
+            .service
+            .table()
+            .parse(&handle, input, Some(category), runtime.host.as_ref(), policy)
+            .expect("installed dispatch runs the shared original walker");
+        assert_installed_family(&actual, &installed_results, input);
         if input == "a" {
             // Both implicit variable routes exist, but the original generated
             // semantic visitor gives PVar(a) and PLiteral(SVar(a)) the same
@@ -300,6 +333,12 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
                 let result = collect(&source, primary_for("Pattern"), &input);
                 if accepted {
                     let actual = result.expect("grouped quantifiers are accepted");
+                    let installed_results = runtime
+                        .service
+                        .table()
+                        .parse(&handle, &input, Some(pattern), runtime.host.as_ref(), policy)
+                        .expect("installed grouped quantifier route");
+                    assert_installed_family(&actual, &installed_results, &input);
                     let expected = parser
                         .parse_category(&input, pattern)
                         .expect("grouped contract");
@@ -314,6 +353,11 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
                     );
                     check_variable_free(&actual, &expected, Some(&ungrouped), &input);
                 } else {
+                    assert!(matches!(runtime.service.table()
+                        .parse(&handle, &input, Some(pattern), runtime.host.as_ref(), policy),
+                        Err(mettail_grammar_core::InstalledParseError::Parse(
+                            mettail_grammar_core::RuntimeError::NoParse))),
+                        "installed route must reject adjacent nonassociative quantifiers: {input:?}");
                     match result {
                         Ok(actual) => assert!(actual.is_empty(), "all readings must reject {input:?}: {actual:?}"),
                         Err(WpdaResolveResult::ParseError { .. } | WpdaResolveResult::AcceptedWithTrailing { .. }) => {},
@@ -361,6 +405,48 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
     assert_eq!(expected.len(), 1, "one declared JoinPieces structure");
     assert_structure(&actual[0].0.syntax, &expected[0].syntax, "JoinPieces syntax");
     assert_structure(&actual[0].0.value, &expected[0].value, "JoinPieces value");
+    let installed_results = runtime
+        .service
+        .table()
+        .parse_template(
+            &handle,
+            &pieces,
+            &holes,
+            Some(computation),
+            runtime.host.as_ref(),
+            policy,
+            LanguageRight::Construct,
+        )
+        .expect("installed route preserves typed Text holes");
+    assert_installed_family(&actual, &installed_results, "JoinPieces with two Text holes");
+
+    for (restricted, expected) in [
+        (
+            mettail_grammar_core::RuntimePolicy { max_parse_items: 0, ..policy },
+            mettail_grammar_core::RuntimeError::ParseItemLimit,
+        ),
+        (
+            mettail_grammar_core::RuntimePolicy { max_forest_nodes: 0, ..policy },
+            mettail_grammar_core::RuntimeError::ForestNodeLimit,
+        ),
+        (
+            mettail_grammar_core::RuntimePolicy { max_semantic_results: 1, ..policy },
+            mettail_grammar_core::RuntimeError::SemanticResultLimit,
+        ),
+    ] {
+        match runtime.service.table().parse(
+            &handle,
+            "a",
+            Some(pattern),
+            runtime.host.as_ref(),
+            restricted,
+        ) {
+            Err(mettail_grammar_core::InstalledParseError::Parse(error)) => {
+                assert_eq!(error, expected)
+            },
+            other => panic!("installed exhaustion must not publish a partial family: {other:?}"),
+        }
+    }
 
     // The actual ambiguous input must exercise the owned persistent-key hook.
     // Exhaustion is a failed realization request, never an empty family or a
