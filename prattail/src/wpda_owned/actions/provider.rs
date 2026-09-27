@@ -1,14 +1,18 @@
 //! Action-table consumer for the admitted owned-engine domain.
 
 use super::{decode_token, reduce, term_category, OwnedTerm};
+use crate::wpda_owned::token_bindings::{matches_prefix, OwnedTokenBindings};
 use crate::wpda_owned::{engine::OwnedEngineActions, source::OwnedTokenSource};
 use crate::wpda_rule_analysis::{
+    atomic_prefix::UnifiedDescriptor,
     authored_action::{
         authored_action_categories, derive_authored_action_shapes, AuthoredActionInput,
         AuthoredActionShape,
     },
     authored_descriptors::OwnedWpdaDescriptors,
     authored_synthesis::AuthoredRuleOrigin,
+    prefix_bucket::PrefixBuckets,
+    prefix_pattern::NeutralPattern,
 };
 use crate::wpda_runtime::{
     ActionArg, ActionContext, ActionInvocationError, ActionSignature, SemanticBuilder, ANY_CAT,
@@ -46,6 +50,7 @@ struct Row<'grammar> {
     variable_category: Option<CategoryId>,
     literal_category: Option<CategoryId>,
     literal_token: Option<TokenId>,
+    literal_home_patterns: Vec<(NeutralPattern, Option<NeutralPattern>)>,
     inputs: Vec<Input>,
     production: Option<ProductionId>,
     category_children: Vec<usize>,
@@ -54,6 +59,29 @@ struct Row<'grammar> {
 enum Input {
     Term(u16),
     Collection { category: u16, kind: CollectionKind },
+}
+
+/// Retain only the original atomic home rows at this action's exact WPDA
+/// coordinates. Core category IDs are a separate mapping, checked at decode.
+fn literal_home_patterns(
+    category: u16,
+    rule: u16,
+    buckets: &PrefixBuckets<NeutralPattern, NeutralPattern>,
+) -> Vec<(NeutralPattern, Option<NeutralPattern>)> {
+    buckets
+        .1
+        .iter()
+        .filter_map(|key| buckets.0.get(key))
+        .flat_map(|bucket| &bucket.descs)
+        .filter_map(|descriptor| match descriptor {
+            UnifiedDescriptor::Atomic(arm)
+                if arm.category_src_idx == category && arm.rule_idx == rule =>
+            {
+                Some((arm.pattern.clone(), arm.extra_guard.clone()))
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 /// Borrow the single collection slot already recognized by Core normalization.
@@ -132,6 +160,7 @@ impl<'source, 'session, 'parser, 'input, 'grammar>
                         variable_category: Some(core_category),
                         literal_category: None,
                         literal_token: None,
+                        literal_home_patterns: Vec::new(),
                         inputs: Vec::new(),
                         production: None,
                         category_children: Vec::new(),
@@ -149,6 +178,11 @@ impl<'source, 'session, 'parser, 'input, 'grammar>
                         variable_category: None,
                         literal_category: Some(core_categories[cat]),
                         literal_token: None,
+                        literal_home_patterns: literal_home_patterns(
+                            category,
+                            local_rule,
+                            &descriptors.prefixes[cat],
+                        ),
                         inputs: Vec::new(),
                         production: None,
                         category_children: Vec::new(),
@@ -284,6 +318,7 @@ impl<'source, 'session, 'parser, 'input, 'grammar>
                     variable_category: None,
                     literal_category: None,
                     literal_token,
+                    literal_home_patterns: Vec::new(),
                     inputs,
                     production: Some(production.id),
                     category_children,
@@ -291,8 +326,14 @@ impl<'source, 'session, 'parser, 'input, 'grammar>
             }
             rows.push(category_rows);
         }
-        let semantic_keys = crate::wpda_owned::semantic_keys::OwnedSemanticKeys::new(source, descriptors);
-        Ok(Self { source, rows, core_categories, semantic_keys })
+        let semantic_keys =
+            crate::wpda_owned::semantic_keys::OwnedSemanticKeys::new(source, descriptors);
+        Ok(Self {
+            source,
+            rows,
+            core_categories,
+            semantic_keys,
+        })
     }
 
     fn row(&self, category: u16, rule: u16) -> Option<&Row<'grammar>> {
@@ -332,8 +373,9 @@ impl<'source, 'session, 'parser, 'input, 'grammar>
         span: SourceSpan,
         expected_category: Option<CategoryId>,
         expected_token: Option<TokenId>,
+        home_patterns: &[(NeutralPattern, Option<NeutralPattern>)],
     ) -> Result<Option<OwnedTerm>, ActionInvocationError> {
-        let ActionArg::Token { text, pos, occurrence, .. } = arg else {
+        let ActionArg::Token { kind, text, pos, occurrence } = arg else {
             return Ok(None);
         };
         let occurrence = occurrence.ok_or(ActionInvocationError::MissingTokenOccurrence)?;
@@ -352,9 +394,7 @@ impl<'source, 'session, 'parser, 'input, 'grammar>
             .tokens
             .get(edge.token.0 as usize)
             .ok_or(ActionInvocationError::InvalidTokenOccurrence)?;
-        if expected_category.is_some_and(|category| definition.category != Some(category))
-            || expected_token.is_some_and(|token| token != edge.token)
-        {
+        if expected_token.is_some_and(|token| token != edge.token) {
             return Err(ActionInvocationError::InvalidTokenOccurrence);
         }
         if self
@@ -364,6 +404,25 @@ impl<'source, 'session, 'parser, 'input, 'grammar>
             != Some(text.as_str())
         {
             return Err(ActionInvocationError::InvalidTokenOccurrence);
+        }
+        if let Some(category) = expected_category {
+            // Synthetic native literals use the original retained token-kind
+            // observation, never a decoder inferred from spelling. Macro Core
+            // builtins may lack a category tag; only the original home literal
+            // pattern/guard can authorize that absence. A contradictory tag is
+            // still refused. Authored exact-token captures keep their old path.
+            let actual_kind = OwnedTokenBindings::new(self.source.session().grammar())
+                .and_then(|bindings| bindings.resolve(edge.token, text))
+                .map_err(|_| ActionInvocationError::InvalidTokenOccurrence)?;
+            let category_matches = match definition.category {
+                Some(actual) => actual == category,
+                None => home_patterns
+                    .iter()
+                    .any(|(pattern, guard)| matches_prefix(pattern, guard.as_ref(), kind)),
+            };
+            if actual_kind != *kind || !category_matches {
+                return Err(ActionInvocationError::InvalidTokenOccurrence);
+            }
         }
         decode_token(self.source.session(), category, edge.token, text, span).map(Some)
     }
@@ -531,8 +590,14 @@ impl OwnedEngineActions for OwnedActionProvider<'_, '_, '_, '_, '_> {
             return Ok(());
         }
         if row.decode_literal {
-            let Some(term) =
-                self.literal(category, &args[0], span, row.literal_category, row.literal_token)?
+            let Some(term) = self.literal(
+                category,
+                &args[0],
+                span,
+                row.literal_category,
+                row.literal_token,
+                &row.literal_home_patterns,
+            )?
             else {
                 return Ok(());
             };
@@ -611,7 +676,8 @@ impl OwnedEngineActions for OwnedActionProvider<'_, '_, '_, '_, '_> {
         &self,
         term: &std::sync::Arc<dyn Any + Send + Sync>,
         cache: &mut mettail_semantic_key::ContentKeyCache,
-    ) -> Result<Option<mettail_semantic_key::ContentKey>, mettail_semantic_key::ContentKeyCacheError> {
+    ) -> Result<Option<mettail_semantic_key::ContentKey>, mettail_semantic_key::ContentKeyCacheError>
+    {
         match &self.semantic_keys {
             Some(keys) => keys.content_key(term, cache),
             None => Ok(None),

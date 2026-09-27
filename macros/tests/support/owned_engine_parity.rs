@@ -68,6 +68,7 @@ mod native_scalar_fixture {
 /// not a rewritten lexer or an assertion of generated-lexer compatibility.
 #[test]
 fn generated_native_scalar_preserves_original_semantic_equivalence() {
+    use mettail_prattail::wpda_owned::engine::OwnedEngineActions;
     use mettail_prattail::wpda_walker::WpdaEngine;
     use native_scalar_fixture::{Pattern, Scalar};
 
@@ -128,6 +129,24 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
             .admits_variables
     );
     let image = compile_parser_image(&grammar).expect("existing runtime lexical image");
+    let observations = grammar
+        .wpda_token_observations
+        .as_ref()
+        .expect("captured original token observations");
+    let scalar_token = grammar
+        .tokens
+        .iter()
+        .find(|token| {
+            matches!(
+                observations.get(token.id.0 as usize),
+                Some(Some(core::WpdaTokenObservation::StringLit))
+            )
+        })
+        .expect("original String literal token family");
+    assert_eq!(
+        scalar_token.category, None,
+        "original builtin tokens carry no Core category tag; source rules supply admission"
+    );
     let host = FixtureHost(grammar.fingerprint().expect("native fixture fingerprint"));
     let parser = core::RuntimeParser::new(
         &grammar,
@@ -137,6 +156,27 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
         &host,
     )
     .expect("existing host admission; native actions remain generated Rust");
+    let occurrences: Vec<_> = (0..grammar.productions.len()).collect();
+    let synthesis = derive_authored_rules(&grammar, &occurrences, |_| Ok::<_, Infallible>(()))
+        .expect("original native fixture synthesis");
+    let descriptors = derive_authored_descriptors(
+        &grammar,
+        &occurrences,
+        synthesis,
+        DescriptorOptions {
+            crosscat_lex_compat_gate: true,
+            prefix_factoring: false,
+            mixfix_factoring: false,
+            accept_continue: false,
+            recovery_base: 0xFE00,
+            max_mixfix_slice: usize::MAX,
+        },
+        |_, _, _, _| Ok::<_, Infallible>(()),
+        |_, _| Ok::<_, Infallible>(false),
+    )
+    .expect("complete captured native descriptor domain");
+    let absorption = derive_absorption_rows(&grammar, &descriptors)
+        .expect("original native absorption observations");
     let collect = |input: &str| {
         let session = parser
             .lexical_session(input)
@@ -165,6 +205,8 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
         assert!(!roots.is_empty());
         let mut terms = Vec::new();
         let mut weights = Vec::new();
+        let mut generated_family = Vec::new();
+        let mut key_cache = mettail_runtime::exact_semantic_key::ContentKeyCache::default();
         for root in roots {
             let readings = walker
                 .realize_root_to_terms_with_weights(
@@ -175,6 +217,11 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
                 .expect("original generated semantic actions");
             assert!(readings.len() < 256, "root {root:?} exhausted for {input:?}");
             for (term, weight) in readings {
+                let key = native_scalar_fixture::GeneratedNativeScalarWpdaEngine
+                    .semantic_content_key(&term, &mut key_cache)
+                    .expect("bounded original native key")
+                    .expect("generated native category has an exact key");
+                generated_family.push((key.as_bytes().to_vec(), weight));
                 terms.push(
                     term.downcast_ref::<Pattern>()
                         .expect("generated Pattern carrier")
@@ -184,6 +231,51 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
             }
         }
         assert!(!terms.is_empty(), "acceptance realizes original generated terms for {input:?}");
+        let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
+            .expect("complete owned native actions");
+        let owned_engine =
+            OwnedWpdaEngine::new(&descriptors, &actions, 0, &[], &absorption, |_| Ok(()))
+                .expect("original native routing for owned carrier");
+        let mut owned_walker = WpdaWalker::new_for_category(owned_engine, 0, 0);
+        owned_walker
+            .run_to_end_of_input(10_000, &source)
+            .expect("owned consumer of the same native source");
+        let resolved = owned_walker.resolve_at_end_of_input(&source);
+        let WpdaResolveResult::Accepted { roots, .. } = resolved else {
+            panic!("owned engine must accept native input {input:?}: {resolved:?}");
+        };
+        assert!(!roots.is_empty());
+        let mut owned_family = Vec::new();
+        let mut owned_cache = mettail_runtime::exact_semantic_key::ContentKeyCache::default();
+        for root in roots {
+            let readings = owned_walker
+                .realize_root_to_terms_with_weights(
+                    root,
+                    Some(256),
+                    RealizeRequestMode::BoundedEnumeration,
+                )
+                .expect("owned native semantic actions");
+            assert!(readings.len() < 256, "owned root {root:?} exhausted for {input:?}");
+            for (value, weight) in readings {
+                let term = value
+                    .downcast_ref::<OwnedTerm>()
+                    .expect("owned native carrier");
+                assert_eq!(term.syntax, term.value, "native identity carrier for {input:?}");
+                let key = actions
+                    .semantic_content_key(&value, &mut owned_cache)
+                    .expect("bounded owned native key")
+                    .expect("captured native profile has an exact key");
+                owned_family.push((key.as_bytes().to_vec(), weight));
+            }
+        }
+        // Compare complete finite observations, including native variables and
+        // transparent projections. Reuse the original exact-key worker rather
+        // than inventing a second serializer or filtering a ground sublanguage.
+        generated_family.sort();
+        generated_family.dedup();
+        owned_family.sort();
+        owned_family.dedup();
+        assert_eq!(owned_family, generated_family, "complete native weighted family for {input:?}");
         (terms, weights)
     };
     // This macro fixture has no explicit precedence for category-leading
@@ -235,6 +327,9 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
     }
     assert_eq!(counts[0] + counts[1], 1, "one representative of the proved variable class");
     assert_eq!(counts[2], 1, "the distinct literal class must survive");
+    for input in ["a*", "abc", "a|b|c", "(a*)*"] {
+        collect(input);
+    }
 }
 
 mod postfix_fixture {

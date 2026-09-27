@@ -177,6 +177,7 @@ theories/StructuralTerminalRoster.v
 theories/RegexCharacterProfile.v
 theories/TerminalOccurrence.v
 theories/OwnedActionAdapter.v
+theories/LiteralActionAdmission.v
 theories/ActionContextDispatch.v
 theories/OwnedCollectionAction.v
 theories/OwnedVariableAction.v

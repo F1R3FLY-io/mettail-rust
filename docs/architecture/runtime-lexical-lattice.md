@@ -257,6 +257,16 @@ Invoke the existing decoder once; retain its original error on failure.
 Publish the resulting carrier only after the enclosing action succeeds.
 ```
 
+The original macro bridge leaves builtin tokens' Core category tags absent.
+For a synthetic literal action, absence alone does not authorize decoding: the
+adapter requires the original atomic **home-category row**, meaning the row
+emitted for that exact action category and rule, whose retained token pattern
+and guard match the selected occurrence's original token-kind observation.
+The observation must also equal the action argument's kind. A present but
+conflicting category tag is always rejected. An authored token-capture action
+continues to require its exact declared `TokenId`; it does not use this
+synthetic-row admission path. Neither path infers a decoder from spelling.
+
 Missing or invalid occurrence metadata is a protocol error, not permission to
 choose a decoder. The original static terminal-interner entry supplies no
 occurrence and keeps its original identity equivalence. Recovery-generated
@@ -268,6 +278,10 @@ models unchanged static identity, separation of distinct selected occurrences,
 and exact lookup without defaults. Decoder and native-action sequencing is
 covered separately by
 [OwnedActionAdapter](../../formal/rocq/prattail_wpda_runtime/theories/OwnedActionAdapter.v).
+The synthetic literal admission boundary is modeled in
+[LiteralActionAdmission](../../formal/rocq/prattail_wpda_runtime/theories/LiteralActionAdmission.v):
+failed provenance or row checks invoke no decoder; successful admission
+forwards the exact selected token and retains the decoder's result and state.
 Concrete tests include coincident kind/text alternatives with different
 decoders, missing and invalid provenance, and rejection before callbacks.
 
@@ -340,7 +354,12 @@ value keys are not a substitute. Parser-local key equality does not authorize
 wire publication, prove portable identity, or establish complete ambiguity
 preservation outside the compared parser boundary. The generated-consumer
 [parity fixture](../../macros/tests/support/owned_engine_parity.rs) checks this
-distinction directly, separately from installed-parser activation.
+distinction directly. Its native-string corpus feeds the same captured grammar
+and lexical source to both engines and compares complete finite sets of original
+key bytes paired with full transition weights, including variables inside
+compound terms. Each root must remain below the enumeration limit for that
+comparison to count as complete. Installed-parser activation remains a separate
+integration gate.
 
 The owned [key adapter](../../prattail/src/wpda_owned/semantic_keys.rs) supplies
 the existing result-returning `semantic_content_key` hook. Both realization

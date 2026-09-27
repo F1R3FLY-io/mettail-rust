@@ -6,6 +6,272 @@ use crate::wpda_runtime::WpdaTokenSource;
 use mettail_grammar_core as core;
 
 #[test]
+fn synthetic_literal_admission_checks_original_home_witness_before_decoding() {
+    use crate::wpda_rule_analysis::{atomic_prefix::PrefixArmDescriptor, prefix::UnifiedBucket};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    };
+
+    #[derive(Default)]
+    struct Host {
+        calls: Mutex<Vec<String>>,
+        fail: AtomicBool,
+    }
+    impl core::RuntimeHost for Host {
+        fn capability_manifest(
+            &self,
+            key: &core::RuntimeCapabilityKey,
+        ) -> Option<core::RuntimeCapabilityManifest> {
+            Some(core::RuntimeCapabilityManifest {
+                key: key.clone(),
+                code_commitment: [1; 32],
+                abi: "literal-admission-test/1".into(),
+                effects: [core::RuntimeEffect::Reduce].into_iter().collect(),
+                cost: core::RuntimeLogicalCost {
+                    base: 1,
+                    per_input_byte: 1,
+                    per_value: 1,
+                    maximum: 1024,
+                },
+            })
+        }
+        fn decode_token(&self, _: &str, text: &str) -> Result<DynamicValue, String> {
+            self.calls
+                .lock()
+                .expect("decoder call log is not poisoned")
+                .push(text.into());
+            if self.fail.load(Ordering::SeqCst) {
+                Err("literal refused".into())
+            } else {
+                Ok(DynamicValue::Text(text.into()))
+            }
+        }
+    }
+    let home_rows = |category, rule, guard: Option<NeutralPattern>| {
+        let pattern = NeutralPattern::StringLiteral;
+        let key = (pattern.clone(), guard.clone().unwrap_or_default());
+        let buckets = (
+            [(
+                key.clone(),
+                UnifiedBucket {
+                    pat: pattern.clone(),
+                    extra_guard: guard.clone(),
+                    descs: vec![UnifiedDescriptor::Atomic(PrefixArmDescriptor {
+                        pattern,
+                        extra_guard: guard,
+                        category_src_idx: category,
+                        rule_idx: rule,
+                    })],
+                },
+            )]
+            .into_iter()
+            .collect(),
+            vec![key],
+        );
+        literal_home_patterns(0, 0, &buckets)
+    };
+    for tag in [None, Some(CategoryId(1)), Some(CategoryId(0))] {
+        let mut grammar = core::GrammarCoreV1::new("LiteralAdmission");
+        for (id, name) in [(0, "Other"), (1, "Scalar")] {
+            grammar.categories.push(core::Category {
+                id: CategoryId(id),
+                name: name.into(),
+                carrier: core::Carrier::Dynamic,
+                primary: id == 1,
+                admits_variables: false,
+            });
+        }
+        grammar.tokens.push(core::TokenDefinition {
+            id: TokenId(0),
+            name: "literal".into(),
+            pattern: core::TokenPattern::Literal("long".into()),
+            category: tag,
+            evaluation: None,
+            priority: 1,
+            mode: core::ModeId(0),
+            channel: "main".into(),
+            transition: core::ModeTransition::default(),
+            decoder: core::TokenDecoder::Capability("literal/test".into()),
+            reservation: core::Reservation::None,
+        });
+        grammar.modes[0].token_ids.push(TokenId(0));
+        grammar.wpda_token_observations = Some(vec![Some(core::WpdaTokenObservation::StringLit)]);
+        grammar
+            .capabilities
+            .insert(core::Capability::TokenDecoder("literal/test".into()));
+        grammar.reductions.push(ReductionPlan {
+            output_category: CategoryId(1),
+            constructor: core::ConstructorId(0),
+            input_arity: 0,
+            fields: vec![],
+            evaluation: None,
+            evaluation_mode: None,
+            tier: None,
+        });
+        grammar.productions.push(core::Production {
+            authored: None,
+            id: ProductionId(0),
+            constructor: core::ConstructorId(0),
+            label: "Literal".into(),
+            result: CategoryId(1),
+            syntax: vec![SyntaxItem::Token(TokenId(0))],
+            precedence: core::Precedence::default(),
+            classification: core::ProductionClass::default(),
+            reduction: 0,
+            provenance: None,
+        });
+        let image = compile_parser_image(&grammar).expect("fixture image");
+        let host = Host::default();
+        let parser = core::RuntimeParser::new(
+            &grammar,
+            &image,
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            &host,
+        )
+        .expect("fixture parser");
+        let session = parser.lexical_session("long").expect("lex once");
+        let source = OwnedTokenSource::from_admitted_session(
+            &session,
+            SourceAdapterLimits { nodes: 16, edges: 16, text_bytes: 128 },
+        )
+        .expect("original token kind");
+        let end = source.next_pos(0, 0).expect("selected literal end");
+        let context = ActionContext {
+            source_positions: Some((0, end as u32)),
+            result_category: Some(0),
+        };
+        let mut provider = OwnedActionProvider {
+            source: &source,
+            semantic_keys: None,
+            core_categories: vec![CategoryId(1)],
+            rows: vec![vec![Row {
+                plan: None,
+                expected: vec![ANY_CAT],
+                ignore_keyword: false,
+                decode_literal: true,
+                variable_category: None,
+                literal_category: Some(CategoryId(1)),
+                literal_token: None,
+                literal_home_patterns: home_rows(0, 0, None),
+                inputs: vec![],
+                production: None,
+                category_children: vec![],
+            }]],
+        };
+        let argument = || ActionArg::Token {
+            kind: TokenKind::StringLit,
+            text: "long".into(),
+            pos: 0,
+            occurrence: Some(0),
+        };
+        let mut output = SemanticBuilder::new();
+        let result =
+            provider.execute_action_with_context(0, 0, &mut output, vec![argument()], context);
+        if tag == Some(CategoryId(0)) {
+            assert!(matches!(result, Err(ActionInvocationError::InvalidTokenOccurrence)));
+            assert_eq!(output.len(), 0);
+            assert!(
+                host.calls
+                    .lock()
+                    .expect("decoder call log is not poisoned")
+                    .is_empty(),
+                "contradictory tag cannot be repaired"
+            );
+            continue;
+        }
+        result.expect("matching tag or original untagged home witness");
+        assert_eq!(&*host.calls.lock().expect("decoder call log is not poisoned"), &["long"]);
+        let term = output
+            .take_result::<OwnedTerm>()
+            .expect("accepted literal publishes one owned term");
+        assert_eq!(term.category, 0, "WPDA coordinate is not the Core category ID");
+        assert_eq!(term.syntax, DynamicValue::Text("long".into()));
+        assert_eq!(term.value, term.syntax);
+        assert_eq!(term.span, SourceSpan { start: 0, end: 4 });
+
+        for case in ["wrong-kind", "wrong-text", "invalid-occurrence", "missing-occurrence"] {
+            let mut arg = argument();
+            let ActionArg::Token { kind, text, occurrence, .. } = &mut arg else {
+                unreachable!()
+            };
+            match case {
+                "wrong-kind" => *kind = TokenKind::Ident,
+                "wrong-text" => *text = "changed".into(),
+                "invalid-occurrence" => *occurrence = Some(u32::MAX),
+                _ => *occurrence = None,
+            }
+            let mut output = SemanticBuilder::new();
+            let result =
+                provider.execute_action_with_context(0, 0, &mut output, vec![arg], context);
+            assert!(
+                matches!(
+                    result,
+                    Err(ActionInvocationError::InvalidTokenOccurrence
+                        | ActionInvocationError::MissingTokenOccurrence)
+                ),
+                "{case}"
+            );
+            assert_eq!(output.len(), 0, "{case}");
+            assert_eq!(
+                host.calls
+                    .lock()
+                    .expect("decoder call log is not poisoned")
+                    .len(),
+                1,
+                "{case} must not decode"
+            );
+        }
+        if tag.is_none() {
+            for rows in [
+                vec![],
+                home_rows(1, 0, None),
+                home_rows(0, 1, None),
+                home_rows(0, 0, Some(NeutralPattern::CategoryName("wrong".into()))),
+            ] {
+                provider.rows[0][0].literal_home_patterns = rows;
+                let mut output = SemanticBuilder::new();
+                assert!(matches!(
+                    provider.execute_action_with_context(
+                        0,
+                        0,
+                        &mut output,
+                        vec![argument()],
+                        context
+                    ),
+                    Err(ActionInvocationError::InvalidTokenOccurrence)
+                ));
+                assert_eq!(output.len(), 0);
+                assert_eq!(
+                    host.calls
+                        .lock()
+                        .expect("decoder call log is not poisoned")
+                        .len(),
+                    1,
+                    "absent/wrong-coordinate/wrong-guard row must not decode"
+                );
+            }
+        }
+        provider.rows[0][0].literal_home_patterns = home_rows(0, 0, None);
+        host.fail.store(true, Ordering::SeqCst);
+        let mut output = SemanticBuilder::new();
+        assert!(matches!(provider.execute_action_with_context(0, 0, &mut output,
+            vec![argument()], context), Err(ActionInvocationError::RuntimeSemantic(
+                RuntimeError::MissingCapability(ref message))) if message == "literal refused"));
+        assert_eq!(
+            host.calls
+                .lock()
+                .expect("decoder call log is not poisoned")
+                .len(),
+            2,
+            "selected decoder failure is retained once"
+        );
+        assert_eq!(output.len(), 0);
+    }
+}
+
+#[test]
 fn collection_action_slot_borrows_direct_or_single_separated_payload_unchanged() {
     let collection = SyntaxItem::Collection {
         slot: "pieces".into(),
@@ -116,6 +382,10 @@ fn provider_uses_actual_nonunit_source_boundaries_and_refuses_missing_context() 
     coincident.decoder = core::TokenDecoder::Unit;
     grammar.tokens.push(coincident);
     grammar.modes[0].token_ids.push(core::TokenId(1));
+    grammar.wpda_token_observations = Some(vec![
+        Some(core::WpdaTokenObservation::Fixed("long".into())),
+        Some(core::WpdaTokenObservation::Fixed("long".into())),
+    ]);
     grammar.reductions.push(ReductionPlan {
         output_category: core::CategoryId(0),
         constructor: core::ConstructorId(0),
@@ -166,6 +436,7 @@ fn provider_uses_actual_nonunit_source_boundaries_and_refuses_missing_context() 
             variable_category: None,
             literal_category: None,
             literal_token: None,
+            literal_home_patterns: Vec::new(),
             inputs: Vec::new(),
             production: Some(core::ProductionId(0)),
             category_children: Vec::new(),
@@ -238,6 +509,7 @@ fn provider_uses_actual_nonunit_source_boundaries_and_refuses_missing_context() 
             variable_category: None,
             literal_category: Some(core::CategoryId(0)),
             literal_token: None,
+            literal_home_patterns: Vec::new(),
             inputs: Vec::new(),
             production: None,
             category_children: Vec::new(),
@@ -325,6 +597,7 @@ fn provider_uses_actual_nonunit_source_boundaries_and_refuses_missing_context() 
             variable_category: None,
             literal_category: None,
             literal_token: None,
+            literal_home_patterns: Vec::new(),
             inputs: vec![
                 Input::Collection { category: 0, kind: CollectionKind::List },
                 Input::Collection { category: 0, kind: CollectionKind::List },
