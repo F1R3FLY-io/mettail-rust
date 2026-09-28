@@ -16,26 +16,26 @@ The declaration path is one-way and structural: generated host AST, typed declar
 
 ## Authored Regex spelling
 
-This excerpt shows the authored language definition, not a field-by-field transcription of the current service records. The ordinary `Exports` builder is omitted because the example does not need to hide or rename categories. Requested rights remain installation policy rather than a `Theory` attribute. `Options` owns optional lexer, parser, and semantic controls, including semantic limits. The two lexical declarations use a **BNFC-inspired `token Name Reg;` form** inside `Terms`. They are not an invented `Literals { Category ::= Reg => carrier … }` language. `Types` carries the separate canonical carrier and variable-admission metadata. In particular, the `data` modifier in this excerpt is **proposed**, not part of Greg and Mike's current `Types { Category; }` grammar: it requests a category without automatically admitted variable forms. The short rewrite sample illustrates the rule grammar; the migration rule in [Typed rules](#typed-rules-and-native-values) applies to every remaining rewrite in the fixture. Each form shown is proposed syntax, not an assertion that the current parser accepts it.
+This excerpt shows the authored language definition, not a field-by-field transcription of the current service records. The ordinary `Exports` builder is omitted because the example does not need to hide or rename categories. Requested rights remain installation policy rather than a `Theory` attribute. `Options` owns optional lexer, parser, and semantic controls, including semantic limits. The two lexical declarations use a **BNFC-inspired `token Name Reg;` form** inside `Terms`. They are not an invented `Literals { Category ::= Reg => carrier … }` language. `Types` carries the separate canonical carrier and variable-admission metadata. Greg and Mike's plain `Types { Category; }` form remains the minimum. The optional `noadmit` prefix applies to one category declaration and forbids only implicit guest-language variable terms; it is not a block or another builder. The short rewrite sample illustrates the rule grammar; the migration rule in [Typed rules](#typed-rules-and-native-values) applies to every remaining rewrite in the fixture. Each form shown is proposed syntax, not an assertion that the current parser accepts it.
 
 ```text
 Module RegexGSLT {
   Theory Regex() {
     Types {
-      data Pattern;
-      data Computation;
-      data NFrames;
-      data DFrames;
-      data EFrames;
-      data MatchResult;
-      data ReplacementTemplate;
-      data PrefixResult;
-      data Scalar = String;
-      data Text = String;
-      data Bool = bool;
-      data Flag = bool;
-      data Nat = BigInt;
-      data Grade = BigInt;
+      noadmit Pattern;
+      noadmit Computation;
+      noadmit NFrames;
+      noadmit DFrames;
+      noadmit EFrames;
+      noadmit MatchResult;
+      noadmit ReplacementTemplate;
+      noadmit PrefixResult;
+      noadmit Scalar = String;
+      noadmit Text = String;
+      noadmit Bool = bool;
+      noadmit Flag = bool;
+      noadmit Nat = BigInt;
+      noadmit Grade = BigInt;
     }
 
     Terms {
@@ -84,7 +84,7 @@ Module RegexGSLT {
 }
 ```
 
-The Regex fixture sets `admits_variables: false` for every listed category. Proposed `data Category;` would lower to that existing schema property; plain `Category;` retains the current default, `admits_variables: true`. This is a *category-admission setting*, not an extra constructor, equality, rewrite, or semantic capability. It borrows the meaning of `data` from the [existing compile-time language specification](../../../languages/src/rholang.rs), whose closed metasyntax categories do not acquire automatic variable/HOL forms. The current in-Rholang DDL parser accepts only `Category;`, so the modifier and native-carrier spellings shown here require separate syntax and elaboration work. Neither spelling is related to the exact programmatic `Data(value)` builder.
+The Regex fixture sets `admits_variables: false` for every listed category. The proposed `noadmit Category;` spelling (or `noadmit Category = Carrier;` with a carrier) lowers only that category to the existing `admits_variables: false` schema property; a plain `Category;` retains the current `admits_variables: true` default. A *variable term* is an object-language term admitted by the guest-language category, not a rewrite-rule metavariable such as `p:Pattern` or an FLT hole. The repeated `noadmit` prefixes reflect the fixture's fourteen explicit false settings; ordinary category declarations have no prefix. This does not remove declared constructors, prevent GSLT rules from executing, or grant or revoke runtime authority. It cannot simply be inferred from an absent variable rule: the existing generated parser can synthesize variable forms for ordinary categories ([implicit-variable rule](../../../macros/src/gen/mod.rs)). The compile-time `data` role is **not** reused: it also changes generated semantic-operation axes and is broader than the single `admits_variables` field ([semantic operation categories](../../../macros/src/logic/common.rs)). The current in-Rholang DDL parser accepts only `Category;`, so the proposed `noadmit` prefix and native-carrier spellings shown here require separate syntax and elaboration work. Neither is related to the exact programmatic `Data(value)` builder.
 
 ### Language semantics, module visibility, and FLT execution
 
@@ -180,7 +180,7 @@ The [current schema](../../../mettail-elab/src/schema.rs) accepts more fields th
 | Canonical field family | Authoring role and boundary |
 |---|---|
 | `mettail`, `name` | Derived from the language profile and enclosing `Theory`; ordinary `Data` fragments still may not override them. |
-| `types` | Existing `Types` declares category names. Proposed category modifiers and annotations would expose the already-present native/collection/extern carrier, variable-admission (`data` for `admits_variables: false`), collection delimiter, and refinement fields; these are not yet accepted by the in-Rholang DDL parser. |
+| `types` | Existing `Types` declares category names. Proposed optional per-category carrier annotations and `noadmit` prefixes would expose the already-present native/collection/extern carrier, `admits_variables`, collection delimiter, and refinement fields; these are not yet accepted by the in-Rholang DDL parser. |
 | `literals` | BNFC-inspired `token Category Reg;` inside `Terms` for a carrier-backed category; the `Types` carrier supplies the checked default decoder. An explicit typed decoder override covers the other native-evaluation variants. |
 | `tokens` | The same `token Name Reg;` inside `Terms` for named tokens; `Options.Lexer.TokenOptions` attaches optional category/decoder, priority, push/pop, and stream without altering that declaration form. `position token` requires an additional canonical position field. |
 | `modes` | `Modes` declares name, optional `raw`, and its ordered token declarations. |
@@ -205,9 +205,9 @@ Representative record spelling for the broader families is:
 
 ```text
 Types {
-  data Entries = Map(Key, Value)
+  noadmit Entries = Map(Key, Value)
     collection { open = "{"; close = "}"; sep = ","; key_val_sep = ":"; };
-  data Positive = BigInt refine n:Nat where cmp(n, ">", 0);
+  noadmit Positive = BigInt refine n:Nat where cmp(n, ">", 0);
 }
 Modes { Quoted raw { token CloseQuote ["]; } }
 Options {
