@@ -12,8 +12,8 @@ skinparam rectangle {
 
 rectangle "RSpace candidate\ntext binding" as candidate #DCEEFF
 rectangle "Explicit language handle\nand typed FLT template" as flt #BBDEFB
-rectangle "Checked FullMatch action\nsemantic transition kernel" as kernel #D1C4E9
-rectangle "Exact terminal-key\npredicate classification" as classify #FFF9C4
+rectangle "Checked GSLT rewrite relation\nsemantic transition kernel" as kernel #D1C4E9
+rectangle "Caller FLT pattern / OSLF query\ncomplete evidence classification" as classify #FFF9C4
 rectangle "Sat\nvalid commit receipt\nCOMM fires" as sat #C8E6C9
 rectangle "Unsat\nno match" as unsat #FFCDD2
 rectangle "DontKnow / refusal\nno consumption" as unknown #FFE0B2

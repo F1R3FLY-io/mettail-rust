@@ -1,22 +1,22 @@
 # Complete Module and Theory surface for MeTTaIL declarations
 
-Status: design proposal for Greg and Mike's review. The syntax in this document is **not yet implemented**. The full-field spelling below is a mapping exercise, **not an accepted requirement to add every displayed builder**. The final surface must extend their existing `Module`/`Theory` declaration style only where the established builders cannot express the required interface; it does not define another host language or replace the canonical data representation.
+Status: design proposal for Greg and Mike's review. The syntax in this document is **not yet implemented**. The authored theory uses Greg and Mike's existing `Terms`, `Equations`, and `Rewrites` to define semantics. `Exports` retains its existing category visibility and renaming role; it does **not** redeclare semantic operations. This does not define another host language or remove the data-faithful canonical representation.
 
-The immediate motivation is the three `Data({...})` blocks in the [Regex GSLT application](../../../rholang-runtime/tests/fixtures/regex_gslt_application.rho). They currently carry (1) sorts, carriers, and literal tokens, (2) operator binding metadata, and (3) typed rewrites, rights, OSLF actions and observations, and limits. The readable `Terms`, `Equations`, and `Rewrites` around them already use Greg and Mike's style. The design obligation is a lossless route to **every admitted authoring field**, while retaining `Data` as the exact programmatic form; it does not imply one new syntax builder per field.
+The immediate motivation is the three `Data({...})` blocks in the [Regex GSLT application](../../../rholang-runtime/tests/fixtures/regex_gslt_application.rho). They currently carry (1) sorts, carriers, and literal tokens, (2) operator binding metadata, and (3) typed rewrites, rights, OSLF actions and observations, and limits. The readable `Terms`, `Equations`, and `Rewrites` already state the guest language's semantics. The present runtime service selects named action and observation records, but that implementation requirement does **not** justify making authors duplicate their rewrite rules as new Theory declarations. The data-faithful form remains available for automatic construction and analysis; eliminating presentation `Data` from the authored Regex source requires a general FLT-to-rewrite-relation execution path, not additional semantic syntax.
 
 The authoritative sources have different jobs: `MeTTaIL/GSLT/src/main/bnfc/metta_venus.cf` is the **BNFC reference for a readable token-regex surface**; `f1r3node-rust-module-syntax/module-syntax/documentation/mettail-ddl-and-modules-2026-08-19.md` supplies **Greg and Mike's `Module`/`Theory`, `Types`, and judgment-form `Terms` structure**. Their document leaves retention of BNFC pragmas, including `token` and `position token`, open in §9.4. This proposal adopts a **BNFC-inspired**, not byte-for-byte BNFC-compatible, token declaration form inside the module structure. The established PraTTaIL regex compiler retains its semantics; similarity of spelling does not import BNFC's character classes or every BNFC operator. The [BNFC LBNF reference](https://github.com/BNFC/bnfc/blob/master/docs/lbnf.rst#lexer-definitions) documents the inspiration. Current implementation boundaries are the generated [Rholang specification](../../../languages/src/rholang.rs), [authoring schema](../../../mettail-elab/src/schema.rs), [canonical language core](../../../grammar-core/src/language_core.rs), and [runtime lexer-image compiler](../../../prattail/src/runtime_backend.rs).
 
 ## Terms and architecture
 
-The *host* is the one Rholang language parsed by the generated frontend. A *theory* is an immutable language definition; it is not an installed parser or an authority. A *guest term* is parsed under an explicitly selected installed-language handle. `Data` denotes a structurally parsed Rholang value, not text passed to another DDL parser. A *carrier* specifies a native value representation; an ordinary theory constructor is still a distinct structural term. OSLF is the existing theory/action/observation layer. FLT means foreign-language term. The proposed `token Name Reg;` expressions specify **lexer tokens** using PraTTaIL regex semantics; they are not the Regex guest language being specified by the application.
+The *host* is the one Rholang language parsed by the generated frontend. A *theory* is an immutable language definition; it is not an installed parser or an authority. A *guest term* is parsed under an explicitly selected installed-language handle. `Data` denotes a structurally parsed Rholang value, not text passed to another DDL parser. A *carrier* specifies a native value representation; an ordinary theory constructor is still a distinct structural term. A graph-structured lambda theory (GSLT) presents grammar, equations, and reductions; Operational Semantics in Logical Form (OSLF) derives behavioral observations and logic over that presentation for a specified observational setting ([Stay and Meredith 2017](https://doi.org/10.48550/arXiv.1704.03080), [GSLT context](../../../context/gslt-context.md)). The current action/observation service is one runtime interface over the theory, not OSLF's definition. FLT means foreign-language term. The proposed `token Name Reg;` expressions specify **lexer tokens** using PraTTaIL regex semantics; they are not the Regex guest language being specified by the application.
 
 ![Proposed authored-to-installed-language flow](figures/module-ddl-full-surface-flow.svg)
 
 The declaration path is one-way and structural: generated host AST, typed declaration AST, canonical value and `LanguageCore`, then the existing lexer/WPDA and semantic-image compilers. Exact-core `Data` enters at the canonical-value boundary. Neither route grants rights; installation intersects requested rights with an independent capability grant.
 
-## Candidate full-field Regex spelling
+## Authored Regex spelling
 
-This complete *section inventory* shows how the fields in the three current Regex `Data` blocks could be expressed without adding a builder for every canonical field. It is deliberately exhaustive, **not the minimum form required to declare a module or theory**. The existing `Exports` builder is extended with distinctly tagged `effect`, `operation`, and `observation` entries; its existing category-export and rename entries retain their meaning. Requested rights remain installation policy rather than a `Theory` attribute. `Options` owns optional lexer, parser, and semantic controls, including semantic limits. The two lexical declarations use a **BNFC-inspired `token Name Reg;` form**, retained inside the proposed `Terms` builder. They are not an invented `Literals { Category ::= Reg => carrier … }` language. `Types` carries the separate canonical carrier and variable-admission metadata. The short rewrite sample illustrates the rule grammar; the migration rule in [Typed rules](#typed-rules-and-native-values) applies to every remaining rewrite in the fixture. Each form shown is proposed syntax, not an assertion that the current parser accepts it.
+This excerpt shows the authored language definition, not a field-by-field transcription of the current service records. The ordinary `Exports` builder is omitted because the example does not need to hide or rename categories. Requested rights remain installation policy rather than a `Theory` attribute. `Options` owns optional lexer, parser, and semantic controls, including semantic limits. The two lexical declarations use a **BNFC-inspired `token Name Reg;` form** inside `Terms`. They are not an invented `Literals { Category ::= Reg => carrier … }` language. `Types` carries the separate canonical carrier and variable-admission metadata. The short rewrite sample illustrates the rule grammar; the migration rule in [Typed rules](#typed-rules-and-native-values) applies to every remaining rewrite in the fixture. Each form shown is proposed syntax, not an assertion that the current parser accepts it.
 
 ```text
 Module RegexGSLT {
@@ -67,51 +67,6 @@ Module RegexGSLT {
             ~> (FullDerivative (DEval c p (DNil)) t j);
     }
 
-    Exports {
-      effect Pure : pure requires {} emits {};
-
-      operation "full-match" : (Computation) -> Computation
-        via rewrite StartFullMatch
-        effect Pure requires { Reduce } grade Grade
-        normalize Computation until { DoneBool }
-        branching deterministic;
-      operation "search" : (Computation) -> Computation
-        via rewrite StartSearch
-        effect Pure requires { Reduce } grade Grade
-        normalize Computation until { DoneMatch }
-        branching deterministic;
-      operation "replace-first" : (Computation) -> Computation
-        via rewrite StartReplaceFirst
-        effect Pure requires { Reduce } grade Grade
-        normalize Computation until { DoneText }
-        branching deterministic;
-      operation "replace-all" : (Computation) -> Computation
-        via rewrite StartReplaceAll
-        effect Pure requires { Reduce } grade Grade
-        normalize Computation until { DoneText }
-        branching deterministic;
-      operation "nullable" : (Computation) -> Computation
-        via rewrite StartNullable
-        effect Pure requires { Reduce } grade Grade
-        normalize Computation until { DoneBool }
-        branching deterministic;
-      operation "derivative" : (Computation) -> Computation
-        via rewrite StartDerivative
-        effect Pure requires { Reduce } grade Grade
-        normalize Computation until { DonePattern }
-        branching deterministic;
-
-      observation FullMatch : Computation via "full-match"
-        predicate CallFullMatch
-        accepts (DoneBool (BTrue))
-        rejects (DoneBool (BFalse));
-      observation Search : Computation via "search";
-      observation ReplaceFirst : Computation via "replace-first";
-      observation ReplaceAll : Computation via "replace-all";
-      observation Nullable : Computation via "nullable";
-      observation Derivative : Computation via "derivative";
-    }
-
     Options {
       Semantics {
         Limits {
@@ -129,31 +84,23 @@ Module RegexGSLT {
 }
 ```
 
-### What the public interface and options mean
+### Language semantics, module visibility, and FLT execution
 
-`Module` groups reusable declarations and their composition. `Terms`, `Equations`, and `Rewrites` specify the object language. `Exports` specifies what callers may name and how a named operation is executed and observed. `Options` groups operational controls rather than placing lexer, parser, or semantic settings beside the theory's defining rules. No additional block is mandatory for a syntax-only theory: its canonical action, observation, and effect lists remain empty, and its limits retain their bounded defaults.
+`Module` groups reusable declarations. `Types` states the sorts; `Terms` states constructors and concrete syntax; `Equations` states equality; `Rewrites` states the directed transition relation. The complete Regex fixture's relation contains `StartFullMatch` and the subsequent computation rules; only representative rules appear in the excerpt. The existing `Exports` builder only selects or renames categories across a theory-composition boundary. It is optional when the default category visibility is sufficient, as in this excerpt; it is **not** a second semantic-definition mechanism.
 
-| Surface clause | Canonical role | Why it appears in this example |
+| Concern | Source of meaning | Boundary |
 |---|---|---|
-| `Rewrites` | Individual directed transitions, such as `StartFullMatch` and `FullAdvance`. | The theory defines reduction rules. A rule alone neither names a public operation nor grants permission to execute one. |
-| `Exports { effect Pure ...; }` | A checked `EffectDeclV1`, not executable host code or a capability grant. | The predicate operation must name a declared pure effect with no emissions. The one declaration is shared by several operations. |
-| `Exports { operation "full-match" ...; }` | A checked `SemanticActionV1` with a name, signature, entry rule, effect/right/grade contract, and execution policy. | The public operation starts at `StartFullMatch` and normalizes through applicable rewrites until `DoneBool`; it does not duplicate those rewrites. |
-| `Exports { observation FullMatch ...; }` | A checked `ObservationDeclV1` naming an operation and interpreting its result. | The predicate entry states which completed guest terms accept or reject a `where` guard; no truthiness is inferred from names. Multiple observations may refer to one operation. |
-| `Options { Semantics { Limits { ... } } }` | Checked `TheoryLimitsV1` bounds on rule work, proof/frontier size, grade size, and output. | The example preserves the existing fixture's stricter bounds; omission uses canonical defaults. Exhaustion does not fabricate a result or Boolean `false`. |
+| Guest syntax and transitions | `Types`, `Terms`, `Equations`, and `Rewrites`. | Immutable theory and its existing compiled grammar/semantic images. |
+| Public category visibility or renaming | Existing `Exports` category entries. | Theory/module composition, not rewrite execution. |
+| One-step versus normalizing execution, resource budget, and result-pattern test | Generic FLT invocation and its checked caller policy. | Authorized runtime request, not a new Theory declaration. |
+| Parser, lexer, and semantic limits | Nested `Options`. | Checked authoring options intersected with independent host admission limits. |
+| Requested and granted rights | Installation request and independent host grant. | Opaque installed-language handle, never a theory term or rewrite. |
 
-Within an exported `operation`, `via rewrite` selects its entry transition; `effect` and `requires` state checked effect and right requirements; `grade` names the resource-grade sort; and `normalize ... until` plus `branching` selects the existing normalization policy and its result multiplicity. These clauses describe how the named operation uses declared rules; they are not additional rewrite bodies. Distinct `effect`, `operation`, and `observation` entry prefixes preserve the existing unprefixed category-export and category-rename forms and make mixed `Exports` blocks structurally unambiguous.
+The current [semantic service](../../../rholang-runtime/src/semantic_service.rs) accepts named `Reduce` and `Observe` operations backed by `SemanticActionV1` and `ObservationDeclV1`. That is an **implementation seam**, not proof that authored language semantics need action or observation declarations. To execute an authored theory without duplicating its semantics, the service must expose a general, authorized one-step or bounded-normalization operation over the existing compiled rewrite relation through the existing semantic transition kernel. The caller selects the execution and observation policy; the theory supplies the transition relation. Different observational settings may ask different questions of that same relation; they do not redefine the guest language. This is required integration work, not a claim that the current service already supports direct relation execution. The internal action/observation records and exact data-faithful input remain available for callers that deliberately construct those interfaces.
 
-Requested rights are a separate installation policy, outside `LanguageCoreV1` and its grammar/theory fingerprints. Omitting that request uses the current native-FLT default set (`Parse`, `Construct`, `Match`, `Observe`, `ReflectAst`, `Reduce`), equal to the fixture's explicit list. An explicit empty request instead requests no rights. Neither form grants authority: installation intersects the request with an independent host grant.
+For Regex, an FLT containing `fullMatch(...)` is a `Computation` term. The rewrite relation itself decides each successor, including the `StartFullMatch` step; no extra public operation name or entry-rule declaration is needed. A normalizing FLT request must retain every admissible successor until the chosen bounded policy has enough evidence to finish or reports `Undetermined`. A Rholang FLT pattern can then match a completed `doneBool(yes)` or `doneBool(no)` term structurally, as the existing application already does for `yes`. A `where` guard may accept only according to its explicit caller-side pattern and completeness policy; an exhausted, conflicting, or unmatched result must not silently become `false`.
 
-### Which fields need additional syntax?
-
-Greg and Mike's existing `Terms`, `Equations`, and named `Rewrites` suffice to state constructors, equality, and the directed reduction relation. They do **not** uniquely determine an external operation contract: the same named rewrite could be a one-step operation or the entry to normalization, and normalization requires an explicit terminal set and branching policy. `Exports` currently exports and renames *categories only*; the proposed tagged `operation` entry extends that existing interface builder while preserving category-export behavior. It elaborates the existing canonical action record from a named rule and its checked sorts. No separate `Actions` builder is required.
-
-Likewise, `Terms` can declare guest Boolean constructors and `Rewrites` can reduce to them, but their names alone do not authorize the host to treat arbitrary terms as true or false. The current `FullMatch` result uses a guest `Computation` term, so an explicit checked result interpretation appears as an `observation` entry in `Exports`, not as a standalone block. Non-pure effects cannot generally be inferred from rewrite syntax alone: such inference would require a checked effect signature for every intrinsic and a sound compositional effect analysis. The present core instead requires named effect metadata, especially a declared pure, no-emission effect for a predicate operation. A tagged `effect` entry in `Exports` carries that checked shared contract without adding a top-level `Effects` builder. Semantic limits already have canonical bounded defaults; any explicit override belongs under `Options.Semantics.Limits`, not at the Theory-builder level.
-
-**Design direction:** preserve the existing Theory algebra and rule builders; extend `Exports` for checked public operations, effects, and observations; group all lexer, parser, and semantic controls under `Options`; and keep requested rights at the installation boundary. Before implementation, prove that structural elaboration reproduces the canonical action, observation, effect, limit, and requested-rights values without inferred grants, truthiness, or execution strategy. No new regex or rewrite semantics are authorized by this surface-design choice.
-
-Thus a `fullMatch(...)` guest term is parsed under the installed grammar; the `FullMatch` observation invokes the `full-match` action, which starts and normalizes through `Rewrites`; the observation classifies completed terms. Requested rights, checked effects, and `Options.Semantics.Limits` constrain that path independently. `Equations` express equality; a normalizing action follows directed rewrites, not equations. The current schema can separately name an equation as the entry of a one-step action, but that is not how the Regex actions above are defined.
+The Regex rule intrinsics are a closed, pure set in the current core. For a general effectful theory, purity and capability requirements must be checked from the actual transition primitives and their trusted signatures before admitting an effectful or guard invocation; a source-level `effect Pure` assertion cannot make an effectful rule pure. Requested rights remain outside `LanguageCoreV1`: omission requests the current native-FLT default set (`Parse`, `Construct`, `Match`, `Observe`, `ReflectAst`, `Reduce`), while an explicit empty request asks for none. Neither request grants authority. `Options.Semantics.Limits` overrides the bounded theory defaults; exhaustion is a refusal or `Undetermined`, never fabricated logical evidence.
 
 `token Scalar Reg;` and `token Nat Reg;` deliberately resemble BNFC token declarations, but `Reg` uses all existing PraTTaIL lexer-regex forms. For these two names, the typed `Types` declarations determine the existing native decoder deterministically: `String` maps to the checked `carrier str` representation and `BigInt` to `carrier int`. That inference is a proposed *elaboration rule*; it must be proved equal to the fixture's explicit `literals[].eval` values. A nondefault decoder remains an explicitly typed declaration, never an inference from the spelling of `Scalar` or `Nat`. Unlike BNFC's `["abc"]` enumeration, the unquoted `[A-Z]` character class uses PraTTaIL's existing range semantics. The two declarations lower to the fixture's unchanged runtime patterns `[A-Za-z0-9\u{80}-\u{10FFFF}]` and `[0-9]+` (the JSON source escapes each backslash), with no lexer-language or token-priority change.
 
@@ -224,11 +171,11 @@ The complete rule-AST surface must cover variables, constructor applications, on
 
 The authored `Terms` surface uses Greg and Mike's judgment arm `Label . bindings |- syntax : Category;`. A legacy BNFC arm `Label . Category ::= Items;`, if retained for import compatibility, is a distinct AST variant and must not be mistaken for the proposed **token-regex** syntax. Optional suffixes cover evaluation (`operator`, `carrier`, `handler`, or source requirement), `fold`/`step`, association, `prefix(n)`, sharing the preceding level, tier/bound/force, and documentation. Duplicated attributes are rejected. `prefix(n)` maps to the existing `prefix_bp` field even for a postfix rule; no new precedence convention is invented. Regex's explicit powers remain alternation 10, concatenation 20, postfix 30. Nonassociative postfix rejection and grouping behavior must remain unchanged.
 
-## Remaining declaration families
+## Canonical fields versus authored theory syntax
 
-The following table is the coverage contract for **all** top-level keys accepted by the [current schema](../../../mettail-elab/src/schema.rs), not merely fields used by Regex. The proposed surface does **not** assign a peer Theory builder to each schema key: public semantic records are tagged entries in `Exports`, and operational controls are nested in `Options`. Complex entries remain named and typed, not unvalidated free-form maps.
+The [current schema](../../../mettail-elab/src/schema.rs) accepts more fields than the GSLT presentation requires. This inventory separates the existing or needed *authoring surface* from derived logical structure, runtime policy, and exact programmatic metadata. A canonical field's existence is not a reason to introduce a peer Theory builder. The data-faithful `language/3` route remains available for automatic construction and analysis; it is structurally parsed Rholang data, not a second textual DDL parser.
 
-| Canonical field family | Proposed Theory syntax and exact obligation |
+| Canonical field family | Authoring role and boundary |
 |---|---|
 | `mettail`, `name` | Derived from the language profile and enclosing `Theory`; ordinary `Data` fragments still may not override them. |
 | `types` | `Types` declares category name, optional native/collection/extern carrier, variable admission via `data`, collection delimiters, and refinement predicate. |
@@ -238,25 +185,18 @@ The following table is the coverage contract for **all** top-level keys accepted
 | `sync` | `Sync` declares alignments and location tracking without changing stream membership implicitly. |
 | `terms` | `Terms` preserves label, result sort, context, one of judgment syntax or BNFC items, evaluation, mode, association, `prefix_bp`, previous-level sharing, tier, and documentation. |
 | `equations`, `rewrites` | `Equations`/`Rewrites` preserve names, contexts, ordered premises, and exact structural left/right ASTs. |
-| `rights` | An explicit installation request, not a Theory builder. The installer grants no right without independent authority; omission uses the current native-FLT default request. |
-| `oslf.effects` | Tagged `effect` entries in `Exports` preserve name, class, required effects/capabilities, and emitted effects. |
-| `oslf.actions` | Tagged `operation` entries in `Exports` preserve ID, domain, codomain, entry transition, effect, effect class, required rights, grade, and execution plan. |
-| `oslf.observations` | Tagged `observation` entries in `Exports` preserve name, action, result sort, and optional explicit predicate role. |
-| `oslf.judgments` | `Judgments` preserves signature, exact/bounded decision mode, and ordered named rules/atoms. |
-| `oslf.morphisms` | `Morphisms` preserves source/target and category, constructor, action, and grade mappings. |
-| `oslf.interactive` | `Interactive` is a closed typed field block for cut, channel/datum/continuation sorts. |
-| `oslf.continued` | `Continued` is a closed typed field block for continuation operators and checked witnesses. |
-| `oslf.cost` | `Cost` is a closed typed field block for Cost(G) sorts, operations, laws, and witnesses. |
-| `oslf.resource_projection` | `ResourceProjection` declares the checked semantic-grade-to-host-demand mapping; it grants no funding authority. |
-| `oslf.checkers` | `Checkers` names a pre-installed ABI and limit profile; it cannot install code. |
+| `rights` | Installation policy, not a Theory builder. The installer grants no right without independent authority; omission uses the current native-FLT default request. |
+| `oslf.effects`, `oslf.actions`, `oslf.observations` | Present in the current action-centric FLT service and exact programmatic schema, but **not** required additions to the authored GSLT. The general FLT service must run and observe the theory's checked rewrite relation without authors restating it as named actions or observation tables. Existing explicit data remains valid. |
+| `oslf.judgments` | OSLF judgments derived from the GSLT should be generated or queried from that theory. Explicit extra axioms or checker contracts, if any, require their own soundness justification; the field alone does not justify a `Judgments` builder. |
+| `oslf.morphisms` | Theory/module composition and `Replacements` supply the existing authored mapping language. Additional canonical morphism evidence may remain explicit data or derived evidence; do not duplicate it as obligatory Theory syntax. |
+| `oslf.interactive`, `oslf.continued`, `oslf.cost` | The corresponding structure and laws are defined by typed terms, equations, and rewrites when they are part of the language. Canonical witnesses or checked profile metadata are separate derived or programmatic artifacts; no standalone builder follows merely from their fields. |
+| `oslf.resource_projection`, `oslf.checkers` | Checked host-integration or checker-ABI requirements, not guest-language syntax or an authority grant. Their programmatic representation remains available; any additional surface must be justified at that boundary. |
 | `oslf.limits` | `Options.Semantics.Limits` covers every accepted bound; omission retains the current default. |
-| `guards` | `Guards` has typed predicate, connective, theory, channel, and join declarations with the current predicate subset and metadata. |
-| `tree_invariants` | `TreeInvariants` declares named structural constraints and documentation. |
-| `relations` | `Relations` preserves the legacy relation/rule schema only where its profile already permits it; it does not bypass `language/3` restrictions. |
+| `guards`, `tree_invariants`, `relations` | Existing analysis and profile-specific data remain exact in `language/3`; the GSLT's reduction and equality laws remain in `Rewrites` and `Equations`. Additional source forms require a specific non-derivability case and must not silently expand the core theory. |
 | `options` | `Options` groups closed lexer, parser, generation, weighting, and semantic settings; parser recovery and semantic limits are nested closed blocks. The groupings lower to the existing canonical fields without changing their meaning. |
-| `semantics`, `context`, `doc` | `Semantics`, `Context`, `Documentation` preserve these authored observations without making them executable code. |
-| `extends`, `includes`, `mixins` | Separate builders preserve the resolver's different composition/projection/collision laws. |
-| `exports`, `replacements` | Existing category-export/rename entries in `Exports` and existing `Replacements` retain their meaning. Tagged semantic entries in `Exports` use distinct syntax and checked cross-kind collision rules. |
+| `semantics`, `context`, `doc` | Authoring metadata in the data-faithful form; not additional rewrite or equality semantics. A readable metadata surface is optional and must preserve the current closed schema. |
+| `extends`, `includes`, `mixins` | Existing Module/Theory parameters, references, combinators, and `Replacements` are the primary authored composition surface. Preserve their distinct resolver laws; do not add redundant builders merely to mirror data keys. |
+| `exports`, `replacements` | Existing category visibility/renaming in `Exports` and existing `Replacements` retain their Greg/Mike meanings. No semantic-operation entries are added to `Exports`. |
 | `core_schema`, `core` | Stay in closed exact-core `Data`; they are not presentation builders. |
 
 Representative record spelling for the broader families is:
@@ -274,25 +214,15 @@ Options {
   Semantics { Limits { max_steps = 10000000; } }
 }
 Sync { align Main Auxiliary at {"\n"}; track Locations with Main; }
-Judgments { J(A, B) decision exact { Rule: if K(x, y) then J(x, y); } }
-Morphisms {
-  M : "Source" -> "Target" {
-    categories { A => B; }
-    constructors { C => D; }
-    actions { "a" => "b"; }
-    grades { G => H; }
-  }
-}
-Checkers { "checker-abi" limit_profile "profile"; }
 ```
 
 The `Modes` example keeps the same `token Name Reg;` form inside a mode; `Options.Lexer.TokenOptions` supplies mode-stack behavior. The `Sync` example uses a BNFC-style sequence. Field blocks are closed and type-checked, not arbitrary host-code evaluation. The existing data-schema option keys are `beam_width`, `log_semiring_model_path`, `dispatch`, `emit_tests`, `emit_blockly`, `emit_simulator`, `parse_only`, `case_insensitive`, `unicode_normalization`, `reserved_keywords`, `contextual_keywords`, and `recovery`; the proposed nested grouping is surface organization, not a new interpretation of those keys. Recovery must include every current key: `skip_per_token`, `delete_cost`, `substitute_cost`, `insert_cost`, `swap_cost`, `max_skip_lookahead`, `deep_nesting_threshold`, `deep_nesting_skip_mult`, `shallow_depth_threshold`, `shallow_depth_skip_mult`, `low_bp_threshold`, `low_bp_skip_mult`, `collection_insert_mult`, `group_insert_mult`, `bracket_insert_mult`, `mixfix_substitute_mult`, `simulation_valid_mult`, `simulation_fail_penalty`, `beam_width`, `cascade_window`, `vpa_nesting_ceiling`, `adaptive_weight_threshold`, `deterministic_skip_discount`, `ambiguous_insert_discount`, and `max_recovery_depth`.
 
-The complete guard/tree language needs dedicated structural productions for the existing predicate tags, not a string hidden in `guard(...)`: positive/negative calls, finite domains, bounded quantification, linear constraints, equality/inequality, comparisons, conjunction/disjunction/negation/implication, AC matching where admitted, and tree root/parent/child/subtree/category/label references. Each surface production lowers to exactly one admitted canonical tag; unsupported modal or profile-specific forms remain rejected.
+Guard and tree-query data remain available in the exact programmatic schema. A readable Rholang query language may expose positive/negative calls, finite domains, bounded quantification, linear constraints, equality/inequality, comparisons, logical connectives, AC matching, and tree references where their profiles admit them. Those are *queries over* the theory and its OSLF-derived logic, not additional definitions of the guest language's syntax or reduction semantics. Unsupported modal or profile-specific forms remain rejected.
 
 ## Boolean values and predicate evidence
 
-The current Regex fixture declares `BTrue`/`BFalse` as constructors in the `Bool` sort. `Bool = bool` admits native Boolean carrier values but **does not equate** those constructors with Rholang `true`/`false`. The application currently matches `doneBool(yes)` and then explicitly sends `true`. Its `FullMatch` predicate role separately maps checked `DoneBool(BTrue)` and `DoneBool(BFalse)` to accept/refute evidence for a guard. An unexpected, conflicting, exhausted, or missing result is undetermined, not `false`.
+The current Regex fixture declares `BTrue`/`BFalse` as constructors in the `Bool` sort. `Bool = bool` admits native Boolean carrier values but **does not equate** those constructors with Rholang `true`/`false`. The application already matches the structural FLT pattern `doneBool(yes)` and then explicitly sends Rholang `true`. Its current `FullMatch` predicate-role record additionally maps `DoneBool(BTrue)` and `DoneBool(BFalse)` to guard evidence; that record is part of the present action-centric service, not a new GSLT axiom or a necessary Theory builder. An unexpected, conflicting, exhausted, or missing result is undetermined, not `false`.
 
 ### How `fullMatch` guards a receive
 
@@ -305,7 +235,7 @@ for(@text <- @"regex.guard.input"
 }
 ```
 
-`language` is an opaque installed handle in lexical scope. The qualified guest parser constructs `CallFullMatch(Pattern, Text)` in the declared `Computation` sort. The predicate role on observation `FullMatch` selects that input constructor, runs its checked `full-match` action through the shared semantic transition kernel, and compares **every** completed result against the declared closed `DoneBool(BTrue)` and `DoneBool(BFalse)` keys. It does not ask whether a term's name resembles `true`, nor does it coerce the guest `Bool` carrier to a Rholang Boolean. The classifications are:
+`language` is an opaque installed handle in lexical scope. The qualified guest parser constructs `CallFullMatch(Pattern, Text)` in the declared `Computation` sort. The **current** predicate service selects the named `FullMatch` observation, runs its checked action through the shared semantic transition kernel, and compares every completed result against its declared positive and negative terms. The required generalization is for a Rholang caller to express that test as an FLT pattern or OSLF query over the theory's reduction relation, without restating the reduction semantics in the Theory. That direct-query `where` path is **not yet implemented**. It must preserve the following classification:
 
 | Checked result set | Guard evidence |
 |---|---|
@@ -317,60 +247,41 @@ The RSpace communication commits only on `Sat` with a valid, still-live authorit
 
 ### What Boolean algebra is, and is not, present
 
-`FullMatch` is *usable as a predicate* because its role gives a checked map from terminal guest terms into `Sat`, `Unsat`, or `DontKnow`. The verdicts use strong-Kleene conjunction, disjunction, and negation. For example, `Unsat and DontKnow` is `Unsat`, `Sat or DontKnow` is `Sat`, and `not DontKnow` remains `DontKnow`. This is **not** a two-valued Boolean algebra: excluded middle fails at `DontKnow` (`DontKnow or not DontKnow` remains `DontKnow`). The policy that blocks a receive on `DontKnow` is an operational admission decision, not a logical conversion from unknown to false. A safe collapse to native `bool` exists only for `Sat`/`Unsat`; `DontKnow` has no Boolean value.
+The query yields `Sat`, `Unsat`, or `DontKnow` evidence. The verdicts use strong-Kleene conjunction, disjunction, and negation. For example, `Unsat and DontKnow` is `Unsat`, `Sat or DontKnow` is `Sat`, and `not DontKnow` remains `DontKnow`. This is **not** a two-valued Boolean algebra: excluded middle fails at `DontKnow` (`DontKnow or not DontKnow` remains `DontKnow`). The policy that blocks a receive on `DontKnow` is an operational admission decision, not a logical conversion from unknown to false. A safe collapse to native `bool` exists only for `Sat`/`Unsat`; `DontKnow` has no Boolean value.
 
-The two guest constructors could represent the two elements of a Boolean algebra **only after** the theory declares Boolean operations and proves their total, closed, terminating/confluent truth tables on that constructor subset. The present Regex fixture declares no such general `and`/`or`/`not` algebra. For `FullMatch` specifically, a proof of total deterministic normalization into exactly one of the two declared terminal forms under adequate resources would make each successful observation two-valued; bounded exhaustion or invalid evidence still remains a third outcome. A first-class Rholang `bool` therefore needs the explicit projection below, not an inference from the `Bool` sort or from the guard policy.
+The two guest constructors could represent the two elements of a Boolean algebra **only after** the theory declares Boolean operations and proves their total, closed, terminating/confluent truth tables on that constructor subset. The present Regex fixture declares no such general `and`/`or`/`not` algebra. For `fullMatch` specifically, a proof of total deterministic normalization into exactly one of the two declared terminal forms under adequate resources would make each successful query two-valued; bounded exhaustion or invalid evidence still remains a third outcome. Rholang code can already construct a host `true` after structurally matching the positive FLT result; a negative mapping must be equally explicit. No new `Projections` Theory builder or `observeValue` service is justified by this example.
 
 ![Checked FLT predicate and COMM-time admission](figures/module-ddl-predicate-flow.svg)
 
-For first-class host values, add a separately versioned projection declaration and explicit observation operation:
-
-```text
-Projections {
-  BooleanResult : Computation -> Rholang.Bool {
-    (DoneBool (BTrue)) => true;
-    (DoneBool (BFalse)) => false;
-  }
-}
-Exports {
-  observation FullMatch : Computation via "full-match"
-    projects BooleanResult
-    predicate CallFullMatch
-    accepts (DoneBool (BTrue))
-    rejects (DoneBool (BFalse));
-  observation Nullable : Computation via "nullable" projects BooleanResult;
-}
-```
-
-This is a **new canonical-schema and FLT-service feature**, not sugar over existing `predicate_role`. Existing `observe` still returns guest terms and receipts. An opt-in `observeValue` returns each checked guest result plus its projected host Boolean and receipt; it never elects a first result. Installation validates exact closed guest keys, unique rows, declared guest and host sorts, and authority to use the observation. Unmapped or inconclusive results fail explicitly. A later `Codecs` declaration may provide a proved, explicit bidirectional subset mapping for constructing `BTrue`/`BFalse` from Rholang Boolean inputs; it is not required for read-only observation and must not be inferred from the sort name. `ResourceProjection` remains exclusively about cost/funding and must not be overloaded for value conversion.
+The derived-query path must preserve all parse and rewrite alternatives. A pattern that matches one candidate is not sufficient to discard another candidate, and budget exhaustion is not negative evidence. Explicit Rholang pattern matching maps *guest terms* to host process behavior without making guest constructors identical to native Rholang Booleans. `ResourceProjection` remains exclusively about cost/funding and must not be overloaded for value conversion.
 
 ## Elaboration, identity, and authority laws
 
-The generated Rholang grammar must emit typed `Ddl*` AST variants for each builder and BNFC `Reg` node. The existing structural DDL lowering then produces the canonical presentation value; the existing checked schema and composition machinery produce `LanguageCore`. There is no source substring extraction, host `Display` round-trip, or second DDL parser. The compiled lexer/WPDA and OSLF images remain derived and replaceable; the immutable language value remains authoritative.
+The generated Rholang grammar must emit typed `Ddl*` AST variants for the necessary Greg/Mike builders and BNFC-inspired `Reg` nodes. Existing structural DDL lowering produces the canonical presentation value; the checked schema and composition machinery produce `LanguageCore`. There is no source substring extraction, host `Display` round-trip, or second DDL parser. Lexer/WPDA and OSLF images remain derived and replaceable; the immutable GSLT presentation remains authoritative for its syntax, equality, and transition relation.
 
 The following laws are implementation requirements:
 
 1. **Old-form preservation:** every previously admitted `Data` value decodes exactly as before. Closed exact-core `Data` still begins only at `Empty`, contains exactly `core_schema` and `core`, and cannot be mixed with presentation builders as an open fragment.
-2. **Builder correspondence:** for each new declaration, structural elaboration equals its documented canonical fragment, including declaration order, optional-versus-present fields, native carrier spelling, names, and source occurrences.
-3. **Core correspondence:** migrating a fixture yields the same admitted `LanguageCore`, including the same canonical regex-string patterns where applicable. No native `Reg` core arm or new regex semantics are introduced; if a surface form lacks an exact mapping, elaboration rejects it.
+2. **Builder correspondence:** each authored `Types`, `Terms`, `Equations`, `Rewrites`, composition, and `Options` declaration lowers to its documented canonical grammar/rule/configuration fields, preserving order, carrier spelling, names, and source occurrences. OSLF-derived observations are not silently reinterpreted as authored axioms.
+3. **GSLT and operational correspondence:** the migrated authored fixture has the same accepted grammar, equality, and rewrite relation, including the same canonical regex-string patterns where applicable. The current fixture's action/observation metadata may differ or be absent, so full `LanguageCore` fingerprint equality is **not** claimed. Instead, prove that generic FLT relation execution and the former named-service path agree on applicable steps, completed result families, resource refusals, and guard evidence, while preserving all ambiguity. No native `Reg` core arm or new regex semantics are introduced.
 4. **No new authority:** syntax, `Data`, names, aliases, registry records, fingerprints, and reflected tags never act as handles or grants. Rights remain requested-versus-granted. Host handlers and checker ABIs are closed and separately authorized.
 5. **No premature election:** token and parser ambiguity survives until admissible evidence resolves it; lexer priority and deterministic source order are explicit, not accidental effects of formatting.
-6. **Bounds and stack safety:** parsing, AST lowering, regex algebra, core admission, image compilation, projection, and cleanup use the existing explicit-stack/resource-checked discipline. Exhaustion is a typed refusal, not a partial language or a Boolean negative.
+6. **Bounds and stack safety:** parsing, AST lowering, regex algebra, core admission, image compilation, generic relation execution, and cleanup use the existing explicit-stack/resource-checked discipline. Exhaustion is a typed refusal, not a partial language or a Boolean negative.
 
-One migration hazard is nonsemantic-looking identity change. Unnamed equations currently receive names derived from element identity, and each `Data` fragment consumes its own fragment identity. Splitting a fragment among builders can therefore change generated names and fingerprints. Add optional named equations and preserve old names where exact migration needs them; compare complete admitted cores and behavior before claiming parity. Operator power, intrinsic output order, predicate-role terms, and action terminal lists also must be compared exactly.
+One migration hazard is nonsemantic-looking identity change. Unnamed equations currently receive names derived from element identity, and each `Data` fragment consumes its own fragment identity. Splitting a fragment among builders can change generated names and fingerprints. Add optional named equations and preserve old names where exact grammar/rule migration needs them. Eliminating redundant action and observation records intentionally changes the full theory value; compare the actual transition relation and externally visible FLT evidence, not just fingerprints. Operator power, intrinsic output order, and resource bounds must still be compared exactly.
 
 ## Grammar and implementation plan
 
-Braces delimit builders and semicolons terminate declarations. The generated host grammar distinguishes `token Name Reg;` from Greg and Mike's judgment-form term rules inside `Terms`, and both from ordinary Rholang process syntax. It also distinguishes regex alternation from Rholang process parallel composition. New keywords should be contextual where possible; making `char`, `digit`, or `token` globally reserved would be a Rholang regression. Action IDs may be quoted (`"full-match"`) because a hyphen must not be parsed as subtraction. Rule constructors stay parenthesized S-expressions. A native literal stays distinct from a constructor, and a typed collection's element annotation stays distinct from a result-sort annotation. Existing theory-algebra precedence, module imports, lexical scope, and full-expression extent remain unchanged.
+Braces delimit builders and semicolons terminate declarations. The generated host grammar distinguishes `token Name Reg;` from Greg and Mike's judgment-form term rules inside `Terms`, and both from ordinary Rholang process syntax. It also distinguishes regex alternation from Rholang process parallel composition. New keywords should be contextual where possible; making `char`, `digit`, or `token` globally reserved would be a Rholang regression. Rule constructors stay parenthesized S-expressions. A native literal stays distinct from a constructor, and a typed collection's element annotation stays distinct from a result-sort annotation. Existing theory-algebra precedence, module imports, lexical scope, and full-expression extent remain unchanged.
 
 Implementation should proceed as one reviewed contract, with these independently verifiable increments:
 
-1. Freeze a schema-field/variant inventory and exact old/new fixture witnesses. Define the BNFC-inspired surface-to-PraTTaIL mapping and its rejection boundary before changing the parser.
+1. Freeze the GSLT core, lexer/parser configuration, data-faithful extension, and runtime-query boundaries against the OSLF/GSLT sources. Define the BNFC-inspired surface-to-PraTTaIL mapping and its rejection boundary before changing the parser.
 2. Extend `languages/src/rholang.rs` with typed builders and the proposed BNFC-inspired `Reg` grammar; preserve generated AST occurrences and the existing parser hot path. Extend the structural DDL wire only where the authored declaration AST requires it.
 3. Add categories, literal/token `Reg` surface forms, term metadata, and complete rule AST/premises. Lower accepted regex forms to existing canonical `TokenPattern::Regex` strings and reuse the existing PraTTaIL automata and semantic compiler without changing either one's semantics.
-4. Extend the existing `Exports` builder with distinct checked effect, operation, and observation entries; place lexer, parser, and semantic controls under `Options`; keep requested rights at the installation boundary. Add the remaining genuinely declarative OSLF, guard, and composition forms without a redundant builder per canonical field. Preserve exact-core `Data` and current profile restrictions. Add the separately reviewed Boolean projection schema and opt-in service ABI.
-5. Migrate the Regex fixture with no presentation `Data` blocks, retaining a canonical `Data` fixture as the oracle. Run property-based round trips, invalid-input tests, generated/static versus installed/runtime lexer/parser differential tests, full Regex semantic and FLT tests, and public-node entrypoint tests.
+4. Preserve `Exports` as category visibility/renaming only; place lexer, parser, and semantic controls under `Options` and keep requested rights at installation. Reuse the existing compiled rewrite image and semantic transition kernel to expose a checked generic FLT step/normalization/query path. Derive OSLF observations from the theory and caller query rather than authored action or observation tables; prove the relation/OSLF correspondence before changing the runtime service. Preserve exact-core `Data` and current profile restrictions.
+5. Migrate the Regex fixture with no presentation `Data` blocks, retaining its current action-centric form as a differential oracle. Run property-based rule-relationship and query-equivalence tests, invalid-input tests, generated/static versus installed/runtime lexer/parser differential tests, full Regex semantic and FLT tests, and public-node entrypoint tests.
 
-The proof model must cover builder-to-core correspondence; exact equivalence of each admitted surface regex to its emitted existing PraTTaIL pattern, including Unicode ranges and priority; explicit rejection of unmappable forms; declaration/handle capability separation; and projection/refusal laws. Tests must demonstrate that `a*?`, `a++`, and `a?+` remain rejected, grouping works, precedence is 10/20/30, `BTrue` differs from native `true`, and a failed or mixed observation never becomes a host `false`. Deep declarations and regexes must fail within admitted resource bounds, not overflow the process stack.
+The proof model must cover builder-to-GSLT correspondence; exact equivalence of each admitted surface regex to its emitted existing PraTTaIL pattern, including Unicode ranges and priority; explicit rejection of unmappable forms; complete candidate preservation in generic relation execution; derivation of OSLF query evidence; declaration/handle capability separation; and refusal laws. Tests must demonstrate that `a*?`, `a++`, and `a?+` remain rejected, grouping works, precedence is 10/20/30, `BTrue` differs from native `true`, and a failed or mixed query never becomes a host `false`. Deep declarations and regexes must fail within admitted resource bounds, not overflow the process stack.
 
-This proposal is intentionally a **surface and correspondence design**. It does not claim that the shown syntax or first-class Boolean projection currently exists or passes tests; it does not propose a BNFC difference backend or change PraTTaIL regex semantics.
+This proposal is intentionally a **surface and correspondence design**. It does not claim that the shown token/options syntax or generic FLT relation-query path currently exists or passes tests; it does not propose a BNFC difference backend or change PraTTaIL regex semantics.
