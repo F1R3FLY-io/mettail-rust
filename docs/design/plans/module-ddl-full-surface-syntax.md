@@ -16,7 +16,7 @@ The declaration path is one-way and structural: generated host AST, typed declar
 
 ## Authored Regex spelling
 
-This excerpt shows the authored language definition, not a field-by-field transcription of the current service records. The ordinary `Exports` builder is omitted because the example does not need to hide or rename categories. Requested rights remain installation policy rather than a `Theory` attribute. `Options` owns optional lexer, parser, and semantic controls, including semantic limits. The two lexical declarations use a **BNFC-inspired `token Name Reg;` form** inside `Terms`. They are not an invented `Literals { Category ::= Reg => carrier … }` language. `Types` carries the separate canonical carrier and variable-admission metadata. The short rewrite sample illustrates the rule grammar; the migration rule in [Typed rules](#typed-rules-and-native-values) applies to every remaining rewrite in the fixture. Each form shown is proposed syntax, not an assertion that the current parser accepts it.
+This excerpt shows the authored language definition, not a field-by-field transcription of the current service records. The ordinary `Exports` builder is omitted because the example does not need to hide or rename categories. Requested rights remain installation policy rather than a `Theory` attribute. `Options` owns optional lexer, parser, and semantic controls, including semantic limits. The two lexical declarations use a **BNFC-inspired `token Name Reg;` form** inside `Terms`. They are not an invented `Literals { Category ::= Reg => carrier … }` language. `Types` carries the separate canonical carrier and variable-admission metadata. In particular, the `data` modifier in this excerpt is **proposed**, not part of Greg and Mike's current `Types { Category; }` grammar: it requests a category without automatically admitted variable forms. The short rewrite sample illustrates the rule grammar; the migration rule in [Typed rules](#typed-rules-and-native-values) applies to every remaining rewrite in the fixture. Each form shown is proposed syntax, not an assertion that the current parser accepts it.
 
 ```text
 Module RegexGSLT {
@@ -83,6 +83,8 @@ Module RegexGSLT {
   theory Regex()
 }
 ```
+
+The Regex fixture sets `admits_variables: false` for every listed category. Proposed `data Category;` would lower to that existing schema property; plain `Category;` retains the current default, `admits_variables: true`. This is a *category-admission setting*, not an extra constructor, equality, rewrite, or semantic capability. It borrows the meaning of `data` from the [existing compile-time language specification](../../../languages/src/rholang.rs), whose closed metasyntax categories do not acquire automatic variable/HOL forms. The current in-Rholang DDL parser accepts only `Category;`, so the modifier and native-carrier spellings shown here require separate syntax and elaboration work. Neither spelling is related to the exact programmatic `Data(value)` builder.
 
 ### Language semantics, module visibility, and FLT execution
 
@@ -178,7 +180,7 @@ The [current schema](../../../mettail-elab/src/schema.rs) accepts more fields th
 | Canonical field family | Authoring role and boundary |
 |---|---|
 | `mettail`, `name` | Derived from the language profile and enclosing `Theory`; ordinary `Data` fragments still may not override them. |
-| `types` | `Types` declares category name, optional native/collection/extern carrier, variable admission via `data`, collection delimiters, and refinement predicate. |
+| `types` | Existing `Types` declares category names. Proposed category modifiers and annotations would expose the already-present native/collection/extern carrier, variable-admission (`data` for `admits_variables: false`), collection delimiter, and refinement fields; these are not yet accepted by the in-Rholang DDL parser. |
 | `literals` | BNFC-inspired `token Category Reg;` inside `Terms` for a carrier-backed category; the `Types` carrier supplies the checked default decoder. An explicit typed decoder override covers the other native-evaluation variants. |
 | `tokens` | The same `token Name Reg;` inside `Terms` for named tokens; `Options.Lexer.TokenOptions` attaches optional category/decoder, priority, push/pop, and stream without altering that declaration form. `position token` requires an additional canonical position field. |
 | `modes` | `Modes` declares name, optional `raw`, and its ordered token declarations. |
