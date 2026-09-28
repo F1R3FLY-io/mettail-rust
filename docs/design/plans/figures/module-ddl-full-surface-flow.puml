@@ -1,0 +1,42 @@
+@startuml
+title Proposed in-Rholang Module/ Theory declaration flow
+left to right direction
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam rectangle {
+  BorderColor #37474F
+  FontColor #102027
+  RoundCorner 16
+}
+
+rectangle "Rholang source\nModule / Theory\nBNFC Reg and typed builders" as source #DCEEFF
+rectangle "Generated Rholang\nparser and Ddl AST" as frontend #BBDEFB
+rectangle "Structural declaration\nelaboration" as elaborate #B3E5FC
+database "Canonical value\nand LanguageCore" as core #C8E6C9
+rectangle "Exact-core Data\nprogrammatic input" as data #E1F5FE
+rectangle "Existing lexer / WPDA\nimage compiler" as parser #D1C4E9
+rectangle "Existing OSLF\nsemantic-image compiler" as semantic #D1C4E9
+rectangle "Independent capability\ngrant and policy" as grant #FFE0B2
+rectangle "Atomic installation\nand verification" as install #FFF9C4
+rectangle "Opaque installed handle\nFLT parse / match / reduce / observe" as runtime #FFCDD2
+
+source --> frontend
+frontend --> elaborate
+elaborate --> core
+data --> core
+core --> parser
+core --> semantic
+parser --> install
+semantic --> install
+grant --> install
+install --> runtime
+
+note bottom of elaborate
+  No source-text DDL reparse.
+  Native BNFC Reg is parsed structurally.
+end note
+note bottom of install
+  Requested rights do not grant authority.
+end note
+@enduml
