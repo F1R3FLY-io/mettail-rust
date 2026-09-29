@@ -8,7 +8,7 @@ Put named projection rule groups **inside `Rewrites`**, alongside ordinary guest
 
 ```text
 Rewrites {
-  projection Boolean : Bool <~> host.Bool {
+  projection Boolean : Bool <~> host::Bool {
     Yes : (BTrue) <~> true;
     No  : (BFalse) <~> false;
   }
@@ -35,7 +35,7 @@ In particular, after guest terms are lowered to their checked Rholang representa
 
 | Layer | Guest endpoint | Host endpoint | What remains distinct |
 |---|---|---|---|
-| Authoring | `Bool`, `Entry`, or another declared category | `host.Bool`, `host.Str`, `host.Proc`, or another registered host category | Names resolve in explicit endpoint namespaces. |
+| Authoring | `Bool`, `Entry`, or another declared category | `host::Bool`, `host::Str`, `host::Proc`, or another registered host category | Names resolve in explicit endpoint namespaces. |
 | Semantic identity | Guest language commitment and category | Host signature/profile commitment and category | Equal spelling or equal numeric IDs do not establish equal sorts. |
 | Structural representation | Reflected guest term in Rholang `Par` | Checked host value or term in Rholang `Par` | Constructor ownership, native carrier, binding scope, and capabilities remain checked. |
 | Execution | Guest rewrites or a selected projection direction | Checked construction of the target endpoint | One kernel executes the selected relation; it does not run host processes merely because it constructs their syntax. |
@@ -64,7 +64,7 @@ The paths in this section refer to the `mettail-module-dev/mettail-rust` feature
 
 The actual Regex fixture declares `Bool = bool`, `BTrue` with concrete spelling `yes`, and `BFalse` with spelling `no` ([fixture, lines 17–37](../../../rholang-runtime/tests/fixtures/regex_gslt_application.rho#L17)). It separately contains action/observation metadata, including a `FullMatch` predicate role ([lines 390–413](../../../rholang-runtime/tests/fixtures/regex_gslt_application.rho#L390)). Neither the carrier declaration nor that predicate role implements a general bidirectional value conversion.
 
-The feature-worktree code supports a native-Boolean direct relation path when no predicate role is selected ([service selection, lines 352–409](../../../rholang-runtime/src/semantic_service.rs#L352)). It does not yet mean that a `Computation` result can select an arbitrary `Computation ~> host.Bool` mapping. That additional composition is part of this proposal.
+The feature-worktree code supports a native-Boolean direct relation path when no predicate role is selected ([service selection, lines 352–409](../../../rholang-runtime/src/semantic_service.rs#L352)). It does not yet mean that a `Computation` result can select an arbitrary `Computation ~> host::Bool` mapping. That additional composition is part of this proposal.
 
 ## Proposed surface
 
@@ -87,6 +87,8 @@ ProjectionRule :=
   Name RuleContext? ":" RulePremises? GuestRuleTerm Direction HostRuleTerm ";"
 
 Direction := "~>" | "<~" | "<~>"
+HostCategory := "host" "::" CategoryName
+HostConstructor := "(" "host" "::" ConstructorName RuleTerm* ")"
 ```
 
 The group signature fixes the categories and supported direction. In the initial surface each row uses the group's direction. Independently designed forward and backward conversions use separate named groups; they do not falsely claim to be inverses. A later grouping convenience may display them together without changing their separate contracts.
@@ -97,9 +99,9 @@ The group signature fixes the categories and supported direction. In the initial
 | `G <~ H` | Host value/term of category `H` | Guest term of category `G` | A directed, possibly partial relation, with the guest still written on the left. |
 | `G <~> H` | Either endpoint, selected by the caller | The other endpoint | Checked partial inverse rules over their admitted domains. |
 
-`host` denotes the host signature bound by the installation environment. It is not an ordinary user-defined alias, a URI to execute, or a source-level authority grant. `host.Bool`, `host.Str`, and `host.Proc` match category names in the current host specification ([host categories, lines 83–95](../../../languages/src/rholang.rs#L83)). Other host categories may be admitted through the same typed endpoint mechanism. An immutable signature/profile commitment resolves the namespace; a caller cannot reinterpret a previously installed projection by rebinding `host`.
+`host` denotes the host signature bound by the installation environment. It is not an ordinary user-defined alias, a URI to execute, or a source-level authority grant. `::` is namespace qualification, not field access or an operation on terms. `host::Bool`, `host::Str`, and `host::Proc` match category names in the current host specification ([host categories, lines 83–95](../../../languages/src/rholang.rs#L83)). Other host categories may be admitted through the same typed endpoint mechanism. An immutable signature/profile commitment resolves the namespace; a caller cannot reinterpret a previously installed projection by rebinding `host`. The new `::` token is recognized contextually in this DDL position and remains distinct from the existing `::=` regex-declaration delimiter.
 
-Within rules, guest constructors remain parenthesized, such as `(BTrue)`. Host constructors may be qualified, such as `(host.CastStr text)`. Host native literals are resolved by the declared host endpoint and expected child sorts. The DDL parser recognizes these structural forms directly. It never evaluates an arbitrary Rholang process while elaborating a declaration.
+Within rules, guest constructors remain parenthesized, such as `(BTrue)`. Host constructors may be qualified, such as `(host::CastStr text)`. Host native literals are resolved by the declared host endpoint and expected child sorts. The DDL parser recognizes these structural forms directly. It never evaluates an arbitrary Rholang process while elaborating a declaration.
 
 ### Why the exact example is `(BTrue) <~> true`
 
@@ -113,7 +115,7 @@ An editor may display `yes` as the guest-side preview, using the declared syntax
 
 ### Carrier transport is explicit and narrow
 
-`projection TextValue : Text <~> host.Str via carrier;` requests the checked structural correspondence between compatible native carrier leaves. It does not convert every constructor in `Text`. Its domain is the native-leaf subset admitted by the guest category and the selected host codec.
+`projection TextValue : Text <~> host::Str via carrier;` requests the checked structural correspondence between compatible native carrier leaves. It does not convert every constructor in `Text`. Its domain is the native-leaf subset admitted by the guest category and the selected host codec.
 
 The implementation resolves exact representations, range/refinement restrictions, Unicode policy, numeric width, collection behavior, and codec identity. Matching a broad carrier family is insufficient: the current host's `Int` is `i64`, whereas a guest's integer representation may be wider. An out-of-range value is explicitly unmapped or refused; it is not truncated. Text does not become bytes by sharing an internal buffer, and a capability never becomes a string by rendering it.
 
@@ -129,13 +131,13 @@ This excerpt is proposed syntax in the existing Regex theory, after its `Types` 
 Rewrites {
   NullableCoreDone : (NullableCore (NDone B)) ~> (DoneBool B);
 
-  projection Boolean : Bool <~> host.Bool {
+  projection Boolean : Bool <~> host::Bool {
     Yes : (BTrue) <~> true;
     No  : (BFalse) <~> false;
   }
 
-  projection CompletedBoolean : Computation ~> host.Bool {
-    Done(b:Bool, h:host.Bool):
+  projection CompletedBoolean : Computation ~> host::Bool {
+    Done(b:Bool, h:host::Bool):
       if projection Boolean(b, h) then
         (DoneBool b) ~> h;
   }
@@ -165,23 +167,23 @@ Theory Entries() {
   }
 
   Rewrites {
-    projection TextValue : Text <~> host.Str via carrier;
+    projection TextValue : Text <~> host::Str via carrier;
 
-    projection EntryValue : Entry <~> host.Proc {
-      Pair(k:Text, v:Text, hk:host.Str, hv:host.Str):
+    projection EntryValue : Entry <~> host::Proc {
+      Pair(k:Text, v:Text, hk:host::Str, hv:host::Str):
         if projection TextValue(k, hk), projection TextValue(v, hv) then
           (MakeEntry k v)
-          <~> (host.CastList {(host.CastStr hk), (host.CastStr hv)});
+          <~> (host::CastList {(host::CastStr hk), (host::CastStr hv)});
     }
   }
 }
 ```
 
-The braced collection is the existing rule-term collection notation. Its ordered host-list interpretation comes from the registered `host.CastList` signature, not from the braces alone. `host.CastStr` and `host.CastList` correspond to current host constructors ([lines 1300–1303](../../../languages/src/rholang.rs#L1300)). Exposing their signature and canonical collection representation to projection compilation is new integration work.
+The braced collection is the existing rule-term collection notation. Its ordered host-list interpretation comes from the registered `host::CastList` signature, not from the braces alone. `host::CastStr` and `host::CastList` correspond to current host constructors ([lines 1300–1303](../../../languages/src/rholang.rs#L1300)). Exposing their signature and canonical collection representation to projection compilation is new integration work.
 
 For native text leaves, guest `entry("color", "blue")` projects to host `["color", "blue"]`; the inverse constructs the same guest entry. A host list of three values, a list containing an integer, or a host send process is outside the inverse domain. A guest `Entry` containing a non-native `Text` constructor is outside this particular forward domain unless `TextValue` is deliberately extended.
 
-The two `TextValue` calls convert the endpoint types explicitly. Equal underlying string representations do not allow a `Text` metavariable to be used as `host.Str` without a checked correspondence. Both call plans can be generated for this structural example: forward calls receive guest leaves; reverse calls receive host leaves. Their results then construct the other endpoint.
+The two `TextValue` calls convert the endpoint types explicitly. Equal underlying string representations do not allow a `Text` metavariable to be used as `host::Str` without a checked correspondence. Both call plans can be generated for this structural example: forward calls receive guest leaves; reverse calls receive host leaves. Their results then construct the other endpoint.
 
 No Boolean-specific dispatch, Regex-specific evaluator, string rendering, or second parser participates in this example. The same pattern applies to admitted numeric categories, records, sums, trees, collections, bound syntax, and opaque values whose host contracts support the required operations.
 
@@ -191,14 +193,14 @@ An entry's key can be exported while its value is discarded. A separately author
 
 ```text
 Rewrites {
-  projection KeyOnly : Entry ~> host.Str {
-    Key(k:Text, v:Text, hk:host.Str):
+  projection KeyOnly : Entry ~> host::Str {
+    Key(k:Text, v:Text, hk:host::Str):
       if projection TextValue(k, hk) then
         (MakeEntry k v) ~> hk;
   }
 
-  projection WithEmptyValue : Entry <~ host.Str {
-    Default(k:Text, hk:host.Str):
+  projection WithEmptyValue : Entry <~ host::Str {
+    Default(k:Text, hk:host::Str):
       if projection TextValue(k, hk) then
         (MakeEntry k "") <~ hk;
   }
@@ -226,7 +228,7 @@ h\in D_H &\implies P(Q(h))\equiv_H h.
 \end{aligned}
 ```
 
-Definedness must be preserved as well as the returned value: the corresponding reverse application must exist on each forward image, and conversely. Neither law asserts total coverage of the whole declared category. The `EntryValue` example is partial on `host.Proc`.
+Definedness must be preserved as well as the returned value: the corresponding reverse application must exist on each forward image, and conversely. Neither law asserts total coverage of the whole declared category. The `EntryValue` example is partial on `host::Proc`.
 
 Reversing an arrow is not a general program inversion algorithm. The initial automatic `<~>` checker should accept a decidable structural fragment: exact constants; typed constructor patterns with recoverable metavariables; calls to already checked partial isomorphisms; and collections/binders only where the supported matcher can certify recovery and scope. Check overlap and compatibility across the entire group, not only each row separately. A nonlinear pattern, erased variable, unconstrained output, lossy intrinsic, problematic equation, or unsupported inverse dependency must produce a precise refusal or require independently checked law evidence. For instance, two distinct guest constructors both mapped to host `true` cannot both be part of an inverse table unless the admitted guest equality and domain proof justify that identification.
 
@@ -261,9 +263,31 @@ with explicitly specified simulation strength, observations, effects, binding be
 
 The default projection request is structural: it applies the chosen projection to an already admitted input. A separate explicit request policy may normalize the guest first and then project every completed alternative. This distinction prevents a conversion declaration from implicitly running an arbitrary guest computation or choosing a normal form.
 
-Within a projection rule, guest reduction premises remain ordinary GSLT transition premises, closed intrinsics remain the existing checked primitive operations, and a projection premise calls the named boundary relation. Any recursion uses the kernel's bounded worklist and shares the request budget. Host construction does not execute the constructed `host.Proc`; effects require a subsequent separately authorized host operation.
+Within a projection rule, guest reduction premises remain ordinary GSLT transition premises, closed intrinsics remain the existing checked primitive operations, and a projection premise calls the named boundary relation. Any recursion uses the kernel's bounded worklist and shares the request budget. Host construction does not execute the constructed `host::Proc`; effects require a subsequent separately authorized host operation.
 
 Ordinary unqualified guest normalization never automatically chooses a projection. The pair `BTrue ~> true` and `BTrue <~ true`, if inserted as unrestricted rewrites in one relation, would both change the guest result domain and make conversion cycles possible. A selected forward relation or selected reverse relation has a single endpoint direction; an explicit round trip consists of two calls with intermediate admission.
+
+### Mixed guest–host operations are typed compositions
+
+A projection makes a host value available to a guest operation only through an explicit, checked conversion. For example, suppose the guest theory already defines `FullMatch` on `Pattern` and `Text`, with a `Bool` result; `TextValue : Text <~> host::Str` supplies an admitted host-to-guest text direction; and `Boolean : Bool <~> host::Bool` supplies an admitted guest-to-host result direction. An operation taking a guest `Pattern` and a host `Str` may compose those three selected relations without adding host values to the guest's ordinary rewrite relation.
+
+Let $`F`$ be the guest `FullMatch` relation, $`Q_{mathrm{Text}}`$ the selected `host::Str`-to-`Text` relation, and $`P_{mathrm{Bool}}`$ the selected `Bool`-to-`host::Bool` relation. The mixed operation has the relational meaning:
+
+```math
+\widehat F
+=P_{\mathrm{Bool}}\circ F\circ
+  (\mathrm{id}_{\mathrm{Pattern}}\times Q_{\mathrm{Text}}).
+```
+
+Here $`\circ`$ is relational composition, $`\times`$ combines the independent typed inputs, and $`\mathrm{id}_{\mathrm{Pattern}}`$ leaves the guest pattern unchanged. This defines a partial, possibly multivalued relation, not automatically a total function. The composed request names each projection and direction, carries all source alternatives and receipts, shares one bounded work budget, and accepts a unique-value or Boolean result only after complete evidence establishes it. The host input is never silently coerced merely because a projection with matching endpoint names exists.
+
+This contract also scales to several host input types, guest inputs, and a host output: use a checked product of the chosen input projections, then the existing guest operation, then an optional output projection. An effectful guest operation still needs its normal action/effect rights and settlement; pure projections cannot launder those requirements. If a first-class *named mixed operation* is later authored in the DDL, its signature must explicitly list guest and host endpoint types and elaborate to this same typed composition plan and kernel, not create a second evaluator or make the guest's internal `Terms` silently polymorphic over host values. The present projection-group syntax alone defines the conversion relations, not that new named-operation surface.
+
+A host-typed input may be filled by an already parsed Rholang process hole at run time. The hole carries an expected endpoint such as `host::Proc` or `host::Str`; filling it first checks the actual structural Rholang term against that exact host category, lexical scope, ownership, and the request budget. A `host::Proc` hole may admit a process term; a `host::Str` hole admits a checked string value or term, not an arbitrary process merely because both have a `Par` representation. The selected host-to-guest projection then consumes the admitted value. Filling never reparses the process as guest text, and merely constructing a host process does not execute it.
+
+Host-category **admission** is not a host-to-host rewrite. If the fill already inhabits the projection's declared host input category, it can be projected directly. If it instead inhabits `host::Proc` and the selected projection requires `host::Str`, an explicit checked host transformation must establish a `host::Str` result first: this may be a structural extraction from a known constructor, an ordinary host rewrite, or an authorized host computation according to the host theory. The complete result family and receipts of that step feed the host-to-guest projection; no first-result selection, implicit evaluation, or type-name cast is permitted. Thus host→host rewriting is composable when genuinely required, but it is not mandatory merely to pattern-match a host-typed hole.
+
+The current FLT template-hole record carries a **guest** `CategoryId` only ([runtime hole record](../../../grammar-core/src/runtime.rs#L78), [installed construction admission](../../../rholang-runtime/src/language_install.rs#L1828)). Host-typed inputs therefore require a versioned endpoint-qualified telescope at the mixed-operation boundary, with the existing structural hole transport and admission discipline reused. They must not be smuggled into the guest parser as a fictitious guest category. If a fill denotes a computation rather than an already admitted value, evaluating it is a separate explicitly authorized operation whose effects and result evidence precede projection.
 
 ## Runtime behavior and UI contract
 
@@ -337,6 +361,10 @@ Do not put executable value mappings into `TheoryMorphismV1`'s constructor-name 
 ### 3. Shared rule compilation and execution
 
 Parameterize the existing rule compiler by relation signature and direction. Reuse constructor lookup, typed arenas, matching, substitution, native leaves, and verified image compilation. Add `Projection(id, direction)` alongside the existing action/rewrite-relation selection. Its candidate set contains only the selected projection's directional rules, and its output-sort contract comes from the descriptor. It must never enter the ordinary `RewriteRelation(sort)` candidate set.
+
+The compiled representation must reuse the current two-part semantic image: complete flat rule programs retain every source rule, while positional left-hand sides are quotient-compiled into the existing flat `TheoryPatternAutomatonV1`/Dovetail `SetAutomaton` representation ([compiler](../../../dovetail-runtime/src/theory_image_compiler.rs#L1282), [restoration](../../../dovetail-runtime/src/semantic_transition_kernel.rs#L182)). Relation-and-direction metadata restricts candidate dispatch; it does not create a second pattern-matching algorithm. Non-positional rules, including supported collection and binder forms, continue through the same bounded complete-rule matcher rather than being discarded to force them into the positional accelerator. The versioned projection image can share interned automaton states and index entries by selected relation, subject to preserving exact candidate and receipt behavior.
+
+Here **PathMap** names a supported collection form and its exact mode/structural marker, not the storage format of the set automaton ([pattern algebra](../../../dovetail/src/set_automaton.rs#L21), [semantic operator mapping](../../../dovetail-runtime/src/semantic_transition_kernel.rs#L32)). A projection involving a PathMap should reuse that existing collection encoding and matcher. Calling every compiled rewrite a “PathMap automaton” would conflate the collection term with the automaton's flat state DAG and rule-entry index.
 
 A projection is one relation application, including its checked premises. Source guest normalization is a separate explicit phase. Typed subprojection premises are scheduled through the same bounded kernel worklist, not by recursively invoking an unmetered service or building a new interpreter. Their receipts compose into the parent's proof and work accounting. Existing supported equation and transition premise behavior remains shared; unsupported profiles are rejected explicitly.
 
