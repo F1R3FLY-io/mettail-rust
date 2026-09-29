@@ -136,11 +136,34 @@ Definition forward_row (id origin : nat) (guest host : Term) : Row :=
 Definition reverse_row (id origin : nat) (guest host : Term) : Row :=
   row (Projection id HostToGuest) origin host guest.
 
+Inductive SurfaceArrow := ForwardArrow | BackwardArrow | BothArrows.
+
+(** The compiler stores only directed rules.  The surface arrow changes which
+    endpoint is the input; it does not introduce a second execution engine. *)
+Definition lower_surface_row (id origin : nat) (guest host : Term)
+           (arrow : SurfaceArrow) : list Row :=
+  match arrow with
+  | ForwardArrow => [forward_row id origin guest host]
+  | BackwardArrow => [reverse_row id origin guest host]
+  | BothArrows => [forward_row id origin guest host;
+                   reverse_row id origin guest host]
+  end.
+
+Lemma backward_is_directed_host_input : forall id origin guest host,
+  lower_surface_row id origin guest host BackwardArrow =
+  [row (Projection id HostToGuest) origin host guest].
+Proof. reflexivity. Qed.
+
+Lemma both_are_two_directed_rules : forall id origin guest host,
+  lower_surface_row id origin guest host BothArrows =
+  lower_surface_row id origin guest host ForwardArrow ++
+  lower_surface_row id origin guest host BackwardArrow.
+Proof. reflexivity. Qed.
+
 Definition expand_bidirectional (id : nat)
            (pairs : list (nat * Term * Term)) : list Row :=
   flat_map (fun '(origin, guest, host) =>
-              [forward_row id origin guest host;
-               reverse_row id origin guest host]) pairs.
+              lower_surface_row id origin guest host BothArrows) pairs.
 
 Lemma bidirectional_forward_source : forall id pairs origin guest host,
   In (origin, guest, host) pairs ->
