@@ -129,6 +129,7 @@ theories/RegexGsltOracle.v
 theories/RegexGsltApplication.v
 theories/RegexGsltApplicationMachine.v
 theories/WherePredicateCommit.v
+theories/NativeBooleanPredicate.v
 theories/ParserBackendSelection.v
 theories/OwnedPrecedenceAdmission.v
 theories/OwnedExplicitPrattLevels.v
