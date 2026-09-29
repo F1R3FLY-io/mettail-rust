@@ -1772,20 +1772,21 @@ mod tests {
         SemanticGuardEvaluator, SemanticGuardRequest, SemanticInputDecision, SemanticInputLimits,
         SemanticJudgmentDecision, SemanticJudgmentHeadDecision, SemanticJudgmentHeadRequest,
         SemanticJudgmentLimits, SemanticJudgmentProofRequest, SemanticMatchDecision,
-        SemanticMatchRefutation, SemanticMatchUndetermined, SemanticResourceReceipt,
-        SemanticTransitionDecision, SemanticTransitionInput, SemanticTransitionLimits,
-        SemanticTransitionMatcher,
+        SemanticMatchRefutation, SemanticMatchUndetermined, SemanticRelationExecutionRequest,
+        SemanticResourceReceipt, SemanticTransitionDecision, SemanticTransitionInput,
+        SemanticTransitionLimits, SemanticTransitionMatcher,
     };
     use dovetail::egraph::{EClassId, EGraph, ENode};
     use mettail_grammar_core::{
-        Associativity, CanonicalValue, Carrier, Category, CategoryId, ConstructorId, EffectDeclV1,
-        FieldSource, GrammarCoreV1, JudgmentAtomV1, JudgmentDecisionV1, JudgmentDeclV1,
-        JudgmentRuleV1, LanguageCoreValidationError, LanguageRight, LanguageRights, Precedence,
-        Production, ProductionClass, ProductionId, ReductionPlan, SemanticEffectClassV1,
-        SemanticNormalizationBranchingV1, SyntaxItem, TheoryConstructorV1, TheoryEquationV1,
-        TheoryLiteralV1, TheoryPremiseId, TheoryPremiseNodeV1, TheoryProfileV1, TheoryRewriteV1,
-        TheoryRuleOriginV1, TheorySortV1, TheoryTermNodeV1, TheoryValidationError,
-        TheoryVariableRoleV1, TheoryVariableV1, LANGUAGE_CORE_ABI_CURRENT,
+        Associativity, BuiltinCarrier, CanonicalValue, Carrier, Category, CategoryId,
+        ConstructorId, EffectDeclV1, FieldSource, GrammarCoreV1, JudgmentAtomV1,
+        JudgmentDecisionV1, JudgmentDeclV1, JudgmentRuleV1, LanguageCoreValidationError,
+        LanguageRight, LanguageRights, Precedence, Production, ProductionClass, ProductionId,
+        ReductionPlan, SemanticEffectClassV1, SemanticNormalizationBranchingV1, SyntaxItem,
+        TheoryConstructorV1, TheoryEquationV1, TheoryLiteralCarrierV1, TheoryLiteralV1,
+        TheoryPremiseId, TheoryPremiseNodeV1, TheoryProfileV1, TheoryRewriteV1, TheoryRuleOriginV1,
+        TheorySortV1, TheoryTermNodeV1, TheoryValidationError, TheoryVariableRoleV1,
+        TheoryVariableV1, LANGUAGE_CORE_ABI_CURRENT,
     };
 
     fn production(
@@ -2088,6 +2089,398 @@ mod tests {
             output_nodes: 1_000,
             output_bytes: 64 * 1024,
         }
+    }
+
+    fn native_boolean_input(value: bool) -> SemanticTransitionInput {
+        let mut graph = EGraph::new();
+        let root =
+            graph.add(ENode::leaf(theory_operator_to_machine(&TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::Boolean(value),
+            })));
+        match SemanticTransitionInput::admit(
+            graph,
+            root,
+            SemanticInputLimits {
+                work: 10_000,
+                nodes: 64,
+                bytes: 64 * 1024,
+            },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit native Boolean input"),
+        }
+    }
+
+    #[test]
+    fn direct_relation_reuses_worklist_and_preserves_distinct_normal_forms() {
+        let mut language = fixture();
+        language
+            .theory
+            .rewrites
+            .push(divergent_add_zero_rule("wrap-add-zero"));
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile divergent relation");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore relation");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (decision, used) = matcher.execute_rewrite_relation_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 1),
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::ProvenRelation(proven) = decision else {
+            panic!("all relation normal forms must be published together")
+        };
+        assert_eq!(proven.work, used);
+        assert_eq!(proven.normal_forms.len(), 2);
+        assert_ne!(proven.normal_forms[0].receipt.output, proven.normal_forms[1].receipt.output);
+        for form in &proven.normal_forms {
+            assert_eq!(form.output_sort, TheorySortId(0));
+            assert_eq!(form.receipt.work, used);
+            assert_eq!(form.receipt.normalization_hops.len(), 1);
+            assert_eq!(form.receipt.relation_sort, TheorySortId(0));
+            assert_eq!(form.receipt.image_fingerprint, image.fingerprint().expect("fingerprint"));
+        }
+    }
+
+    #[test]
+    fn direct_relation_checks_zero_step_native_booleans_without_action_ids() {
+        let mut language = fixture();
+        language.grammar.categories[0].carrier = Carrier::Builtin(BuiltinCarrier::Boolean);
+        language.theory.sorts[0].kind = TheorySortKindV1::Syntax {
+            literal: Some(TheoryLiteralCarrierV1::Boolean),
+        };
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile native Boolean carrier");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore Boolean relation");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        for value in [false, true] {
+            let (decision, used) = matcher.execute_rewrite_relation_accounted(
+                SemanticRelationExecutionRequest {
+                    image: &image,
+                    relation_sort: TheorySortId(0),
+                    granted_rights: &rights,
+                    input: native_boolean_input(value),
+                    limits: normalization_limits(),
+                },
+                || false,
+            );
+            let SemanticTransitionDecision::ProvenRelation(proven) = decision else {
+                panic!("exhaustively irreducible Boolean literal must be a normal form")
+            };
+            assert_eq!(proven.work, used);
+            assert_eq!(proven.normal_forms.len(), 1);
+            let form = &proven.normal_forms[0];
+            assert!(form.receipt.normalization_hops.is_empty());
+            let mut view_work = 0;
+            let view = crate::theory_positional_native_view(
+                &image,
+                proven.egraph(),
+                form.output,
+                form.output_sort,
+                &mut view_work,
+                100,
+                &mut || false,
+            )
+            .expect("native view remains checked");
+            assert!(matches!(
+                view,
+                Some(crate::TheoryPositionalNativeView::Literal {
+                    value: crate::RuntimeLiteralRef::Boolean(actual),
+                    ..
+                }) if actual == value
+            ));
+        }
+    }
+
+    #[test]
+    fn direct_relation_respects_explicit_guest_to_native_boolean_rewrite() {
+        let mut language = fixture();
+        language.grammar.categories[0].carrier = Carrier::Builtin(BuiltinCarrier::Boolean);
+        language.theory.sorts[0].kind = TheorySortKindV1::Syntax {
+            literal: Some(TheoryLiteralCarrierV1::Boolean),
+        };
+        language.grammar.productions[1].label = "ToHostBool".into();
+        language.theory.constructors[1].name = "ToHostBool".into();
+        language.theory.rewrites.push(TheoryRewriteV1 {
+            name: "project-guest-true".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: Vec::new(),
+                terms: vec![
+                    term_constructor("Zero", Vec::new()),
+                    term_constructor("ToHostBool", vec![TheoryTermId(0)]),
+                    TheoryTermNodeV1 {
+                        sort: "Expr".into(),
+                        form: TheoryTermFormV1::Literal(TheoryLiteralV1::Boolean(true)),
+                    },
+                ],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            },
+            left: TheoryTermId(1),
+            right: TheoryTermId(2),
+        });
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile explicit Boolean projection");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore projection");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (decision, _) = matcher.execute_rewrite_relation_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(1), 0),
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::ProvenRelation(proven) = decision else {
+            panic!("explicit projector must normalize under the same relation")
+        };
+        assert_eq!(proven.normal_forms.len(), 1);
+        let form = &proven.normal_forms[0];
+        assert_eq!(form.receipt.normalization_hops.len(), 1);
+        let mut view_work = 0;
+        let view = crate::theory_positional_native_view(
+            &image,
+            proven.egraph(),
+            form.output,
+            form.output_sort,
+            &mut view_work,
+            100,
+            &mut || false,
+        )
+        .expect("projected native Boolean view");
+        assert!(matches!(
+            view,
+            Some(crate::TheoryPositionalNativeView::Literal {
+                value: crate::RuntimeLiteralRef::Boolean(true),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn direct_relation_requires_reduce_right_and_complete_resources() {
+        let language = fixture();
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile relation resource fixture");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore relation");
+        let no_rights = LanguageRights::from_rights([]);
+        let denied = matcher.execute_rewrite_relation_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &no_rights,
+                input: normalization_input(TheoryConstructorId(0), 1),
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        assert!(matches!(
+            denied.0,
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        ));
+
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let run = |limit| {
+            matcher.execute_rewrite_relation_accounted(
+                SemanticRelationExecutionRequest {
+                    image: &image,
+                    relation_sort: TheorySortId(0),
+                    granted_rights: &rights,
+                    input: normalization_input(TheoryConstructorId(0), 1),
+                    limits: SemanticTransitionLimits { work: limit, ..normalization_limits() },
+                },
+                || false,
+            )
+        };
+        let (decision, used) = run(100_000);
+        let SemanticTransitionDecision::ProvenRelation(proven) = decision else {
+            panic!("complete relation work must succeed")
+        };
+        assert_eq!(proven.work, used);
+        assert!(used > normalization_input(TheoryConstructorId(0), 1).admission_work());
+        assert!(matches!(run(used), (SemanticTransitionDecision::ProvenRelation(_), exact)
+            if exact == used));
+        assert!(matches!(run(used - 1), (SemanticTransitionDecision::Undetermined {
+            reason: SemanticMatchUndetermined::WorkBudgetExhausted, work, ..
+        }, reported) if work == reported && reported == used - 1));
+        let cancelled = matcher.execute_rewrite_relation_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 1),
+                limits: normalization_limits(),
+            },
+            || true,
+        );
+        assert!(matches!(
+            cancelled.0,
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::Cancelled,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn direct_relation_refuses_cycles_and_insufficient_frontier() {
+        let mut cyclic = fixture();
+        let cycle_terms = vec![
+            term_constructor("Zero", Vec::new()),
+            term_constructor("Wrap", vec![TheoryTermId(0)]),
+        ];
+        for (name, left, right) in [
+            ("zero-to-wrap", TheoryTermId(0), TheoryTermId(1)),
+            ("wrap-to-zero", TheoryTermId(1), TheoryTermId(0)),
+        ] {
+            cyclic.theory.rewrites.push(TheoryRewriteV1 {
+                name: name.into(),
+                arena: TheoryRuleArenaV1 {
+                    variables: Vec::new(),
+                    terms: cycle_terms.clone(),
+                    premises: Vec::new(),
+                    premise_roots: Vec::new(),
+                },
+                left,
+                right,
+            });
+        }
+        let image = compile_theory_semantic_image(&cyclic, TheoryImageAdmissionLimits::default())
+            .expect("compile cyclic relation");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore cycle");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (decision, _) = matcher.execute_rewrite_relation_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 0),
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        assert!(matches!(
+            decision,
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::NormalizationCycleDetected,
+                ..
+            }
+        ));
+
+        let mut divergent = fixture();
+        divergent
+            .theory
+            .rewrites
+            .push(divergent_add_zero_rule("wrap-add-zero"));
+        let image =
+            compile_theory_semantic_image(&divergent, TheoryImageAdmissionLimits::default())
+                .expect("compile divergent relation");
+        let matcher =
+            SemanticTransitionMatcher::restore(&image).expect("restore divergent relation");
+        let (decision, _) = matcher.execute_rewrite_relation_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 1),
+                limits: SemanticTransitionLimits { frontier: 1, ..normalization_limits() },
+            },
+            || false,
+        );
+        assert!(matches!(
+            decision,
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::FrontierLimitExceeded,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn direct_relation_treats_exhaustively_refuted_premises_as_no_successor() {
+        let mut language = judgment_fixture();
+        language.theory.rewrites[0] = TheoryRewriteV1 {
+            name: "unwrap-if-zero".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![variable(0, "value")],
+                terms: vec![term_variable(0), term_constructor("Wrap", vec![TheoryTermId(0)])],
+                premises: vec![TheoryPremiseNodeV1 {
+                    form: TheoryPremiseFormV1::Judgment(JudgmentAtomV1 {
+                        judgment: "IsZero".into(),
+                        terms: vec![TheoryTermId(0)],
+                    }),
+                }],
+                premise_roots: vec![TheoryPremiseId(0)],
+            },
+            left: TheoryTermId(1),
+            right: TheoryTermId(0),
+        };
+        language.theory.actions[0].transition =
+            TheoryRuleReferenceV1::Rewrite("unwrap-if-zero".into());
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile guarded relation");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore guarded relation");
+        let rights = LanguageRights::from_rights([
+            LanguageRight::Reduce,
+            LanguageRight::Check,
+            LanguageRight::SearchProof,
+        ]);
+        let mut graph = EGraph::new();
+        let zero = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let wrapped_zero = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![zero],
+        ));
+        let double_wrapped = graph.add(ENode::new(
+            theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(TheoryConstructorId(1))),
+            vec![wrapped_zero],
+        ));
+        let input = match SemanticTransitionInput::admit(
+            graph,
+            double_wrapped,
+            SemanticInputLimits { work: 1_000, nodes: 16, bytes: 64 * 1024 },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit guarded relation input"),
+        };
+        let (decision, _) = matcher.execute_rewrite_relation_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &rights,
+                input,
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        let proven = match decision {
+            SemanticTransitionDecision::ProvenRelation(proven) => proven,
+            SemanticTransitionDecision::Refuted(reason) => {
+                panic!("a refuted conditional rule must leave a normal form: {reason:?}")
+            },
+            SemanticTransitionDecision::Undetermined { reason, work, .. } => {
+                panic!("guarded relation remained undetermined after {work} work: {reason:?}")
+            },
+            SemanticTransitionDecision::Proven(_) => {
+                panic!("direct relation returned a named-action result")
+            },
+        };
+        assert_eq!(proven.normal_forms.len(), 1);
+        let receipt = &proven.normal_forms[0].receipt;
+        assert_eq!(receipt.input, receipt.output);
+        assert!(receipt.normalization_hops.is_empty());
     }
 
     fn judgment_fixture() -> LanguageCoreV1 {
@@ -3301,8 +3694,10 @@ mod tests {
             TheoryResourceProfileV1::Uncosted => 1,
             TheoryResourceProfileV1::Costed { .. } => 1 + std::mem::size_of::<u32>(),
         };
-        let sort_count_offset =
-            8 + std::mem::size_of::<u16>() * 2 + 32 * 3 + resource_profile_wire_len;
+        // The canonical header contains the image, compiler, and primitive
+        // substrate ABI fields before its three 32-byte commitments.
+        let language_fingerprint_offset = 8 + std::mem::size_of::<u16>() * 3;
+        let sort_count_offset = language_fingerprint_offset + 32 * 3 + resource_profile_wire_len;
         forged_count[sort_count_offset..sort_count_offset + 4]
             .copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(matches!(
@@ -3311,7 +3706,7 @@ mod tests {
         ));
 
         let mut forged_fingerprint = bytes.clone();
-        forged_fingerprint[12] ^= 1;
+        forged_fingerprint[language_fingerprint_offset] ^= 1;
         assert!(matches!(
             TheorySemanticImageV1::decode(&forged_fingerprint, &language, limits),
             Err(TheoryImageError::FingerprintMismatch("language"))
@@ -4942,6 +5337,9 @@ mod tests {
         );
         let proven = match decision {
             SemanticTransitionDecision::Proven(proven) => proven,
+            SemanticTransitionDecision::ProvenRelation(_) => {
+                panic!("named action unexpectedly returned a direct relation result")
+            },
             SemanticTransitionDecision::Refuted(reason) => {
                 panic!("the unique fresh selection was refuted: {reason:?}")
             },

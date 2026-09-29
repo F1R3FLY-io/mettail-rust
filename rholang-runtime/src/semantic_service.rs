@@ -452,6 +452,11 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
     })??;
     let proven = match decision {
         SemanticTransitionDecision::Proven(proven) => proven,
+        SemanticTransitionDecision::ProvenRelation(_) => {
+            return Err(InstalledSemanticError::InvalidEvidence(
+                "named action returned a direct relation result",
+            ))
+        },
         SemanticTransitionDecision::Refuted(reason) => {
             return Err(InstalledSemanticError::Refuted(reason))
         },
