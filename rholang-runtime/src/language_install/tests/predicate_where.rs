@@ -340,6 +340,77 @@ async fn where_predicate_actual_comm_unknown_is_nonconsuming_and_true_commits_on
     }
 }
 
+#[tokio::test]
+async fn where_native_boolean_actual_comm_requires_complete_true_evidence() {
+    use models::rust::utils::new_freevar_par;
+    use rspace_plus_plus::rspace::shared::{
+        in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
+    };
+    for (outcomes, accepts) in
+        [(&[true][..], true), (&[false][..], false), (&[true, false][..], false)]
+    {
+        let (runtime, token, _) = native_boolean_fixture(outcomes);
+        let matcher = SubstrateGuardMatcher::with_language_runtime(runtime);
+        let mut manager = InMemoryStoreManager::new();
+        let space = crate::speculation::Space::create(
+            manager.r_space_stores().await.unwrap(),
+            Arc::new(Box::new(matcher)),
+        )
+        .unwrap();
+        let channel = new_gstring_par("native-predicate-comm".into(), vec![], false);
+        space
+            .consume(
+                vec![channel.clone()],
+                vec![BindPattern {
+                    patterns: vec![new_freevar_par(0, vec![])],
+                    remainder: None,
+                    free_count: 1,
+                }],
+                TaggedContinuation {
+                    tagged_cont: Some(TaggedCont::ScalaBodyRef(713)),
+                    guard: Some(descriptor(&token, "call")),
+                },
+                false,
+                std::collections::BTreeSet::new(),
+            )
+            .await
+            .unwrap();
+        let data = ListParWithRandom {
+            pars: vec![new_gint_par(8, vec![], false)],
+            random_state: vec![2; 32],
+        };
+        let result = space.produce(channel.clone(), data, false).await.unwrap();
+        assert_eq!(result.is_some(), accepts, "outcomes: {outcomes:?}");
+        assert_eq!(space.get_data(&channel).await.is_empty(), accepts);
+        assert_eq!(
+            space
+                .get_waiting_continuations(vec![channel])
+                .await
+                .is_empty(),
+            accepts
+        );
+    }
+}
+
+#[test]
+fn where_native_boolean_negation_requires_determinate_evidence() {
+    use models::rhoapi::{expr::ExprInstance, ENot, Expr};
+    for (outcomes, expected) in [(&[false][..], true), (&[true, false][..], false)] {
+        let (runtime, token, _) = native_boolean_fixture(outcomes);
+        let matcher = SubstrateGuardMatcher::with_language_runtime(runtime);
+        let not = Par::default().with_exprs(vec![Expr {
+            expr_instance: Some(ExprInstance::ENotBody(ENot {
+                p: Some(descriptor(&token, "call")),
+            })),
+        }]);
+        let continuation = TaggedContinuation {
+            tagged_cont: Some(TaggedCont::ScalaBodyRef(714)),
+            guard: Some(not),
+        };
+        assert_eq!(matcher.prepare_commit(&continuation, &[]).is_some(), expected);
+    }
+}
+
 #[test]
 fn where_unknown_stays_unknown_under_not_and_short_circuit_does_not_execute_it() {
     use models::rhoapi::{expr::ExprInstance, ENot, EOr, Expr};
