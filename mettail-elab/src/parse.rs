@@ -540,9 +540,15 @@ impl Parser {
                 let mut v = Vec::new();
                 while !self.at(&Tok::RBrace) {
                     let span = self.span();
+                    let admits_variables =
+                        !matches!(self.peek(), Tok::Ident(word) if word == "noadmit");
+                    if !admits_variables {
+                        self.bump();
+                    }
                     let cat = self.ident()?;
+                    let carrier = if self.eat(&Tok::Eq) { Some(self.ident()?) } else { None };
                     self.expect(Tok::Semi)?;
-                    v.push(CatDecl { cat, span });
+                    v.push(CatDecl { cat, admits_variables, carrier, span });
                 }
                 Builder::Types(v)
             },

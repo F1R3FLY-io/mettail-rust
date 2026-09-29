@@ -213,6 +213,8 @@ impl Builder {
 #[derive(Clone, Debug)]
 pub struct CatDecl {
     pub cat: Cat,
+    pub admits_variables: bool,
+    pub carrier: Option<String>,
     pub span: Span,
 }
 

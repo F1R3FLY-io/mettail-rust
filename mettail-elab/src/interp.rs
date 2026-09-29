@@ -427,8 +427,13 @@ impl<'a> Interp<'a> {
                                 ));
                             }
                             let id = self.fresh();
-                            p.types
-                                .push(CatEntry { id, cat: d.cat.clone(), span: d.span });
+                            p.types.push(CatEntry {
+                                id,
+                                cat: d.cat.clone(),
+                                admits_variables: d.admits_variables,
+                                carrier: d.carrier.clone(),
+                                span: d.span,
+                            });
                         }
                         Ok(p)
                     },
@@ -440,8 +445,13 @@ impl<'a> Interp<'a> {
                                 // exported; record it, so `Empty Exports { Elem; }`
                                 // still means something.
                                 let id = self.fresh();
-                                p.types
-                                    .push(CatEntry { id, cat: e.cat.clone(), span: e.span });
+                                p.types.push(CatEntry {
+                                    id,
+                                    cat: e.cat.clone(),
+                                    admits_variables: true,
+                                    carrier: None,
+                                    span: e.span,
+                                });
                             }
                             let ext = e.as_name.clone().unwrap_or_else(|| e.cat.clone());
                             // Rename-on-export renames the category everywhere.
@@ -586,7 +596,12 @@ impl<'a> Interp<'a> {
                                 builders.push(Builder::Types(
                                     std::mem::take(&mut fragment.types)
                                         .into_iter()
-                                        .map(|entry| CatDecl { cat: entry.cat, span })
+                                        .map(|entry| CatDecl {
+                                            cat: entry.cat,
+                                            admits_variables: entry.admits_variables,
+                                            carrier: entry.carrier,
+                                            span,
+                                        })
                                         .collect(),
                                 ));
                             }

@@ -25,6 +25,36 @@ const APPLICATION: &str = include_str!("../../demos/mettail-inline-ddl/inline-dd
 const REGISTRY_APPLICATION: &str =
     include_str!("../../demos/mettail-registry-modules/registry-modules.rho");
 
+#[test]
+fn noadmit_remains_available_as_a_channel_name() {
+    Proc::parse_via_wpda("new ordinary in { ordinary!(1) }")
+        .expect("ordinary binder control parses");
+    Proc::parse_via_wpda("noadmit!(1)")
+        .expect("noadmit is available as an ordinary channel name");
+}
+
+#[test]
+fn native_carrier_declarations_use_the_generated_rholang_entrypoint() {
+    let source = r#"Theory Native() {
+        Types { noadmit Text = String; noadmit Flag = bool; noadmit Count = BigInt; }
+        Terms {
+            TextValue . |- "text" : Text;
+            FlagValue . |- "flag" : Flag;
+            CountValue . |- "count" : Count;
+        }
+    }"#;
+    let parsed = Proc::parse_via_wpda(source).expect("generated host grammar parses carrier DDL");
+    lower_rholang_proc(&parsed).expect("carrier DDL lowers structurally without source reparse");
+}
+
+#[test]
+fn migrated_regex_types_parser_paths_agree() {
+    let source = include_str!("fixtures/regex_gslt_application.rho");
+    Proc::parse(source).expect("generated parser accepts the authored Regex type declarations");
+    Proc::parse_via_wpda(source)
+        .expect("WPDA parser accepts the same authored Regex type declarations");
+}
+
 fn exact_expr(value: &Par) -> Option<&ExprInstance> {
     if !value.sends.is_empty()
         || !value.receives.is_empty()
@@ -189,7 +219,7 @@ fn demo_registry() -> Arc<DemoRegistry> {
                     spec: canonical_demo_language(
                         r#"Theory Left() {
                             Data({"rights": ["Parse", "Construct", "Match"]})
-                            Types { LeftExpr; }
+                            Types { noadmit LeftExpr; }
                             Terms { LeftLiteral . |- "left" : LeftExpr; }
                         }"#,
                     ),
@@ -199,7 +229,7 @@ fn demo_registry() -> Arc<DemoRegistry> {
                     spec: canonical_demo_language(
                         r#"Theory Right() {
                             Data({"rights": ["Parse", "Construct", "Match"]})
-                            Types { RightExpr; }
+                            Types { noadmit RightExpr; }
                             Terms { RightLiteral . |- "right" : RightExpr; }
                         }"#,
                     ),

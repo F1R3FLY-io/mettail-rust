@@ -458,7 +458,20 @@ pub fn presentation_to_value(
     let mut events = Vec::new();
     for entry in &presentation.types {
         if !presentation.data_derived.contains(&entry.id) {
-            events.push((entry.id, map([("types", list([string(entry.cat.clone())]))])));
+            let category = if entry.admits_variables && entry.carrier.is_none() {
+                string(entry.cat.clone())
+            } else {
+                let mut attributes = BTreeMap::from([("name".into(), string(entry.cat.clone()))]);
+                attributes.insert(
+                    "admits_variables".into(),
+                    RhoValue::Boolean(entry.admits_variables),
+                );
+                if let Some(carrier) = &entry.carrier {
+                    attributes.insert("carrier".into(), string(carrier.clone()));
+                }
+                RhoValue::Map(attributes)
+            };
+            events.push((entry.id, map([("types", list([category]))])));
         }
     }
     for (index, (from, to)) in presentation.exports.iter().enumerate() {
@@ -740,9 +753,53 @@ fn legacy_value_to_presentation(
         .iter()
         .enumerate()
         .map(|(index, value)| {
+            let path = format!("$.types[{index}]");
+            let (cat, admits_variables, carrier) = match value {
+                RhoValue::String(cat) => (cat.clone(), true, None),
+                RhoValue::Map(fields) => {
+                    if let Some(key) = fields
+                        .keys()
+                        .find(|key| {
+                            key.as_str() != "name"
+                                && key.as_str() != "admits_variables"
+                                && key.as_str() != "carrier"
+                        })
+                    {
+                        return Err(ValueDecodeError::new(
+                            format!("{path}.{key}"),
+                            "not a presentation category field",
+                        ));
+                    }
+                    let cat = expect_string(field(fields, "name", &path)?, format!("{path}.name"))?
+                        .to_string();
+                    let admits_variables = match fields.get("admits_variables") {
+                        None => true,
+                        Some(RhoValue::Boolean(value)) => *value,
+                        Some(_) => {
+                            return Err(ValueDecodeError::new(
+                                format!("{path}.admits_variables"),
+                                "expected boolean",
+                            ));
+                        },
+                    };
+                    let carrier = fields
+                        .get("carrier")
+                        .map(|value| expect_string(value, format!("{path}.carrier")).map(str::to_string))
+                        .transpose()?;
+                    (cat, admits_variables, carrier)
+                },
+                _ => {
+                    return Err(ValueDecodeError::new(
+                        path,
+                        "expected a category name or category map",
+                    ));
+                },
+            };
             Ok(CatEntry {
                 id: ElemId(index as u64 + 1),
-                cat: expect_string(value, format!("$.types[{index}]"))?.to_string(),
+                cat,
+                admits_variables,
+                carrier,
                 span,
             })
         })
@@ -1640,7 +1697,13 @@ mod tests {
     fn module_result_has_language_2_value_and_valid_core() {
         let span = Span { line: 1, col: 1 };
         let presentation = Presentation {
-            types: vec![CatEntry { id: ElemId(1), cat: "Expr".into(), span }],
+            types: vec![CatEntry {
+                id: ElemId(1),
+                cat: "Expr".into(),
+                admits_variables: true,
+                carrier: None,
+                span,
+            }],
             terms: vec![TermEntry {
                 id: ElemId(2),
                 rule: TermRule {

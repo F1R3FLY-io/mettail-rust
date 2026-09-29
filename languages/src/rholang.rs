@@ -76,7 +76,7 @@ language! {
             "Module", "Theory", "theory", "import", "as", "from", "Empty",
             "free", "let", "Types", "Exports", "Replacements", "Terms",
             "Equations", "Rewrites", "Data", "HashBag", "Set", "List", "sep",
-            "subst", "PPar",
+            "subst", "PPar", "noadmit",
         ],
     },
 
@@ -207,6 +207,7 @@ language! {
         data DdlPath
         data DdlTheoryExpr
         data DdlCatDecl
+        data DdlCarrier
         data DdlExport
         data DdlReplacement
         data DdlTermRule
@@ -2664,6 +2665,12 @@ language! {
             |- "Theory" name@Ident "(" parameters.*sep(",") ")" "{" body "}" : Proc;
 
         DdlCategory . |- name@Ident ";" : DdlCatDecl;
+        DdlCategoryNoAdmit . |- "noadmit" name@Ident ";" : DdlCatDecl;
+        DdlCategoryCarrier . carrier:DdlCarrier |- name@Ident "=" carrier ";" : DdlCatDecl;
+        DdlCategoryNoAdmitCarrier .
+            carrier:DdlCarrier |- "noadmit" name@Ident "=" carrier ";" : DdlCatDecl;
+        DdlCarrierIdent . |- name@Ident : DdlCarrier;
+        DdlCarrierBool . |- "bool" : DdlCarrier;
         DdlExportDirect . |- name@Ident ";" : DdlExport;
         DdlExportRename .
             |- name@Ident "=>" replacement@Ident ";" : DdlExport;

@@ -11,14 +11,14 @@ new install(`rho:mettail:install`) in {
                     Data({
                       "rights": ["Parse", "Construct", "Match", "Publish", "Check"]
                     })
-                    Types { LeftExpr; }
+                    Types { noadmit LeftExpr; }
                     Terms { LeftLiteral . |- "left" : LeftExpr; }
                   }
                   Theory Right() {
                     Data({
                       "rights": ["Parse", "Construct", "Match", "Publish", "Check"]
                     })
-                    Types { RightExpr; }
+                    Types { noadmit RightExpr; }
                     Terms { RightLiteral . |- "right" : RightExpr; }
                   }
                   Theory Ambiguous() {

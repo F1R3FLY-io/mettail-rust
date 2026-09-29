@@ -7,10 +7,10 @@
 
 use crate::rholang_ast::RholangAstLowerError;
 use mettail_languages::rholang::{
-    DdlBinding, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses, DdlImport,
-    DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlPremise, DdlPremises, DdlReplacement,
-    DdlRewrite, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem,
-    DdlTermRule, DdlTheoryExpr, Proc,
+    DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses,
+    DdlImport, DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlPremise, DdlPremises,
+    DdlReplacement, DdlRewrite, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort,
+    DdlSyntaxItem, DdlTermRule, DdlTheoryExpr, Proc,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{new_elist_par, new_gstring_par};
@@ -225,6 +225,26 @@ impl<'a> DdlLowerPlan<'a> {
                         tag: "category",
                         children: vec![Task::Text(category)],
                     }),
+                    DdlCatDecl::DdlCategoryNoAdmit(category) => tasks.push(Task::Node {
+                        tag: "category-noadmit",
+                        children: vec![Task::Text(category)],
+                    }),
+                    DdlCatDecl::DdlCategoryCarrier(category, carrier) => tasks.push(Task::Node {
+                        tag: "category-carrier",
+                        children: vec![
+                            Task::Text(category),
+                            Task::Text(carrier_spelling(carrier)),
+                        ],
+                    }),
+                    DdlCatDecl::DdlCategoryNoAdmitCarrier(category, carrier) => {
+                        tasks.push(Task::Node {
+                            tag: "category-noadmit-carrier",
+                            children: vec![
+                                Task::Text(category),
+                                Task::Text(carrier_spelling(carrier)),
+                            ],
+                        });
+                    },
                 },
                 Task::Export(export) => match export {
                     DdlExport::DdlExportDirect(category) => tasks.push(Task::Node {
@@ -484,6 +504,13 @@ impl<'a> DdlLowerPlan<'a> {
 
 fn string_par(value: String) -> Par {
     new_gstring_par(value, Vec::new(), false)
+}
+
+fn carrier_spelling(carrier: &DdlCarrier) -> &str {
+    match carrier {
+        DdlCarrier::DdlCarrierIdent(name) => name,
+        DdlCarrier::DdlCarrierBool => "bool",
+    }
 }
 
 fn decode_captured_string(raw: &str) -> Result<String, String> {

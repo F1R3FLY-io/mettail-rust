@@ -298,6 +298,138 @@ mod tests {
     use super::*;
 
     #[test]
+    fn noadmit_category_survives_source_elaboration_and_canonical_roundtrip() {
+        let language = elaborate_theory_language(
+            r#"Theory Categories() {
+                Types { OpenExpr; noadmit ClosedExpr; }
+                Terms {
+                    OpenLiteral . |- "open" : OpenExpr;
+                    ClosedLiteral . |- "closed" : ClosedExpr;
+                }
+            }"#,
+        )
+        .expect("both category declarations elaborate");
+        let (_, presentation) = canonical::value_to_presentation(&language.canonical_value)
+            .expect("canonical value reconstructs the presentation");
+        assert!(presentation
+            .types
+            .iter()
+            .any(|entry| entry.cat == "OpenExpr" && entry.admits_variables));
+        assert!(presentation
+            .types
+            .iter()
+            .any(|entry| entry.cat == "ClosedExpr" && !entry.admits_variables));
+        let roundtrip = canonical::value_to_core(&language.canonical_value)
+            .expect("canonical value lowers independently");
+        assert_eq!(language.grammar_core, roundtrip);
+        assert!(roundtrip
+            .categories
+            .iter()
+            .any(|category| category.name == "OpenExpr" && category.admits_variables));
+        assert!(roundtrip
+            .categories
+            .iter()
+            .any(|category| category.name == "ClosedExpr" && !category.admits_variables));
+    }
+
+    #[test]
+    fn native_carrier_annotations_preserve_spelling_and_admission() {
+        let language = elaborate_theory_language(
+            r#"Theory Carriers() {
+                Types {
+                    noadmit Text = String;
+                    noadmit Flag = bool;
+                    noadmit Nat = BigInt;
+                }
+                Terms {
+                    TextValue . |- "text" : Text;
+                    FlagValue . |- "flag" : Flag;
+                    NatValue . |- "nat" : Nat;
+                }
+            }"#,
+        )
+        .expect("native carrier annotations elaborate");
+        let (_, presentation) = canonical::value_to_presentation(&language.canonical_value)
+            .expect("native carrier maps retain presentation metadata");
+        for (name, spelling) in [("Text", "String"), ("Flag", "bool"), ("Nat", "BigInt")] {
+            let entry = presentation
+                .types
+                .iter()
+                .find(|entry| entry.cat == name)
+                .expect("declared category survives");
+            assert!(!entry.admits_variables);
+            assert_eq!(entry.carrier.as_deref(), Some(spelling));
+        }
+        let roundtrip = canonical::value_to_core(&language.canonical_value)
+            .expect("carrier annotations lower through the canonical schema");
+        assert_eq!(language.grammar_core, roundtrip);
+        for name in ["Text", "Flag", "Nat"] {
+            assert!(!roundtrip
+                .categories
+                .iter()
+                .find(|category| category.name == name)
+                .expect("lowered category")
+                .admits_variables);
+        }
+    }
+
+    #[test]
+    fn authored_native_type_matches_the_data_faithful_type_value() {
+        let authored = elaborate_theory_language(
+            r#"Theory Same() {
+                Types { noadmit Text = String; }
+                Terms { TextValue . |- "text" : Text; }
+            }"#,
+        )
+        .expect("authored type elaborates");
+        let data_faithful = elaborate_theory_language(
+            r#"Theory Same() {
+                Data({"types": [{"name":"Text", "carrier":"String",
+                                "admits_variables":false}]})
+                Terms { TextValue . |- "text" : Text; }
+            }"#,
+        )
+        .expect("data-faithful type elaborates");
+        assert_eq!(authored.canonical_value, data_faithful.canonical_value);
+        assert_eq!(authored.grammar_core, data_faithful.grammar_core);
+    }
+
+    #[test]
+    fn regex_type_migration_preserves_every_original_admission_flag_and_carrier() {
+        let authored = elaborate_theory_language(
+            r#"Theory RegexTypes() {
+                Types {
+                    Pattern; Computation; NFrames; DFrames; EFrames;
+                    MatchResult; ReplacementTemplate; PrefixResult;
+                    Scalar = String; Text = String;
+                    noadmit Bool = bool; noadmit Flag = bool;
+                    noadmit Nat = BigInt; noadmit Grade = BigInt;
+                }
+                Terms { PFail . |- "(?!)" : Pattern; }
+            }"#,
+        )
+        .expect("authored Regex type roster elaborates");
+        let data_faithful = elaborate_theory_language(
+            r#"Theory RegexTypes() {
+                Data({"types": [
+                    "Pattern", "Computation", "NFrames", "DFrames", "EFrames",
+                    "MatchResult", "ReplacementTemplate", "PrefixResult",
+                    {"name":"Scalar", "carrier":"String", "admits_variables":true},
+                    {"name":"Text", "carrier":"String", "admits_variables":true},
+                    {"name":"Bool", "carrier":"bool", "admits_variables":false},
+                    {"name":"Flag", "carrier":"bool", "admits_variables":false},
+                    {"name":"Nat", "carrier":"BigInt", "admits_variables":false},
+                    {"name":"Grade", "carrier":"BigInt", "admits_variables":false}
+                ]})
+                Terms { PFail . |- "(?!)" : Pattern; }
+            }"#,
+        )
+        .expect("original Regex type roster elaborates");
+        assert_eq!(authored.canonical_value, data_faithful.canonical_value);
+        assert_eq!(authored.grammar_core, data_faithful.grammar_core);
+    }
+
+    #[test]
     fn surface_language_crosses_the_canonical_value_boundary() {
         let source = r#"
             Module Tiny {

@@ -427,9 +427,27 @@ fn decode_builder_sequence<T>(
 }
 
 fn decode_cat_decl(value: RhoValue, path: &str) -> Result<CatDecl, DdlValueError> {
-    let mut fields = expect_node(value, "category", Some(1), path.into())?;
+    let (tag, admits_variables, has_carrier) = match node_tag(&value) {
+        Some("category-noadmit") => ("category-noadmit", false, false),
+        Some("category-carrier") => ("category-carrier", true, true),
+        Some("category-noadmit-carrier") => ("category-noadmit-carrier", false, true),
+        _ => ("category", true, false),
+    };
+    let mut fields = expect_node(value, tag, Some(if has_carrier { 2 } else { 1 }), path.into())?
+        .into_iter();
+    let cat = expect_string(fields.next().expect("arity checked"), format!("{path}.category"))?;
+    let carrier = if has_carrier {
+        Some(expect_string(
+            fields.next().expect("arity checked"),
+            format!("{path}.carrier"),
+        )?)
+    } else {
+        None
+    };
     Ok(CatDecl {
-        cat: expect_string(fields.pop().expect("arity checked"), format!("{path}.category"))?,
+        cat,
+        admits_variables,
+        carrier,
         span: SYNTHETIC_SPAN,
     })
 }
@@ -870,6 +888,28 @@ mod tests {
                 .chain(fields)
                 .collect(),
         )
+    }
+
+    #[test]
+    fn category_wire_tags_preserve_variable_admission_and_native_carrier() {
+        for (tag, admits_variables, carrier) in [
+            ("category", true, None),
+            ("category-noadmit", false, None),
+            ("category-carrier", true, Some("String")),
+            ("category-noadmit-carrier", false, Some("String")),
+        ] {
+            let mut fields = vec![RhoValue::String("Text".into())];
+            if let Some(carrier) = carrier {
+                fields.push(RhoValue::String(carrier.into()));
+            }
+            let declaration = decode_cat_decl(node(tag, fields), "$.type")
+                .expect("known structural category tag");
+            assert_eq!(declaration.cat, "Text");
+            assert_eq!(declaration.admits_variables, admits_variables);
+            assert_eq!(declaration.carrier.as_deref(), carrier);
+        }
+        assert!(decode_cat_decl(node("category-carrier", vec![RhoValue::String("Text".into())]), "$.type")
+            .is_err());
     }
 
     #[test]

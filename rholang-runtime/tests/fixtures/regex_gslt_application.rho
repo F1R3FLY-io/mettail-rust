@@ -3,17 +3,23 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe`), stdout(`
     install!(
 Module RegexGSLT {
   Theory Regex() {
+    Types {
+      Pattern;
+      Computation;
+      NFrames;
+      DFrames;
+      EFrames;
+      MatchResult;
+      ReplacementTemplate;
+      PrefixResult;
+      Scalar = String;
+      Text = String;
+      noadmit Bool = bool;
+      noadmit Flag = bool;
+      noadmit Nat = BigInt;
+      noadmit Grade = BigInt;
+    }
     Data({
-      "types": [
-        "Pattern", "Computation", "NFrames", "DFrames", "EFrames",
-        "MatchResult", "ReplacementTemplate", "PrefixResult",
-        {"name":"Scalar", "carrier":"String", "admits_variables":true},
-        {"name":"Text", "carrier":"String", "admits_variables":true},
-        {"name":"Bool", "carrier":"bool", "admits_variables":false},
-        {"name":"Flag", "carrier":"bool", "admits_variables":false},
-        {"name":"Nat", "carrier":"BigInt", "admits_variables":false},
-        {"name":"Grade", "carrier":"BigInt", "admits_variables":false}
-      ],
       "literals": [
         {"category":"Scalar", "pattern":"[A-Za-z0-9\\u{80}-\\u{10FFFF}]", "eval":["carrier", "str", Map()]},
         {"category":"Nat", "pattern":"[0-9]+", "eval":["carrier", "int", Map()]}

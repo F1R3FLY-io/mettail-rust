@@ -33,6 +33,8 @@ pub struct ElemId(pub u64);
 pub struct CatEntry {
     pub id: ElemId,
     pub cat: Cat,
+    pub admits_variables: bool,
+    pub carrier: Option<String>,
     pub span: Span,
 }
 
@@ -456,7 +458,14 @@ impl Presentation {
         s.push_str("Presentation\n");
         s.push_str("  Types {");
         for t in &self.types {
-            s.push_str(&format!(" {};", t.cat));
+            if !t.admits_variables {
+                s.push_str(" noadmit");
+            }
+            s.push_str(&format!(" {}", t.cat));
+            if let Some(carrier) = &t.carrier {
+                s.push_str(&format!(" = {carrier}"));
+            }
+            s.push(';');
         }
         s.push_str(" }\n  Exports {");
         for (int, ext) in &self.exports {
