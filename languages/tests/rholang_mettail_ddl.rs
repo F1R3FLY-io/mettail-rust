@@ -30,6 +30,7 @@ fn run_ddl_sexp_action(
                 kind: TokenKind::Ident,
                 text: "PNode".into(),
                 pos: 0,
+                occurrence: None,
             },
             ActionArg::SelectedCollection(
                 SelectedCollection::new(items).expect("test inputs are terms"),
@@ -167,6 +168,31 @@ fn judgement_term_and_builder_chain_parse_structurally() {
     let rewrite = DdlRewrite::parse("RDrop : (PDrop (NQuote P)) ~> P;")
         .expect("a named direct rewrite must parse independently");
     assert_eq!(DdlRewrite::parse(&rewrite.to_string()).unwrap(), rewrite);
+
+    let projection = DdlRewrite::parse(
+        "projection Boolean : Bool <~> host::Bool { Yes : (BTrue) <~> true; No : (BFalse) <~> false; }",
+    )
+    .expect("a bidirectional typed projection must parse structurally");
+    assert_eq!(DdlRewrite::parse(&projection.to_string()).unwrap(), projection);
+    let reverse = DdlRewrite::parse(
+        "projection BooleanImport : Bool <~ host::Bool { Yes : (BTrue) <~ true; }",
+    )
+    .expect("a reverse projection keeps the guest on the left");
+    assert_eq!(DdlRewrite::parse(&reverse.to_string()).unwrap(), reverse);
+    let carrier = DdlRewrite::parse("projection TextValue : Text <~> host::Str via carrier;")
+        .expect("carrier transport is an explicit typed declaration");
+    let rendered = carrier.to_string();
+    let reparsed = DdlRewrite::parse(&rendered)
+        .unwrap_or_else(|error| panic!("carrier render `{rendered}` failed: {error}"));
+    assert_eq!(reparsed, carrier);
+    let conditional = DdlRewrite::parse(
+        "projection CompletedBoolean : Computation ~> host::Bool { Done(b:Bool,h:host::Bool): if projection Boolean(b,h) then (DoneBool b) ~> h; }",
+    )
+    .expect("a typed projection premise must parse in its generated Rholang DDL category");
+    let rendered = conditional.to_string();
+    let reparsed = DdlRewrite::parse(&rendered)
+        .unwrap_or_else(|error| panic!("conditional render `{rendered}` failed: {error}"));
+    assert_eq!(reparsed, conditional);
 
     let complete_builder = DdlTheoryExpr::parse(
         r#"

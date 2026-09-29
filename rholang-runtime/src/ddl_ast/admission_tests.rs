@@ -28,6 +28,62 @@ fn process_values() -> Vec<Par> {
 }
 
 #[test]
+fn generated_projection_groups_lower_as_typed_structural_ddl_nodes() {
+    let body = DdlTheoryExpr::parse(
+        "Rewrites { projection Boolean : Bool <~> host::Bool { Yes : (BTrue) <~> true; No : (BFalse) <~> false; } projection CompletedBoolean : Computation ~> host::Bool { Done(b:Bool,h:host::Bool): if projection Boolean(b,h) then (DoneBool b) ~> h; } }",
+    )
+    .expect("the generated Rholang parser owns the inline DDL syntax");
+    let plan = DdlLowerPlan::try_build(
+        DdlRoot::Theory {
+            name: "Regex",
+            parameters: &[],
+            body: &body,
+        },
+        &mut |_, _| Ok(()),
+    )
+    .expect("the iterative structural plan admits projection groups");
+    let tags = plan
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            WireOp::Node { tag, .. } => Some(*tag),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tags.iter()
+            .filter(|tag| **tag == "projection-group")
+            .count(),
+        2
+    );
+    assert_eq!(tags.iter().filter(|tag| **tag == "projection-rule").count(), 3);
+    assert_eq!(
+        tags.iter()
+            .filter(|tag| **tag == "projection-host-binding")
+            .count(),
+        1
+    );
+    assert_eq!(tags.iter().filter(|tag| **tag == "projection-call").count(), 1);
+    assert_eq!(
+        tags.iter()
+            .filter(|tag| **tag == "ast-boolean-true")
+            .count(),
+        1
+    );
+    assert_eq!(
+        tags.iter()
+            .filter(|tag| **tag == "ast-boolean-false")
+            .count(),
+        1
+    );
+    assert!(plan.process_jobs().next().is_none(), "declarations do not execute host code");
+    let value = plan
+        .try_finish(Vec::<Par>::new(), &mut |_, _| Ok(()))
+        .expect("closed wire");
+    assert!(value.locally_free.is_empty() && !value.connective_used);
+}
+
+#[test]
 fn paid_plan_preserves_exact_postorder_process_identity_and_closed_wire_metadata() {
     let items = two_processes();
     let plan = DdlLowerPlan::try_build(root(&items), &mut |_, _| Ok(())).expect("paid plan");

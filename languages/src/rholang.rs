@@ -219,6 +219,13 @@ language! {
         data DdlFreshnesses
         data DdlFreshness
         data DdlRewrite
+        data DdlProjectionDirection
+        data DdlProjectionRule
+        data DdlProjectionCarrierMode
+        data DdlProjectionRowHead
+        data DdlProjectionBinding
+        data DdlProjectionPremises
+        data DdlProjectionPremise
         data DdlPremises
         data DdlPremise
         data DdlRuleAstItems
@@ -2718,11 +2725,52 @@ language! {
             |- name@Ident ":" left "~>" right ";" : DdlRewrite;
         DdlRewriteConditional . premises:DdlPremises, left:DdlRuleAst, right:DdlRuleAst
             |- name@Ident ":" premises left "~>" right ";" : DdlRewrite;
+        DdlRewriteProjection . direction:DdlProjectionDirection, rules:Vec(DdlProjectionRule)
+            |- "projection" name@Ident ":" guest@Ident direction "host" "::" host@Ident
+                "{" rules.*sep("") "}" : DdlRewrite;
+        DdlRewriteCarrierProjection . direction:DdlProjectionDirection,
+            mode:DdlProjectionCarrierMode
+            |- "projection" name@Ident ":" guest@Ident direction "host" "::" host@Ident
+                "via" mode ";" : DdlRewrite;
+
+        // All three source arrows lower to the same directed rule form.
+        // `<~` swaps the elaborated endpoints; `<~>` emits two independently
+        // checked directed rules sharing one authored source occurrence.
+        DdlProjectionForward . |- "~>" : DdlProjectionDirection;
+        DdlProjectionBackward . |- "<~" : DdlProjectionDirection;
+        DdlProjectionBoth . |- "<~>" : DdlProjectionDirection;
+        DdlProjectionCarrierOnly . |- "carrier" : DdlProjectionCarrierMode;
+        DdlProjectionHeadPlain . |- name@Ident ":" : DdlProjectionRowHead;
+        DdlProjectionHeadContext . bindings:Vec(DdlProjectionBinding)
+            |- name@Ident "(" bindings.*sep(",") ")" ":" : DdlProjectionRowHead;
+        DdlProjectionBindingGuest . |- name@Ident ":" sort@Ident : DdlProjectionBinding;
+        DdlProjectionBindingHost .
+            |- name@Ident ":" "host" "::" sort@Ident : DdlProjectionBinding;
+        DdlProjectionPremisesList . clauses:Vec(DdlProjectionPremise)
+            |- "if" clauses.*sep(",") "then" : DdlProjectionPremises;
+        DdlProjectionPremiseCall .
+            |- "projection" name@Ident "(" guest@Ident "," host@Ident ")"
+                : DdlProjectionPremise;
+        DdlProjectionPremiseTransition .
+            |- left@Ident "~>" right@Ident : DdlProjectionPremise;
+        DdlProjectionRuleDirect . head:DdlProjectionRowHead, left:DdlRuleAst,
+            direction:DdlProjectionDirection,
+            right:DdlRuleAst
+            |- head left direction right ";" : DdlProjectionRule;
+        DdlProjectionRuleConditional . head:DdlProjectionRowHead,
+            premises:DdlProjectionPremises, left:DdlRuleAst,
+            direction:DdlProjectionDirection, right:DdlRuleAst
+            |- head premises left direction right ";" : DdlProjectionRule;
 
         DdlRuleAstSubst . abstraction:DdlRuleAst, argument:DdlRuleAst
             |- "(" "subst" abstraction argument ")" : DdlRuleAst;
+        DdlRuleAstHostSExp . arguments:Vec(DdlRuleAst)
+            |- "(" "host" "::" label@Ident arguments.*sep("") ")" : DdlRuleAst;
         DdlRuleAstSExp . arguments:Vec(DdlRuleAst)
             |- "(" label@Ident arguments.*sep("") ")" : DdlRuleAst;
+        DdlRuleAstBoolean . value:Bool |- value : DdlRuleAst;
+        DdlRuleAstString . |- raw@StringLiteral : DdlRuleAst;
+        DdlRuleAstInteger . value:Int |- value : DdlRuleAst;
         DdlRuleAstAbs . body:DdlRuleAst |- "^" binder@Ident "." body : DdlRuleAst;
         DdlRuleAstCollectionEmpty . |- "{" "}" : DdlRuleAst;
         DdlRuleAstCollection . items:DdlRuleAstItems |- "{" items "}" : DdlRuleAst;

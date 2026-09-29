@@ -7,10 +7,12 @@
 
 use crate::rholang_ast::RholangAstLowerError;
 use mettail_languages::rholang::{
-    DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses,
+    Bool, DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses,
     DdlImport, DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlPremise, DdlPremises,
-    DdlReplacement, DdlRewrite, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort,
-    DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr, Int, Proc,
+    DdlProjectionBinding, DdlProjectionDirection, DdlProjectionPremise, DdlProjectionPremises,
+    DdlProjectionRowHead, DdlProjectionRule, DdlReplacement, DdlRewrite, DdlRuleAst,
+    DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem, DdlTermAttr, DdlTermRule,
+    DdlTheoryExpr, Int, Proc,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{new_elist_par, new_gstring_par};
@@ -403,6 +405,114 @@ impl<'a> DdlLowerPlan<'a> {
                             ],
                         });
                     },
+                    DdlRewrite::DdlRewriteProjection(name, guest, direction, host, rules) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-group",
+                            children: vec![
+                                Task::Text(name),
+                                Task::Text(guest),
+                                direction_task(direction.as_ref()),
+                                Task::Text(host),
+                                sequence(rules.iter().map(Task::ProjectionRule).collect()),
+                            ],
+                        });
+                    },
+                    DdlRewrite::DdlRewriteCarrierProjection(name, guest, direction, host, _) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-carrier",
+                            children: vec![
+                                Task::Text(name),
+                                Task::Text(guest),
+                                direction_task(direction.as_ref()),
+                                Task::Text(host),
+                            ],
+                        });
+                    },
+                },
+                Task::ProjectionRule(rule) => match rule {
+                    DdlProjectionRule::DdlProjectionRuleDirect(head, left, direction, right) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-rule",
+                            children: vec![
+                                Task::ProjectionHead(head.as_ref()),
+                                sequence(Vec::new()),
+                                Task::RuleAst(left.as_ref()),
+                                direction_task(direction.as_ref()),
+                                Task::RuleAst(right.as_ref()),
+                            ],
+                        });
+                    },
+                    DdlProjectionRule::DdlProjectionRuleConditional(
+                        head,
+                        premises,
+                        left,
+                        direction,
+                        right,
+                    ) => tasks.push(Task::Node {
+                        tag: "projection-rule",
+                        children: vec![
+                            Task::ProjectionHead(head.as_ref()),
+                            Task::ProjectionPremises(premises.as_ref()),
+                            Task::RuleAst(left.as_ref()),
+                            direction_task(direction.as_ref()),
+                            Task::RuleAst(right.as_ref()),
+                        ],
+                    }),
+                },
+                Task::ProjectionHead(head) => match head {
+                    DdlProjectionRowHead::DdlProjectionHeadPlain(name) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-head",
+                            children: vec![Task::Text(name), sequence(Vec::new())],
+                        });
+                    },
+                    DdlProjectionRowHead::DdlProjectionHeadContext(name, bindings) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-head",
+                            children: vec![
+                                Task::Text(name),
+                                sequence(bindings.iter().map(Task::ProjectionBinding).collect()),
+                            ],
+                        });
+                    },
+                },
+                Task::ProjectionBinding(binding) => match binding {
+                    DdlProjectionBinding::DdlProjectionBindingGuest(name, sort) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-guest-binding",
+                            children: vec![Task::Text(name), Task::Text(sort)],
+                        });
+                    },
+                    DdlProjectionBinding::DdlProjectionBindingHost(name, sort) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-host-binding",
+                            children: vec![Task::Text(name), Task::Text(sort)],
+                        });
+                    },
+                },
+                Task::ProjectionPremises(premises) => match premises {
+                    DdlProjectionPremises::DdlProjectionPremisesList(clauses) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-premises",
+                            children: vec![sequence(
+                                clauses.iter().map(Task::ProjectionPremise).collect(),
+                            )],
+                        });
+                    },
+                },
+                Task::ProjectionPremise(premise) => match premise {
+                    DdlProjectionPremise::DdlProjectionPremiseCall(name, guest, host) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-call",
+                            children: vec![Task::Text(name), Task::Text(guest), Task::Text(host)],
+                        });
+                    },
+                    DdlProjectionPremise::DdlProjectionPremiseTransition(left, right) => {
+                        tasks.push(Task::Node {
+                            tag: "projection-transition",
+                            children: vec![Task::Text(left), Task::Text(right)],
+                        });
+                    },
                 },
                 Task::Premise(premise) => match premise {
                     DdlPremise::DdlPremise(left, right) => tasks.push(Task::Node {
@@ -411,7 +521,7 @@ impl<'a> DdlLowerPlan<'a> {
                     }),
                 },
                 Task::RuleAst(ast) => {
-                    let node = rule_ast_task(ast);
+                    let node = rule_ast_task(ast)?;
                     tasks.push(node);
                 },
             }
@@ -786,8 +896,8 @@ fn rule_ast_remainder_tail<'a>(tail: &'a DdlRuleAstRemainderTail) -> (Vec<Task<'
     }
 }
 
-fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Task<'a> {
-    match ast {
+fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Result<Task<'a>, RholangAstLowerError> {
+    Ok(match ast {
         DdlRuleAst::DdlRuleAstSubst(body, argument) => Task::Node {
             tag: "ast-subst",
             children: vec![Task::RuleAst(body.as_ref()), Task::RuleAst(argument.as_ref())],
@@ -798,6 +908,33 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Task<'a> {
                 Task::Text(label),
                 sequence(arguments.iter().map(Task::RuleAst).collect()),
             ],
+        },
+        DdlRuleAst::DdlRuleAstHostSExp(label, arguments) => Task::Node {
+            tag: "ast-host-sexp",
+            children: vec![
+                Task::Text(label),
+                sequence(arguments.iter().map(Task::RuleAst).collect()),
+            ],
+        },
+        DdlRuleAst::DdlRuleAstBoolean(value) => {
+            let tag = match value.as_ref() {
+                Bool::BoolLit(true) => "ast-boolean-true",
+                Bool::BoolLit(false) => "ast-boolean-false",
+                _ => {
+                    return Err(RholangAstLowerError::DdlWire(
+                        "a projection Boolean literal must be an exact true or false value".into(),
+                    ));
+                },
+            };
+            Task::Node { tag, children: Vec::new() }
+        },
+        DdlRuleAst::DdlRuleAstString(raw) => Task::Node {
+            tag: "ast-string",
+            children: vec![Task::QuotedText(raw)],
+        },
+        DdlRuleAst::DdlRuleAstInteger(value) => Task::Node {
+            tag: "ast-integer",
+            children: vec![Task::Number(value.as_ref())],
         },
         DdlRuleAst::DdlRuleAstAbs(binder, body) => Task::Node {
             tag: "ast-abs",
@@ -837,7 +974,16 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Task<'a> {
             tag: "ast-var",
             children: vec![Task::Text(name)],
         },
-    }
+    })
+}
+
+fn direction_task(direction: &DdlProjectionDirection) -> Task<'_> {
+    let tag = match direction {
+        DdlProjectionDirection::DdlProjectionForward => "guest-to-host",
+        DdlProjectionDirection::DdlProjectionBackward => "host-to-guest",
+        DdlProjectionDirection::DdlProjectionBoth => "bidirectional",
+    };
+    Task::Node { tag, children: Vec::new() }
 }
 
 enum Task<'a> {
@@ -877,6 +1023,11 @@ enum Task<'a> {
     Equation(&'a DdlEquation),
     Freshness(&'a DdlFreshness),
     Rewrite(&'a DdlRewrite),
+    ProjectionRule(&'a DdlProjectionRule),
+    ProjectionHead(&'a DdlProjectionRowHead),
+    ProjectionBinding(&'a DdlProjectionBinding),
+    ProjectionPremises(&'a DdlProjectionPremises),
+    ProjectionPremise(&'a DdlProjectionPremise),
     Premise(&'a DdlPremise),
     RuleAst(&'a DdlRuleAst),
 }

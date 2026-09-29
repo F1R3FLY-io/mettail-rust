@@ -159,13 +159,35 @@ pub(super) fn expansion(
                     },
                     reserve,
                 )?,
+                DdlRewrite::DdlRewriteProjection(_, _, _, _, rules) => rules.len(),
+                DdlRewrite::DdlRewriteCarrierProjection(..) => 0,
             };
-            (2, add(len, 4)?)
+            (2, add(len, 5)?)
+        },
+        Task::ProjectionRule(..) => (2, 5),
+        Task::ProjectionHead(head) => match head {
+            DdlProjectionRowHead::DdlProjectionHeadPlain(..) => (2, 2),
+            DdlProjectionRowHead::DdlProjectionHeadContext(_, bindings) => {
+                (2, add(bindings.len(), 2)?)
+            },
+        },
+        Task::ProjectionBinding(..) => (1, 2),
+        Task::ProjectionPremises(premises) => match premises {
+            DdlProjectionPremises::DdlProjectionPremisesList(clauses) => {
+                (2, add(clauses.len(), 1)?)
+            },
+        },
+        Task::ProjectionPremise(premise) => match premise {
+            DdlProjectionPremise::DdlProjectionPremiseCall(..) => (1, 3),
+            DdlProjectionPremise::DdlProjectionPremiseTransition(..) => (1, 2),
         },
         Task::TheoryExpr(expression) => theory(expression)?,
         Task::RuleAst(ast) => match ast {
             DdlRuleAst::DdlRuleAstSubst(..) | DdlRuleAst::DdlRuleAstAbs(..) => (1, 2),
-            DdlRuleAst::DdlRuleAstSExp(_, arguments) => (2, add(arguments.len(), 2)?),
+            DdlRuleAst::DdlRuleAstSExp(_, arguments)
+            | DdlRuleAst::DdlRuleAstHostSExp(_, arguments) => (2, add(arguments.len(), 2)?),
+            DdlRuleAst::DdlRuleAstBoolean(_) => (1, 0),
+            DdlRuleAst::DdlRuleAstString(_) | DdlRuleAst::DdlRuleAstInteger(_) => (1, 1),
             DdlRuleAst::DdlRuleAstCollectionEmpty => (2, 1),
             DdlRuleAst::DdlRuleAstCollection(items) => {
                 let len = linked_len(
