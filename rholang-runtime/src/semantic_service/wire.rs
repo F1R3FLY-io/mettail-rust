@@ -116,9 +116,16 @@ fn prepare_reply<C: FnMut() -> bool>(
         &mut poll,
     );
     let body = match outcome {
-        Ok(results) => match encode_results_v1(results, &mut budget) {
-            Ok(value) => ReplyBody::Proven(value),
-            Err(error) => wire_diagnostic(error),
+        Ok(PreparedSemanticOutput::Action(results)) => {
+            match encode_results_v1(results, &mut budget) {
+                Ok(value) => ReplyBody::Proven(value),
+                Err(error) => wire_diagnostic(error),
+            }
+        },
+        Ok(PreparedSemanticOutput::PredicateRelation(_)) => {
+            service_diagnostic(InstalledSemanticError::InvalidEvidence(
+                "predicate relation is not a named action reply",
+            ))
         },
         Err(error) => service_diagnostic(error),
     };

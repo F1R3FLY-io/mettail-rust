@@ -100,6 +100,7 @@ pub(crate) fn prepare<C: FnMut() -> bool>(
     let evidence = runtime.prepare_where_predicate(
         handle,
         &input,
+        &call.category,
         *work,
         limits
             .boundary_payload_bytes

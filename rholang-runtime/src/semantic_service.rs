@@ -7,17 +7,21 @@
 use crate::installed_flt::{InstalledFltAdapter, InstalledFltBindingError, InstalledFltError};
 use crate::language_install::{LanguageRuntimeError, RholangLanguageRuntime};
 use mettail_dovetail_runtime::{
-    SemanticActionExecutionRequest, SemanticInputLimits, SemanticMatchRefutation,
-    SemanticMatchUndetermined, SemanticPremiseReceipt, SemanticResourceReceipt, SemanticTransition,
+    theory_positional_native_view, RuntimeLiteralRef, SemanticActionExecutionRequest,
+    SemanticInputLimits, SemanticMatchRefutation, SemanticMatchUndetermined,
+    SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt, SemanticRelationExecutionRequest,
+    SemanticRelationNormalFormReceipt, SemanticResourceReceipt, SemanticTransition,
     SemanticTransitionDecision, SemanticTransitionInput, SemanticTransitionLimits,
     SemanticTransitionMatcher, SemanticTransitionReceipt, TheoryPatternRestoreError,
+    TheoryPositionalNativeView,
 };
 use mettail_grammar_core::{
-    InstalledLanguage, InstalledLanguageHandle, InstalledLanguageTable, LanguageAccessError,
-    LanguageRight, TheoryActionExecutionImageV1, TheoryActionId, TheoryActionImageV1,
-    TheoryImageOperatorV1, TheoryLimitsV1, TheoryLiteralV1, TheoryPatternStateFormV1,
-    TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1, TheorySemanticImageV1,
-    TheorySortId, TheoryVariableId,
+    BuiltinCarrier, Carrier, InstalledLanguage, InstalledLanguageHandle, InstalledLanguageTable,
+    LanguageAccessError, LanguageRight, TheoryActionExecutionImageV1, TheoryActionId,
+    TheoryActionImageV1, TheoryImageOperatorV1, TheoryLimitsV1, TheoryLiteralCarrierV1,
+    TheoryLiteralV1, TheoryPatternStateFormV1, TheoryPatternStateV1, TheoryResourceProfileV1,
+    TheoryRuleDispositionV1, TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1,
+    TheorySortKindV1, TheoryVariableId,
 };
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
 use models::rhoapi::Par;
@@ -138,6 +142,8 @@ impl From<DynamicReflectionError> for InstalledSemanticError {
 pub enum SemanticOperation<'a> {
     Reduce(&'a str),
     Observe(&'a str),
+    /// Guard-only query of the exact authored category, not a named action.
+    Predicate(&'a str),
 }
 
 /// A structural invocation of an installed theory, never guest source text.
@@ -232,15 +238,27 @@ struct SemanticServiceUsage {
 }
 
 struct PreparedSemanticReport {
-    outcome: Result<Vec<SemanticServiceResult>, InstalledSemanticError>,
+    outcome: Result<PreparedSemanticOutput, InstalledSemanticError>,
     publication: Option<InstalledSemanticPublication>,
     predicate_verdict: Option<mettail_prattail::algebra_tower::Sat3>,
     usage: SemanticServiceUsage,
 }
 
+#[derive(Debug)]
+enum PreparedSemanticOutput {
+    Action(Vec<SemanticServiceResult>),
+    /// Retain the complete original relation receipts through COMM.
+    PredicateRelation(Vec<SemanticRelationNormalFormReceipt>),
+}
+
 impl PreparedSemanticReport {
     fn commit(self) -> SemanticServiceReport {
-        let outcome = self.outcome.and_then(|results| {
+        let outcome = self.outcome.and_then(|output| {
+            let PreparedSemanticOutput::Action(results) = output else {
+                return Err(InstalledSemanticError::InvalidEvidence(
+                    "predicate relation cannot be published as an action",
+                ));
+            };
             let publication = self
                 .publication
                 .ok_or(InstalledSemanticError::InvalidEvidence(
@@ -332,17 +350,64 @@ impl RholangLanguageRuntime {
             );
             let prepared = (|| {
                 let selected_role = if predicate {
-                    Some(predicate::select_role(&installed, request.input, &mut budget)?)
+                    predicate::select_role(&installed, request.input, &mut budget)?
                 } else {
                     None
                 };
-                let operation = selected_role.map_or(request.operation, |index| {
-                    SemanticOperation::Observe(
-                        &installed.language_core().theory.observations[index].name,
-                    )
-                });
-                let SelectedSemanticOperation { action, input_sort, mut required } =
-                    select_semantic_operation(&installed, operation, &mut budget)?;
+                let predicate_category = if predicate {
+                    match request.operation {
+                        SemanticOperation::Predicate(category) => Some(category),
+                        _ => {
+                            return Err(InstalledSemanticError::InvalidSelection(
+                                "where predicate requires an exact category",
+                            ))
+                        },
+                    }
+                } else {
+                    None
+                };
+                let native_sort = if selected_role.is_none() {
+                    predicate_category
+                        .map(|category| {
+                            predicate::native_boolean_sort(&installed, category, &mut budget)
+                        })
+                        .transpose()?
+                } else {
+                    None
+                };
+                let mut selection = if native_sort.is_none() {
+                    let operation = selected_role.map_or(request.operation, |index| {
+                        SemanticOperation::Observe(
+                            &installed.language_core().theory.observations[index].name,
+                        )
+                    });
+                    Some(select_semantic_operation(&installed, operation, &mut budget)?)
+                } else {
+                    None
+                };
+                let mut required = if let Some(selected) = &mut selection {
+                    if let Some(category) = predicate_category {
+                        let actual = &installed.language_core().theory.sorts
+                            [selected.input_sort.0 as usize]
+                            .name;
+                        budget.charge(
+                            actual
+                                .len()
+                                .checked_add(category.len())
+                                .ok_or(DynamicReflectionError::WorkLimit)?,
+                            0,
+                        )?;
+                        if actual != category {
+                            return Err(InstalledSemanticError::InvalidSelection(
+                                "predicate role input category mismatch",
+                            ));
+                        }
+                    }
+                    std::mem::take(&mut selected.required)
+                } else {
+                    budget.charge(3, 3)?;
+                    vec![LanguageRight::Observe, LanguageRight::Reduce, LanguageRight::Construct]
+                };
                 if predicate && !required.contains(&LanguageRight::Construct) {
                     budget.charge(1, 1)?;
                     required.push(LanguageRight::Construct);
@@ -369,19 +434,38 @@ impl RholangLanguageRuntime {
                     },
                     None => None,
                 };
-                let results = prepare_semantic_results(
-                    &bundle,
-                    SelectedSemanticExecution { action, input_sort },
-                    request.input,
-                    limits,
-                    &mut budget,
-                    &mut kernel_work,
-                )?;
-                if let Some(keys) = keys {
-                    predicate_verdict =
-                        Some(predicate::classify_results(&results, &keys, &mut budget)?);
+                if let Some(selected) = selection {
+                    let results = prepare_semantic_results(
+                        &bundle,
+                        SelectedSemanticExecution {
+                            action: selected.action,
+                            input_sort: selected.input_sort,
+                        },
+                        request.input,
+                        limits,
+                        &mut budget,
+                        &mut kernel_work,
+                    )?;
+                    if let Some(keys) = keys {
+                        predicate_verdict =
+                            Some(predicate::classify_results(&results, &keys, &mut budget)?);
+                    }
+                    Ok(PreparedSemanticOutput::Action(results))
+                } else {
+                    let sort = native_sort.ok_or(InstalledSemanticError::InvalidEvidence(
+                        "missing native predicate sort",
+                    ))?;
+                    let (receipts, verdict) = prepare_native_predicate_results(
+                        &bundle,
+                        sort,
+                        request.input,
+                        limits,
+                        &mut budget,
+                        &mut kernel_work,
+                    )?;
+                    predicate_verdict = Some(verdict);
+                    Ok(PreparedSemanticOutput::PredicateRelation(receipts))
                 }
-                Ok(results)
             })();
             remaining = budget.finish();
             prepared
@@ -486,6 +570,145 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
     let terms = adapter.reflect_transitions(&proven, selection.action.codomain, budget)?;
     let (_graph, transitions) = proven.into_parts();
     pair_semantic_results(terms, transitions, budget)
+}
+
+/// Classify only the complete roster returned by the installed theory's
+/// actionless normalization path. A guest constructor is never truthy by name;
+/// only a checked literal in the declared Boolean carrier is a Boolean result.
+fn prepare_native_predicate_results<C: FnMut() -> bool>(
+    prepared: &InstalledSemanticBundle<'_>,
+    sort: TheorySortId,
+    input: &Par,
+    limits: SemanticServiceLimits,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+    kernel_work: &mut Option<u64>,
+) -> Result<
+    (Vec<SemanticRelationNormalFormReceipt>, mettail_prattail::algebra_tower::Sat3),
+    InstalledSemanticError,
+> {
+    use mettail_prattail::algebra_tower::Sat3;
+    let installed = prepared.installed();
+    let image = installed
+        .semantic_image()
+        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+    let adapter = InstalledFltAdapter::new(installed, budget)?;
+    let category = adapter.input_category(sort, budget)?;
+    let input = adapter.to_kernel(
+        input,
+        category,
+        SemanticInputLimits {
+            work: limits.execution.work,
+            nodes: limits.execution.term_nodes,
+            bytes: limits.execution.term_bytes,
+        },
+        budget,
+    )?;
+    let admission = input.admission_work();
+    budget.charge(1, 8)?;
+    let expected_input = input.exact_key().clone();
+    let decision = budget.run_accounted_stage(|remaining, cancel| {
+        let Some(ceiling) = admission.checked_add(remaining) else {
+            return (Err(InstalledSemanticError::InvalidEvidence("admission ceiling overflow")), 0);
+        };
+        match prepared.execute_relation_accounted(
+            sort,
+            input,
+            SemanticTransitionLimits { work: ceiling, ..limits.execution },
+            cancel,
+        ) {
+            Err(error) => (Err(error), 0),
+            Ok((decision, aggregate)) => {
+                *kernel_work = Some(aggregate);
+                match aggregate.checked_sub(admission) {
+                    Some(increment) => (Ok(decision), increment),
+                    None => (
+                        Err(InstalledSemanticError::InvalidEvidence(
+                            "kernel underreported admission",
+                        )),
+                        0,
+                    ),
+                }
+            },
+        }
+    })??;
+    let proven = match decision {
+        SemanticTransitionDecision::ProvenRelation(proven) => proven,
+        SemanticTransitionDecision::Proven(_) => {
+            return Err(InstalledSemanticError::InvalidEvidence(
+                "relation returned a named action result",
+            ));
+        },
+        SemanticTransitionDecision::Refuted(reason) => {
+            return Err(InstalledSemanticError::Refuted(reason))
+        },
+        SemanticTransitionDecision::Undetermined { reason, .. } => {
+            return Err(InstalledSemanticError::Undetermined(reason));
+        },
+    };
+    if Some(proven.work) != *kernel_work
+        || proven.work < admission
+        || proven.normal_forms.is_empty()
+    {
+        return Err(InstalledSemanticError::InvalidEvidence("relation result aggregate"));
+    }
+    let mut verdict = None;
+    for form in &proven.normal_forms {
+        validate_fresh_relation_receipt(
+            installed,
+            sort,
+            expected_input.as_bytes(),
+            proven.work,
+            &form.receipt,
+            form.output_sort,
+            budget,
+        )?;
+        charge_relation_receipt_transport(&form.receipt, budget)?;
+        let current = budget
+            .run_accounted_stage(|limit, cancel| {
+                let mut used = 0;
+                let viewed = theory_positional_native_view(
+                    image,
+                    proven.egraph(),
+                    form.output,
+                    sort,
+                    &mut used,
+                    limit,
+                    cancel,
+                );
+                (viewed, used)
+            })?
+            .map_err(InstalledSemanticError::Undetermined)?;
+        let current = match current {
+            Some(TheoryPositionalNativeView::Literal {
+                sort: actual,
+                value: RuntimeLiteralRef::Boolean(true),
+            }) if actual == sort => Sat3::Sat,
+            Some(TheoryPositionalNativeView::Literal {
+                sort: actual,
+                value: RuntimeLiteralRef::Boolean(false),
+            }) if actual == sort => Sat3::Unsat,
+            _ => Sat3::DontKnow,
+        };
+        verdict = predicate::fold_uniform_candidate(verdict, current);
+    }
+    budget.charge(0, 0)?;
+    let (_, forms) = proven.into_parts();
+    budget.charge(
+        forms.len(),
+        forms
+            .len()
+            .checked_mul(8)
+            .ok_or(DynamicReflectionError::PayloadByteLimit)?,
+    )?;
+    let mut receipts = Vec::new();
+    receipts
+        .try_reserve_exact(forms.len())
+        .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+    for form in forms {
+        budget.charge(1, 0)?;
+        receipts.push(form.receipt);
+    }
+    Ok((receipts, verdict.unwrap_or(Sat3::DontKnow)))
 }
 
 /// Whole-record move refinement of SemanticReceiptTransport.pair_results.
@@ -598,11 +821,56 @@ fn validate_fresh_receipt<C: FnMut() -> bool>(
     Ok(())
 }
 
+fn validate_fresh_relation_receipt<C: FnMut() -> bool>(
+    installed: &InstalledLanguage,
+    sort: TheorySortId,
+    expected_input: &[u8],
+    aggregate: u64,
+    receipt: &SemanticRelationNormalFormReceipt,
+    output_sort: TheorySortId,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), InstalledSemanticError> {
+    budget.charge(1, 0)?;
+    let commitment = installed.commitment();
+    if receipt.language_fingerprint != commitment.language_fingerprint
+        || receipt.theory_fingerprint != commitment.theory_fingerprint
+        || Some(receipt.image_fingerprint) != commitment.semantic_image_fingerprint
+        || receipt.relation_sort != sort
+        || output_sort != sort
+        || receipt.work != aggregate
+    {
+        return Err(InstalledSemanticError::InvalidEvidence("relation receipt envelope"));
+    }
+    budget.charge(expected_input.len(), 0)?;
+    if receipt.input != expected_input {
+        return Err(InstalledSemanticError::InvalidEvidence("relation receipt input key"));
+    }
+    let mut previous = expected_input;
+    for hop in &receipt.normalization_hops {
+        budget.charge(
+            previous
+                .len()
+                .checked_add(1)
+                .ok_or(DynamicReflectionError::WorkLimit)?,
+            0,
+        )?;
+        if hop.before != previous {
+            return Err(InstalledSemanticError::InvalidEvidence("relation normalization chain"));
+        }
+        previous = &hop.after;
+    }
+    budget.charge(previous.len(), 0)?;
+    if previous != receipt.output {
+        return Err(InstalledSemanticError::InvalidEvidence("relation final output"));
+    }
+    Ok(())
+}
+
 impl SemanticOperation<'_> {
     pub(crate) fn right(self) -> LanguageRight {
         match self {
             Self::Reduce(_) => LanguageRight::Reduce,
-            Self::Observe(_) => LanguageRight::Observe,
+            Self::Observe(_) | Self::Predicate(_) => LanguageRight::Observe,
         }
     }
 }
@@ -652,6 +920,11 @@ pub(crate) fn select_semantic_operation<'a, C: FnMut() -> bool>(
                     .ok_or(InstalledSemanticError::UnknownObservation)?;
             let observation = &theory.observations[index];
             (observation.action.as_str(), Some(observation.result.as_str()))
+        },
+        SemanticOperation::Predicate(_) => {
+            return Err(InstalledSemanticError::InvalidSelection(
+                "predicate query has no named action",
+            ));
         },
     };
     let index = find_exact_name(theory.actions.iter().map(|a| a.id.as_str()), action_name, budget)?
@@ -794,6 +1067,29 @@ impl<'a> InstalledSemanticBundle<'a> {
             is_cancelled,
         ))
     }
+
+    pub(crate) fn execute_relation_accounted<C: FnMut() -> bool>(
+        &self,
+        sort: TheorySortId,
+        input: SemanticTransitionInput,
+        limits: SemanticTransitionLimits,
+        is_cancelled: C,
+    ) -> Result<(SemanticTransitionDecision, u64), InstalledSemanticError> {
+        let image = self
+            .installed
+            .semantic_image()
+            .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+        Ok(self.matcher.execute_rewrite_relation_accounted(
+            SemanticRelationExecutionRequest {
+                image,
+                relation_sort: sort,
+                granted_rights: self.handle.rights(),
+                input,
+                limits,
+            },
+            is_cancelled,
+        ))
+    }
 }
 
 /// Setup schedule v1. These are logical image coordinates/payload reservations,
@@ -875,8 +1171,25 @@ fn charge_receipt_transport<C: FnMut() -> bool>(
         },
     }
     charge_receipt_premises(&receipt.premises, budget)?;
+    charge_normalization_hops(&receipt.normalization_hops, budget)
+}
+
+fn charge_relation_receipt_transport<C: FnMut() -> bool>(
+    receipt: &SemanticRelationNormalFormReceipt,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), DynamicReflectionError> {
+    budget.charge(1, 108)?; // fingerprints, relation sort, and aggregate work
+    charge_receipt_payload(&receipt.input, budget)?;
+    charge_receipt_payload(&receipt.output, budget)?;
+    charge_normalization_hops(&receipt.normalization_hops, budget)
+}
+
+fn charge_normalization_hops<C: FnMut() -> bool>(
+    hops: &[SemanticNormalizationHopReceiptV1],
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), DynamicReflectionError> {
     budget.charge(1, 8)?; // hop count
-    for hop in &receipt.normalization_hops {
+    for hop in hops {
         budget.charge(1, 8)?; // hop's work is data, not another execution charge
         charge_receipt_payload(&hop.before, budget)?;
         charge_receipt_payload(&hop.after, budget)?;

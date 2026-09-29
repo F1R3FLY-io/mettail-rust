@@ -4093,6 +4093,53 @@ pub(crate) mod tests {
             .expect("the modified fixture supplies an admitted pair")
     }
 
+    /// A fixture production with a new source label needs a corresponding
+    /// retained authored observation. Cloning only the lowered production
+    /// would leave its rule handle pointing at the old label, which canonical
+    /// admission correctly rejects before the binding under test is reached.
+    fn retain_renamed_authored_rule(
+        language: &mut mettail_grammar_core::LanguageCoreV1,
+        production: &mut mettail_grammar_core::Production,
+    ) {
+        use mettail_grammar_core::{AuthoredName, AuthoredNameId, AuthoredNode, AuthoredRuleId};
+
+        let store = language
+            .grammar
+            .authored
+            .as_mut()
+            .expect("retained authored rules");
+        let source = match store.get(production.authored.expect("authored production").0) {
+            Some(AuthoredNode::Rule(rule)) => rule.clone(),
+            other => panic!("production source is an authored rule: {other:?}"),
+        };
+        let mut next_class = 0;
+        for index in 0..store.len() {
+            let index = u32::try_from(index).expect("small fixture");
+            if let Some(AuthoredNode::Name(name)) = store.get(index) {
+                next_class = next_class.max(
+                    name.equality_class
+                        .checked_add(1)
+                        .expect("available source class"),
+                );
+            }
+        }
+        let label = AuthoredNameId(
+            store
+                .try_push(AuthoredNode::Name(AuthoredName {
+                    spelling: production.label.clone(),
+                    equality_class: next_class,
+                }))
+                .expect("new authored label"),
+        );
+        let mut rule = source;
+        rule.label = label;
+        production.authored = Some(AuthoredRuleId(
+            store
+                .try_push(AuthoredNode::Rule(rule))
+                .expect("renamed authored rule"),
+        ));
+    }
+
     pub(crate) fn installed_flt_adapter_fixture(
     ) -> (RholangLanguageRuntime, Par, Arc<mettail_grammar_core::InstalledLanguage>) {
         let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
@@ -4879,6 +4926,9 @@ pub(crate) mod tests {
             );
             let mut bundle = match decision {
                 SemanticTransitionDecision::Proven(bundle) => bundle,
+                SemanticTransitionDecision::ProvenRelation(_) => {
+                    panic!("named action unexpectedly returned a direct relation")
+                },
                 SemanticTransitionDecision::Refuted(reason) => panic!("kernel refuted: {reason:?}"),
                 SemanticTransitionDecision::Undetermined { reason, work, .. } => {
                     panic!("kernel undetermined: {reason:?} after {work}")
@@ -5233,6 +5283,9 @@ pub(crate) mod tests {
                     || false,
                 ) {
                     SemanticTransitionDecision::Proven(bundle) => bundle,
+                    SemanticTransitionDecision::ProvenRelation(_) => {
+                        panic!("named action unexpectedly returned a direct relation")
+                    },
                     SemanticTransitionDecision::Refuted(reason) => {
                         panic!("deep rule refuted: {reason:?}")
                     },
@@ -5460,6 +5513,7 @@ pub(crate) mod tests {
         );
         production.label = "ConflictingAlias".into();
         constructor.name = production.label.clone();
+        retain_renamed_authored_rule(&mut language, &mut production);
         // Keep the original dense constructor roster and matching reduction;
         // the added label is the only new representability violation.
         language.grammar.productions.push(production);
@@ -5506,6 +5560,7 @@ pub(crate) mod tests {
         );
         production.label = "^dynamic-text:61".into();
         constructor.name = production.label.clone();
+        retain_renamed_authored_rule(&mut language, &mut production);
         let mut reduction = language.grammar.reductions[production.reduction as usize].clone();
         reduction.constructor = production.constructor;
         production.reduction =
@@ -5655,7 +5710,9 @@ pub(crate) mod tests {
             mettail_elab::canonical::value_to_core(&tiny_value("SyntaxOnly", l([s("Construct")])))
                 .expect("structural core");
         let parser_image = compile_parser_image(&core).expect("parser image");
-        let table = InstalledLanguageTable::new();
+        let table = InstalledLanguageTable::with_runtime_factory(Arc::new(
+            mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
+        ));
         let grant = table
             .install_runtime(
                 core,
@@ -6763,7 +6820,9 @@ pub(crate) mod tests {
             StaleAbi::SemanticCompiler,
             StaleAbi::PrimitiveSubstrate,
         ] {
-            let table = InstalledLanguageTable::new();
+            let table = InstalledLanguageTable::with_runtime_factory(Arc::new(
+                mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
+            ));
             let valid = ExecutableLanguageInstall {
                 language: language.clone(),
                 parser_image: parser_image.clone(),
@@ -6828,7 +6887,9 @@ pub(crate) mod tests {
             assert_eq!(table.installed_count().expect("table readable"), 0);
         }
 
-        let table = InstalledLanguageTable::new();
+        let table = InstalledLanguageTable::with_runtime_factory(Arc::new(
+            mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
+        ));
         let mut bad_semantic = semantic_image.clone();
         bad_semantic.language_fingerprint = [0xff; 32];
         let semantic_result = table.install_executable_runtime_batch(
@@ -6855,7 +6916,9 @@ pub(crate) mod tests {
         assert!(matches!(semantic_result, Err(InstallLanguageError::InvalidTheoryImage(_))));
         assert_eq!(table.installed_count().expect("table readable"), 0);
 
-        let table = InstalledLanguageTable::new();
+        let table = InstalledLanguageTable::with_runtime_factory(Arc::new(
+            mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
+        ));
         let parser_limits = ParserImageAdmissionLimits {
             max_runtime_rules: 0,
             ..ParserImageAdmissionLimits::default()
@@ -6884,7 +6947,9 @@ pub(crate) mod tests {
         ));
         assert_eq!(table.installed_count().expect("table readable"), 0);
 
-        let table = InstalledLanguageTable::new();
+        let table = InstalledLanguageTable::with_runtime_factory(Arc::new(
+            mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
+        ));
         let mut bad_parser = parser_image.clone();
         bad_parser.core_fingerprint = [0xff; 32];
         let parser_result = table.install_executable_runtime_batch(

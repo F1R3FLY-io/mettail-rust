@@ -120,7 +120,9 @@ fn predicate_roles_reject_fresh_and_cached_invalid_constants_before_publication(
 fn predicate_roles_defend_the_factory_after_direct_core_table_install() {
     let (language, image) = invalid_cached_predicate();
     let parser = compile_parser_image(&language.grammar).expect("parser");
-    let table = InstalledLanguageTable::new();
+    let table = InstalledLanguageTable::with_runtime_factory(Arc::new(
+        mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
+    ));
     let grant = table
         .install_executable_runtime(
             language,

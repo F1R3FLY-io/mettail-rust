@@ -8,17 +8,15 @@ pub(super) fn select_role<C: FnMut() -> bool>(
     installed: &InstalledLanguage,
     input: &Par,
     budget: &mut ReflectedCodecBudget<'_, C>,
-) -> Result<usize, InstalledSemanticError> {
+) -> Result<Option<usize>, InstalledSemanticError> {
     budget.charge(87, 87)?;
     let owner = crate::language_install::grammar_fingerprint_label(
         installed.commitment().language_fingerprint,
     );
     let context = ReflectedPositionalContext::new(&owner, budget)?;
-    let head = context
-        .view(input, budget)?
-        .ok_or(InstalledSemanticError::InvalidSelection(
-            "predicate input has no canonical installed constructor",
-        ))?;
+    let Some(head) = context.view(input, budget)? else {
+        return Ok(None);
+    };
     let mut selected = None;
     for (index, observation) in installed
         .language_core()
@@ -39,7 +37,83 @@ pub(super) fn select_role<C: FnMut() -> bool>(
             }
         }
     }
-    selected.ok_or(InstalledSemanticError::InvalidSelection("constructor has no predicate role"))
+    Ok(selected)
+}
+
+/// The category is an exact source/image coordinate, never an inferred name
+/// such as `Bool` or a constructor whose spelling happens to be `yes`.
+pub(super) fn native_boolean_sort<C: FnMut() -> bool>(
+    installed: &InstalledLanguage,
+    category: &str,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<TheorySortId, InstalledSemanticError> {
+    let language = installed.language_core();
+    let image = installed
+        .semantic_image()
+        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+    let mut grammar_coordinate = None;
+    for entry in &language.grammar.categories {
+        budget.charge(
+            entry
+                .name
+                .len()
+                .checked_add(1)
+                .ok_or(DynamicReflectionError::WorkLimit)?,
+            0,
+        )?;
+        if entry.name == category {
+            if grammar_coordinate.replace(entry.id).is_some() {
+                return Err(InstalledSemanticError::InvalidEvidence("duplicate grammar category"));
+            }
+            if !matches!(&entry.carrier, Carrier::Builtin(BuiltinCarrier::Boolean)) {
+                return Err(InstalledSemanticError::InvalidSelection(
+                    "predicate category is not a native Boolean carrier",
+                ));
+            }
+        }
+    }
+    grammar_coordinate
+        .ok_or(InstalledSemanticError::InvalidSelection("unknown predicate category"))?;
+    let mut selected = None;
+    for (index, source) in language.theory.sorts.iter().enumerate() {
+        budget.charge(
+            source
+                .name
+                .len()
+                .checked_add(1)
+                .ok_or(DynamicReflectionError::WorkLimit)?,
+            0,
+        )?;
+        if source.name != category {
+            continue;
+        }
+        if selected.is_some() {
+            return Err(InstalledSemanticError::InvalidEvidence("duplicate theory sort"));
+        }
+        let id = TheorySortId(u32::try_from(index).map_err(|_| {
+            InstalledSemanticError::InvalidEvidence("theory sort coordinate overflow")
+        })?);
+        let compiled = image.sorts.get(index).filter(|sort| sort.id == id).ok_or(
+            InstalledSemanticError::InvalidEvidence("predicate sort source/image coordinate"),
+        )?;
+        if !matches!(
+            &source.kind,
+            TheorySortKindV1::Syntax {
+                literal: Some(TheoryLiteralCarrierV1::Boolean)
+            }
+        ) || !matches!(
+            &compiled.kind,
+            TheorySortKindImageV1::Syntax {
+                literal: Some(TheoryLiteralCarrierV1::Boolean)
+            }
+        ) {
+            return Err(InstalledSemanticError::InvalidSelection(
+                "predicate sort is not native Boolean",
+            ));
+        }
+        selected = Some(id);
+    }
+    selected.ok_or(InstalledSemanticError::InvalidSelection("unbound predicate theory sort"))
 }
 
 pub(super) fn role_keys<C: FnMut() -> bool>(
@@ -95,14 +169,20 @@ pub(super) fn classify_results<C: FnMut() -> bool>(
         } else {
             Sat3::DontKnow
         };
-        uniform = Some(match uniform {
-            None => current,
-            Some(previous) if previous == current => current,
-            Some(_) => Sat3::DontKnow,
-        });
+        uniform = fold_uniform_candidate(uniform, current);
     }
     budget.charge(0, 0)?;
     Ok(uniform.unwrap_or(Sat3::DontKnow))
+}
+
+/// Consensus of complete result occurrences, not existential satisfiability.
+/// A conflicting or unknown member is sticky under all later observations.
+pub(super) fn fold_uniform_candidate(previous: Option<Sat3>, current: Sat3) -> Option<Sat3> {
+    Some(match previous {
+        None => current,
+        Some(earlier) if earlier == current => current,
+        Some(_) => Sat3::DontKnow,
+    })
 }
 
 /// Private fresh service evidence retained until the actual COMM mutation.
@@ -158,7 +238,9 @@ impl ProduceCommitGuard for PredicateCommit {
 
 impl PredicateEvidence {
     pub(crate) fn verdict(&self) -> Sat3 {
-        if self.0.outcome.is_err() {
+        if self.0.outcome.as_ref().is_err()
+            || matches!(&self.0.outcome, Ok(PreparedSemanticOutput::PredicateRelation(receipts)) if receipts.is_empty())
+        {
             Sat3::DontKnow
         } else {
             self.0.predicate_verdict.unwrap_or(Sat3::DontKnow)
@@ -180,6 +262,7 @@ impl RholangLanguageRuntime {
         &self,
         handle: &Par,
         input: &Par,
+        category: &str,
         prefix_work: u64,
         prefix_bytes: usize,
         limits: SemanticServiceLimits,
@@ -189,7 +272,7 @@ impl RholangLanguageRuntime {
             SemanticServiceRequest {
                 handle,
                 input,
-                operation: SemanticOperation::Observe(""),
+                operation: SemanticOperation::Predicate(category),
                 limits,
             },
             SemanticServicePrefix {
@@ -205,6 +288,7 @@ impl RholangLanguageRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     #[test]
     fn predicate_roster_classification_keeps_duplicates_and_never_selects_first() {
         let keys = [ContentKey::from_bytes(vec![1]), ContentKey::from_bytes(vec![2])];
@@ -232,6 +316,37 @@ mod tests {
             let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 1000, &mut cancel);
             assert_eq!(classify_results(&results, &keys, &mut budget).unwrap(), expected);
             assert_eq!(budget.work_used(), results.len() as u64 * 4);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn uniform_candidate_fold_is_order_independent_and_duplicate_stable(
+            samples in proptest::collection::vec(0u8..3, 0..40)
+        ) {
+            let values: Vec<Sat3> = samples.iter().map(|sample| match sample {
+                0 => Sat3::Sat,
+                1 => Sat3::Unsat,
+                _ => Sat3::DontKnow,
+            }).collect();
+            let classify = |items: &[Sat3]| items.iter().copied()
+                .fold(None, fold_uniform_candidate)
+                .unwrap_or(Sat3::DontKnow);
+            let expected = if values.is_empty() || values.contains(&Sat3::DontKnow) {
+                Sat3::DontKnow
+            } else if values.iter().all(|v| *v == Sat3::Sat) {
+                Sat3::Sat
+            } else if values.iter().all(|v| *v == Sat3::Unsat) {
+                Sat3::Unsat
+            } else {
+                Sat3::DontKnow
+            };
+            prop_assert_eq!(classify(&values), expected);
+            let mut reversed = values.clone();
+            reversed.reverse();
+            prop_assert_eq!(classify(&reversed), expected);
+            let duplicated = values.iter().copied().chain(values.iter().copied()).collect::<Vec<_>>();
+            prop_assert_eq!(classify(&duplicated), expected);
         }
     }
 }
