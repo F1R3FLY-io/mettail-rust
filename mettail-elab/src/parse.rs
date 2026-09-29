@@ -546,7 +546,11 @@ impl Parser {
                         self.bump();
                     }
                     let cat = self.ident()?;
-                    let carrier = if self.eat(&Tok::Eq) { Some(self.ident()?) } else { None };
+                    let carrier = if self.eat(&Tok::Eq) {
+                        Some(self.ident()?)
+                    } else {
+                        None
+                    };
                     self.expect(Tok::Semi)?;
                     v.push(CatDecl { cat, admits_variables, carrier, span });
                 }
@@ -793,8 +797,47 @@ impl Parser {
         }
         self.expect(Tok::Colon)?;
         let result = self.ident()?;
+        let mut associativity = None;
+        let mut prefix_binding_power = None;
+        while !self.at(&Tok::Semi) {
+            let attribute = self.ident()?;
+            if attribute == "prefix" {
+                if prefix_binding_power.is_some() {
+                    return self.err("duplicate prefix binding power");
+                }
+                self.expect(Tok::LParen)?;
+                let power = match self.bump() {
+                    Tok::Integer(value) => match u16::try_from(value) {
+                        Ok(power) => power,
+                        Err(_) => return self.err("expected a u16 binding power"),
+                    },
+                    other => {
+                        return self.err(format!(
+                            "expected integer binding power, found {}",
+                            other.describe()
+                        ))
+                    },
+                };
+                self.expect(Tok::RParen)?;
+                prefix_binding_power = Some(power);
+            } else if let Some(value) = TermAssociativity::parse(&attribute) {
+                if associativity.replace(value).is_some() {
+                    return self.err("duplicate associativity");
+                }
+            } else {
+                return self.err(format!("unsupported term attribute `{attribute}`"));
+            }
+        }
         self.expect(Tok::Semi)?;
-        Ok(TermRule { label, context, syntax, result, span })
+        Ok(TermRule {
+            label,
+            context,
+            syntax,
+            result,
+            associativity,
+            prefix_binding_power,
+            span,
+        })
     }
 
     fn binding(&mut self) -> PResult<Binding> {

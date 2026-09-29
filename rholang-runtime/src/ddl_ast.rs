@@ -10,7 +10,7 @@ use mettail_languages::rholang::{
     DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses,
     DdlImport, DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlPremise, DdlPremises,
     DdlReplacement, DdlRewrite, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort,
-    DdlSyntaxItem, DdlTermRule, DdlTheoryExpr, Proc,
+    DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr, Int, Proc,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{new_elist_par, new_gstring_par};
@@ -78,6 +78,7 @@ pub(crate) enum DdlRoot<'a> {
 enum WireOp<'a> {
     Text(&'a str),
     QuotedText(&'a str),
+    Number(&'a Int),
     Process(usize),
     Node { tag: &'static str, child_count: usize },
 }
@@ -120,7 +121,9 @@ impl<'a> DdlLowerPlan<'a> {
             };
             admission::expansion(&task, reserve)?;
             let (pending, emitted, process_count) = match &task {
-                Task::Text(_) | Task::QuotedText(_) | Task::FinishNode { .. } => (0, 1, 0),
+                Task::Text(_) | Task::QuotedText(_) | Task::Number(_) | Task::FinishNode { .. } => {
+                    (0, 1, 0)
+                },
                 Task::Process(_) => (0, 1, 1),
                 Task::Node { children, .. } => (
                     children
@@ -147,6 +150,7 @@ impl<'a> DdlLowerPlan<'a> {
             match task {
                 Task::Text(value) => operations.push(WireOp::Text(value)),
                 Task::QuotedText(value) => operations.push(WireOp::QuotedText(value)),
+                Task::Number(value) => operations.push(WireOp::Number(value)),
                 Task::Process(process) => {
                     let index = processes.len();
                     processes.push(process);
@@ -231,10 +235,7 @@ impl<'a> DdlLowerPlan<'a> {
                     }),
                     DdlCatDecl::DdlCategoryCarrier(category, carrier) => tasks.push(Task::Node {
                         tag: "category-carrier",
-                        children: vec![
-                            Task::Text(category),
-                            Task::Text(carrier_spelling(carrier)),
-                        ],
+                        children: vec![Task::Text(category), Task::Text(carrier_spelling(carrier))],
                     }),
                     DdlCatDecl::DdlCategoryNoAdmitCarrier(category, carrier) => {
                         tasks.push(Task::Node {
@@ -276,6 +277,39 @@ impl<'a> DdlLowerPlan<'a> {
                             ],
                         });
                     },
+                    DdlTermRule::DdlTermAttributed(
+                        label,
+                        bindings,
+                        syntax,
+                        result,
+                        first,
+                        rest,
+                    ) => {
+                        let attributes = std::iter::once(first.as_ref())
+                            .chain(rest.iter())
+                            .map(Task::TermAttr)
+                            .collect();
+                        tasks.push(Task::Node {
+                            tag: "term-attributed",
+                            children: vec![
+                                Task::Text(label),
+                                sequence(bindings.iter().map(Task::Binding).collect()),
+                                sequence(syntax.iter().map(Task::SyntaxItem).collect()),
+                                Task::Text(result),
+                                sequence(attributes),
+                            ],
+                        });
+                    },
+                },
+                Task::TermAttr(attribute) => match attribute {
+                    DdlTermAttr::DdlTermAttrWord(word) => tasks.push(Task::Node {
+                        tag: "term-attr-word",
+                        children: vec![Task::Text(word)],
+                    }),
+                    DdlTermAttr::DdlTermAttrCall(word, value) => tasks.push(Task::Node {
+                        tag: "term-attr-call",
+                        children: vec![Task::Text(word), Task::Number(value.as_ref())],
+                    }),
                 },
                 Task::Binding(binding) => match binding {
                     DdlBinding::DdlBindingPlain(name, sort) => tasks.push(Task::Node {
@@ -446,6 +480,16 @@ impl<'a> DdlLowerPlan<'a> {
                         decode_captured_string(value).map_err(RholangAstLowerError::DdlWire)?,
                         reserve,
                     )?);
+                },
+                WireOp::Number(value) => {
+                    let Int::NumLit(number) = value else {
+                        let message = "DDL term binding power must be an integer literal";
+                        admission::parts(1, 1, message.len(), reserve)?;
+                        return Err(RholangAstLowerError::DdlWire(message.into()));
+                    };
+                    let spelling = number.to_string();
+                    admission::text(spelling.len(), false, reserve)?;
+                    values.push(V::text(spelling, reserve)?);
                 },
                 WireOp::Process(index) => {
                     let value = process_values.get_mut(index).and_then(Option::take);
@@ -799,6 +843,7 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Task<'a> {
 enum Task<'a> {
     Text(&'a str),
     QuotedText(&'a str),
+    Number(&'a Int),
     Process(&'a Proc),
     Node {
         tag: &'static str,
@@ -825,6 +870,7 @@ enum Task<'a> {
     Export(&'a DdlExport),
     Replacement(&'a DdlReplacement),
     TermRule(&'a DdlTermRule),
+    TermAttr(&'a DdlTermAttr),
     Binding(&'a DdlBinding),
     Sort(&'a DdlSort),
     SyntaxItem(&'a DdlSyntaxItem),

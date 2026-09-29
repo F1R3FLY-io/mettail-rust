@@ -72,7 +72,7 @@ pub(super) fn expansion(
     // Pay the borrowed discriminant/length selection before inspection.
     parts(1, 0, 0, reserve)?;
     let (count, slots) = match task {
-        Task::Text(_) | Task::QuotedText(_) | Task::FinishNode { .. } => {
+        Task::Text(_) | Task::QuotedText(_) | Task::Number(_) | Task::FinishNode { .. } => {
             return parts(3, 1, 0, reserve);
         },
         Task::Process(_) => return parts(6, 2, 0, reserve),
@@ -110,6 +110,16 @@ pub(super) fn expansion(
         Task::TermRule(DdlTermRule::DdlTerm(_, bindings, syntax, _)) => {
             (3, add(add(bindings.len(), syntax.len())?, 4)?)
         },
+        Task::TermRule(DdlTermRule::DdlTermAttributed(_, bindings, syntax, _, _, rest)) => {
+            (4, add(add(add(bindings.len(), syntax.len())?, rest.len())?, 6)?)
+        },
+        Task::TermAttr(attribute) => (
+            1,
+            match attribute {
+                DdlTermAttr::DdlTermAttrWord(_) => 1,
+                DdlTermAttr::DdlTermAttrCall(..) => 2,
+            },
+        ),
         Task::Binding(binding) => (
             1,
             match binding {

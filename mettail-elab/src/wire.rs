@@ -7,8 +7,8 @@
 
 use crate::ast::{
     Ast, Binding, Builder, CatDecl, CollKind, DottedPath, Equation, Export, Import, Item,
-    ModuleFile, ModuleItem, Param, Replacement, RewriteDecl, Sort, TermRule, TheoryDecl,
-    TheoryExpr,
+    ModuleFile, ModuleItem, Param, Replacement, RewriteDecl, Sort, TermAssociativity, TermRule,
+    TheoryDecl, TheoryExpr,
 };
 use crate::canonical::{
     admit_canonical_value, admit_canonical_value_resources, RhoValue, ValueDecodeError,
@@ -433,14 +433,11 @@ fn decode_cat_decl(value: RhoValue, path: &str) -> Result<CatDecl, DdlValueError
         Some("category-noadmit-carrier") => ("category-noadmit-carrier", false, true),
         _ => ("category", true, false),
     };
-    let mut fields = expect_node(value, tag, Some(if has_carrier { 2 } else { 1 }), path.into())?
-        .into_iter();
+    let mut fields =
+        expect_node(value, tag, Some(if has_carrier { 2 } else { 1 }), path.into())?.into_iter();
     let cat = expect_string(fields.next().expect("arity checked"), format!("{path}.category"))?;
     let carrier = if has_carrier {
-        Some(expect_string(
-            fields.next().expect("arity checked"),
-            format!("{path}.carrier"),
-        )?)
+        Some(expect_string(fields.next().expect("arity checked"), format!("{path}.carrier"))?)
     } else {
         None
     };
@@ -474,7 +471,18 @@ fn decode_replacement(value: RhoValue, path: &str) -> Result<Replacement, DdlVal
 }
 
 fn decode_term_rule(value: RhoValue, path: &str) -> Result<TermRule, DdlValueError> {
-    let mut fields = expect_node(value, "term", Some(4), path.into())?.into_iter();
+    let attributed = node_tag(&value) == Some("term-attributed");
+    let mut fields = expect_node(
+        value,
+        if attributed {
+            "term-attributed"
+        } else {
+            "term"
+        },
+        Some(if attributed { 5 } else { 4 }),
+        path.into(),
+    )?
+    .into_iter();
     let label = expect_string(fields.next().expect("arity checked"), format!("{path}.label"))?;
     let context =
         expect_sequence(fields.next().expect("arity checked"), &format!("{path}.context"))?
@@ -488,11 +496,80 @@ fn decode_term_rule(value: RhoValue, path: &str) -> Result<TermRule, DdlValueErr
         .map(|(index, value)| decode_item(value, &format!("{path}.syntax[{index}]")))
         .collect::<Result<Vec<_>, _>>()?;
     let result = expect_string(fields.next().expect("arity checked"), format!("{path}.result"))?;
+    let mut associativity = None;
+    let mut prefix_binding_power = None;
+    if attributed {
+        let attributes =
+            expect_sequence(fields.next().expect("arity checked"), &format!("{path}.attributes"))?;
+        if attributes.is_empty() {
+            return Err(DdlValueError::new(
+                format!("{path}.attributes"),
+                "attributed term requires at least one attribute",
+            ));
+        }
+        for (index, attribute) in attributes.into_iter().enumerate() {
+            let attribute_path = format!("{path}.attributes[{index}]");
+            match node_tag(&attribute) {
+                Some("term-attr-word") => {
+                    let mut values =
+                        expect_node(attribute, "term-attr-word", Some(1), attribute_path.clone())?;
+                    let spelling = expect_string(
+                        values.pop().expect("arity checked"),
+                        format!("{attribute_path}.name"),
+                    )?;
+                    let Some(value) = TermAssociativity::parse(&spelling) else {
+                        return Err(DdlValueError::new(
+                            attribute_path,
+                            "expected left, right, or nonassoc",
+                        ));
+                    };
+                    if associativity.replace(value).is_some() {
+                        return Err(DdlValueError::new(attribute_path, "duplicate associativity"));
+                    }
+                },
+                Some("term-attr-call") => {
+                    let mut values =
+                        expect_node(attribute, "term-attr-call", Some(2), attribute_path.clone())?
+                            .into_iter();
+                    let name = expect_string(
+                        values.next().expect("arity checked"),
+                        format!("{attribute_path}.name"),
+                    )?;
+                    if name != "prefix" {
+                        return Err(DdlValueError::new(
+                            attribute_path,
+                            "expected prefix(binding_power)",
+                        ));
+                    }
+                    let spelling = expect_string(
+                        values.next().expect("arity checked"),
+                        format!("{attribute_path}.binding_power"),
+                    )?;
+                    let power = spelling.parse::<u16>().map_err(|_| {
+                        DdlValueError::new(
+                            format!("{attribute_path}.binding_power"),
+                            "expected a u16 binding power",
+                        )
+                    })?;
+                    if prefix_binding_power.replace(power).is_some() {
+                        return Err(DdlValueError::new(
+                            attribute_path,
+                            "duplicate prefix binding power",
+                        ));
+                    }
+                },
+                Some(tag) => return Err(wrong_tag(&attribute_path, tag, "a term attribute")),
+                None => return Err(not_node(&attribute_path, "a term attribute")),
+            }
+        }
+    }
     Ok(TermRule {
         label,
         context,
         syntax,
         result,
+        associativity,
+        prefix_binding_power,
         span: SYNTHETIC_SPAN,
     })
 }
@@ -908,8 +985,46 @@ mod tests {
             assert_eq!(declaration.admits_variables, admits_variables);
             assert_eq!(declaration.carrier.as_deref(), carrier);
         }
-        assert!(decode_cat_decl(node("category-carrier", vec![RhoValue::String("Text".into())]), "$.type")
-            .is_err());
+        assert!(decode_cat_decl(
+            node("category-carrier", vec![RhoValue::String("Text".into())]),
+            "$.type"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn attributed_term_wire_preserves_metadata_and_rejects_duplicate_or_unknown_fields() {
+        let term = |attributes| {
+            node(
+                "term-attributed",
+                vec![
+                    RhoValue::String("Operator".into()),
+                    node("sequence", vec![]),
+                    node("sequence", vec![]),
+                    RhoValue::String("Expr".into()),
+                    node("sequence", attributes),
+                ],
+            )
+        };
+        let association = || node("term-attr-word", vec![RhoValue::String("nonassoc".into())]);
+        let power = || {
+            node(
+                "term-attr-call",
+                vec![RhoValue::String("prefix".into()), RhoValue::String("30".into())],
+            )
+        };
+        let decoded = decode_term_rule(term(vec![association(), power()]), "$.term")
+            .expect("typed term metadata decodes structurally");
+        assert_eq!(decoded.associativity, Some(TermAssociativity::NonAssociative));
+        assert_eq!(decoded.prefix_binding_power, Some(30));
+        assert!(decode_term_rule(term(vec![association(), association()]), "$.term").is_err());
+        assert!(decode_term_rule(term(vec![power(), power()]), "$.term").is_err());
+        assert!(decode_term_rule(
+            term(vec![node("term-attr-word", vec![RhoValue::String("unknown".into())])]),
+            "$.term",
+        )
+        .is_err());
+        assert!(decode_term_rule(term(vec![]), "$.term").is_err());
     }
 
     #[test]

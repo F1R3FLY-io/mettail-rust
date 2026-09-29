@@ -1,6 +1,8 @@
 //! Canonical Rholang-value projection and `GrammarCore` lowering.
 
-use crate::ast::{Ast, Binding, CollKind, Equation, Item, RewriteDecl, Sort, TermRule};
+use crate::ast::{
+    Ast, Binding, CollKind, Equation, Item, RewriteDecl, Sort, TermAssociativity, TermRule,
+};
 use crate::lex::Span;
 use crate::pres::{CatEntry, ElemId, EqEntry, Presentation, RwEntry, TermEntry};
 use mettail_grammar_core as core;
@@ -462,10 +464,8 @@ pub fn presentation_to_value(
                 string(entry.cat.clone())
             } else {
                 let mut attributes = BTreeMap::from([("name".into(), string(entry.cat.clone()))]);
-                attributes.insert(
-                    "admits_variables".into(),
-                    RhoValue::Boolean(entry.admits_variables),
-                );
+                attributes
+                    .insert("admits_variables".into(), RhoValue::Boolean(entry.admits_variables));
                 if let Some(carrier) = &entry.carrier {
                     attributes.insert("carrier".into(), string(carrier.clone()));
                 }
@@ -757,14 +757,11 @@ fn legacy_value_to_presentation(
             let (cat, admits_variables, carrier) = match value {
                 RhoValue::String(cat) => (cat.clone(), true, None),
                 RhoValue::Map(fields) => {
-                    if let Some(key) = fields
-                        .keys()
-                        .find(|key| {
-                            key.as_str() != "name"
-                                && key.as_str() != "admits_variables"
-                                && key.as_str() != "carrier"
-                        })
-                    {
+                    if let Some(key) = fields.keys().find(|key| {
+                        key.as_str() != "name"
+                            && key.as_str() != "admits_variables"
+                            && key.as_str() != "carrier"
+                    }) {
                         return Err(ValueDecodeError::new(
                             format!("{path}.{key}"),
                             "not a presentation category field",
@@ -784,7 +781,9 @@ fn legacy_value_to_presentation(
                     };
                     let carrier = fields
                         .get("carrier")
-                        .map(|value| expect_string(value, format!("{path}.carrier")).map(str::to_string))
+                        .map(|value| {
+                            expect_string(value, format!("{path}.carrier")).map(str::to_string)
+                        })
                         .transpose()?;
                     (cat, admits_variables, carrier)
                 },
@@ -1002,7 +1001,29 @@ pub fn partial_value_to_presentation(value: &RhoValue) -> Result<Presentation, V
 
 fn decode_term(value: &RhoValue, path: &str) -> Result<TermRule, ValueDecodeError> {
     let item = expect_map(value, path.into())?;
-    reject_unknown_keys(item, &["label", "category", "context", "syntax"], path)?;
+    reject_unknown_keys(
+        item,
+        &["label", "category", "context", "syntax", "assoc", "prefix_bp"],
+        path,
+    )?;
+    let associativity = item
+        .get("assoc")
+        .map(|value| {
+            let spelling = expect_string(value, format!("{path}.assoc"))?;
+            TermAssociativity::parse(spelling).ok_or_else(|| {
+                ValueDecodeError::new(format!("{path}.assoc"), "expected left, right, or nonassoc")
+            })
+        })
+        .transpose()?;
+    let prefix_binding_power = item
+        .get("prefix_bp")
+        .map(|value| match value {
+            RhoValue::Integer(power) => u16::try_from(*power).map_err(|_| {
+                ValueDecodeError::new(format!("{path}.prefix_bp"), "expected a u16 integer")
+            }),
+            _ => Err(ValueDecodeError::new(format!("{path}.prefix_bp"), "expected a u16 integer")),
+        })
+        .transpose()?;
     Ok(TermRule {
         label: expect_string(field(item, "label", path)?, format!("{path}.label"))?.to_string(),
         result: expect_string(field(item, "category", path)?, format!("{path}.category"))?
@@ -1017,6 +1038,8 @@ fn decode_term(value: &RhoValue, path: &str) -> Result<TermRule, ValueDecodeErro
             .enumerate()
             .map(|(index, value)| decode_item(value, &format!("{path}.syntax[{index}]")))
             .collect::<Result<Vec<_>, _>>()?,
+        associativity,
+        prefix_binding_power,
         span: Span { line: 0, col: 0 },
     })
 }
@@ -1294,12 +1317,19 @@ fn reject_unknown_keys(
 }
 
 fn term_to_value(rule: &TermRule) -> RhoValue {
-    map([
-        ("label", string(rule.label.clone())),
-        ("category", string(rule.result.clone())),
-        ("context", list(rule.context.iter().map(binding_to_value))),
-        ("syntax", list(rule.syntax.iter().map(item_to_value))),
-    ])
+    let mut fields = BTreeMap::from([
+        ("label".into(), string(rule.label.clone())),
+        ("category".into(), string(rule.result.clone())),
+        ("context".into(), list(rule.context.iter().map(binding_to_value))),
+        ("syntax".into(), list(rule.syntax.iter().map(item_to_value))),
+    ]);
+    if let Some(associativity) = rule.associativity {
+        fields.insert("assoc".into(), string(associativity.spelling()));
+    }
+    if let Some(power) = rule.prefix_binding_power {
+        fields.insert("prefix_bp".into(), RhoValue::Integer(i128::from(power)));
+    }
+    RhoValue::Map(fields)
 }
 
 fn binding_to_value(binding: &Binding) -> RhoValue {
@@ -1711,6 +1741,8 @@ mod tests {
                     context: Vec::new(),
                     syntax: vec![Item::Terminal("0".into())],
                     result: "Expr".into(),
+                    associativity: None,
+                    prefix_binding_power: None,
                     span,
                 },
                 span,

@@ -159,17 +159,13 @@ Module RegexGSLT {
       DerivativeScalarDecide . b:Flag, c:Scalar, p:Pattern |- "derivativeScalarDecide(" b "," c "," p ")" : Computation;
       DerivativeSurface . c:Scalar, sub:Computation |- "derivativeSurface(" c "," sub ")" : Computation;
       DerivativeCore . sub:Computation |- "derivativeCore(" sub ")" : Computation;
+      PAlt . p:Pattern, q:Pattern |- p "|" q : Pattern left prefix(10);
+      PConcat . p:Pattern, q:Pattern |- p q : Pattern left prefix(20);
+      PStar . p:Pattern |- p "*" : Pattern nonassoc prefix(30);
+      PPlus . p:Pattern |- p "+" : Pattern nonassoc prefix(30);
+      POptional . p:Pattern |- p "?" : Pattern nonassoc prefix(30);
+      PRepeat . p:Pattern, lo:Nat, hi:Nat |- p "{" lo "," hi "}" : Pattern nonassoc prefix(30);
     }
-    Data({
-      "terms": [
-        {"label":"PAlt", "category":"Pattern", "context":[["param","p","Pattern"],["param","q","Pattern"]], "syntax":["p",["lit","|"],"q"], "assoc":"left", "prefix_bp":10},
-        {"label":"PConcat", "category":"Pattern", "context":[["param","p","Pattern"],["param","q","Pattern"]], "syntax":["p","q"], "assoc":"left", "prefix_bp":20},
-        {"label":"PStar", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","*"]], "assoc":"nonassoc", "prefix_bp":30},
-        {"label":"PPlus", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","+"]], "assoc":"nonassoc", "prefix_bp":30},
-        {"label":"POptional", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","?"]], "assoc":"nonassoc", "prefix_bp":30},
-        {"label":"PRepeat", "category":"Pattern", "context":[["param","p","Pattern"],["param","lo","Nat"],["param","hi","Nat"]], "syntax":["p",["lit","{"],"lo",["lit",","],"hi",["lit","}"]], "assoc":"nonassoc", "prefix_bp":30}
-      ]
-    })
     Equations {
       (PAlt (PFail) P) == P;
       (PAlt P (PFail)) == P;

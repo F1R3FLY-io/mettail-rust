@@ -244,7 +244,35 @@ pub struct TermRule {
     pub context: Vec<Binding>,
     pub syntax: Vec<Item>,
     pub result: Cat,
+    pub associativity: Option<TermAssociativity>,
+    pub prefix_binding_power: Option<u16>,
     pub span: Span,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TermAssociativity {
+    Left,
+    Right,
+    NonAssociative,
+}
+
+impl TermAssociativity {
+    pub fn spelling(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::NonAssociative => "nonassoc",
+        }
+    }
+
+    pub fn parse(spelling: &str) -> Option<Self> {
+        match spelling {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            "nonassoc" => Some(Self::NonAssociative),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

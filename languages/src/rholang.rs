@@ -211,6 +211,7 @@ language! {
         data DdlExport
         data DdlReplacement
         data DdlTermRule
+        data DdlTermAttr
         data DdlBinding
         data DdlSort
         data DdlSyntaxItem
@@ -2679,6 +2680,12 @@ language! {
 
         DdlTerm . bindings:Vec(DdlBinding), syntax:Vec(DdlSyntaxItem)
             |- label@Ident "." bindings.*sep(",") "|-" syntax.*sep("") ":" result@Ident ";" : DdlTermRule;
+        DdlTermAttributed . bindings:Vec(DdlBinding), syntax:Vec(DdlSyntaxItem),
+            first:DdlTermAttr, rest:Vec(DdlTermAttr)
+            |- label@Ident "." bindings.*sep(",") "|-" syntax.*sep("") ":" result@Ident
+                first rest.*sep("") ";" : DdlTermRule;
+        DdlTermAttrWord . |- word@Ident : DdlTermAttr;
+        DdlTermAttrCall . value:Int |- word@Ident "(" value ")" : DdlTermAttr;
         DdlBindingPlain . sort:DdlSort |- name@Ident ":" sort : DdlBinding;
         DdlBindingBinder .
             |- "^" binder@Ident "." body@Ident ":" "[" from@Ident "->" to@Ident "]" : DdlBinding;

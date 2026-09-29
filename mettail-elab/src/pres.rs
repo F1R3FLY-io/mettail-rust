@@ -522,7 +522,22 @@ pub fn render_rule(r: &TermRule) -> String {
             Item::Projection { arg, sep } => format!("{arg}.*sep({sep:?})"),
         })
         .collect();
-    format!("{} . {} |- {} : {};", r.label, ctx.join(", "), syn.join(" "), r.result)
+    let mut suffix = String::new();
+    if let Some(associativity) = r.associativity {
+        suffix.push(' ');
+        suffix.push_str(associativity.spelling());
+    }
+    if let Some(power) = r.prefix_binding_power {
+        suffix.push_str(&format!(" prefix({power})"));
+    }
+    format!(
+        "{} . {} |- {} : {}{};",
+        r.label,
+        ctx.join(", "),
+        syn.join(" "),
+        r.result,
+        suffix
+    )
 }
 
 pub fn render_ast(a: &Ast) -> String {

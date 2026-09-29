@@ -364,12 +364,14 @@ mod tests {
             .expect("carrier annotations lower through the canonical schema");
         assert_eq!(language.grammar_core, roundtrip);
         for name in ["Text", "Flag", "Nat"] {
-            assert!(!roundtrip
-                .categories
-                .iter()
-                .find(|category| category.name == name)
-                .expect("lowered category")
-                .admits_variables);
+            assert!(
+                !roundtrip
+                    .categories
+                    .iter()
+                    .find(|category| category.name == name)
+                    .expect("lowered category")
+                    .admits_variables
+            );
         }
     }
 
@@ -425,6 +427,92 @@ mod tests {
             }"#,
         )
         .expect("original Regex type roster elaborates");
+        assert_eq!(authored.canonical_value, data_faithful.canonical_value);
+        assert_eq!(authored.grammar_core, data_faithful.grammar_core);
+    }
+
+    #[test]
+    fn authored_term_precedence_matches_existing_data_fields() {
+        let authored = elaborate_theory_language(
+            r#"Theory Operators() {
+                Types { Expr; }
+                Terms {
+                    Atom . |- "a" : Expr;
+                    Add . x:Expr, y:Expr |- x "+" y : Expr left prefix(10);
+                    Post . x:Expr |- x "*" : Expr nonassoc prefix(30);
+                }
+            }"#,
+        )
+        .expect("authored term metadata elaborates");
+        let data_faithful = elaborate_theory_language(
+            r#"Theory Operators() {
+                Types { Expr; }
+                Terms { Atom . |- "a" : Expr; }
+                Data({"terms": [
+                    {"label":"Add", "category":"Expr",
+                     "context":[["param","x","Expr"],["param","y","Expr"]],
+                     "syntax":["x",["lit","+"],"y"],
+                     "assoc":"left", "prefix_bp":10},
+                    {"label":"Post", "category":"Expr",
+                     "context":[["param","x","Expr"]],
+                     "syntax":["x",["lit","*"]],
+                     "assoc":"nonassoc", "prefix_bp":30}
+                ]})
+            }"#,
+        )
+        .expect("data-faithful term metadata elaborates");
+        assert_eq!(authored.canonical_value, data_faithful.canonical_value);
+        assert_eq!(authored.grammar_core, data_faithful.grammar_core);
+    }
+
+    #[test]
+    fn duplicate_or_out_of_range_term_metadata_is_rejected() {
+        for suffix in
+            ["left right", "prefix(10) prefix(20)", "prefix(65536)", "prefix(-1)", "unknown"]
+        {
+            let source = format!(
+                "Theory Invalid() {{ Types {{ Expr; }} Terms {{ Atom . |- \"a\" : Expr {suffix}; }} }}"
+            );
+            assert!(
+                elaborate_theory_language(&source).is_err(),
+                "term metadata {suffix:?} must reject"
+            );
+        }
+    }
+
+    #[test]
+    fn regex_operator_migration_preserves_all_six_canonical_records_and_core_rules() {
+        let authored = elaborate_theory_language(
+            r#"Theory RegexOperators() {
+                Types { Pattern; Nat; }
+                Terms {
+                    PFail . |- "(?!)" : Pattern;
+                    PAlt . p:Pattern, q:Pattern |- p "|" q : Pattern left prefix(10);
+                    PConcat . p:Pattern, q:Pattern |- p q : Pattern left prefix(20);
+                    PStar . p:Pattern |- p "*" : Pattern nonassoc prefix(30);
+                    PPlus . p:Pattern |- p "+" : Pattern nonassoc prefix(30);
+                    POptional . p:Pattern |- p "?" : Pattern nonassoc prefix(30);
+                    PRepeat . p:Pattern, lo:Nat, hi:Nat
+                      |- p "{" lo "," hi "}" : Pattern nonassoc prefix(30);
+                }
+            }"#,
+        )
+        .expect("authored Regex operator roster elaborates");
+        let data_faithful = elaborate_theory_language(
+            r#"Theory RegexOperators() {
+                Types { Pattern; Nat; }
+                Terms { PFail . |- "(?!)" : Pattern; }
+                Data({"terms": [
+                    {"label":"PAlt", "category":"Pattern", "context":[["param","p","Pattern"],["param","q","Pattern"]], "syntax":["p",["lit","|"],"q"], "assoc":"left", "prefix_bp":10},
+                    {"label":"PConcat", "category":"Pattern", "context":[["param","p","Pattern"],["param","q","Pattern"]], "syntax":["p","q"], "assoc":"left", "prefix_bp":20},
+                    {"label":"PStar", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","*"]], "assoc":"nonassoc", "prefix_bp":30},
+                    {"label":"PPlus", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","+"]], "assoc":"nonassoc", "prefix_bp":30},
+                    {"label":"POptional", "category":"Pattern", "context":[["param","p","Pattern"]], "syntax":["p",["lit","?"]], "assoc":"nonassoc", "prefix_bp":30},
+                    {"label":"PRepeat", "category":"Pattern", "context":[["param","p","Pattern"],["param","lo","Nat"],["param","hi","Nat"]], "syntax":["p",["lit","{"],"lo",["lit",","],"hi",["lit","}"]], "assoc":"nonassoc", "prefix_bp":30}
+                ]})
+            }"#,
+        )
+        .expect("original Regex operator roster elaborates");
         assert_eq!(authored.canonical_value, data_faithful.canonical_value);
         assert_eq!(authored.grammar_core, data_faithful.grammar_core);
     }
