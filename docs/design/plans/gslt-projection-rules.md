@@ -289,6 +289,20 @@ Host-category **admission** is not a host-to-host rewrite. If the fill already i
 
 The current FLT template-hole record carries a **guest** `CategoryId` only ([runtime hole record](../../../grammar-core/src/runtime.rs#L78), [installed construction admission](../../../rholang-runtime/src/language_install.rs#L1828)). Host-typed inputs therefore require a versioned endpoint-qualified telescope at the mixed-operation boundary, with the existing structural hole transport and admission discipline reused. They must not be smuggled into the guest parser as a fictitious guest category. If a fill denotes a computation rather than an already admitted value, evaluating it is a separate explicitly authorized operation whose effects and result evidence precede projection.
 
+### Guest-to-guest projections can compose through a pinned host endpoint
+
+The same typed-relation design permits a later `guest1::C`-to-`guest2::D` projection. Suppose $`P_1`$ is a checked partial isomorphism from `guest1::C` to `host::H` and $`P_2`$ is one from `guest2::D` to that **same committed** `host::H` signature and category. The two derived directions are relational composites:
+
+```math
+R_{12}=P_2^{-1}\circ P_1,
+\qquad
+R_{21}=P_1^{-1}\circ P_2.
+```
+
+They form a partial inverse pair on the portion whose host images overlap, subject to each leg's admitted-domain and endpoint-equation laws. If either leg is only directed, lossy, ambiguous, or lacks inverse evidence, the composite may still be a directed relation but must not be advertised as `<~>`. Equal display names or equal `Par` structures do not establish that two host signatures are the same; a separately checked host-to-host bridge would be needed if the pinned signatures differ.
+
+“Infer” here means discover and verify a candidate **path after the caller specifies both installed language handles and the intended target category**. It does not mean guess a target language for an FLT, insert a coercion implicitly into ordinary rewrites, or choose one of several competing routes. A composite request checks both capabilities and profile commitments, charges one bounded budget across its legs, retains every intermediate alternative and receipt, and derives unique-value evidence only from complete results. A versioned composition plan may reuse or specialize the existing compiled rule images and automata; it need not duplicate source rules or build another interpreter. Direct guest-to-guest rules remain possible where the host route is absent or semantically inappropriate.
+
 ## Runtime behavior and UI contract
 
 Extend the existing generic semantic service with a projection operation rather than creating a language-specific evaluator. Its conceptual request fields are:
