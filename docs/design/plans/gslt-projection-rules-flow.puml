@@ -1,0 +1,44 @@
+@startuml
+skinparam backgroundColor #F8FAFC
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #334155
+  LifeLineBorderColor #64748B
+  LifeLineBackgroundColor #F1F5F9
+  ParticipantBorderColor #334155
+  ParticipantFontColor #0F172A
+  GroupBorderColor #64748B
+  GroupBackgroundColor #E2E8F0
+  NoteBorderColor #B45309
+  NoteBackgroundColor #FEF3C7
+}
+title Selected GSLT projection directions share one checked kernel
+participant "Rholang application" as App #DBEAFE
+participant "Installed-language\ncapability" as Cap #DDD6FE
+participant "Typed endpoint\nadapter" as Adapter #CCFBF1
+participant "Shared GSLT\nsemantic kernel" as Kernel #FDE68A
+
+group Guest to host: selected forward relation
+  App -> Cap : request(handle, projection, forward, guest G)
+  Cap -> Adapter : authorize and admit exact guest category
+  Adapter -> Kernel : selected forward rules + bounded input
+  Kernel --> Adapter : complete host H roster + receipts
+  Adapter --> Cap : checked host structures and evidence
+  Cap --> App : reauthorized publication or refusal
+end
+
+group Host to guest: selected reverse relation
+  App -> Cap : request(handle, projection, reverse, host H)
+  Cap -> Adapter : authorize and admit exact host category
+  Adapter -> Kernel : selected reverse rules + bounded input
+  Kernel --> Adapter : complete guest G roster + receipts
+  Adapter --> Cap : checked reflected guest terms and evidence
+  Cap --> App : reauthorized publication or refusal
+end
+
+note over Adapter, Kernel
+  Ordinary guest rewrites are a different selected relation.
+  Neither direction is inserted into guest normalization.
+  Incomplete or conflicting evidence cannot become one value.
+end note
+@enduml
