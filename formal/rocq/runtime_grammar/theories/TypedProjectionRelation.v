@@ -114,6 +114,32 @@ Proof.
   now rewrite Eq.
 Qed.
 
+(** A separately added projection relation cannot change the candidate set
+    selected for an ordinary guest rewrite.  This is stronger than checking a
+    single projection row: it covers any finite projection image extension. *)
+Definition only_projection_rows (rows : list Row) : Prop :=
+  forall rule, In rule rows ->
+    exists id direction, row_selector rule = Projection id direction.
+
+Lemma ordinary_selection_conservative : forall image extension sort,
+  only_projection_rows extension ->
+  selected (Ordinary sort) (image ++ extension) = selected (Ordinary sort) image.
+Proof.
+  intros image extension sort Only.
+  unfold selected. rewrite filter_app.
+  assert (Empty : filter (fun rule : Row =>
+      match row_selector rule with
+      | Ordinary rhs_sort => Nat.eqb sort rhs_sort
+      | Projection _ _ => false
+      end) extension = []).
+  { revert Only. induction extension as [|rule rest IH]; intros Only; simpl.
+    - reflexivity.
+    - destruct (Only rule (or_introl eq_refl)) as [id [direction Eq]].
+      rewrite Eq. apply IH. intros candidate Member.
+      apply Only. now right. }
+  now rewrite Empty, app_nil_r.
+Qed.
+
 Definition typed_image (id : nat) (sig : Signature) (image : list Row) : Prop :=
   forall rule dir, In rule image ->
     row_selector rule = Projection id dir ->
