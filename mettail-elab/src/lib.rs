@@ -33,6 +33,10 @@ pub struct ElaboratedLanguage {
     pub requested_rights: mettail_grammar_core::LanguageRights,
     /// Authoritative complete syntax-and-theory artifact.
     pub language_core: mettail_grammar_core::LanguageCoreV1,
+    /// Versioned semantic extension when this is a `language/4` value. The
+    /// legacy core above is its unchanged parser/theory base, not an
+    /// alternative installable meaning for the projected language.
+    pub projected_language_core: Option<mettail_grammar_core::ProjectedLanguageCoreV1>,
     /// Compatibility projection for parser-only consumers. New installation
     /// code should retain `language_core` so theory identity is not erased.
     pub grammar_core: mettail_grammar_core::GrammarCoreV1,
@@ -67,7 +71,17 @@ pub fn elaborate_language(
     resolver: &dyn resolve::Resolver,
 ) -> Result<ElaboratedLanguage, Diag> {
     let presentation = elaborate(entry, resolver)?;
-    finish_language(name, presentation)
+    finish_language(name, presentation, None)
+}
+
+pub fn elaborate_language_with_host(
+    name: &str,
+    entry: &resolve::ModuleRef,
+    resolver: &dyn resolve::Resolver,
+    host: &mettail_grammar_core::ProjectionHostSignatureV1,
+) -> Result<ElaboratedLanguage, Diag> {
+    let presentation = elaborate(entry, resolver)?;
+    finish_language(name, presentation, Some(host))
 }
 
 /// Elaborate every named `theory ...` entry of one module in source order.
@@ -81,7 +95,16 @@ pub fn elaborate_module_languages(
     resolver: &dyn resolve::Resolver,
 ) -> Result<ElaboratedModule, Diag> {
     let program = resolve::Program::load(entry, resolver)?;
-    elaborate_program_languages(&program, entry)
+    elaborate_program_languages(&program, entry, None)
+}
+
+pub fn elaborate_module_languages_with_host(
+    entry: &resolve::ModuleRef,
+    resolver: &dyn resolve::Resolver,
+    host: &mettail_grammar_core::ProjectionHostSignatureV1,
+) -> Result<ElaboratedModule, Diag> {
+    let program = resolve::Program::load(entry, resolver)?;
+    elaborate_program_languages(&program, entry, Some(host))
 }
 
 /// Elaborate an entry module already parsed by nouveau Rholang. Imported
@@ -95,6 +118,15 @@ pub fn elaborate_module_ast(
     elaborate_module_ast_at(&entry, module, resolver)
 }
 
+pub fn elaborate_module_ast_with_host(
+    module: ast::ModuleFile,
+    resolver: &dyn resolve::Resolver,
+    host: &mettail_grammar_core::ProjectionHostSignatureV1,
+) -> Result<ElaboratedModule, Diag> {
+    let entry = resolve::ModuleRef::Registry("rho:mettail:inline-ast".into());
+    elaborate_module_ast_at_with_host(&entry, module, resolver, host)
+}
+
 /// Elaborate an already-parsed module under an explicit authoritative module
 /// reference. This is used for a Registry entry that has already been fetched,
 /// commitment-checked, and trust-verified by the caller; only its imports may
@@ -105,21 +137,33 @@ pub fn elaborate_module_ast_at(
     resolver: &dyn resolve::Resolver,
 ) -> Result<ElaboratedModule, Diag> {
     let program = resolve::Program::load_from_ast(entry, module, resolver)?;
-    elaborate_program_languages(&program, entry)
+    elaborate_program_languages(&program, entry, None)
+}
+
+pub fn elaborate_module_ast_at_with_host(
+    entry: &resolve::ModuleRef,
+    module: ast::ModuleFile,
+    resolver: &dyn resolve::Resolver,
+    host: &mettail_grammar_core::ProjectionHostSignatureV1,
+) -> Result<ElaboratedModule, Diag> {
+    let program = resolve::Program::load_from_ast(entry, module, resolver)?;
+    elaborate_program_languages(&program, entry, Some(host))
 }
 
 fn elaborate_program_languages(
     program: &resolve::Program,
     entry: &resolve::ModuleRef,
+    host: Option<&mettail_grammar_core::ProjectionHostSignatureV1>,
 ) -> Result<ElaboratedModule, Diag> {
-    elaborate_loaded_module(program, entry)
+    elaborate_loaded_module(program, entry, host)
 }
 
 fn elaborate_loaded_module(
     program: &resolve::Program,
     reference: &resolve::ModuleRef,
+    host: Option<&mettail_grammar_core::ProjectionHostSignatureV1>,
 ) -> Result<ElaboratedModule, Diag> {
-    elaborate_loaded_module_unannotated(program, reference).map_err(|mut error| {
+    elaborate_loaded_module_unannotated(program, reference, host).map_err(|mut error| {
         error.attach_provenance(module_provenance(program, reference));
         error
     })
@@ -139,6 +183,7 @@ fn module_provenance(
 fn elaborate_loaded_module_unannotated(
     program: &resolve::Program,
     reference: &resolve::ModuleRef,
+    host: Option<&mettail_grammar_core::ProjectionHostSignatureV1>,
 ) -> Result<ElaboratedModule, Diag> {
     let module = program.module(reference).ok_or_else(|| {
         Diag::new(
@@ -180,7 +225,7 @@ fn elaborate_loaded_module_unannotated(
         .into_iter()
         .zip(presentations)
         .map(|(name, presentation)| {
-            finish_language(&name, presentation)
+            finish_language(&name, presentation, host)
                 .map(|language| ElaboratedModuleExport { name, language })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -264,10 +309,14 @@ pub fn elaborate_theory_ast(declaration: ast::TheoryDecl) -> Result<ElaboratedLa
     let program = resolve::Program::from_single_module(entry, module)?;
     let mut interpreter = interp::Interp::new(&program);
     let presentation = interpreter.run()?;
-    finish_language(&name, presentation)
+    finish_language(&name, presentation, None)
 }
 
-fn finish_language(name: &str, presentation: Presentation) -> Result<ElaboratedLanguage, Diag> {
+fn finish_language(
+    name: &str,
+    presentation: Presentation,
+    host: Option<&mettail_grammar_core::ProjectionHostSignatureV1>,
+) -> Result<ElaboratedLanguage, Diag> {
     let canonical_value =
         canonical::presentation_to_value(name, &presentation).map_err(|error| {
             Diag::new(DiagKind::Value, error.to_string(), lex::Span { line: 0, col: 0 })
@@ -276,21 +325,31 @@ fn finish_language(name: &str, presentation: Presentation) -> Result<ElaboratedL
     // boundary even though `presentation` is already available so the surface
     // DDL and programmatically constructed values cannot acquire distinct
     // lowering behavior.
-    let installable =
-        canonical::value_to_installable_language_core(&canonical_value).map_err(|error| {
+    let installable = canonical::value_to_installable_any_language_core(&canonical_value, host)
+        .map_err(|error| {
             Diag::new(
                 DiagKind::Resolution,
                 format!("cannot lower canonical language value: {error:?}"),
                 lex::Span { line: 0, col: 0 },
             )
         })?;
-    let language_core = installable.language;
+    let (language_core, projected_language_core, requested_rights) = match installable {
+        canonical::InstallableAnyLanguageCore::Legacy(installable) => {
+            (installable.language, None, installable.requested_rights)
+        },
+        canonical::InstallableAnyLanguageCore::Projected(installable) => (
+            installable.language.base.clone(),
+            Some(installable.language),
+            installable.requested_rights,
+        ),
+    };
     Ok(ElaboratedLanguage {
         presentation,
         canonical_value,
-        requested_rights: installable.requested_rights,
+        requested_rights,
         grammar_core: language_core.grammar.clone(),
         language_core,
+        projected_language_core,
     })
 }
 
@@ -534,6 +593,87 @@ mod tests {
 
         assert_eq!(language.grammar_core.provenance.frontend, "rholang-language/2");
         assert_eq!(language.grammar_core, direct);
+    }
+
+    #[test]
+    fn host_bound_elaboration_retains_the_versioned_projection_core() {
+        let source = r#"
+            Module Predicate {
+              Theory T() { Types { Bool; } Terms { BTrue . |- "yes" : Bool; } }
+              theory T()
+            }
+        "#;
+        let resolver = resolve::MemResolver::new().with("Predicate.module", source);
+        let entry = resolve::ModuleRef::parse("Predicate.module").unwrap();
+        let plain = elaborate_language("Predicate", &entry, &resolver).unwrap();
+        // The generated Rholang frontend supplies this already-parsed AST;
+        // the standalone BNFC parser deliberately does not reparse it.
+        let mut module = parse::parse_module(source).unwrap();
+        let ast::ModuleItem::TheoryDecl(declaration) = &mut module.items[0] else {
+            panic!("first module item is its theory declaration");
+        };
+        let span = declaration.span;
+        let body = std::mem::replace(&mut declaration.body, ast::TheoryExpr::Empty(span));
+        declaration.body = ast::TheoryExpr::Build {
+            base: Box::new(body),
+            builder: ast::Builder::Rewrites(vec![ast::RewriteEntry::Projection(
+                ast::ProjectionDecl {
+                    name: "Boolean".into(),
+                    guest: "Bool".into(),
+                    host: "Bool".into(),
+                    direction: ast::ProjectionDirection::Both,
+                    body: ast::ProjectionBody::Carrier,
+                    span,
+                },
+            )]),
+            span,
+        };
+        assert!(elaborate_module_ast(module.clone(), &resolver).is_err());
+        let host = mettail_grammar_core::ProjectionHostSignatureV1 {
+            signature_fingerprint: [7; 32],
+            codec_profile_fingerprint: [9; 32],
+            sorts: vec![mettail_grammar_core::TheorySortV1 {
+                name: "Bool".into(),
+                kind: mettail_grammar_core::TheorySortKindV1::Syntax {
+                    literal: Some(mettail_grammar_core::TheoryLiteralCarrierV1::Boolean),
+                },
+            }],
+            constructors: Vec::new(),
+        };
+        let mut exports = elaborate_module_ast_with_host(module, &resolver, &host)
+            .expect("bound host signature admits the versioned projection")
+            .exports;
+        let projected = exports.remove(0).language;
+        let versioned = projected
+            .projected_language_core
+            .as_ref()
+            .expect("projection retained");
+        assert_eq!(versioned.projections.len(), 1);
+        assert_eq!(versioned.base, projected.language_core);
+        let mut equivalent_unprojected_value = projected.canonical_value.clone();
+        let canonical::RhoValue::Map(ref mut equivalent_fields) = equivalent_unprojected_value
+        else {
+            panic!("language canonical value is a map");
+        };
+        equivalent_fields.remove("projections");
+        equivalent_fields
+            .insert("mettail".into(), canonical::RhoValue::String("language/3".into()));
+        let equivalent_unprojected =
+            canonical::value_to_language_core(&equivalent_unprojected_value).unwrap();
+        assert_eq!(
+            versioned.base.grammar_fingerprint().unwrap(),
+            equivalent_unprojected.grammar_fingerprint().unwrap()
+        );
+        assert_ne!(
+            versioned.base.grammar_fingerprint().unwrap(),
+            plain.language_core.grammar_fingerprint().unwrap(),
+            "different schema versions retain separate grammar identities"
+        );
+        let canonical::RhoValue::Map(ref map) = projected.canonical_value else {
+            panic!("language canonical value is a map");
+        };
+        assert_eq!(map.get("mettail"), Some(&canonical::RhoValue::String("language/4".into())));
+        assert!(canonical::value_to_language_core(&projected.canonical_value).is_err());
     }
 
     #[test]

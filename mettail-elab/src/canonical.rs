@@ -781,6 +781,48 @@ pub struct InstallableProjectedLanguageCore {
     pub requested_rights: core::LanguageRights,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum InstallableAnyLanguageCore {
+    Legacy(InstallableLanguageCore),
+    Projected(InstallableProjectedLanguageCore),
+}
+
+/// One closed canonical-value admission route for module elaboration. A
+/// projection-bearing value requires the independently supplied host binding;
+/// it never falls through to the legacy `LanguageCoreV1` installer.
+pub fn value_to_installable_any_language_core(
+    value: &RhoValue,
+    host: Option<&core::ProjectionHostSignatureV1>,
+) -> Result<InstallableAnyLanguageCore, ValueToCoreError> {
+    if crate::core_value::is_language_core_value(value) {
+        return value_to_installable_language_core(value).map(InstallableAnyLanguageCore::Legacy);
+    }
+    admit_canonical_value(value).map_err(ValueToCoreError::Decode)?;
+    let schema = crate::schema::decode_composed(value, None).map_err(ValueToCoreError::Decode)?;
+    let requested_rights = schema.requested_rights();
+    if schema.has_projections() {
+        let host = host.ok_or_else(|| {
+            ValueToCoreError::Decode(ValueDecodeError::new(
+                "$.projections",
+                "a projection-bearing language requires a bound host signature",
+            ))
+        })?;
+        let language = schema
+            .lower_projected_language(host)
+            .map_err(ValueToCoreError::Decode)?;
+        Ok(InstallableAnyLanguageCore::Projected(InstallableProjectedLanguageCore {
+            language,
+            requested_rights,
+        }))
+    } else {
+        let language = schema.lower_language().map_err(ValueToCoreError::Decode)?;
+        Ok(InstallableAnyLanguageCore::Legacy(InstallableLanguageCore {
+            language,
+            requested_rights,
+        }))
+    }
+}
+
 pub trait LanguageValueResolver {
     fn resolve_language(&self, name: &str) -> Result<Option<RhoValue>, String>;
 }
