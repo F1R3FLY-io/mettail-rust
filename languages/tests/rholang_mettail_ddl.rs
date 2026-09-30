@@ -3,6 +3,32 @@ use mettail_languages::rholang::{
     DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
 };
 use mettail_prattail::automata::TokenKind;
+use mettail_runtime::Language;
+
+#[test]
+fn projection_host_categories_are_the_generated_rholang_categories() {
+    use mettail_languages::rholang::RholangLanguage;
+
+    let metadata = RholangLanguage.metadata();
+    let categories = metadata.types();
+    for name in ["Bool", "Str", "Proc"] {
+        assert!(
+            categories.iter().any(|category| category.name == name),
+            "host::{name} must resolve in the generated Rholang grammar"
+        );
+    }
+    assert_eq!(
+        categories.iter().filter(|category| category.name == "Bool").count(),
+        1,
+        "a projection must not introduce another host Bool category"
+    );
+    assert!(
+        metadata
+            .definition_fingerprint()
+            .is_some_and(|fingerprint| !fingerprint.is_empty()),
+        "host category references need the generated grammar identity"
+    );
+}
 
 fn run_ddl_sexp_action(
     items: Vec<mettail_prattail::wpda_runtime::ActionArg>,
