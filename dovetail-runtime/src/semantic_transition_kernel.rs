@@ -18,8 +18,8 @@ use mettail_grammar_core::{
     CollectionKind, LanguageRight, LanguageRights, PathMapModeV1, ProjectedTheorySemanticImageV1,
     ProjectionDirectionV1, ProjectionRelationBodyImageV1, SemanticEffectClassV1,
     SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1, TheoryActionId,
-    TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryImageIntrinsicV1,
-    TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
+    TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryImageError,
+    TheoryImageIntrinsicV1, TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
     TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId, TheoryLimitsV1,
     TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1, TheoryPatternStateFormV1,
     TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1,
@@ -172,6 +172,13 @@ pub enum TheoryPatternRestoreError {
     Automaton(FlatAutomatonRestoreError),
     /// A checked allocation failed while restoring reusable matcher state.
     Allocation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectedMatcherRestoreError {
+    InvalidImage,
+    Fingerprint(TheoryImageError),
+    Pattern(TheoryPatternRestoreError),
 }
 
 impl From<FlatAutomatonRestoreError> for TheoryPatternRestoreError {
@@ -733,6 +740,17 @@ pub struct SemanticActionExecutionRequest<'a> {
     pub limits: SemanticTransitionLimits,
 }
 
+/// Execute one installed, rule-backed projection direction. The installed
+/// service must bind this image to its handle and codec profile before use.
+pub struct SemanticProjectionExecutionRequest<'a> {
+    pub image: &'a ProjectedTheorySemanticImageV1,
+    pub projection: u32,
+    pub direction: ProjectionDirectionV1,
+    pub granted_rights: &'a LanguageRights,
+    pub input: SemanticTransitionInput,
+    pub limits: SemanticTransitionLimits,
+}
+
 /// Normalize an already-admitted term under its installed theory's directed
 /// rewrite relation. There is no named action or fabricated entry rule.
 pub struct SemanticRelationExecutionRequest<'a> {
@@ -767,12 +785,14 @@ struct SemanticExecutionRequest<'a> {
 pub struct SemanticTransitionMatcher {
     transition_automaton: SetAutomaton<FramedSemanticOperator>,
     judgment_automaton: SetAutomaton<FramedSemanticOperator>,
+    ordinary_rule_count: u32,
+    projected_execution_fingerprint: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Copy)]
 enum TransitionRuleSelection<'a> {
     ActionRules(&'a [TheoryRuleProgramId]),
-    RewriteRelation(TheorySortId),
+    RewriteRelation { sort: TheorySortId, upper_exclusive: u32 },
     SelectedPrograms(&'a [bool]),
 }
 
@@ -795,8 +815,10 @@ impl TransitionRuleSelection<'_> {
                 .get(rule.id.0 as usize)
                 .copied()
                 .ok_or(SemanticMatchUndetermined::InvalidImageEvidence),
-            Self::RewriteRelation(sort) => {
-                if !matches!(rule.origin, TheoryRuleOriginV1::Rewrite { .. }) {
+            Self::RewriteRelation { sort, upper_exclusive } => {
+                if rule.id.0 >= upper_exclusive
+                    || !matches!(rule.origin, TheoryRuleOriginV1::Rewrite { .. })
+                {
                     return Ok(false);
                 }
                 let source = rule
@@ -816,7 +838,246 @@ impl SemanticTransitionMatcher {
             judgment_automaton: restore_theory_judgment_pattern_automaton(
                 &image.judgment_patterns,
             )?,
+            ordinary_rule_count: u32::try_from(image.rules.len())
+                .map_err(|_| TheoryPatternRestoreError::IdentifierOverflow)?,
+            projected_execution_fingerprint: None,
         })
+    }
+
+    pub fn restore_projected(
+        image: &ProjectedTheorySemanticImageV1,
+    ) -> Result<Self, ProjectedMatcherRestoreError> {
+        if image.abi != PROJECTED_THEORY_IMAGE_ABI_V1
+            || image.base_rule_count as usize > image.execution.rules.len()
+            || image.execution.language_fingerprint != image.projected_language_fingerprint
+        {
+            return Err(ProjectedMatcherRestoreError::InvalidImage);
+        }
+        let fingerprint = image
+            .execution
+            .fingerprint()
+            .map_err(ProjectedMatcherRestoreError::Fingerprint)?;
+        let mut matcher =
+            Self::restore(&image.execution).map_err(ProjectedMatcherRestoreError::Pattern)?;
+        matcher.ordinary_rule_count = image.base_rule_count;
+        matcher.projected_execution_fingerprint = Some(fingerprint);
+        Ok(matcher)
+    }
+
+    /// Execute a selected cross-sort relation through the existing bounded
+    /// one-step action machine. The private action is a backend dispatch key,
+    /// never part of the resulting projection receipt or the guest theory.
+    pub fn execute_rule_projection_accounted<C>(
+        &self,
+        request: SemanticProjectionExecutionRequest<'_>,
+        is_cancelled: C,
+    ) -> (SemanticProjectionDecision, u64)
+    where
+        C: FnMut() -> bool,
+    {
+        let SemanticProjectionExecutionRequest {
+            image,
+            projection,
+            direction,
+            granted_rights,
+            mut input,
+            limits,
+        } = request;
+        let invalid = |work| {
+            (
+                SemanticProjectionDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work,
+                    stats: SetAutomatonStats::default(),
+                },
+                work,
+            )
+        };
+        if image.abi != PROJECTED_THEORY_IMAGE_ABI_V1
+            || image.execution.language_fingerprint != image.projected_language_fingerprint
+            || self.ordinary_rule_count != image.base_rule_count
+            || image.execution.fingerprint().ok() != self.projected_execution_fingerprint
+        {
+            return invalid(input.admission_work);
+        }
+        let mut selected = image.relations.iter().filter(|relation| {
+            relation.projection == projection && relation.direction == direction
+        });
+        let Some(relation) = selected.next() else {
+            return (
+                SemanticProjectionDecision::Refuted(SemanticMatchRefutation::RequestRejected),
+                input.admission_work,
+            );
+        };
+        if selected.next().is_some() {
+            return invalid(input.admission_work);
+        }
+        let (ProjectionRelationBodyImageV1::Rules(rows), Some(action_id)) =
+            (&relation.body, relation.dispatch_action)
+        else {
+            return (
+                SemanticProjectionDecision::Refuted(SemanticMatchRefutation::RequestRejected),
+                input.admission_work,
+            );
+        };
+        let Some(action) = image
+            .execution
+            .actions
+            .get(action_id.0 as usize)
+            .filter(|action| {
+                action.id == action_id
+                    && action.domain.as_slice() == [relation.input_sort]
+                    && action.codomain == relation.output_sort
+                    && action.effect_class == SemanticEffectClassV1::Pure
+                    && matches!(action.execution, TheoryActionExecutionImageV1::OneStep)
+            })
+        else {
+            return invalid(input.admission_work);
+        };
+        if rows.is_empty()
+            || action.transitions.len() != rows.len()
+            || !action
+                .transitions
+                .iter()
+                .zip(rows)
+                .all(|(id, row)| *id == row.program)
+        {
+            return invalid(input.admission_work);
+        }
+        let Some(preflight_work) = u64::try_from(rows.len())
+            .ok()
+            .and_then(|count| input.admission_work.checked_add(count))
+        else {
+            return invalid(input.admission_work);
+        };
+        if preflight_work > limits.work {
+            return (
+                SemanticProjectionDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                    work: input.admission_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                input.admission_work,
+            );
+        }
+        let mut origins = Vec::new();
+        if origins
+            .try_reserve_exact(image.execution.rules.len())
+            .is_err()
+        {
+            return (
+                SemanticProjectionDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::AllocationFailed,
+                    work: input.admission_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                input.admission_work,
+            );
+        }
+        origins.resize(image.execution.rules.len(), None);
+        for row in rows {
+            let Some(slot) = origins.get_mut(row.program.0 as usize) else {
+                return invalid(preflight_work);
+            };
+            if row.program.0 < image.base_rule_count
+                || slot.replace(row.source_occurrence).is_some()
+            {
+                return invalid(preflight_work);
+            }
+        }
+        input.admission_work = preflight_work;
+        let (decision, work) = self.execute_action_accounted(
+            SemanticActionExecutionRequest {
+                image: &image.execution,
+                action: action_id,
+                granted_rights,
+                input,
+                limits,
+            },
+            is_cancelled,
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            return (
+                match decision {
+                    SemanticTransitionDecision::Refuted(reason) => {
+                        SemanticProjectionDecision::Refuted(reason)
+                    },
+                    SemanticTransitionDecision::Undetermined { reason, work, stats } => {
+                        SemanticProjectionDecision::Undetermined { reason, work, stats }
+                    },
+                    SemanticTransitionDecision::ProvenRelation(_)
+                    | SemanticTransitionDecision::Proven(_) => return invalid(work),
+                },
+                work,
+            );
+        };
+        let total_work = proven.work;
+        let stats = proven.stats;
+        let (egraph, transitions) = proven.into_parts();
+        let mut values = Vec::new();
+        if values.try_reserve_exact(transitions.len()).is_err() {
+            return (
+                SemanticProjectionDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::AllocationFailed,
+                    work: total_work,
+                    stats,
+                },
+                total_work,
+            );
+        }
+        for transition in transitions {
+            let SemanticTransition {
+                output,
+                output_sort,
+                substitution,
+                receipt,
+            } = transition;
+            let Some(source_occurrence) = origins.get(receipt.rule.0 as usize).copied().flatten()
+            else {
+                return invalid(total_work);
+            };
+            if receipt.action != action_id
+                || receipt.language_fingerprint != image.projected_language_fingerprint
+                || receipt.effect != action.effect
+                || receipt.effect_class != SemanticEffectClassV1::Pure
+                || output_sort != relation.output_sort
+                || !receipt.normalization_hops.is_empty()
+            {
+                return invalid(total_work);
+            }
+            values.push(SemanticProjectionValue {
+                output,
+                output_sort,
+                substitution,
+                receipt: SemanticProjectionReceipt {
+                    projected_language_fingerprint: image.projected_language_fingerprint,
+                    base_image_fingerprint: image.base_image_fingerprint,
+                    image_fingerprint: receipt.image_fingerprint,
+                    host_signature_fingerprint: image.host_signature_fingerprint,
+                    host_codec_profile_fingerprint: image.host_codec_profile_fingerprint,
+                    projection,
+                    direction,
+                    input_sort: relation.input_sort,
+                    output_sort,
+                    source_occurrence,
+                    rule: receipt.rule,
+                    input: receipt.input,
+                    output: receipt.output,
+                    resource: receipt.resource,
+                    premises: receipt.premises,
+                    work: receipt.work,
+                },
+            });
+        }
+        (
+            SemanticProjectionDecision::Proven(ProvenSemanticProjections {
+                egraph,
+                values,
+                work: total_work,
+                stats,
+            }),
+            total_work,
+        )
     }
 
     /// Reuse the action matcher’s exact-ID selection and complete automaton
@@ -848,6 +1109,8 @@ impl SemanticTransitionMatcher {
         }
         if image.abi != PROJECTED_THEORY_IMAGE_ABI_V1
             || image.execution.language_fingerprint != image.projected_language_fingerprint
+            || self.ordinary_rule_count != image.base_rule_count
+            || image.execution.fingerprint().ok() != self.projected_execution_fingerprint
         {
             return (
                 SemanticMatchDecision::Undetermined {
@@ -1062,7 +1325,7 @@ impl SemanticTransitionMatcher {
         (decision, work, stats)
     }
 
-    fn match_rewrite_relation_accounted<C>(
+    pub(crate) fn match_rewrite_relation_accounted<C>(
         &self,
         sort: TheorySortId,
         request: SemanticActionMatchRequest<'_>,
@@ -1085,7 +1348,10 @@ impl SemanticTransitionMatcher {
                 return SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected);
             }
             let (decision, child_work, child_stats) = self.match_transition_rules_accounted(
-                TransitionRuleSelection::RewriteRelation(sort),
+                TransitionRuleSelection::RewriteRelation {
+                    sort,
+                    upper_exclusive: self.ordinary_rule_count,
+                },
                 TransitionRuleMatchRequest {
                     image,
                     egraph,
@@ -4444,6 +4710,63 @@ impl ProvenSemanticTransitions {
 pub enum SemanticTransitionDecision {
     Proven(ProvenSemanticTransitions),
     ProvenRelation(ProvenSemanticRelationNormalForms),
+    Refuted(SemanticMatchRefutation),
+    Undetermined {
+        reason: SemanticMatchUndetermined,
+        work: u64,
+        stats: SetAutomatonStats,
+    },
+}
+
+/// Published proof for one selected, cross-endpoint GSLT rule occurrence.
+/// Internal dispatch action/effect identifiers never cross this boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticProjectionReceipt {
+    pub projected_language_fingerprint: [u8; 32],
+    pub base_image_fingerprint: [u8; 32],
+    pub image_fingerprint: [u8; 32],
+    pub host_signature_fingerprint: [u8; 32],
+    pub host_codec_profile_fingerprint: [u8; 32],
+    pub projection: u32,
+    pub direction: ProjectionDirectionV1,
+    pub input_sort: TheorySortId,
+    pub output_sort: TheorySortId,
+    pub source_occurrence: u32,
+    pub rule: TheoryRuleProgramId,
+    pub input: Vec<u8>,
+    pub output: Vec<u8>,
+    pub resource: SemanticResourceReceipt,
+    pub premises: Vec<SemanticPremiseReceipt>,
+    pub work: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticProjectionValue {
+    pub output: EClassId,
+    pub output_sort: TheorySortId,
+    pub substitution: SemanticActionSubstitution,
+    pub receipt: SemanticProjectionReceipt,
+}
+
+pub struct ProvenSemanticProjections {
+    egraph: EGraph<FramedSemanticOperator>,
+    pub values: Vec<SemanticProjectionValue>,
+    pub work: u64,
+    pub stats: SetAutomatonStats,
+}
+
+impl ProvenSemanticProjections {
+    pub fn egraph(&self) -> &EGraph<FramedSemanticOperator> {
+        &self.egraph
+    }
+
+    pub fn into_parts(self) -> (EGraph<FramedSemanticOperator>, Vec<SemanticProjectionValue>) {
+        (self.egraph, self.values)
+    }
+}
+
+pub enum SemanticProjectionDecision {
+    Proven(ProvenSemanticProjections),
     Refuted(SemanticMatchRefutation),
     Undetermined {
         reason: SemanticMatchUndetermined,

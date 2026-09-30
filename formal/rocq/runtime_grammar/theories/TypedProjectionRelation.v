@@ -174,6 +174,28 @@ Proof.
   now rewrite Empty, app_nil_r.
 Qed.
 
+(** The executable image retains ordinary programs as a dense prefix and
+    appends directional projection programs. A nested ordinary-transition
+    premise is restricted to that prefix, even though the matcher was restored
+    from the complete positional automaton. Thus its candidate set is exactly
+    the old guest relation, independently of the projection rows' patterns. *)
+Lemma ordinary_program_prefix : forall (ordinary projections : list Row),
+  firstn (length ordinary) (ordinary ++ projections) = ordinary.
+Proof.
+  intros ordinary projections.
+  rewrite firstn_app, firstn_all, Nat.sub_diag.
+  simpl. now rewrite app_nil_r.
+Qed.
+
+Lemma bounded_ordinary_selection_exact : forall ordinary projections sort,
+  selected (Ordinary sort)
+    (firstn (length ordinary) (ordinary ++ projections)) =
+  selected (Ordinary sort) ordinary.
+Proof.
+  intros ordinary projections sort.
+  now rewrite ordinary_program_prefix.
+Qed.
+
 Definition typed_image (id : nat) (sig : Signature) (image : list Row) : Prop :=
   forall rule dir, In rule image ->
     row_selector rule = Projection id dir ->

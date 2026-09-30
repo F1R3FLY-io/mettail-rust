@@ -6,7 +6,7 @@
 //! second expression language.
 
 use crate::{
-    LanguageCoreV1, TheoryConstructorV1, TheoryRewriteV1, TheoryRuleProgramId,
+    LanguageCoreV1, TheoryActionId, TheoryConstructorV1, TheoryRewriteV1, TheoryRuleProgramId,
     TheorySemanticImageV1, TheorySortId, TheorySortV1,
 };
 use serde::{Deserialize, Serialize};
@@ -103,6 +103,10 @@ pub struct ProjectionRelationImageV1 {
     pub direction: ProjectionDirectionV1,
     pub input_sort: TheorySortId,
     pub output_sort: TheorySortId,
+    /// Private one-step action dispatch for rule-backed relations. This is
+    /// never an authored guest action; publication replaces its internal
+    /// action receipt with a projection-specific receipt.
+    pub dispatch_action: Option<TheoryActionId>,
     pub body: ProjectionRelationBodyImageV1,
 }
 

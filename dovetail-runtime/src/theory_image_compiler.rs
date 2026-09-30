@@ -13,26 +13,26 @@ use dovetail::set_automaton::{
 };
 use mettail_grammar_core::{
     theory_guard_commitment_v1, CollectionKind, JudgmentAtomV1, JudgmentDeclV1, JudgmentRuleV1,
-    LanguageCoreV1, ProjectedLanguageCoreV1, ProjectedTheorySemanticImageV1, ProjectionBodyV1,
-    ProjectionDirectionV1, ProjectionHostSignatureV1, ProjectionRelationBodyImageV1,
-    ProjectionRelationImageV1, ProjectionRuleImageEntryV1, SemanticActionExecutionV1,
-    SemanticActionV1, TheoryActionExecutionImageV1, TheoryActionId, TheoryActionImageV1,
-    TheoryConstructorId, TheoryConstructorImageV1, TheoryConstructorV1, TheoryEffectId,
-    TheoryGrammarConstructorV1, TheoryImageAdmissionLimits, TheoryImageError,
-    TheoryImageIntrinsicV1, TheoryImageJudgmentAtomV1, TheoryImageOperatorV1,
-    TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1, TheoryImageTermFormV1,
-    TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryIntrinsicV1, TheoryJudgmentId,
-    TheoryJudgmentImageV1, TheoryJudgmentPatternAutomatonV1, TheoryJudgmentPatternEntryV1,
-    TheoryJudgmentRuleProgramId, TheoryJudgmentRuleProgramV1, TheoryPatternAutomatonV1,
-    TheoryPatternEntryId, TheoryPatternEntryV1, TheoryPatternInvocationV1,
-    TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1, TheoryPremiseFormV1,
-    TheoryResourceProfileV1, TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1,
-    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleReferenceV1,
-    TheoryRuleSuppressionV1, TheorySemanticImageV1, TheorySortId, TheorySortImageV1,
-    TheorySortKindImageV1, TheorySortKindV1, TheorySortV1, TheoryTermFormV1, TheoryTermId,
-    TheoryTermNodeV1, TheoryVariableId, TheoryWorkChargeV1, PROJECTED_THEORY_IMAGE_ABI_V1,
-    THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT,
-    THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
+    LanguageCoreV1, LanguageRight, LanguageRights, ProjectedLanguageCoreV1,
+    ProjectedTheorySemanticImageV1, ProjectionBodyV1, ProjectionDirectionV1,
+    ProjectionHostSignatureV1, ProjectionRelationBodyImageV1, ProjectionRelationImageV1,
+    ProjectionRuleImageEntryV1, SemanticActionExecutionV1, SemanticActionV1, SemanticEffectClassV1,
+    TheoryActionExecutionImageV1, TheoryActionId, TheoryActionImageV1, TheoryConstructorId,
+    TheoryConstructorImageV1, TheoryConstructorV1, TheoryEffectId, TheoryGrammarConstructorV1,
+    TheoryImageAdmissionLimits, TheoryImageError, TheoryImageIntrinsicV1,
+    TheoryImageJudgmentAtomV1, TheoryImageOperatorV1, TheoryImagePremiseFormV1,
+    TheoryImagePremiseNodeV1, TheoryImageTermFormV1, TheoryImageTermNodeV1, TheoryImageVariableV1,
+    TheoryIntrinsicV1, TheoryJudgmentId, TheoryJudgmentImageV1, TheoryJudgmentPatternAutomatonV1,
+    TheoryJudgmentPatternEntryV1, TheoryJudgmentRuleProgramId, TheoryJudgmentRuleProgramV1,
+    TheoryPatternAutomatonV1, TheoryPatternEntryId, TheoryPatternEntryV1,
+    TheoryPatternInvocationV1, TheoryPatternStateFormV1, TheoryPatternStateId,
+    TheoryPatternStateV1, TheoryPremiseFormV1, TheoryResourceProfileV1, TheoryRuleArenaV1,
+    TheoryRuleDirectionV1, TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId,
+    TheoryRuleProgramV1, TheoryRuleReferenceV1, TheoryRuleSuppressionV1, TheorySemanticImageV1,
+    TheorySortId, TheorySortImageV1, TheorySortKindImageV1, TheorySortKindV1, TheorySortV1,
+    TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1, TheoryVariableId, TheoryWorkChargeV1,
+    PROJECTED_THEORY_IMAGE_ABI_V1, THEORY_IMAGE_COMPILER_ABI_CURRENT,
+    THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -270,6 +270,27 @@ pub fn compile_projected_theory_semantic_image(
         .rules
         .try_reserve(projection_rule_count)
         .map_err(|_| TheoryImageCompileError::Allocation)?;
+    let direction_count = language
+        .projections
+        .iter()
+        .try_fold(0usize, |count, projection| {
+            count
+                .checked_add(projection.directions.len())
+                .ok_or(TheoryImageCompileError::LengthOverflow)
+        })?;
+    if execution
+        .actions
+        .len()
+        .checked_add(direction_count)
+        .ok_or(TheoryImageCompileError::LengthOverflow)?
+        > limits.max_actions
+    {
+        return Err(TheoryImageCompileError::Image(TheoryImageError::LimitExceeded("actions")));
+    }
+    execution
+        .actions
+        .try_reserve(direction_count)
+        .map_err(|_| TheoryImageCompileError::Allocation)?;
     let mut relations = empty_vec(
         language
             .projections
@@ -318,6 +339,12 @@ pub fn compile_projected_theory_semantic_image(
                             true,
                             &context,
                         )?;
+                        if program.disposition != TheoryRuleDispositionV1::Executable {
+                            return Err(TheoryImageCompileError::Projection(format!(
+                                "projection row `{}` has no executable orientation",
+                                row.rule.name
+                            )));
+                        }
                         let left = program.terms.get(program.left.0 as usize);
                         let right = program.terms.get(program.right.0 as usize);
                         if left.map(|term| term.sort) != Some(input_sort)
@@ -343,11 +370,43 @@ pub fn compile_projected_theory_semantic_image(
                     ProjectionRelationBodyImageV1::Rules(entries)
                 },
             };
+            let dispatch_action = match &body {
+                ProjectionRelationBodyImageV1::Carrier => None,
+                ProjectionRelationBodyImageV1::Rules(entries) => {
+                    let action_id = TheoryActionId(checked_u32(execution.actions.len())?);
+                    let effect_index = language
+                        .base
+                        .theory
+                        .effects
+                        .len()
+                        .checked_add(relations.len())
+                        .ok_or(TheoryImageCompileError::LengthOverflow)?;
+                    let grade = match execution.resource_profile {
+                        TheoryResourceProfileV1::Uncosted => input_sort,
+                        TheoryResourceProfileV1::Costed { grade_sort } => grade_sort,
+                    };
+                    let mut transitions = empty_vec(entries.len())?;
+                    transitions.extend(entries.iter().map(|entry| entry.program));
+                    execution.actions.push(TheoryActionImageV1 {
+                        id: action_id,
+                        domain: vec![input_sort],
+                        codomain: output_sort,
+                        transitions,
+                        effect: TheoryEffectId(checked_u32(effect_index)?),
+                        effect_class: SemanticEffectClassV1::Pure,
+                        required_rights: projection_required_rights(projection, *direction),
+                        grade,
+                        execution: TheoryActionExecutionImageV1::OneStep,
+                    });
+                    Some(action_id)
+                },
+            };
             relations.push(ProjectionRelationImageV1 {
                 projection: checked_u32(projection_index)?,
                 direction: *direction,
                 input_sort,
                 output_sort,
+                dispatch_action,
                 body,
             });
         }
@@ -366,6 +425,34 @@ pub fn compile_projected_theory_semantic_image(
         execution,
         relations,
     })
+}
+
+fn projection_required_rights(
+    projection: &mettail_grammar_core::TheoryProjectionV1,
+    direction: ProjectionDirectionV1,
+) -> LanguageRights {
+    let mut required = BTreeSet::from([LanguageRight::Match, LanguageRight::Construct]);
+    if let ProjectionBodyV1::Rules(rows) = &projection.body {
+        for row in rows.iter().filter(|row| row.direction == direction) {
+            for premise in &row.rule.arena.premises {
+                match &premise.form {
+                    TheoryPremiseFormV1::Transition { .. } => {
+                        required.insert(LanguageRight::Reduce);
+                    },
+                    TheoryPremiseFormV1::Judgment(_) => {
+                        required.insert(LanguageRight::Check);
+                    },
+                    TheoryPremiseFormV1::Guard(_) => {
+                        required.insert(LanguageRight::Bridge);
+                    },
+                    TheoryPremiseFormV1::Freshness { .. }
+                    | TheoryPremiseFormV1::ForAll { .. }
+                    | TheoryPremiseFormV1::Intrinsic(_) => {},
+                }
+            }
+        }
+    }
+    LanguageRights::from_rights(required)
 }
 
 fn qualify_host_signature(
@@ -2066,7 +2153,8 @@ mod tests {
         SemanticGuardEvaluator, SemanticGuardRequest, SemanticInputDecision, SemanticInputLimits,
         SemanticJudgmentDecision, SemanticJudgmentHeadDecision, SemanticJudgmentHeadRequest,
         SemanticJudgmentLimits, SemanticJudgmentProofRequest, SemanticMatchDecision,
-        SemanticMatchRefutation, SemanticMatchUndetermined, SemanticRelationExecutionRequest,
+        SemanticMatchRefutation, SemanticMatchUndetermined, SemanticProjectionDecision,
+        SemanticProjectionExecutionRequest, SemanticRelationExecutionRequest,
         SemanticResourceReceipt, SemanticTransitionDecision, SemanticTransitionInput,
         SemanticTransitionLimits, SemanticTransitionMatcher,
     };
@@ -2389,7 +2477,7 @@ mod tests {
         assert_eq!(image.relations[0].input_sort, image.relations[1].output_sort);
         assert_eq!(image.relations[0].output_sort, image.relations[1].input_sort);
 
-        let matcher = SemanticTransitionMatcher::restore(&image.execution).unwrap();
+        let matcher = SemanticTransitionMatcher::restore_projected(&image).unwrap();
         let mut graph = EGraph::new();
         let root = graph.add(ENode::leaf(theory_operator_to_machine(
             &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
@@ -2423,6 +2511,23 @@ mod tests {
             .matches
             .iter()
             .all(|matched| matched.rule.0 >= image.base_rule_count));
+        let ordinary_rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (ordinary, _, _) = matcher.match_rewrite_relation_accounted(
+            TheorySortId(0),
+            SemanticActionMatchRequest {
+                image: &image.execution,
+                granted_rights: &ordinary_rights,
+                egraph: &mut graph,
+                root,
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        let SemanticMatchDecision::Proven(ordinary) = ordinary else {
+            panic!("the overlapping ordinary rewrite must remain visible");
+        };
+        assert_eq!(ordinary.matches.len(), 1);
+        assert_eq!(ordinary.matches[0].rule.0, image.base_rule_count - 1);
         let (wrong_direction, _, _) = matcher.match_projection_relation_accounted(
             SemanticProjectionMatchRequest {
                 image: &image,
@@ -2455,6 +2560,91 @@ mod tests {
             denied,
             SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected)
         );
+
+        let action = image.relations[0]
+            .dispatch_action
+            .expect("rule relation dispatch");
+        assert!(action.0 as usize >= legacy.actions.len());
+        let rights = LanguageRights::from_rights([LanguageRight::Match, LanguageRight::Construct]);
+        let (executed, _) = matcher.execute_action_accounted(
+            SemanticActionExecutionRequest {
+                image: &image.execution,
+                action,
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 0),
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(proven) = executed else {
+            panic!("the selected cross-sort relation must execute completely");
+        };
+        assert_eq!(proven.transitions.len(), 2);
+        assert_eq!(
+            proven
+                .transitions
+                .iter()
+                .map(|item| item.receipt.rule)
+                .collect::<Vec<_>>(),
+            forward.iter().map(|row| row.program).collect::<Vec<_>>()
+        );
+        assert!(proven.transitions.iter().all(|item| {
+            item.output_sort == image.relations[0].output_sort && item.receipt.action == action
+        }));
+        assert_eq!(
+            proven
+                .transitions
+                .iter()
+                .map(|item| item.receipt.output.as_slice())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            2,
+            "both conflicting host values remain available for later disambiguation"
+        );
+        let (projected_result, _) = matcher.execute_rule_projection_accounted(
+            SemanticProjectionExecutionRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 0),
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        let SemanticProjectionDecision::Proven(projected_values) = projected_result else {
+            panic!("typed projection result must be complete");
+        };
+        assert_eq!(projected_values.values.len(), 2);
+        assert_eq!(
+            projected_values
+                .values
+                .iter()
+                .map(|item| item.receipt.source_occurrence)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([0, 1])
+        );
+        assert!(projected_values.values.iter().all(|item| {
+            item.output_sort == image.relations[0].output_sort
+                && item.receipt.input_sort == image.relations[0].input_sort
+                && item.receipt.host_signature_fingerprint == host.signature_fingerprint
+                && item.receipt.host_codec_profile_fingerprint == host.codec_profile_fingerprint
+        }));
+        let (insufficient, _) = matcher.execute_rule_projection_accounted(
+            SemanticProjectionExecutionRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &LanguageRights::from_rights([LanguageRight::Match]),
+                input: normalization_input(TheoryConstructorId(0), 0),
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        assert!(matches!(
+            insufficient,
+            SemanticProjectionDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        ));
 
         projected.projections[0].host.signature_fingerprint = [0; 32];
         assert!(matches!(
