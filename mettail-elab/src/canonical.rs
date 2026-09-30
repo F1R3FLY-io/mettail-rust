@@ -1,7 +1,8 @@
 //! Canonical Rholang-value projection and `GrammarCore` lowering.
 
 use crate::ast::{
-    Ast, Binding, CollKind, Equation, Item, RewriteDecl, Sort, TermAssociativity, TermRule,
+    Ast, Binding, CollKind, Equation, Item, ProjectionBinding, ProjectionBody, ProjectionDecl,
+    ProjectionDirection, ProjectionPremise, RewriteDecl, Sort, TermAssociativity, TermRule,
 };
 use crate::lex::Span;
 use crate::pres::{CatEntry, ElemId, EqEntry, Presentation, RwEntry, TermEntry};
@@ -534,6 +535,14 @@ pub fn presentation_to_value(
             ));
         }
     }
+    for entry in &presentation.projections {
+        if !presentation.data_derived.contains(&entry.id) {
+            events.push((
+                entry.id,
+                map([("projections", list([projection_to_value(&entry.projection)]))]),
+            ));
+        }
+    }
     events.extend(
         presentation
             .canonical_fragments
@@ -550,10 +559,78 @@ pub fn presentation_to_value(
     };
     let composed = std::mem::take(composed_values);
     spec.extend(composed);
-    if spec.contains_key("oslf") {
+    if spec.contains_key("projections") {
+        spec.insert("mettail".into(), string("language/4"));
+    } else if spec.contains_key("oslf") {
         spec.insert("mettail".into(), string("language/3"));
     }
     Ok(RhoValue::Map(spec))
+}
+
+fn projection_direction_value(direction: ProjectionDirection) -> RhoValue {
+    string(match direction {
+        ProjectionDirection::GuestToHost => "guest-to-host",
+        ProjectionDirection::HostToGuest => "host-to-guest",
+        ProjectionDirection::Both => "bidirectional",
+    })
+}
+
+fn projection_to_value(projection: &ProjectionDecl) -> RhoValue {
+    let (kind, rows) = match &projection.body {
+        ProjectionBody::Carrier => ("carrier", Vec::new()),
+        ProjectionBody::Rules(rows) => (
+            "rules",
+            rows.iter()
+                .map(|row| {
+                    map([
+                        ("name", string(row.name.clone())),
+                        ("direction", projection_direction_value(row.direction)),
+                        (
+                            "bindings",
+                            list(row.bindings.iter().map(|binding| match binding {
+                                ProjectionBinding::Guest { name, category } => map([
+                                    ("endpoint", string("guest")),
+                                    ("name", string(name.clone())),
+                                    ("category", string(category.clone())),
+                                ]),
+                                ProjectionBinding::Host { name, category } => map([
+                                    ("endpoint", string("host")),
+                                    ("name", string(name.clone())),
+                                    ("category", string(category.clone())),
+                                ]),
+                            })),
+                        ),
+                        (
+                            "premises",
+                            list(row.premises.iter().map(|premise| match premise {
+                                ProjectionPremise::Call { name, guest, host } => map([
+                                    ("kind", string("projection-call")),
+                                    ("name", string(name.clone())),
+                                    ("guest", string(guest.clone())),
+                                    ("host", string(host.clone())),
+                                ]),
+                                ProjectionPremise::Transition { left, right } => map([
+                                    ("kind", string("transition")),
+                                    ("left", string(left.clone())),
+                                    ("right", string(right.clone())),
+                                ]),
+                            })),
+                        ),
+                        ("guest", row.guest.clone()),
+                        ("host", row.host.clone()),
+                    ])
+                })
+                .collect(),
+        ),
+    };
+    map([
+        ("name", string(projection.name.clone())),
+        ("guest", string(projection.guest.clone())),
+        ("host", string(projection.host.clone())),
+        ("direction", projection_direction_value(projection.direction)),
+        ("kind", string(kind)),
+        ("rules", list(rows)),
+    ])
 }
 
 fn merge_values(
@@ -707,6 +784,12 @@ pub trait LanguageValueResolver {
 pub fn value_to_presentation(value: &RhoValue) -> Result<(String, Presentation), ValueDecodeError> {
     admit_canonical_value(value)?;
     let schema = crate::schema::decode(value)?;
+    if schema.has_projections() {
+        return Err(ValueDecodeError::new(
+            "$.projections",
+            "projection-bearing language/4 values require the versioned projection presentation decoder",
+        ));
+    }
     let spec = expect_map(value, "$".into())?;
     let mut legacy = BTreeMap::from([
         ("mettail".into(), string("language/2")),

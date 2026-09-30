@@ -308,6 +308,7 @@ impl<'a> Interp<'a> {
                             terms: Vec::new(),
                             equations: Vec::new(),
                             rewrites: Vec::new(),
+                            projections: Vec::new(),
                             export_origins: presentation.export_origins,
                             opaque_categories: presentation.opaque_categories,
                             ..Presentation::default()
@@ -394,6 +395,7 @@ impl<'a> Interp<'a> {
                             .chain(p.terms.iter().map(|entry| entry.id))
                             .chain(p.equations.iter().map(|entry| entry.id))
                             .chain(p.rewrites.iter().map(|entry| entry.id))
+                            .chain(p.projections.iter().map(|entry| entry.id))
                             .filter(|id| id.0 > fragment_id.0),
                     );
                     p.data_derived_exports.extend(
@@ -537,23 +539,53 @@ impl<'a> Interp<'a> {
                     },
 
                     Builder::Rewrites(rws) => {
-                        for rw in rws {
-                            let mut ls = Vec::new();
-                            rw.lhs.labels(&mut ls);
-                            rw.rhs.labels(&mut ls);
-                            self.check_known(&p, &ls, "Rewrites", rw.span)?;
-                            if p.rewrites.iter().any(|e| e.rw.name == rw.name) {
-                                return Err(Diag::new(
-                                    DiagKind::RepeatLabel,
-                                    format!(
-                                        "rewrite `{}` is declared twice in this theory",
-                                        rw.name
-                                    ),
-                                    rw.span,
-                                ));
+                        for entry in rws {
+                            match entry {
+                                RewriteEntry::Ordinary(rw) => {
+                                    let mut ls = Vec::new();
+                                    rw.lhs.labels(&mut ls);
+                                    rw.rhs.labels(&mut ls);
+                                    self.check_known(&p, &ls, "Rewrites", rw.span)?;
+                                    if p.rewrites.iter().any(|e| e.rw.name == rw.name)
+                                        || p.projections
+                                            .iter()
+                                            .any(|e| e.projection.name == rw.name)
+                                    {
+                                        return Err(Diag::new(
+                                            DiagKind::RepeatLabel,
+                                            format!("rewrite or projection `{}` is declared twice in this theory", rw.name),
+                                            rw.span,
+                                        ));
+                                    }
+                                    let id = self.fresh();
+                                    p.rewrites.push(RwEntry { id, rw: rw.clone() });
+                                },
+                                RewriteEntry::Projection(projection) => {
+                                    if !p.has_cat(&projection.guest) {
+                                        return Err(Diag::new(
+                                            DiagKind::UndeclaredCategory,
+                                            format!("projection `{}` names undeclared guest category `{}`", projection.name, projection.guest),
+                                            projection.span,
+                                        ));
+                                    }
+                                    if p.rewrites.iter().any(|e| e.rw.name == projection.name)
+                                        || p.projections
+                                            .iter()
+                                            .any(|e| e.projection.name == projection.name)
+                                    {
+                                        return Err(Diag::new(
+                                            DiagKind::RepeatLabel,
+                                            format!("rewrite or projection `{}` is declared twice in this theory", projection.name),
+                                            projection.span,
+                                        ));
+                                    }
+                                    let id = self.fresh();
+                                    p.projections.push(ProjectionEntry {
+                                        id,
+                                        projection: projection.clone(),
+                                    });
+                                },
                             }
-                            let id = self.fresh();
-                            p.rewrites.push(RwEntry { id, rw: rw.clone() });
                         }
                         Ok(p)
                     },
@@ -637,7 +669,7 @@ impl<'a> Interp<'a> {
                                 builders.push(Builder::Rewrites(
                                     std::mem::take(&mut fragment.rewrites)
                                         .into_iter()
-                                        .map(|entry| entry.rw)
+                                        .map(|entry| RewriteEntry::Ordinary(entry.rw))
                                         .collect(),
                                 ));
                             }

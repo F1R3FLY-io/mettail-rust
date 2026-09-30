@@ -1,4 +1,9 @@
+use crate::ast::{
+    ProjectionBinding, ProjectionBody, ProjectionDecl, ProjectionDirection, ProjectionPremise,
+    ProjectionRule,
+};
 use crate::canonical::{RhoValue, ValueDecodeError};
+use crate::lex::Span;
 use mettail_grammar_core as core;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,6 +28,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "terms",
     "equations",
     "rewrites",
+    "projections",
     "relations",
     "oslf",
     "extends",
@@ -51,6 +57,7 @@ pub(crate) struct LanguageSchema {
     terms: Vec<TermDecl>,
     equations: Vec<RhoValue>,
     rewrites: Vec<RhoValue>,
+    projections: Vec<ProjectionDecl>,
     relations: Vec<RhoValue>,
     exports: Vec<(String, String)>,
     context: Option<String>,
@@ -303,7 +310,7 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
     let spec = expect_map(value, "$")?;
     reject_unknown_keys(spec, TOP_LEVEL_KEYS, "$")?;
     let notation = expect_string(required(spec, "mettail", "$")?, "$.mettail")?;
-    if notation != "language/2" && notation != "language/3" {
+    if notation != "language/2" && notation != "language/3" && notation != "language/4" {
         return error("$.mettail", format!("unsupported schema `{notation}`"));
     }
     if notation == "language/2" && spec.contains_key("oslf") {
@@ -336,22 +343,29 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
     let equations =
         validate_value_sequence(spec.get("equations"), "$.equations", validate_equation)?;
     let rewrites = validate_value_sequence(spec.get("rewrites"), "$.rewrites", validate_rewrite)?;
+    if notation != "language/4" && spec.contains_key("projections") {
+        return error("$.projections", "typed projections require the `language/4` schema");
+    }
+    let projections = decode_sequence(spec.get("projections"), "$.projections", decode_projection)?;
+    if notation == "language/4" && projections.is_empty() {
+        return error("$.projections", "`language/4` requires at least one typed projection");
+    }
     let relations =
         validate_value_sequence(spec.get("relations"), "$.relations", validate_relation)?;
-    if notation == "language/3" && !relations.is_empty() {
+    if notation != "language/2" && !relations.is_empty() {
         return error(
             "$.relations",
             "language/3 relations require typed `oslf.judgments`; legacy relation declarations do not identify argument sorts or a decision policy",
         );
     }
-    let theory = if notation == "language/3" {
+    let theory = if notation != "language/2" {
         decode_oslf(spec.get("oslf"), "$.oslf")?
     } else {
         core::TheoryCoreV1::structural()
     };
     // Preserve already parsed role values until the complete constructor/sort
     // signature is available. This is structural lowering, never source parsing.
-    let observation_predicates = if notation == "language/3" {
+    let observation_predicates = if notation != "language/2" {
         pending_observation_predicates(spec.get("oslf"))?
     } else {
         Vec::new()
@@ -367,6 +381,7 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
     validate_unique_names(tokens.iter().map(|value| &value.name), "$.tokens")?;
     validate_unique_names(modes.iter().map(|value| &value.name), "$.modes")?;
     validate_unique_names(terms.iter().map(|value| &value.label), "$.terms")?;
+    validate_unique_names(projections.iter().map(|value| &value.name), "$.projections")?;
     validate_unique_names(tree_invariants.iter().map(|value| &value.name), "$.tree_invariants")?;
     Ok(LanguageSchema {
         notation: notation.to_string(),
@@ -384,6 +399,7 @@ pub(crate) fn decode(value: &RhoValue) -> Result<LanguageSchema, ValueDecodeErro
         terms,
         equations,
         rewrites,
+        projections,
         relations,
         exports,
         context,
@@ -695,9 +711,13 @@ fn merge_language_values(
         return error(path, "extension language is not a map");
     };
     let mut extension = std::mem::take(extension_values);
-    let language3 = [&base, &extension]
+    let language4 = [&base, &extension]
         .iter()
-        .any(|values| values.get("mettail") == Some(&RhoValue::String("language/3".into())));
+        .any(|values| values.get("mettail") == Some(&RhoValue::String("language/4".into())));
+    let language3 = language4
+        || [&base, &extension]
+            .iter()
+            .any(|values| values.get("mettail") == Some(&RhoValue::String("language/3".into())));
     for key in ["mettail", "name", "extends", "includes", "mixins", "replacements"] {
         base.remove(key);
         extension.remove(key);
@@ -722,6 +742,7 @@ fn merge_language_values(
     merge_named_field(&mut output, &base, &extension, "terms", term_label, policy, path)?;
     merge_named_field(&mut output, &base, &extension, "equations", record_name, policy, path)?;
     merge_named_field(&mut output, &base, &extension, "rewrites", record_name, policy, path)?;
+    merge_named_field(&mut output, &base, &extension, "projections", record_name, policy, path)?;
     merge_relations(&mut output, &base, &extension, path)?;
     merge_oslf(&mut output, &base, &extension, path)?;
     append_unique_field(&mut output, &base, &extension, "exports", path)?;
@@ -734,7 +755,9 @@ fn merge_language_values(
     output.insert(
         "mettail".into(),
         RhoValue::String(
-            if language3 {
+            if language4 {
+                "language/4"
+            } else if language3 {
                 "language/3"
             } else {
                 "language/2"
@@ -1343,6 +1366,172 @@ fn type_name(value: &RhoValue, path: &str) -> Result<String, ValueDecodeError> {
 fn record_name(value: &RhoValue, path: &str) -> Result<String, ValueDecodeError> {
     let values = expect_map(value, path)?;
     Ok(expect_string(required(values, "name", path)?, &format!("{path}.name"))?.to_string())
+}
+
+fn decode_projection(value: &RhoValue, path: &str) -> Result<ProjectionDecl, ValueDecodeError> {
+    let values = expect_map(value, path)?;
+    reject_unknown_keys(values, &["name", "guest", "host", "direction", "kind", "rules"], path)?;
+    let name = projection_identifier(values, "name", path)?;
+    let guest = projection_identifier(values, "guest", path)?;
+    let host = projection_identifier(values, "host", path)?;
+    let direction = decode_projection_direction(
+        required(values, "direction", path)?,
+        &format!("{path}.direction"),
+    )?;
+    let kind = expect_string(required(values, "kind", path)?, &format!("{path}.kind"))?;
+    let rules =
+        decode_sequence(values.get("rules"), &format!("{path}.rules"), decode_projection_rule)?;
+    let body = match kind {
+        "carrier" if rules.is_empty() => ProjectionBody::Carrier,
+        "carrier" => {
+            return error(
+                format!("{path}.rules"),
+                "carrier projection cannot also declare rule rows",
+            )
+        },
+        "rules" if !rules.is_empty() => ProjectionBody::Rules(rules),
+        "rules" => {
+            return error(format!("{path}.rules"), "rule projection requires at least one row")
+        },
+        _ => return error(format!("{path}.kind"), format!("unknown projection kind `{kind}`")),
+    };
+    if let ProjectionBody::Rules(rows) = &body {
+        validate_unique_names(rows.iter().map(|row| &row.name), &format!("{path}.rules"))?;
+        for (index, row) in rows.iter().enumerate() {
+            if row.direction != direction {
+                return error(
+                    format!("{path}.rules[{index}].direction"),
+                    "projection row direction must match its group declaration",
+                );
+            }
+        }
+    }
+    Ok(ProjectionDecl {
+        name,
+        guest,
+        host,
+        direction,
+        body,
+        span: Span { line: 0, col: 0 },
+    })
+}
+
+fn projection_identifier(
+    values: &BTreeMap<String, RhoValue>,
+    key: &str,
+    path: &str,
+) -> Result<String, ValueDecodeError> {
+    let field_path = format!("{path}.{key}");
+    identifier(expect_string(required(values, key, path)?, &field_path)?, &field_path)
+}
+
+fn decode_projection_direction(
+    value: &RhoValue,
+    path: &str,
+) -> Result<ProjectionDirection, ValueDecodeError> {
+    match expect_string(value, path)? {
+        "guest-to-host" => Ok(ProjectionDirection::GuestToHost),
+        "host-to-guest" => Ok(ProjectionDirection::HostToGuest),
+        "bidirectional" => Ok(ProjectionDirection::Both),
+        other => error(path, format!("unknown projection direction `{other}`")),
+    }
+}
+
+fn decode_projection_rule(
+    value: &RhoValue,
+    path: &str,
+) -> Result<ProjectionRule, ValueDecodeError> {
+    let values = expect_map(value, path)?;
+    reject_unknown_keys(
+        values,
+        &["name", "direction", "bindings", "premises", "guest", "host"],
+        path,
+    )?;
+    let name = projection_identifier(values, "name", path)?;
+    let direction = decode_projection_direction(
+        required(values, "direction", path)?,
+        &format!("{path}.direction"),
+    )?;
+    let bindings = decode_sequence(
+        values.get("bindings"),
+        &format!("{path}.bindings"),
+        decode_projection_binding,
+    )?;
+    let mut names = BTreeSet::new();
+    for (index, binding) in bindings.iter().enumerate() {
+        let name = match binding {
+            ProjectionBinding::Guest { name, .. } | ProjectionBinding::Host { name, .. } => name,
+        };
+        if !names.insert(name) {
+            return error(
+                format!("{path}.bindings[{index}].name"),
+                format!("duplicate projection binding `{name}`"),
+            );
+        }
+    }
+    let premises = decode_sequence(
+        values.get("premises"),
+        &format!("{path}.premises"),
+        decode_projection_premise,
+    )?;
+    let guest = required(values, "guest", path)?.clone();
+    let host = required(values, "host", path)?.clone();
+    crate::wire::validate_projection_term(&guest, &format!("{path}.guest"))
+        .map_err(|error| ValueDecodeError::new(error.path, error.message))?;
+    crate::wire::validate_projection_term(&host, &format!("{path}.host"))
+        .map_err(|error| ValueDecodeError::new(error.path, error.message))?;
+    Ok(ProjectionRule {
+        name,
+        bindings,
+        premises,
+        guest,
+        host,
+        direction,
+        span: Span { line: 0, col: 0 },
+    })
+}
+
+fn decode_projection_binding(
+    value: &RhoValue,
+    path: &str,
+) -> Result<ProjectionBinding, ValueDecodeError> {
+    let values = expect_map(value, path)?;
+    reject_unknown_keys(values, &["endpoint", "name", "category"], path)?;
+    let name = projection_identifier(values, "name", path)?;
+    let category = projection_identifier(values, "category", path)?;
+    match expect_string(required(values, "endpoint", path)?, &format!("{path}.endpoint"))? {
+        "guest" => Ok(ProjectionBinding::Guest { name, category }),
+        "host" => Ok(ProjectionBinding::Host { name, category }),
+        other => {
+            error(format!("{path}.endpoint"), format!("unknown projection endpoint `{other}`"))
+        },
+    }
+}
+
+fn decode_projection_premise(
+    value: &RhoValue,
+    path: &str,
+) -> Result<ProjectionPremise, ValueDecodeError> {
+    let values = expect_map(value, path)?;
+    let kind = expect_string(required(values, "kind", path)?, &format!("{path}.kind"))?;
+    match kind {
+        "projection-call" => {
+            reject_unknown_keys(values, &["kind", "name", "guest", "host"], path)?;
+            Ok(ProjectionPremise::Call {
+                name: projection_identifier(values, "name", path)?,
+                guest: projection_identifier(values, "guest", path)?,
+                host: projection_identifier(values, "host", path)?,
+            })
+        },
+        "transition" => {
+            reject_unknown_keys(values, &["kind", "left", "right"], path)?;
+            Ok(ProjectionPremise::Transition {
+                left: projection_identifier(values, "left", path)?,
+                right: projection_identifier(values, "right", path)?,
+            })
+        },
+        _ => error(format!("{path}.kind"), format!("unknown projection premise `{kind}`")),
+    }
 }
 
 fn term_label(value: &RhoValue, path: &str) -> Result<String, ValueDecodeError> {
@@ -2544,7 +2733,9 @@ pub(crate) fn validate_fragment(value: &RhoValue) -> Result<LanguageSchema, Valu
     complete.insert(
         "mettail".into(),
         RhoValue::String(
-            if fragment.contains_key("oslf") {
+            if fragment.contains_key("projections") {
+                "language/4"
+            } else if fragment.contains_key("oslf") {
                 "language/3"
             } else {
                 "language/2"
@@ -2557,6 +2748,9 @@ pub(crate) fn validate_fragment(value: &RhoValue) -> Result<LanguageSchema, Valu
 }
 
 impl LanguageSchema {
+    pub(crate) fn has_projections(&self) -> bool {
+        !self.projections.is_empty()
+    }
     pub(crate) fn category_names(&self) -> impl Iterator<Item = &str> {
         self.types
             .iter()
@@ -4955,6 +5149,12 @@ impl LanguageSchema {
     }
 
     pub(crate) fn lower_language(&self) -> Result<core::LanguageCoreV1, ValueDecodeError> {
+        if !self.projections.is_empty() {
+            return error(
+                "$.projections",
+                "typed projections cannot be encoded in LanguageCoreV1; a versioned projection artifact is required",
+            );
+        }
         let grammar = self.lower()?;
         let mut theory = self.theory.clone();
         if theory.profile == core::TheoryProfileV1::Oslf {
@@ -6019,6 +6219,66 @@ mod tests {
         };
         values.insert("mettail".into(), s("language/3"));
         value
+    }
+
+    fn language4(
+        name: &str,
+        fields: impl IntoIterator<Item = (&'static str, RhoValue)>,
+    ) -> RhoValue {
+        let mut value = language(name, fields);
+        let RhoValue::Map(values) = &mut value else {
+            unreachable!()
+        };
+        values.insert("mettail".into(), s("language/4"));
+        value
+    }
+
+    #[test]
+    fn projection_value_schema_retains_typed_rows_and_refuses_v1_erasure() {
+        let row = m([
+            ("name", s("Yes")),
+            ("direction", s("bidirectional")),
+            ("bindings", l([])),
+            ("premises", l([])),
+            ("guest", l([s("ast-sexp"), s("BTrue"), l([s("sequence")])])),
+            ("host", l([s("ast-boolean-true")])),
+        ]);
+        let projection = m([
+            ("name", s("Boolean")),
+            ("guest", s("Bool")),
+            ("host", s("Bool")),
+            ("direction", s("bidirectional")),
+            ("kind", s("rules")),
+            ("rules", l([row])),
+        ]);
+        let value = language4(
+            "Predicate",
+            [("types", l([s("Bool")])), ("projections", l([projection.clone()]))],
+        );
+        let decoded = decode(&value).expect("language/4 must retain a closed projection relation");
+        assert_eq!(decoded.projections.len(), 1);
+        assert_eq!(decoded.projections[0].direction, ProjectionDirection::Both);
+        assert!(matches!(decoded.projections[0].body, ProjectionBody::Rules(_)));
+
+        let error =
+            value_to_language_core(&value).expect_err("V1 must never erase projection rules");
+        assert!(format!("{error:?}").contains("versioned projection artifact"));
+
+        let mut old_notation = value.clone();
+        let RhoValue::Map(fields) = &mut old_notation else {
+            unreachable!()
+        };
+        fields.insert("mettail".into(), s("language/3"));
+        assert!(decode(&old_notation).is_err());
+
+        let mut malformed = projection;
+        let RhoValue::Map(fields) = &mut malformed else {
+            unreachable!()
+        };
+        fields.insert("direction".into(), s("host-to-guest"));
+        let malformed =
+            language4("Predicate", [("types", l([s("Bool")])), ("projections", l([malformed]))]);
+        assert!(decode(&malformed).is_err());
     }
 
     #[test]

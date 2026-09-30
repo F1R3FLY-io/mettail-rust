@@ -58,6 +58,12 @@ pub struct RwEntry {
 }
 
 #[derive(Clone, Debug)]
+pub struct ProjectionEntry {
+    pub id: ElemId,
+    pub projection: ProjectionDecl,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CanonicalFragment {
     pub id: ElemId,
     pub value: RhoValue,
@@ -71,6 +77,7 @@ pub struct Presentation {
     pub terms: Vec<TermEntry>,
     pub equations: Vec<EqEntry>,
     pub rewrites: Vec<RwEntry>,
+    pub projections: Vec<ProjectionEntry>,
     pub(crate) export_origins: Vec<ElemId>,
     pub(crate) canonical_fragments: Vec<CanonicalFragment>,
     pub(crate) data_derived: BTreeSet<ElemId>,
@@ -95,6 +102,7 @@ impl Presentation {
             && self.terms.is_empty()
             && self.equations.is_empty()
             && self.rewrites.is_empty()
+            && self.projections.is_empty()
             && self.canonical_fragments.is_empty()
             && self.data_derived.is_empty()
             && self.data_derived_exports.is_empty()
@@ -213,9 +221,68 @@ impl Presentation {
             }
         }
         for r in &other.rewrites {
+            if out
+                .projections
+                .iter()
+                .any(|entry| entry.projection.name == r.rw.name)
+            {
+                return Err(Diag::new(
+                    DiagKind::JoinCollision,
+                    format!("cannot join rewrite and projection both named `{}`", r.rw.name),
+                    span,
+                ));
+            }
             if !out.rewrites.iter().any(|x| x.id == r.id) {
                 out.rewrites.push(r.clone());
             }
+        }
+        for projection in &other.projections {
+            if let Some(existing) = out
+                .projections
+                .iter()
+                .find(|entry| entry.id == projection.id)
+            {
+                if existing.projection != projection.projection {
+                    return Err(Diag::new(
+                        DiagKind::JoinCollision,
+                        format!(
+                            "shared projection `{}` diverged between branches",
+                            projection.projection.name
+                        ),
+                        span,
+                    ));
+                }
+                continue;
+            }
+            if out
+                .rewrites
+                .iter()
+                .any(|entry| entry.rw.name == projection.projection.name)
+            {
+                return Err(Diag::new(
+                    DiagKind::JoinCollision,
+                    format!(
+                        "cannot join rewrite and projection both named `{}`",
+                        projection.projection.name
+                    ),
+                    span,
+                ));
+            }
+            if out
+                .projections
+                .iter()
+                .any(|entry| entry.projection.name == projection.projection.name)
+            {
+                return Err(Diag::new(
+                    DiagKind::JoinCollision,
+                    format!(
+                        "cannot join independently introduced projection `{}`",
+                        projection.projection.name
+                    ),
+                    span,
+                ));
+            }
+            out.projections.push(projection.clone());
         }
         for ex in &other.exports {
             let index = other
@@ -288,6 +355,7 @@ impl Presentation {
         let om: Vec<ElemId> = other.terms.iter().map(|e| e.id).collect();
         let oe: Vec<ElemId> = other.equations.iter().map(|e| e.id).collect();
         let orw: Vec<ElemId> = other.rewrites.iter().map(|e| e.id).collect();
+        let op: Vec<ElemId> = other.projections.iter().map(|e| e.id).collect();
         let fragments: Vec<ElemId> = other
             .canonical_fragments
             .iter()
@@ -316,6 +384,12 @@ impl Presentation {
                 .rewrites
                 .iter()
                 .filter(|e| keep(e.id, &orw))
+                .cloned()
+                .collect(),
+            projections: self
+                .projections
+                .iter()
+                .filter(|e| keep(e.id, &op))
                 .cloned()
                 .collect(),
             exports: self
@@ -379,6 +453,7 @@ impl Presentation {
         let om: Vec<ElemId> = other.terms.iter().map(|e| e.id).collect();
         let oe: Vec<ElemId> = other.equations.iter().map(|e| e.id).collect();
         let orw: Vec<ElemId> = other.rewrites.iter().map(|e| e.id).collect();
+        let op: Vec<ElemId> = other.projections.iter().map(|e| e.id).collect();
         let fragments: Vec<ElemId> = other
             .canonical_fragments
             .iter()
@@ -407,6 +482,12 @@ impl Presentation {
                 .rewrites
                 .iter()
                 .filter(|e| !orw.contains(&e.id))
+                .cloned()
+                .collect(),
+            projections: self
+                .projections
+                .iter()
+                .filter(|e| !op.contains(&e.id))
                 .cloned()
                 .collect(),
             exports: self
@@ -595,4 +676,37 @@ pub fn render_ast(a: &Ast) -> String {
 
 fn same_rule(a: &TermRule, b: &TermRule) -> bool {
     a.label == b.label && a.result == b.result && render_rule(a) == render_rule(b)
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use crate::ast::{ProjectionBody, ProjectionDecl, ProjectionDirection};
+
+    fn projection(id: u64, host: &str) -> Presentation {
+        let span = Span { line: 1, col: 1 };
+        Presentation {
+            projections: vec![ProjectionEntry {
+                id: ElemId(id),
+                projection: ProjectionDecl {
+                    name: "Boolean".into(),
+                    guest: "Bool".into(),
+                    host: host.into(),
+                    direction: ProjectionDirection::Both,
+                    body: ProjectionBody::Carrier,
+                    span,
+                },
+            }],
+            ..Presentation::default()
+        }
+    }
+
+    #[test]
+    fn projection_join_preserves_shared_origin_and_rejects_divergence() {
+        let span = Span { line: 1, col: 1 };
+        let original = projection(1, "Bool");
+        assert_eq!(original.join(&original, span).unwrap().projections.len(), 1);
+        assert!(original.join(&projection(2, "Bool"), span).is_err());
+        assert!(original.join(&projection(1, "Str"), span).is_err());
+    }
 }

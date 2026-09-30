@@ -599,7 +599,7 @@ impl Parser {
             Tok::KwRewrites => {
                 let mut v = Vec::new();
                 while !self.at(&Tok::RBrace) {
-                    v.push(self.rewrite_decl()?);
+                    v.push(RewriteEntry::Ordinary(self.rewrite_decl()?));
                 }
                 Builder::Rewrites(v)
             },
