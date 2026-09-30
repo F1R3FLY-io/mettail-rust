@@ -132,6 +132,91 @@ impl Signature {
         }
     }
 
+    fn with_projection_host(
+        theory: &core::TheoryCoreV1,
+        host: &core::ProjectionHostSignatureV1,
+    ) -> Result<Self, ValueDecodeError> {
+        let mut signature = Self::from_theory(theory);
+        let mut host_sorts = BTreeSet::new();
+        for sort in &host.sorts {
+            if sort.name.is_empty() || !host_sorts.insert(sort.name.as_str()) {
+                return error(
+                    "$.projections.host",
+                    "host signature has an empty or duplicate sort name",
+                );
+            }
+        }
+        for sort in &host.sorts {
+            let name = format!("host::{}", sort.name);
+            let kind = match &sort.kind {
+                core::TheorySortKindV1::Syntax { literal } => {
+                    core::TheorySortKindV1::Syntax { literal: literal.clone() }
+                },
+                core::TheorySortKindV1::Collection { kind, key, element } => {
+                    core::TheorySortKindV1::Collection {
+                        kind: *kind,
+                        key: key.as_ref().map(|value| format!("host::{value}")),
+                        element: format!("host::{element}"),
+                    }
+                },
+                core::TheorySortKindV1::Function { domain, codomain, multiple } => {
+                    core::TheorySortKindV1::Function {
+                        domain: format!("host::{domain}"),
+                        codomain: format!("host::{codomain}"),
+                        multiple: *multiple,
+                    }
+                },
+                core::TheorySortKindV1::Product { factors } => core::TheorySortKindV1::Product {
+                    factors: factors
+                        .iter()
+                        .map(|value| format!("host::{value}"))
+                        .collect(),
+                },
+                core::TheorySortKindV1::Opaque { abi } => {
+                    core::TheorySortKindV1::Opaque { abi: abi.clone() }
+                },
+            };
+            signature
+                .sort_indices
+                .insert(name.clone(), signature.sorts.len());
+            signature.sorts.push(core::TheorySortV1 { name, kind });
+        }
+        let mut host_constructors = BTreeSet::new();
+        for constructor in &host.constructors {
+            if constructor.name.is_empty() || !host_constructors.insert(constructor.name.as_str()) {
+                return error(
+                    "$.projections.host",
+                    "host signature has an empty or duplicate constructor name",
+                );
+            }
+            if !host_sorts.contains(constructor.codomain.as_str())
+                || constructor
+                    .domain
+                    .iter()
+                    .any(|sort| !host_sorts.contains(sort.as_str()))
+            {
+                return error(
+                    "$.projections.host",
+                    "host constructor refers to an unregistered host sort",
+                );
+            }
+            let name = format!("host::{}", constructor.name);
+            signature.constructors.insert(
+                name.clone(),
+                core::TheoryConstructorV1 {
+                    name,
+                    domain: constructor
+                        .domain
+                        .iter()
+                        .map(|sort| format!("host::{sort}"))
+                        .collect(),
+                    codomain: format!("host::{}", constructor.codomain),
+                },
+            );
+        }
+        Ok(signature)
+    }
+
     fn sort(&self, name: &str) -> Option<&core::TheorySortV1> {
         self.sort_indices
             .get(name)
@@ -190,6 +275,49 @@ impl Signature {
         }
         Ok(first.name.clone())
     }
+}
+
+/// Cross-endpoint relation rows reuse the ordinary explicit-stack rule
+/// compiler. Only the two root-sort expectations differ from same-sort guest
+/// rewrites; namespace-qualified host members come from a pinned signature.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compile_projection_rule(
+    name: &str,
+    context: &RhoValue,
+    premises: &RhoValue,
+    left: &RhoValue,
+    right: &RhoValue,
+    input_sort: &str,
+    output_sort: &str,
+    theory: &core::TheoryCoreV1,
+    host: &core::ProjectionHostSignatureV1,
+    path: &str,
+) -> Result<core::TheoryRewriteV1, ValueDecodeError> {
+    let signature = Signature::with_projection_host(theory, host)?;
+    if signature.sort(input_sort).is_none() || signature.sort(output_sort).is_none() {
+        return error(path, "projection root sort is missing from a bound endpoint signature");
+    }
+    let mut compiler = RuleCompiler::new(&signature, theory.limits, name);
+    compiler.decode_context(Some(context), &format!("{path}.context"))?;
+    let input = compiler.compile_pattern(
+        left,
+        Some(input_sort.into()),
+        Side::Left,
+        &format!("{path}.left"),
+    )?;
+    compiler.compile_premises(Some(premises), true, &format!("{path}.premises"))?;
+    let output = compiler.compile_pattern(
+        right,
+        Some(output_sort.into()),
+        Side::Right,
+        &format!("{path}.right"),
+    )?;
+    Ok(core::TheoryRewriteV1 {
+        name: name.into(),
+        arena: compiler.finish()?,
+        left: input,
+        right: output,
+    })
 }
 
 pub(crate) fn compile_surface_rules(

@@ -5155,6 +5155,37 @@ impl LanguageSchema {
                 "typed projections cannot be encoded in LanguageCoreV1; a versioned projection artifact is required",
             );
         }
+        self.lower_language_base()
+    }
+
+    pub(crate) fn lower_projected_language(
+        &self,
+        host: &core::ProjectionHostSignatureV1,
+    ) -> Result<core::ProjectedLanguageCoreV1, ValueDecodeError> {
+        if self.projections.is_empty() {
+            return error("$.projections", "projected language requires at least one projection");
+        }
+        let mut base = self.lower_language_base()?;
+        // The projection collection changes semantic identity only. The guest
+        // parser grammar is precisely the same language/3 grammar projection.
+        base.grammar.provenance.frontend = "rholang-language/3".into();
+        let projections =
+            crate::projection_compile::compile_projections(&self.projections, &base.theory, host)?;
+        let projected = core::ProjectedLanguageCoreV1 {
+            abi: core::PROJECTED_LANGUAGE_CORE_ABI_V1,
+            base,
+            projections,
+        };
+        projected.validate_header().map_err(|error| {
+            ValueDecodeError::new(
+                "$.projections",
+                format!("invalid projected core header: {error:?}"),
+            )
+        })?;
+        Ok(projected)
+    }
+
+    fn lower_language_base(&self) -> Result<core::LanguageCoreV1, ValueDecodeError> {
         let grammar = self.lower()?;
         let mut theory = self.theory.clone();
         if theory.profile == core::TheoryProfileV1::Oslf {
@@ -6171,7 +6202,8 @@ mod tests {
     use crate::canonical::{
         value_to_core, value_to_core_with_resolver, value_to_installable_language_core,
         value_to_installable_language_core_with_resolver, value_to_language_core,
-        value_to_language_core_with_resolver, LanguageValueResolver,
+        value_to_language_core_with_resolver, value_to_projected_language_core,
+        LanguageValueResolver,
     };
 
     fn s(value: &str) -> RhoValue {
@@ -6279,6 +6311,71 @@ mod tests {
         let malformed =
             language4("Predicate", [("types", l([s("Bool")])), ("projections", l([malformed]))]);
         assert!(decode(&malformed).is_err());
+    }
+
+    #[test]
+    fn language4_compiles_bidirectional_boolean_through_existing_rule_arena() {
+        let row = m([
+            ("name", s("Yes")),
+            ("direction", s("bidirectional")),
+            ("bindings", l([])),
+            ("premises", l([])),
+            ("guest", l([s("ast-sexp"), s("BTrue"), l([s("sequence")])])),
+            ("host", l([s("ast-boolean-true")])),
+        ]);
+        let value = language4(
+            "Predicate",
+            [
+                ("types", l([s("Bool")])),
+                ("terms", l([term("BTrue", "Bool", "yes")])),
+                (
+                    "projections",
+                    l([m([
+                        ("name", s("Boolean")),
+                        ("guest", s("Bool")),
+                        ("host", s("Bool")),
+                        ("direction", s("bidirectional")),
+                        ("kind", s("rules")),
+                        ("rules", l([row])),
+                    ])]),
+                ),
+            ],
+        );
+        let host = core::ProjectionHostSignatureV1 {
+            signature_fingerprint: [7; 32],
+            codec_profile_fingerprint: [9; 32],
+            sorts: vec![core::TheorySortV1 {
+                name: "Bool".into(),
+                kind: core::TheorySortKindV1::Syntax {
+                    literal: Some(core::TheoryLiteralCarrierV1::Boolean),
+                },
+            }],
+            constructors: vec![],
+        };
+        let projected = value_to_projected_language_core(&value, &host)
+            .expect("language/4 should reuse the ordinary typed rule compiler");
+        let mut unprojected_value = value.clone();
+        let RhoValue::Map(fields) = &mut unprojected_value else {
+            unreachable!()
+        };
+        fields.remove("projections");
+        fields.insert("mettail".into(), s("language/3"));
+        let unprojected = value_to_language_core(&unprojected_value)
+            .expect("otherwise identical language/3 base must remain valid");
+        assert_eq!(
+            projected.base.grammar_fingerprint().unwrap(),
+            unprojected.grammar_fingerprint().unwrap()
+        );
+        assert_eq!(
+            projected.base.theory_fingerprint().unwrap(),
+            unprojected.theory_fingerprint().unwrap()
+        );
+        let core::ProjectionBodyV1::Rules(rules) = &projected.projections[0].body else {
+            panic!("expected two directed compiled rows")
+        };
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].source_occurrence, rules[1].source_occurrence);
+        assert_ne!(projected.fingerprint().unwrap(), projected.base.fingerprint().unwrap());
     }
 
     #[test]

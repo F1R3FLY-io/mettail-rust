@@ -5,7 +5,7 @@
 //! rule bodies reuse `TheoryRewriteV1`'s existing flat arena rather than a
 //! second expression language.
 
-use crate::{LanguageCoreV1, TheoryRewriteV1};
+use crate::{LanguageCoreV1, TheoryConstructorV1, TheoryRewriteV1, TheorySortV1};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -18,6 +18,18 @@ pub struct ProjectionHostEndpointV1 {
     pub signature_fingerprint: [u8; 32],
     pub category: String,
     pub codec_profile_fingerprint: [u8; 32],
+}
+
+/// An independently supplied immutable host-signature fragment. A projection
+/// declaration only records its fingerprint and category; it cannot define or
+/// replace this roster. The provider must bind it to the installed host
+/// grammar and codec profile before projection compilation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectionHostSignatureV1 {
+    pub signature_fingerprint: [u8; 32],
+    pub codec_profile_fingerprint: [u8; 32],
+    pub sorts: Vec<TheorySortV1>,
+    pub constructors: Vec<TheoryConstructorV1>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

@@ -773,6 +773,14 @@ pub struct InstallableLanguageCore {
     pub requested_rights: core::LanguageRights,
 }
 
+/// Projection-bearing semantic identity remains distinct from the legacy V1
+/// core; requested rights remain a separate attenuation request.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InstallableProjectedLanguageCore {
+    pub language: core::ProjectedLanguageCoreV1,
+    pub requested_rights: core::LanguageRights,
+}
+
 pub trait LanguageValueResolver {
     fn resolve_language(&self, name: &str) -> Result<Option<RhoValue>, String>;
 }
@@ -1007,6 +1015,26 @@ pub fn value_to_installable_language_core(
     let requested_rights = schema.requested_rights();
     let language = schema.lower_language().map_err(ValueToCoreError::Decode)?;
     Ok(InstallableLanguageCore { language, requested_rights })
+}
+
+pub fn value_to_projected_language_core(
+    value: &RhoValue,
+    host: &core::ProjectionHostSignatureV1,
+) -> Result<core::ProjectedLanguageCoreV1, ValueToCoreError> {
+    Ok(value_to_installable_projected_language_core(value, host)?.language)
+}
+
+pub fn value_to_installable_projected_language_core(
+    value: &RhoValue,
+    host: &core::ProjectionHostSignatureV1,
+) -> Result<InstallableProjectedLanguageCore, ValueToCoreError> {
+    admit_canonical_value(value).map_err(ValueToCoreError::Decode)?;
+    let schema = crate::schema::decode_composed(value, None).map_err(ValueToCoreError::Decode)?;
+    let requested_rights = schema.requested_rights();
+    let language = schema
+        .lower_projected_language(host)
+        .map_err(ValueToCoreError::Decode)?;
+    Ok(InstallableProjectedLanguageCore { language, requested_rights })
 }
 
 pub fn value_to_core_with_resolver(

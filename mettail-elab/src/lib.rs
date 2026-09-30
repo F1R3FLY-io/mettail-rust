@@ -13,6 +13,7 @@ pub mod lex;
 pub mod module;
 pub mod parse;
 pub mod pres;
+mod projection_compile;
 pub mod registry;
 pub mod resolve;
 pub mod rholang_literal;
