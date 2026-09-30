@@ -110,6 +110,22 @@ where
 pub type PrefixBuckets<P, K = String> =
     (BTreeMap<(K, K), UnifiedBucket<P, UnifiedDescriptor<P>>>, Vec<(K, K)>);
 
+/// Authored category-leading rows kept independently of lexical FIRST sets.
+/// A structural template hole has a category but no token kind, so token
+/// bucket admission must never be the only record of these rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HolePrefixKind {
+    LeadingCategory,
+    CrossCatProjection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HolePrefixRow {
+    pub rule_idx: u16,
+    pub source_src_idx: u16,
+    pub kind: HolePrefixKind,
+}
+
 /// Derive the original buckets; the backend still owns transition emission.
 ///
 /// The explicit indexed roster may contain synthetic rules absent from the
@@ -156,6 +172,39 @@ where
     C: TryPrefixBucketContext<'source, R>,
     C::Pattern: Clone,
 {
+    try_derive_prefix_buckets_with_holes(
+        reader,
+        context,
+        category_src_idx,
+        category_name,
+        rules_in_category,
+        crosscat_lex_compat_gate,
+    )
+    .map(|(buckets, _)| buckets)
+}
+
+/// The same original two-pass classifier, with a sidecar of authored rows for
+/// tokenless structural-hole dispatch. Lexical buckets are returned unchanged.
+pub fn try_derive_prefix_buckets_with_holes<'source, R, C>(
+    reader: &R,
+    context: &mut C,
+    category_src_idx: u16,
+    category_name: &str,
+    rules_in_category: &[(u16, R::Rule)],
+    crosscat_lex_compat_gate: bool,
+) -> Result<
+    (
+        PrefixBuckets<C::Pattern, <C::Pattern as PrefixPatternObservation>::Key>,
+        Vec<HolePrefixRow>,
+    ),
+    C::Error,
+>
+where
+    R: BinderRuleReader<'source>,
+    C: TryPrefixBucketContext<'source, R>,
+    C::Pattern: Clone,
+{
+    let mut hole_rows = Vec::new();
     let mut cross_cat_infix_sources: HashSet<String> = HashSet::new();
     for index in 0..context.try_rules_len()? {
         let rule = context.try_rule_at(index)?;
@@ -344,6 +393,11 @@ where
                     {
                         continue;
                     }
+                    hole_rows.push(HolePrefixRow {
+                        rule_idx,
+                        source_src_idx,
+                        kind: HolePrefixKind::LeadingCategory,
+                    });
                     for first in try_first_set_of_category(source_cat_name, reader, context)? {
                         insert_keyed_unified_descriptor(
                             &mut unified_buckets,
@@ -379,6 +433,11 @@ where
                 .position(|c| c == &source_cat_name)
                 .map(|i| i as u16)
                 .unwrap_or(0);
+            hole_rows.push(HolePrefixRow {
+                rule_idx,
+                source_src_idx,
+                kind: HolePrefixKind::CrossCatProjection,
+            });
             for ft in try_first_set_of_category(&source_cat_name, reader, context)? {
                 if crosscat_lex_compat_gate
                     && ft.is_var_contribution
@@ -397,5 +456,6 @@ where
             }
         }
     }
-    Ok((unified_buckets, unified_order))
+    hole_rows.sort_by_key(|row| row.rule_idx);
+    Ok(((unified_buckets, unified_order), hole_rows))
 }

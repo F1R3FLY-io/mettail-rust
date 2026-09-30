@@ -248,8 +248,13 @@ impl<'session, 'parser, 'input, 'grammar> OwnedTokenSource<'session, 'parser, 'i
         self.node_id(self.session.canonical_position(position.at(hole.end)))
     }
 
-    pub fn structural_hole_edge(&self, category: mettail_grammar_core::CategoryId, node: usize) -> Option<mettail_grammar_core::StructuralHoleEdge> {
-        self.session.structural_hole_edge(category.0, self.position(node)?)
+    pub fn structural_hole_edge(
+        &self,
+        category: mettail_grammar_core::CategoryId,
+        node: usize,
+    ) -> Option<mettail_grammar_core::StructuralHoleEdge> {
+        self.session
+            .structural_hole_edge(category.0, self.position(node)?)
     }
 }
 

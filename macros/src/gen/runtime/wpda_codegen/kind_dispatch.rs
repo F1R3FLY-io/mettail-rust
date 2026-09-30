@@ -843,7 +843,10 @@ pub(crate) fn emit_cat_can_reach(
     // 2. Transitive closure (reflexivity handled at the call site).
     // 3. The original conservative-over-approximation assertion lives with
     //    the relocated closure body.
-    let pairs = mettail_prattail::wpda_rule_analysis::rule_observation::non_reflexive_category_reachability(direct);
+    let pairs =
+        mettail_prattail::wpda_rule_analysis::rule_observation::non_reflexive_category_reachability(
+            direct,
+        );
     // 4. Emit `matches!` over the non-reflexive pairs (or `false`).
     if pairs.is_empty() {
         quote! { false }

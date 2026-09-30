@@ -117,6 +117,17 @@ pub(super) fn expansion(
         Task::TermRule(DdlTermRule::DdlTermAttributed(_, bindings, syntax, _, _, rest)) => {
             (4, add(add(add(bindings.len(), syntax.len())?, rest.len())?, 6)?)
         },
+        Task::TermRule(DdlTermRule::DdlToken(_, _, pieces, _)) => {
+            (3, add(mul(pieces.len(), 3)?, 5)?)
+        },
+        Task::RegPiece(piece) => (
+            2,
+            match piece {
+                DdlRegPiece::DdlRegClass(_, pieces, _) => add(mul(pieces.len(), 2)?, 3)?,
+                _ => 2,
+            },
+        ),
+        Task::RegClassPiece(_) => (2, 2),
         Task::TermAttr(attribute) => (
             1,
             match attribute {

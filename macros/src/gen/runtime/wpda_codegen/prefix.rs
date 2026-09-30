@@ -1674,12 +1674,14 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
-                            return mettail_prattail::wpda_transitions::prefix::singleton_leading_category(
+                            return mettail_prattail::wpda_transitions::prefix::singleton_leading_category_with_floor(
                             _outer_bp,
                             pos,
                             #category_src_idx,
                             #rule_idx,
                             #source_src_idx,
+                            0,
+                            frontier_top.map(|node| node.symbol.kind),
                             lex_w,
                             );
                         }
@@ -2053,13 +2055,15 @@ fn emit_unified_arm(
                         &fork_bucket_tag,
                     );
                     quote! {
-                        mettail_prattail::wpda_transitions::prefix::push_leading_category(
+                        mettail_prattail::wpda_transitions::prefix::push_leading_category_with_floor(
                         __pd_branches,
                         _outer_bp,
                         pos,
                         #category_src_idx,
                         #rule_idx,
                         #source_src_idx,
+                        0,
+                        frontier_top.map(|node| node.symbol.kind),
                         lex_w,
                         );
                     }

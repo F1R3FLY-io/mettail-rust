@@ -56,6 +56,7 @@ theories/NoAdmitTypeProjection.v
 theories/TypeCarrierProjection.v
 theories/TermAttributeProjection.v
 theories/OptionsLimitsProjection.v
+theories/AuthoredRegexBoundary.v
 theories/CanonicalDispatchTable.v
 theories/BackendModuleEncapsulation.v
 theories/ExhaustiveGeneratedMatch.v

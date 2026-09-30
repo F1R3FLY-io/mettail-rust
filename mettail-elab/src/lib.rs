@@ -457,13 +457,15 @@ mod tests {
     }
 
     #[test]
-    fn regex_type_migration_preserves_every_original_admission_flag_and_carrier() {
+    fn closed_regex_types_match_the_data_faithful_admission_flags_and_carriers() {
         let authored = elaborate_theory_language(
             r#"Theory RegexTypes() {
                 Types {
-                    Pattern; Computation; NFrames; DFrames; EFrames;
-                    MatchResult; ReplacementTemplate; PrefixResult;
-                    Scalar = String; Text = String;
+                    noadmit Pattern; noadmit Computation;
+                    noadmit NFrames; noadmit DFrames; noadmit EFrames;
+                    noadmit MatchResult; noadmit ReplacementTemplate;
+                    noadmit PrefixResult;
+                    noadmit Scalar = String; noadmit Text = String;
                     noadmit Bool = bool; noadmit Flag = bool;
                     noadmit Nat = BigInt; noadmit Grade = BigInt;
                 }
@@ -474,10 +476,16 @@ mod tests {
         let data_faithful = elaborate_theory_language(
             r#"Theory RegexTypes() {
                 Data({"types": [
-                    "Pattern", "Computation", "NFrames", "DFrames", "EFrames",
-                    "MatchResult", "ReplacementTemplate", "PrefixResult",
-                    {"name":"Scalar", "carrier":"String", "admits_variables":true},
-                    {"name":"Text", "carrier":"String", "admits_variables":true},
+                    {"name":"Pattern", "admits_variables":false},
+                    {"name":"Computation", "admits_variables":false},
+                    {"name":"NFrames", "admits_variables":false},
+                    {"name":"DFrames", "admits_variables":false},
+                    {"name":"EFrames", "admits_variables":false},
+                    {"name":"MatchResult", "admits_variables":false},
+                    {"name":"ReplacementTemplate", "admits_variables":false},
+                    {"name":"PrefixResult", "admits_variables":false},
+                    {"name":"Scalar", "carrier":"String", "admits_variables":false},
+                    {"name":"Text", "carrier":"String", "admits_variables":false},
                     {"name":"Bool", "carrier":"bool", "admits_variables":false},
                     {"name":"Flag", "carrier":"bool", "admits_variables":false},
                     {"name":"Nat", "carrier":"BigInt", "admits_variables":false},
@@ -486,7 +494,7 @@ mod tests {
                 Terms { PFail . |- "(?!)" : Pattern; }
             }"#,
         )
-        .expect("original Regex type roster elaborates");
+        .expect("data-faithful closed Regex type roster elaborates");
         assert_eq!(authored.canonical_value, data_faithful.canonical_value);
         assert_eq!(authored.grammar_core, data_faithful.grammar_core);
     }

@@ -27,7 +27,9 @@ use super::binder::BinderShape;
 use super::infix_projection::{try_project_infix_rule_in, InfixProjectionError};
 use super::native_first::{literal_patterned_pattern_and_guard_for_kind, EmissionContext};
 use super::prefix::{FirstLegacyItem, FirstPredicate, TryFirstSetContext, TryIdentSummaryContext};
-use super::prefix_bucket::{try_derive_prefix_buckets, PrefixBuckets, TryPrefixBucketContext};
+use super::prefix_bucket::{
+    try_derive_prefix_buckets_with_holes, HolePrefixRow, PrefixBuckets, TryPrefixBucketContext,
+};
 use super::prefix_pattern::{
     neutral_predicate_parts, NeutralNativeFirstConstructors, NeutralPattern, NeutralPatternKey,
 };
@@ -97,6 +99,7 @@ pub fn derive_authored_prefix_buckets<P, E>(
             crosscat_lex_compat_gate,
         )
     })?
+    .map(|(buckets, _)| buckets)
 }
 
 /// Borrow one validated occurrence context for complete descriptor assembly.
@@ -231,7 +234,10 @@ pub(super) fn derive_category_prefix<'reader, 'store, P, E>(
     synthesis: &AuthoredSynthesisOutput<P>,
     category_src_idx: u16,
     crosscat_lex_compat_gate: bool,
-) -> Result<PrefixBuckets<NeutralPattern, NeutralPatternKey>, AuthoredPrefixError<E>> {
+) -> Result<
+    (PrefixBuckets<NeutralPattern, NeutralPatternKey>, Vec<HolePrefixRow>),
+    AuthoredPrefixError<E>,
+> {
     use AuthoredPrefixError as Error;
     let category_index = usize::from(category_src_idx);
     let category_name = synthesis
@@ -247,7 +253,7 @@ pub(super) fn derive_category_prefix<'reader, 'store, P, E>(
         let index = u16::try_from(index).map_err(|_| Error::RuleIndexOverflow(category_index))?;
         indexed.push((index, rule));
     }
-    try_derive_prefix_buckets(
+    try_derive_prefix_buckets_with_holes(
         reader,
         context,
         category_src_idx,

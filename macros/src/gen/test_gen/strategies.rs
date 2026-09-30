@@ -1,13 +1,13 @@
 //! Tape-based proptest strategy generation for `language!` categories.
 //!
-//! Instead of using `prop_recursive` (which creates recursive strategy call
-//! chains that overflow the stack on deeply nested terms), this module
-//! generates a **tape-based iterative term builder**.
+//! Proptest generates a flat instruction tape rather than recursively nested
+//! strategies. The existing positive-depth term builders still call child
+//! builders recursively; the tape representation alone is not a stack-safety
+//! guarantee.
 //!
 //! ## Design
 //!
-//! Proptest generates a flat `Vec<u8>` "instruction tape". An iterative
-//! work-stack interprets it to build a term:
+//! A flat `Vec<u8>` selects constructors and their fields:
 //!
 //! ```text
 //! fn arb_int(max_depth: u32) -> BoxedStrategy<Int> {
@@ -17,18 +17,18 @@
 //! }
 //! ```
 //!
-//! The `build_int_from_tape` function uses a work-stack:
-//! - Start with a `BuildInt { depth: max_depth }` task
-//! - Pop a task, consume a byte from the tape to choose a constructor
-//! - If depth > 0: push child tasks for the constructor's fields
-//! - If depth == 0: choose a leaf constructor (literal, nullary)
-//! - Store results in a `Vec<Option<AnyTerm>>` indexed by slot IDs
+//! At depth zero, existing direct bases retain their original selection order.
+//! A category without a direct base uses a finite constructor witness from the
+//! existing tree automaton. The finite-witness adapter visits that tree with an
+//! explicit worklist and emits flat bindings, preserving ordered child
+//! occurrences without recursive builder calls. No witness is a diagnostic,
+//! not permission to fabricate a constructor.
 //!
 //! Proptest shrinking produces shorter tapes which produce simpler terms.
 //!
-//! Cross-category references (e.g., an `Int` field inside a `Bool` variant)
-//! push a `Build{OtherCat}` task onto the same work-stack — no recursive
-//! function calls.
+//! At positive depth, the existing recursive constructor choices are unchanged.
+//! The generated `BuildTask` declarations and scheduling fragments do not yet
+//! constitute an executable shared worklist for those choices.
 
 use crate::gen::native::native_type_to_string;
 use crate::gen::native_carrier::{NativeCarrierStorage, NativeRecursiveCarrier};
@@ -38,6 +38,9 @@ use mettail_ast::language::LanguageDef;
 
 use proc_macro2::TokenStream;
 use quote::quote;
+
+mod finite_witness;
+use finite_witness::FiniteWitnessContext;
 
 /// The `CollectionType` a collection field must carry, or the GENERATED-SOURCE
 /// TEXT that refuses.
@@ -117,6 +120,7 @@ fn category_has_binders(category: &syn::Ident, language: &LanguageDef) -> bool {
 /// `use mettail_runtime::Language;` imports.
 pub fn generate_strategies(language: &LanguageDef) -> String {
     let mut out = String::with_capacity(16384);
+    let witnesses = FiniteWitnessContext::new(language);
 
     // Imports needed by the generated strategies
     out.push_str("use proptest::prelude::*;\n");
@@ -133,7 +137,7 @@ pub fn generate_strategies(language: &LanguageDef) -> String {
 
     // Generate build_from_tape function per category
     for lang_type in &language.types {
-        generate_build_from_tape(&lang_type.name, language, &mut out);
+        generate_build_from_tape(&lang_type.name, language, &witnesses, &mut out);
     }
 
     // Generate arb_ strategy functions per category
@@ -386,7 +390,10 @@ fn ident_param_count_for(cat: &str, label: &str, language: &LanguageDef) -> usiz
         .map_or(0, crate::gen::term_gen::ident_param_count)
 }
 
-fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantClassification {
+fn classify_direct_variants(
+    category: &syn::Ident,
+    language: &LanguageDef,
+) -> VariantClassification {
     let cat = category.to_string();
     let variants = collect_spec_only_variants(category, language);
 
@@ -587,34 +594,39 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
         }
     }
 
-    // Ensure there's at least one leaf. By construction (Sites 1 & 2
-    // above), `leaves` was populated only from spec-derived sources:
-    // (a) explicit Nullary/Literal/Var rules from `language.terms`, OR
-    // (b) auto-Var iff `category_emits_parseable_auto_var` returns true
-    //     (which requires the category to be user-defined with no
-    //     `native_type` and no explicit Var rule), OR
-    // (c) auto-Literal iff `category_emits_parseable_auto_literal`
-    //     returns true.
-    //
-    // If `leaves` is still empty, the spec genuinely admits no
-    // parseable leaf for this category — emit a `compile_error!` rather
-    // than fabricating an unparseable Var. This honors the directive:
-    // "all generation must come directly from the language! spec".
-    // Fabricating a Var leaf when the spec doesn't admit one was the
-    // root cause of the optsmoke `int_display_parse_roundtrip` /
-    // `bool_display_parse_roundtrip` failures (2026-04-29).
-    if leaves.is_empty() {
-        let cat_name = cat.clone();
-        let code = format!(
-            r#"compile_error!("category `{cat}` has no spec-defined parseable leaf — \
-add a Var rule, a literal rule (via `![T] as {cat}` types{{}} entry), \
-or a nullary constructor in the language! spec to enable proptest generation")"#,
-            cat = cat_name,
-        );
-        leaves.push(("__no_parseable_leaf".to_string(), code));
-    }
-
     VariantClassification { leaves, recursive }
+}
+
+/// Keep every existing direct base and tape choice unchanged. A category
+/// without a direct leaf may still have a finite constructor tree through
+/// other categories; ask the existing tree automaton for that witness.
+fn classify_variants(
+    category: &syn::Ident,
+    language: &LanguageDef,
+    witnesses: &FiniteWitnessContext<'_>,
+) -> VariantClassification {
+    let mut classification = classify_direct_variants(category, language);
+    let leaves = &mut classification.leaves;
+    if leaves.is_empty() {
+        match witnesses.base_for(category) {
+            Ok(Some(code)) => leaves.push(("__finite_constructor_base".to_owned(), code)),
+            Ok(None) => {
+                let message = format!(
+                    "category `{category}` has no finite base constructible by the tape generator; \
+                     check its constructor dependencies and supported field shapes"
+                );
+                leaves.push((
+                    "__no_parseable_leaf".to_owned(),
+                    format!("compile_error!({message:?})"),
+                ));
+            },
+            Err(message) => leaves.push((
+                "__invalid_constructor_base".to_owned(),
+                format!("compile_error!({message:?})"),
+            )),
+        }
+    }
+    classification
 }
 
 /// Generate code to build a literal value from tape, projected onto
@@ -928,25 +940,22 @@ fn generate_binder_build_code(
 
 /// Generate the `build_{cat}_from_tape` function for one category.
 ///
-/// This is the core of the tape-based approach. Instead of the complex
-/// generic assembly machinery, we use a simpler direct approach:
-/// the tape is consumed left-to-right to build the term recursively
-/// but using an explicit stack instead of the call stack.
-fn generate_build_from_tape(category: &syn::Ident, language: &LanguageDef, out: &mut String) {
+/// The tape is consumed left-to-right. Depth-zero finite witnesses are assembled
+/// without child-builder calls; the existing positive-depth path remains
+/// recursive.
+fn generate_build_from_tape(
+    category: &syn::Ident,
+    language: &LanguageDef,
+    witnesses: &FiniteWitnessContext<'_>,
+    out: &mut String,
+) {
     let cat = category.to_string();
     let cat_lower = cat.to_lowercase();
-    let classification = classify_variants(category, language);
-
-    // Use a simpler approach: direct recursive builder with explicit depth
-    // tracking but iterative work-stack for the actual construction.
-    //
-    // The build function reads bytes from the tape to choose constructors,
-    // then directly builds the term. This avoids the complex slot/assembly
-    // machinery and is clearer.
+    let classification = classify_variants(category, language, witnesses);
 
     out.push_str(&format!("/// Build a `{}` term from an instruction tape.\n", cat));
     out.push_str(&format!(
-        "///\n/// Consumes bytes from the tape to choose constructors.\n/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.\n/// At depth > 0, recursive constructors are also available.\n"
+        "///\n/// Consumes bytes from the tape to choose constructors.\n/// At depth 0, choose an existing direct base or a finite constructor witness.\n/// At depth > 0, existing recursive constructors are also available.\n"
     ));
     out.push_str("#[allow(dead_code, unused_variables, clippy::let_and_return)]\n");
     out.push_str(&format!(
@@ -1024,11 +1033,22 @@ fn generate_build_from_tape(category: &syn::Ident, language: &LanguageDef, out: 
     out.push_str("}\n\n");
 }
 
+/// Shared constructor formatting for existing tape fields and finite-witness
+/// child identifiers. Field ordering and storage wrappers are supplied by the
+/// caller's validated layout; this helper does not infer either.
+fn constructor_expression(cat: &str, label: &str, fields: &[String]) -> String {
+    if fields.is_empty() {
+        format!("{cat}::{label}")
+    } else {
+        format!("{cat}::{label}({})", fields.join(", "))
+    }
+}
+
 /// Generate direct recursive build code for a specific variant.
 ///
-/// This produces code that calls `build_{cat}_from_tape` for each child field,
-/// directly constructing the term. The "iteration" comes from the fact that
-/// proptest generates the flat tape; the build function simply walks it.
+/// This existing path calls `build_{cat}_from_tape` for its children. A flat
+/// input tape alone does not make those calls stack-safe. The finite-witness
+/// adapter has a separate explicit worklist and emits no recursive builders.
 fn generate_direct_recursive_build(
     cat: &str,
     label: &str,
@@ -1335,10 +1355,8 @@ fn generate_direct_recursive_build(
             }
 
             code.push_str(&format!(
-                "            {}::{}({})\n",
-                cat,
-                label_str,
-                field_exprs.join(", "),
+                "            {}\n",
+                constructor_expression(cat, &label_str, &field_exprs),
             ));
 
             code
@@ -1960,6 +1978,7 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
 /// `syn::parse_str`. This ensures the public and private strategies stay in lock-step.
 pub fn generate_public_strategies(language: &LanguageDef) -> TokenStream {
     let mut out = String::with_capacity(16384);
+    let witnesses = FiniteWitnessContext::new(language);
 
     // Generate the AnyTerm enum (public)
     generate_public_any_term_enum(language, &mut out);
@@ -1972,7 +1991,7 @@ pub fn generate_public_strategies(language: &LanguageDef) -> TokenStream {
 
     // Generate public build_from_tape function per category
     for lang_type in &language.types {
-        generate_public_build_from_tape(&lang_type.name, language, &mut out);
+        generate_public_build_from_tape(&lang_type.name, language, &witnesses, &mut out);
     }
 
     // Generate public arb_ strategy functions per category
@@ -2154,14 +2173,15 @@ impl<'a> TapeReader<'a> {
 fn generate_public_build_from_tape(
     category: &syn::Ident,
     language: &LanguageDef,
+    witnesses: &FiniteWitnessContext<'_>,
     out: &mut String,
 ) {
     let cat = category.to_string();
     let cat_lower = cat.to_lowercase();
-    let classification = classify_variants(category, language);
+    let classification = classify_variants(category, language, witnesses);
 
     out.push_str(&format!("/// Build a `{}` term from an instruction tape.\n", cat));
-    out.push_str("///\n/// Consumes bytes from the tape to choose constructors.\n/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.\n/// At depth > 0, recursive constructors are also available.\n");
+    out.push_str("///\n/// Consumes bytes from the tape to choose constructors.\n/// At depth 0, choose an existing direct base or a finite constructor witness.\n/// At depth > 0, existing recursive constructors are also available.\n");
     out.push_str("#[allow(dead_code, unused_variables, clippy::let_and_return)]\n");
     out.push_str(&format!(
         "pub fn build_{cat_lower}_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> {cat} {{\n",
@@ -2264,6 +2284,94 @@ fn generate_public_arb_strategy(category: &syn::Ident, _language: &LanguageDef, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finite_fallback_keeps_existing_direct_bases_and_choices() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: BasePreservation,
+            types { Expr data Meta },
+            terms {
+                First . |- "first" : Expr;
+                Second . |- "second" : Expr;
+                Pair . left:Expr, right:Expr |- "pair" left right : Expr;
+                MetaEmpty . |- "empty" : Meta;
+            },
+            equations {}, rewrites {},
+        "#,
+        )
+        .expect("direct-base fixture");
+        let witnesses = FiniteWitnessContext::new(&language);
+        for category in &language.types {
+            let before = classify_direct_variants(&category.name, &language);
+            assert!(!before.leaves.is_empty());
+            let after = classify_variants(&category.name, &language, &witnesses);
+            assert_eq!(before.leaves, after.leaves);
+            assert_eq!(before.recursive, after.recursive);
+        }
+    }
+
+    #[test]
+    fn finite_fallback_is_shared_by_public_and_private_builders() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: FiniteBaseEntries,
+            types { Expr data Token data Wrapper },
+            terms {
+                Unit . |- "unit" : Expr;
+                Captured . |- raw@StringLiteral : Token;
+                Wrapped . inner:Token |- "wrap" inner : Wrapper;
+            },
+            equations {}, rewrites {},
+        "#,
+        )
+        .expect("finite-base fixture");
+        let category = quote::format_ident!("Wrapper");
+        assert!(classify_direct_variants(&category, &language)
+            .leaves
+            .is_empty());
+        let witnesses = FiniteWitnessContext::new(&language);
+        let expected = classify_variants(&category, &language, &witnesses);
+        assert_eq!(expected.leaves.len(), 1);
+        assert_eq!(expected.leaves[0].0, "__finite_constructor_base");
+        assert!(!expected.leaves[0].1.contains("build_token_from_tape"));
+        let mut private = String::new();
+        let mut public = String::new();
+        generate_build_from_tape(&category, &language, &witnesses, &mut private);
+        generate_public_build_from_tape(&category, &language, &witnesses, &mut public);
+        for source in [&private, &public] {
+            assert!(source.contains(&expected.leaves[0].1));
+            assert!(!source.contains("compile_error"));
+            syn::parse_str::<syn::File>(source).expect("valid builder Rust syntax");
+        }
+    }
+
+    #[test]
+    fn finite_fallback_covers_every_actual_rholang_ddl_category() {
+        let bundled = crate::gen::runtime::binder_congruence::tests::bundled_languages();
+        let language = &bundled
+            .iter()
+            .find(|entry| entry.name == "Rholang")
+            .expect("actual Rholang language declaration")
+            .def;
+        let witnesses = FiniteWitnessContext::new(language);
+        let mut checked = 0;
+        for category in language
+            .types
+            .iter()
+            .filter(|category| category.name.to_string().starts_with("Ddl"))
+        {
+            let result = classify_variants(&category.name, language, &witnesses);
+            assert!(!result.leaves.is_empty(), "{}", category.name);
+            for (_, expression) in result.leaves {
+                assert!(!expression.contains("compile_error"), "{}: {expression}", category.name);
+                syn::parse_str::<syn::Expr>(&expression)
+                    .expect("valid finite-base Rust expression");
+            }
+            checked += 1;
+        }
+        assert!(checked > 0, "must inspect the actual DDL category domain");
+    }
 
     /// **A-8, the THIRD site** — the proptest tape builder.
     ///

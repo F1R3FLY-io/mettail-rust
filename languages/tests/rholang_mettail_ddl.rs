@@ -256,6 +256,29 @@ fn judgement_term_and_builder_chain_parse_structurally() {
 }
 
 #[test]
+fn authored_regex_token_declarations_are_structural_generated_terms() {
+    for source in [
+        r"token Nat ::= [0-9]+;",
+        r"token Semi ::= [;];",
+        r"token Unicode ::= [\u{0391}-\u{03C9}]+;",
+        r"token Branch ::= (a|b){1,3};",
+        r"token Escaped ::= \[\]\+;",
+    ] {
+        let rule = DdlTermRule::parse_via_wpda(source)
+            .unwrap_or_else(|error| panic!("generated parser rejected `{source}`: {error:?}"));
+        assert!(matches!(rule, DdlTermRule::DdlToken(..)));
+        // The generic generated Display inserts presentation spaces; the
+        // structural wire uses captured lexemes, never Display/reparse.
+    }
+
+    let host_source = "new token in { token!(1) }";
+    let lexical = lex_dag(host_source).expect("ordinary host binder source must lex");
+    Proc::parse_via_wpda(host_source).unwrap_or_else(|error| {
+        panic!("contextual `token` must remain an ordinary host identifier: {error:?}; {lexical:?}")
+    });
+}
+
+#[test]
 fn wpda_preserves_nullary_rule_constructors_in_recursive_positions() {
     use mettail_languages::rholang::{
         parse_DdlRuleAst_via_wpda_all_with_source, parse_DdlRuleAst_via_wpda_with_source,

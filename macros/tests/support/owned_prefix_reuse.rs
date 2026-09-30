@@ -11,7 +11,7 @@ mod owned_prefix_reuse {
     };
     use mettail_prattail::wpda_rule_analysis::prefix::FirstPredicate as F;
     use mettail_prattail::wpda_rule_analysis::prefix_bucket::{
-        derive_prefix_buckets, PrefixBuckets,
+        derive_prefix_buckets, try_derive_prefix_buckets_with_holes, HolePrefixKind, PrefixBuckets,
     };
     use mettail_prattail::wpda_rule_analysis::prefix_pattern::NeutralPattern as N;
     use std::convert::Infallible;
@@ -286,6 +286,85 @@ mod owned_prefix_reuse {
     }
 
     #[test]
+    fn tokenless_projection_row_survives_an_empty_lexical_first_set() {
+        let mut language = mixed_language();
+        language.types.push(LangType {
+            name: id("Empty"),
+            role: CategoryRole::Data,
+            native_type: None,
+            collection_kind: None,
+        });
+        language.terms.push(judgement_rule(
+            "ProjectEmpty",
+            "Expr",
+            &[("body", "Empty")],
+            vec![param("body")],
+        ));
+        let categories =
+            crate::gen::runtime::wpda_codegen::collect_category_names_with_literals(&language);
+        let per_category = crate::gen::runtime::wpda_codegen::synthetic::build_per_category_rules(
+            &language,
+            &categories,
+        );
+        let result = categories.iter().position(|name| name == "Expr").unwrap();
+        let source = categories.iter().position(|name| name == "Empty").unwrap();
+        let indexed: Vec<_> = per_category[result]
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| (u16::try_from(index).unwrap(), rule))
+            .collect();
+        let rule_idx = indexed
+            .iter()
+            .find(|(_, rule)| rule.label == id("ProjectEmpty"))
+            .map(|(index, _)| *index)
+            .unwrap();
+        for gate in [false, true] {
+            let (buckets, hole_rows) = try_derive_prefix_buckets_with_holes(
+                &crate::gen::runtime::wpda_codegen::binder::MacroBinderSyntaxReader,
+                &mut MacroFirstSetContext { language: &language },
+                u16::try_from(result).unwrap(),
+                "Expr",
+                &indexed,
+                gate,
+            )
+            .expect("original classifier accepts an empty source category");
+            assert!(hole_rows.iter().any(|row| {
+                row.rule_idx == rule_idx
+                    && row.source_src_idx == u16::try_from(source).unwrap()
+                    && row.kind == HolePrefixKind::CrossCatProjection
+            }));
+            assert!(!buckets.0.values().flat_map(|bucket| &bucket.descs).any(|descriptor| {
+                matches!(descriptor, D::CrossCatProjection { rule_idx: index, .. } if *index == rule_idx)
+            }));
+        }
+
+        // Opening only the source supplies an Ident FIRST reading. The
+        // original lexical compatibility gate suppresses that reading in the
+        // result category, but it must not suppress a typed structural hole.
+        language.types.last_mut().unwrap().role = CategoryRole::Object;
+        for gate in [false, true] {
+            let (buckets, hole_rows) = try_derive_prefix_buckets_with_holes(
+                &crate::gen::runtime::wpda_codegen::binder::MacroBinderSyntaxReader,
+                &mut MacroFirstSetContext { language: &language },
+                u16::try_from(result).unwrap(),
+                "Expr",
+                &indexed,
+                gate,
+            )
+            .expect("the lexical compatibility gate preserves classification");
+            assert!(hole_rows.iter().any(|row| {
+                row.rule_idx == rule_idx && row.kind == HolePrefixKind::CrossCatProjection
+            }));
+            let lexical_projection = buckets.0.values().flat_map(|bucket| &bucket.descs).any(
+                |descriptor| {
+                    matches!(descriptor, D::CrossCatProjection { rule_idx: index, .. } if *index == rule_idx)
+                },
+            );
+            assert_eq!(lexical_projection, !gate);
+        }
+    }
+
+    #[test]
     fn owned_prefix_explicit_reordered_duplicate_occurrences_match_original() {
         let language = mixed_language();
         // Reuse one source production twice; global ordinal, production identity
@@ -412,11 +491,28 @@ mod owned_prefix_reuse {
     }
 
     #[test]
-    fn owned_prefix_out_of_range_explicit_binding_power_is_not_nonatomic() {
-        let language = mixed_language();
+    fn owned_prefix_large_declared_power_uses_ranked_operand_floor() {
+        let mut language = lang_with_int_literal();
+        language.types.push(LangType {
+            name: id("Expr"),
+            role: CategoryRole::Object,
+            native_type: None,
+            collection_kind: None,
+        });
+        language.terms.push(judgement_rule(
+            "UnaryCross",
+            "Expr",
+            &[("body", "Int")],
+            vec![literal("int"), param("body")],
+        ));
         let mut core = core(&language);
         let occurrences: Vec<_> = (0..language.terms.len()).collect();
-        core.productions[7].precedence.binding_power = Some(256);
+        let prefix = core
+            .productions
+            .iter_mut()
+            .find(|production| production.label == "UnaryCross")
+            .expect("the authored prefix survives the grammar bridge");
+        prefix.precedence.binding_power = Some(256);
         let synthesis = derive_authored_rules(&core, &occurrences, |_| Ok::<_, Infallible>(()))
             .expect("synthesis does not consume prefix binding power");
         let category = u16::try_from(
@@ -427,17 +523,23 @@ mod owned_prefix_reuse {
                 .expect("fixture declares Expr"),
         )
         .expect("Expr category fits u16");
-        assert!(matches!(
-            derive_authored_prefix_buckets(
-                &core,
-                &occurrences,
-                &synthesis,
-                category,
-                false,
-                |_, _, _, _| Ok::<_, Infallible>(())
-            ),
-            Err(AuthoredPrefixError::PrefixBindingPowerOverflow(256))
-        ));
+        let actual = derive_authored_prefix_buckets(
+            &core,
+            &occurrences,
+            &synthesis,
+            category,
+            false,
+            |_, _, _, _| Ok::<_, Infallible>(()),
+        )
+        .expect("source power 256 is rank-compressed into a representable Pratt level");
+        let mut found = false;
+        for descriptor in actual.0.values().flat_map(|bucket| &bucket.descs) {
+            if let D::CrossCatPrefixUnary { operand_bp, .. } = descriptor {
+                assert_eq!(*operand_bp, 1, "one declared level has rank one");
+                found = true;
+            }
+        }
+        assert!(found, "the authored unary prefix must retain its operand floor");
     }
 
     #[test]

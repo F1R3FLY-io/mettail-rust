@@ -129,6 +129,15 @@ macro_rules! rholang_source_profile_rows {
             DdlExport::DdlExportRename => [String => Opaque, String => Opaque];
             DdlReplacement::DdlReplacementRule => [String => Opaque, Arc<DdlTermRule> => D];
             DdlTermRule::DdlTerm => [String => Opaque, Vec<DdlBinding> => D, Vec<DdlSyntaxItem> => D, String => Opaque];
+            DdlTermRule::DdlToken => [String => Opaque, String => Opaque, Vec<DdlRegPiece> => D, String => Opaque];
+            DdlRegPiece::DdlRegLiteral => [String => Opaque];
+            DdlRegPiece::DdlRegEscape => [String => Opaque];
+            DdlRegPiece::DdlRegOperator => [String => Opaque];
+            DdlRegPiece::DdlRegClass => [String => Opaque, Vec<DdlRegClassPiece> => D, String => Opaque];
+            DdlRegClassPiece::DdlRegClassLiteral => [String => Opaque];
+            DdlRegClassPiece::DdlRegClassEscape => [String => Opaque];
+            DdlRegClassPiece::DdlRegClassHyphen => [String => Opaque];
+            DdlRegClassPiece::DdlRegClassCaret => [String => Opaque];
             DdlBinding::DdlBindingPlain => [String => Opaque, Arc<DdlSort> => D];
             DdlBinding::DdlBindingBinder => [String => Opaque, String => Opaque, String => Opaque, String => Opaque];
             DdlSort::DdlSortHashBag => [String => Opaque];

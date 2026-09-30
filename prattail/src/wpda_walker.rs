@@ -1117,6 +1117,65 @@ use crate::wpda_runtime::{
     WpdaTokenSource,
 };
 
+/// Every identifier reading at this lexical position, including a secondary
+/// reading of a contextual keyword. A guarded scan must be driven by lexical
+/// evidence, not by the source's preferred edge. The lexer normally supplies
+/// one longest edge per kind, but the iterator preserves all matching edges
+/// for arbitrary `WpdaTokenSource` implementations as well.
+fn identifier_edges_at<'a>(
+    tokens: &'a dyn WpdaTokenSource,
+    pos: usize,
+) -> impl Iterator<Item = (usize, &'a str)> + 'a {
+    let primary = (tokens.peek_kind(pos) == Some(TokenKind::Ident))
+        .then(|| (0, tokens.peek_text(pos).unwrap_or("")));
+    primary
+        .into_iter()
+        .chain(tokens.peek_alternatives(pos).iter().enumerate().filter_map(
+            |(index, alternative)| {
+                (alternative.kind == TokenKind::Ident)
+                    .then_some((index + 1, alternative.text.as_str()))
+            },
+        ))
+}
+
+#[cfg(test)]
+mod guarded_identifier_lattice_tests {
+    use super::identifier_edges_at;
+    use crate::automata::semiring::TropicalWeight;
+    use crate::automata::TokenKind;
+    use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
+    use crate::wpda_runtime::MultiTokenSource;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn guarded_scan_retains_exactly_the_identifier_edges(
+            identifier_mask in proptest::collection::vec(any::<bool>(), 1..32)
+        ) {
+            let alternatives = identifier_mask.iter().enumerate().map(|(index, is_ident)| {
+                let text = format!("edge{index}");
+                LexAlternative {
+                    kind: if *is_ident { TokenKind::Ident } else { TokenKind::Fixed(text.clone()) },
+                    text,
+                    end_byte: index + 1,
+                    weight: TropicalWeight(index as f64),
+                }
+            }).collect();
+            let source = MultiTokenSource::new(LexStream {
+                entries: vec![LexEntry { byte_start: 0, alternatives }],
+            });
+            let actual: Vec<_> = identifier_edges_at(&source, 0)
+                .map(|(index, text)| (index, text.to_owned()))
+                .collect();
+            let expected: Vec<_> = identifier_mask.iter().enumerate()
+                .filter(|(_, is_ident)| **is_ident)
+                .map(|(index, _)| (index, format!("edge{index}")))
+                .collect();
+            prop_assert_eq!(actual, expected);
+        }
+    }
+}
+
 /// Token-level atom producer available to stack-safe chain synthesis.
 ///
 /// `atom_cat_src_idx`/`atom_rule_idx` identify the rule that consumes the
@@ -1245,8 +1304,12 @@ pub trait WpdaEngine<W: SemiringRef> {
 
     /// Admitted category edge: exact endpoint and explicit structural action.
     /// Default engines have no hole input; this never fabricates a token.
-    fn structural_hole_edge(&self, _category: u16, _pos: usize) -> Option<(usize, u32)> { None }
-    fn supports_structural_holes(&self) -> bool { false }
+    fn structural_hole_edge(&self, _category: u16, _pos: usize) -> Option<(usize, u32)> {
+        None
+    }
+    fn supports_structural_holes(&self) -> bool {
+        false
+    }
 
     /// SPPF-realize observational-dedup hook (2026-06-28).
     ///
@@ -2236,9 +2299,15 @@ pub enum WalkerResourceError {
 impl std::fmt::Display for WalkerResourceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LimitsNotInstalled => f.write_str("walker instance has no installed resource limits"),
-            Self::ParseItemLimit { limit, position } => write!(f, "parse item limit {limit} exceeded at position {position}"),
-            Self::ForestNodeLimit { limit, position } => write!(f, "forest node limit {limit} exceeded at position {position}"),
+            Self::LimitsNotInstalled => {
+                f.write_str("walker instance has no installed resource limits")
+            },
+            Self::ParseItemLimit { limit, position } => {
+                write!(f, "parse item limit {limit} exceeded at position {position}")
+            },
+            Self::ForestNodeLimit { limit, position } => {
+                write!(f, "forest node limit {limit} exceeded at position {position}")
+            },
         }
     }
 }
@@ -6299,13 +6368,21 @@ where
         Self::new_for_category_resource_config(engine, cat_src_idx, initial_min_bp, None)
     }
 
-    pub fn new_for_category_with_limits(engine: E, cat_src_idx: u16, initial_min_bp: u8,
-        limits: WalkerResourceLimits) -> Self {
+    pub fn new_for_category_with_limits(
+        engine: E,
+        cat_src_idx: u16,
+        initial_min_bp: u8,
+        limits: WalkerResourceLimits,
+    ) -> Self {
         Self::new_for_category_resource_config(engine, cat_src_idx, initial_min_bp, Some(limits))
     }
 
-    fn new_for_category_resource_config(engine: E, cat_src_idx: u16, initial_min_bp: u8,
-        resource_limits: Option<WalkerResourceLimits>) -> Self {
+    fn new_for_category_resource_config(
+        engine: E,
+        cat_src_idx: u16,
+        initial_min_bp: u8,
+        resource_limits: Option<WalkerResourceLimits>,
+    ) -> Self {
         let mut gss: WpdaGss<W> = WpdaGss::new();
         // Push the target category as the sole frame. Phase 5 fix: do NOT
         // create a separate "bottom" node first — `get_or_create_node`
@@ -6940,15 +7017,22 @@ where
     /// Drive the original canonical worklist with this instance's installed
     /// limits. A failed instance cannot later publish its provisional forest.
     pub fn run_to_end_of_input_limited(
-        &mut self, tokens: &dyn WpdaTokenSource,
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
     ) -> Result<(), WalkerResourceError>
-    where W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
+    where
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
-        let limits = self.resource_limits.ok_or(WalkerResourceError::LimitsNotInstalled)?;
-        if let Some(error) = &self.resource_error { return Err(error.clone()); }
+        let limits = self
+            .resource_limits
+            .ok_or(WalkerResourceError::LimitsNotInstalled)?;
+        if let Some(error) = &self.resource_error {
+            return Err(error.clone());
+        }
         if let Err(error) = self.run_to_end_of_input(0, tokens) {
             return Err(WalkerResourceError::ParseItemLimit {
-                limit: limits.parse_items, position: error.position,
+                limit: limits.parse_items,
+                position: error.position,
             });
         }
         match &self.resource_error {
@@ -8206,38 +8290,49 @@ where
     /// k-best worker supplies both exhaustion and all-demanded-node truncation
     /// observations; this entry never pads or retries beyond the request cap.
     pub fn realize_root_complete_with_weights(
-        &self, root: crate::sppf::SppfId, max_results: usize,
+        &self,
+        root: crate::sppf::SppfId,
+        max_results: usize,
     ) -> WeightedRealizationResult<W>
-    where W: StarSemiringRef,
+    where
+        W: StarSemiringRef,
     {
         use crate::wpda_runtime::{RealizationError, ReconstructionFailure};
         if let Some(error) = &self.resource_error {
             return Err(RealizationError::Resource(error.clone()));
         }
-        let demand = max_results.checked_add(1)
+        let demand = max_results
+            .checked_add(1)
             .ok_or(RealizationError::ResultOverflow { limit: max_results })?;
         if !matches!(self.sppf.node(root),
             Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
                 if non_terminal_tag & CGLL_BIN_TAG != 0)
         {
             return Err(RealizationError::Reconstruction {
-                node: root, cause: ReconstructionFailure::UnexpectedNodeKind,
+                node: root,
+                cause: ReconstructionFailure::UnexpectedNodeKind,
             });
         }
         self.realization_error.replace(None);
         let mut state = KbestState::new();
         let mut fdepths = rustc_hash::FxHashMap::default();
-        let exhausted = self.cgll_kbest_next(&mut state, &mut fdepths, root,
-            KbestOrderKey::Weight, demand, true, self.cgll_pure_goal_cat);
+        let exhausted = self.cgll_kbest_next(
+            &mut state,
+            &mut fdepths,
+            root,
+            KbestOrderKey::Weight,
+            demand,
+            true,
+            self.cgll_pure_goal_cat,
+        );
         // Original action/key/reconstruction faults dominate result overflow.
         self.finish_realization_request(())?;
-        if exhausted != KbestDemandOutcome::NoMore
-            || Self::cgll_kbest_session_truncated(&state)
-        {
+        if exhausted != KbestDemandOutcome::NoMore || Self::cgll_kbest_session_truncated(&state) {
             return Err(RealizationError::ResultOverflow { limit: max_results });
         }
         let realized = Self::cgll_kbest_realized_entries(&state, root, KbestOrderKey::Weight);
-        let out: Vec<_> = realized.into_iter()
+        let out: Vec<_> = realized
+            .into_iter()
             .filter_map(|(arg, weight)| arg.into_dyn_term().map(|value| (value, weight)))
             .collect();
         if out.len() > max_results {
@@ -10545,6 +10640,7 @@ where
             WpdaState::PrefixDispatch { cur_bp, .. } | WpdaState::InfixLoop { cur_bp } => {
                 Some(*cur_bp)
             },
+            WpdaState::EnterLeadingChild { inner_bp, .. } => Some(*inner_bp),
             WpdaState::CrossCatDelegate { inner_cur_bp, .. } => Some(*inner_cur_bp),
             _ => None,
         }
@@ -12309,6 +12405,9 @@ where
         match state {
             WpdaState::Ready { min_bp } => (0, *min_bp as u64),
             WpdaState::PrefixDispatch { cur_bp, .. } => (1, *cur_bp as u64),
+            WpdaState::EnterLeadingChild { source_src_idx, inner_bp } => {
+                (18, pack4(*source_src_idx, *inner_bp as u16, 0, 0))
+            },
             WpdaState::InfixLoop { cur_bp } => (2, *cur_bp as u64),
             WpdaState::InfixChainIterative {
                 result_src_idx,
@@ -12556,8 +12655,30 @@ where
                 }
             }
         }
-        let inter = self.sppf.try_intern_intermediate(slot_id, lo, hi_z, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
-        let packing = self.sppf.try_intern_packing(slot_id, vec![w, z], weight, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+        let inter = self
+            .sppf
+            .try_intern_intermediate(
+                slot_id,
+                lo,
+                hi_z,
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
+        let packing = self
+            .sppf
+            .try_intern_packing(
+                slot_id,
+                vec![w, z],
+                weight,
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
         self.sppf.link_packing_to_symbol(inter, packing);
         Ok(inter)
     }
@@ -12646,14 +12767,22 @@ where
         sep_pos: usize,
     ) -> Result<crate::sppf::SppfId, WalkerResourceError> {
         run.stats.coll_sep_folds += 1;
-        let leaf = self.sppf.try_intern_trigger_terminal(
-            // The token kind is irrelevant for the reserved-owner marker
-            // (identity = (kind, pos, owner) and the owner is reserved).
-            TokenKind::Eof,
-            crate::sppf::PosOrSynth::Real(sep_pos as u32),
-            None,
-            u16::MAX,
-            u16::MAX, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+        let leaf = self
+            .sppf
+            .try_intern_trigger_terminal(
+                // The token kind is irrelevant for the reserved-owner marker
+                // (identity = (kind, pos, owner) and the owner is reserved).
+                TokenKind::Eof,
+                crate::sppf::PosOrSynth::Real(sep_pos as u32),
+                None,
+                u16::MAX,
+                u16::MAX,
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
         // POSITION-SALTED annotation slot (see `cgll_pure_end_binder_scope`):
         // marker folds don't advance the grammar dot, so an unsalted slot
         // can re-hit an earlier fold's `(slot, lo, hi)` identity and close a
@@ -12693,14 +12822,22 @@ where
         unset_pos: usize,
     ) -> Result<crate::sppf::SppfId, WalkerResourceError> {
         run.stats.coll_kv_unset_pushed += 1;
-        let leaf = self.sppf.try_intern_trigger_terminal(
-            // The token kind is irrelevant for the reserved-owner marker
-            // (identity = (kind, pos, owner) and the owner is reserved).
-            TokenKind::Eof,
-            crate::sppf::PosOrSynth::Synthesized(unset_pos as u32),
-            None,
-            u16::MAX,
-            Self::CGLL_UNSET_MARKER_RULE, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+        let leaf = self
+            .sppf
+            .try_intern_trigger_terminal(
+                // The token kind is irrelevant for the reserved-owner marker
+                // (identity = (kind, pos, owner) and the owner is reserved).
+                TokenKind::Eof,
+                crate::sppf::PosOrSynth::Synthesized(unset_pos as u32),
+                None,
+                u16::MAX,
+                Self::CGLL_UNSET_MARKER_RULE,
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
         let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
             ^ ((unset_pos as u32) << 1)
             ^ 0x1000_0000;
@@ -12756,13 +12893,35 @@ where
                 self.sppf.span_hi(leaf).unwrap_or(pos as u32),
             )
         };
-        let inter = self.sppf.try_intern_intermediate(wrap_slot, lo, hi, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+        let inter = self
+            .sppf
+            .try_intern_intermediate(
+                wrap_slot,
+                lo,
+                hi,
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
         let children = if leaf == crate::sppf::SPPF_ID_NONE {
             Vec::new()
         } else {
             vec![leaf]
         };
-        let packing = self.sppf.try_intern_packing(wrap_slot, children, weight.clone(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+        let packing = self
+            .sppf
+            .try_intern_packing(
+                wrap_slot,
+                children,
+                weight.clone(),
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
         self.sppf.link_packing_to_symbol(inter, packing);
         run.stats.weight_carriers += 1;
         Ok(inter)
@@ -15538,7 +15697,9 @@ where
 
     /// Original result projection, shared by bounded and complete requests.
     fn cgll_kbest_realized_entries(
-        state: &KbestState<W>, root: crate::sppf::SppfId, demand_kind: KbestOrderKey,
+        state: &KbestState<W>,
+        root: crate::sppf::SppfId,
+        demand_kind: KbestOrderKey,
     ) -> Vec<(ActionArg, W)> {
         let Some(sub) = state.sub(root, demand_kind) else {
             return Vec::new();
@@ -16191,8 +16352,19 @@ where
         xcat: u8,
         pratt_handoff: CgllPrattHandoff,
     ) {
-        self.try_cgll_pure_descend(run, caller, caller_sym_now, pushed, new_state, child_pos, child_class, w0, xcat, pratt_handoff)
-            .expect("original unbounded canonical helper cannot exhaust installed limits")
+        self.try_cgll_pure_descend(
+            run,
+            caller,
+            caller_sym_now,
+            pushed,
+            new_state,
+            child_pos,
+            child_class,
+            w0,
+            xcat,
+            pratt_handoff,
+        )
+        .expect("original unbounded canonical helper cannot exhaust installed limits")
     }
 
     fn try_cgll_pure_descend(
@@ -16510,7 +16682,18 @@ where
                         W::one_ref(),
                     )?
                 };
-                let z_e = self.sppf.try_intern_symbol(cat | CGLL_BIN_TAG, lo, rep.at_pos as u32, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let z_e = self
+                    .sppf
+                    .try_intern_symbol(
+                        cat | CGLL_BIN_TAG,
+                        lo,
+                        rep.at_pos as u32,
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let children = if joined == crate::sppf::SPPF_ID_NONE {
                     Vec::new()
                 } else {
@@ -16542,14 +16725,26 @@ where
                              absence is a protocol violation)",
                         )
                         .clone();
-                    let pk = self.sppf.try_intern_packing(rule_id, children, recorded, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                    let pk = self
+                        .sppf
+                        .try_intern_packing(
+                            rule_id,
+                            children,
+                            recorded,
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?;
                     self.sppf.link_packing_to_symbol(z_e, pk);
                 }
                 let resumed_w = if spine_prefix != crate::sppf::SPPF_ID_NONE {
                     let mut acc = spine_prefix;
                     for (slot, tr) in &spine_trailers {
                         if *tr != crate::sppf::SPPF_ID_NONE {
-                            acc = self.try_cgll_pure_fold(*slot, acc, *tr, rep.at_pos, W::one_ref())?;
+                            acc =
+                                self.try_cgll_pure_fold(*slot, acc, *tr, rep.at_pos, W::one_ref())?;
                         }
                     }
                     self.try_cgll_pure_get_node_p(
@@ -16579,7 +16774,13 @@ where
                     rep.result_w
                 } else {
                     let slot = Self::cgll_pure_slot_hash(&caller_sym_now, &resume_state);
-                    self.try_cgll_pure_fold(slot, rep.operand_w, rep.result_w, rep.at_pos, W::one_ref())?
+                    self.try_cgll_pure_fold(
+                        slot,
+                        rep.operand_w,
+                        rep.result_w,
+                        rep.at_pos,
+                        W::one_ref(),
+                    )?
                 };
                 run.worklist.push_back(CgllPureDescriptor {
                     state: resume_state,
@@ -16593,7 +16794,7 @@ where
             }
         }
         Ok(())
-}
+    }
 
     /// Materialize ONE resumed caller descriptor from a pop return, folding
     /// the completed `z` into the caller's edge operand per the R1 formula
@@ -16702,7 +16903,7 @@ where
             w: y,
         });
         Ok(())
-}
+    }
 
     /// Materialize ONE resumed caller descriptor whose `w` is REPLACED by
     /// the per-edge `z_e` (R2: the LHS was consumed into the constituent —
@@ -16794,8 +16995,10 @@ where
         br_weight: &W,
         end_inline: bool,
     ) {
-        self.try_cgll_pure_binder_ident_consume(run, d, tokens, pos_after, br_symbol, br_state, br_weight, end_inline)
-            .expect("original unbounded canonical helper cannot exhaust installed limits")
+        self.try_cgll_pure_binder_ident_consume(
+            run, d, tokens, pos_after, br_symbol, br_state, br_weight, end_inline,
+        )
+        .expect("original unbounded canonical helper cannot exhaust installed limits")
     }
 
     fn try_cgll_pure_binder_ident_consume(
@@ -16809,36 +17012,41 @@ where
         br_weight: &W,
         end_inline: bool,
     ) -> Result<(), WalkerResourceError> {
-        if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
-            return Ok(());
+        for (alt_idx, text) in identifier_edges_at(tokens, pos_after) {
+            let marker = self
+                .sppf
+                .try_intern_trigger_terminal(
+                    TokenKind::Ident,
+                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                    Some(text),
+                    u16::MAX,
+                    u16::MAX - 1,
+                    self.resource_limits.map(|limits| limits.forest_nodes),
+                )
+                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                    limit: error.limit,
+                    position: self.resource_position,
+                })?;
+            let w_c = self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, br_weight)?;
+            // POSITION-SALTED (see `cgll_pure_end_binder_scope`).
+            let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
+            let w_m = self.try_cgll_pure_fold(slot, w_c, marker, pos_after, W::one_ref())?;
+            let w = if end_inline {
+                let d_m = CgllPureDescriptor { w: w_m, ..d.clone() };
+                self.try_cgll_pure_end_binder_scope(run, &d_m, pos_after, None, tokens)?
+            } else {
+                w_m
+            };
+            run.worklist.push_back(CgllPureDescriptor {
+                state: br_state.clone(),
+                cur_sym: br_symbol,
+                pos: tokens.next_pos(pos_after, alt_idx).unwrap_or(pos_after + 1),
+                w,
+                ..d.clone()
+            });
         }
-        let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
-        let text = tokens.peek_text(pos_after).unwrap_or("").to_string();
-        let marker = self.sppf.try_intern_trigger_terminal(
-            TokenKind::Ident,
-            crate::sppf::PosOrSynth::Real(pos_after as u32),
-            Some(&text),
-            u16::MAX,
-            u16::MAX - 1, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
-        let w_c = self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, br_weight)?;
-        // POSITION-SALTED (see `cgll_pure_end_binder_scope`).
-        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
-        let w_m = self.try_cgll_pure_fold(slot, w_c, marker, pos_after, W::one_ref())?;
-        let w = if end_inline {
-            let d_m = CgllPureDescriptor { w: w_m, ..d.clone() };
-            self.try_cgll_pure_end_binder_scope(run, &d_m, pos_after, None, tokens)?
-        } else {
-            w_m
-        };
-        run.worklist.push_back(CgllPureDescriptor {
-            state: br_state,
-            cur_sym: br_symbol,
-            pos: next_of(pos_after),
-            w,
-            ..d.clone()
-        });
         Ok(())
-}
+    }
 
     /// P3.f: structural-delimiter [`crate::wpda_runtime::FrameCtx`] for a pure
     /// descriptor — the pure form of classic [`Self::frame_ctx_for_stack`]
@@ -16970,7 +17178,17 @@ where
             .get(&d.u)
             .map(|e| e.inherited_scope_depth)
             .unwrap_or(0);
-        let sid = self.sppf.try_intern_binder_scope(&names, depth, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+        let sid = self
+            .sppf
+            .try_intern_binder_scope(
+                &names,
+                depth,
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
         // POSITION-SALTED annotation slot: binder-list folds (ident markers,
         // this BinderScope, weight carriers) all happen under ONE
         // `(cur_sym, state)` pair, so the grammar dot never advances their
@@ -17251,12 +17469,20 @@ where
                 RecoveryEvent::from_action_kind(5, at_pos, *cost)
             },
         });
-        let marker = self.sppf.try_intern_trigger_terminal(
-            TokenKind::Fixed(format!("{tag}{SEP}{serial}", SEP = CGLL_REPAIR_PAYLOAD_SEP)),
-            crate::sppf::PosOrSynth::Synthesized(at_pos as u32),
-            Some(payload.as_str()),
-            u16::MAX,
-            u16::MAX - 2, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+        let marker = self
+            .sppf
+            .try_intern_trigger_terminal(
+                TokenKind::Fixed(format!("{tag}{SEP}{serial}", SEP = CGLL_REPAIR_PAYLOAD_SEP)),
+                crate::sppf::PosOrSynth::Synthesized(at_pos as u32),
+                Some(payload.as_str()),
+                u16::MAX,
+                u16::MAX - 2,
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
         #[cfg(feature = "walker-trace")]
         if std::env::var_os("PRATTAIL_CGLL_EVENT_DIAG").is_some() {
             eprintln!(
@@ -17453,7 +17679,7 @@ where
             },
         }
         Ok(())
-}
+    }
 
     /// Task #10 item 4: allocate one CONTIGUOUS virtual chain serving
     /// `served` (each entry `(kind, text, at_real)` — amendment 7: the
@@ -17536,10 +17762,35 @@ where
         };
         // gll_create stores caller.pos at the consumed opener; close_hi is
         // the actual consume target. Neither position is reconstructed.
-        let lo = self.gss.node(descriptor.u)
-            .expect("grouping close retains its canonical GSS frame").pos as u32;
-        let symbol = self.sppf.try_intern_symbol(u32::from(category) | CGLL_BIN_TAG, lo, close_hi as u32, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
-        let packing = self.sppf.try_intern_packing(rule, vec![descriptor.w], W::one_ref(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+        let lo = self
+            .gss
+            .node(descriptor.u)
+            .expect("grouping close retains its canonical GSS frame")
+            .pos as u32;
+        let symbol = self
+            .sppf
+            .try_intern_symbol(
+                u32::from(category) | CGLL_BIN_TAG,
+                lo,
+                close_hi as u32,
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
+        let packing = self
+            .sppf
+            .try_intern_packing(
+                rule,
+                vec![descriptor.w],
+                W::one_ref(),
+                self.resource_limits.map(|limits| limits.forest_nodes),
+            )
+            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                limit: error.limit,
+                position: self.resource_position,
+            })?;
         self.sppf.link_packing_to_symbol(symbol, packing);
         Ok(symbol)
     }
@@ -17793,14 +18044,34 @@ where
                         cat_u16, rule_u16, slot_idx, d.pos, d.w, seps, item_summaries
                     );
                 }
-                let cid = self.sppf.try_intern_collection_id(coll_id, items, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let cid = self
+                    .sppf
+                    .try_intern_collection_id(
+                        coll_id,
+                        items,
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let z = if is_class3 {
                     let depth = run
                         .v_parent
                         .get(&d.u)
                         .map(|e| e.inherited_scope_depth)
                         .unwrap_or(0);
-                    let leaf = self.sppf.try_intern_binder_scope(&binder_names, depth, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                    let leaf = self
+                        .sppf
+                        .try_intern_binder_scope(
+                            &binder_names,
+                            depth,
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?;
                     // Position-salted annotation pairing (CID is span-less,
                     // the leaf zero-width — the salt keeps distinct closes
                     // from re-hitting one (slot, lo, hi) identity).
@@ -17875,9 +18146,31 @@ where
                 let cat = cat_u16 as u32;
                 let rule_id = (cat << 16) | (rule_u16 as u32);
                 let lo = self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32;
-                let z = self.sppf.try_intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let z = self
+                    .sppf
+                    .try_intern_symbol(
+                        cat | CGLL_BIN_TAG,
+                        lo,
+                        i_pop as u32,
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 for cid in collection_zs {
-                    let pk = self.sppf.try_intern_packing(rule_id, vec![cid], pop_weight.clone(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                    let pk = self
+                        .sppf
+                        .try_intern_packing(
+                            rule_id,
+                            vec![cid],
+                            pop_weight.clone(),
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?;
                     self.sppf.link_packing_to_symbol(z, pk);
                 }
                 // Task #10 item 3: record `pop_weight` — mirrors the packing
@@ -17917,7 +18210,18 @@ where
                     let lo = self
                         .cgll_pure_span_lo_content(d.w)
                         .unwrap_or_else(|| self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32);
-                    let z = self.sppf.try_intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                    let z = self
+                        .sppf
+                        .try_intern_symbol(
+                            cat | CGLL_BIN_TAG,
+                            lo,
+                            i_pop as u32,
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?;
                     let children = if d.w == crate::sppf::SPPF_ID_NONE {
                         Vec::new()
                     } else {
@@ -17966,7 +18270,18 @@ where
                         "S1 H9: spine id {:#06x} reached the pure reduce packing intern",
                         rule_id & 0xFFFF,
                     );
-                    let pk = self.sppf.try_intern_packing(rule_id, children, pk_weight.clone(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                    let pk = self
+                        .sppf
+                        .try_intern_packing(
+                            rule_id,
+                            children,
+                            pk_weight.clone(),
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?;
                     self.sppf.link_packing_to_symbol(z, pk);
                     if is_seed_frame {
                         self.cgll_pure_publish_completed_root(run, z, i_pop, tokens);
@@ -18048,7 +18363,18 @@ where
                                 W::one_ref(),
                             )?
                         };
-                        let z_e = self.sppf.try_intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                        let z_e = self
+                            .sppf
+                            .try_intern_symbol(
+                                cat | CGLL_BIN_TAG,
+                                lo,
+                                i_pop as u32,
+                                self.resource_limits.map(|limits| limits.forest_nodes),
+                            )
+                            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                limit: error.limit,
+                                position: self.resource_position,
+                            })?;
                         let children = if joined == crate::sppf::SPPF_ID_NONE {
                             Vec::new()
                         } else {
@@ -18063,7 +18389,18 @@ where
                             "S1 H9: spine id {:#06x} reached the pure reduce Return-arm packing intern",
                             rule_id & 0xFFFF,
                         );
-                        let pk = self.sppf.try_intern_packing(rule_id, children, pop_weight.clone(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                        let pk = self
+                            .sppf
+                            .try_intern_packing(
+                                rule_id,
+                                children,
+                                pop_weight.clone(),
+                                self.resource_limits.map(|limits| limits.forest_nodes),
+                            )
+                            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                limit: error.limit,
+                                position: self.resource_position,
+                            })?;
                         self.sppf.link_packing_to_symbol(z_e, pk);
                         if spine_prefix != crate::sppf::SPPF_ID_NONE {
                             // Chronological re-fold: prefix ⊕ trailers, then
@@ -18220,7 +18557,7 @@ where
             }
         }
         Ok(())
-}
+    }
 
     /// STAGE D — forest WELL-FORMEDNESS self-check (env-gated
     /// `PRATTAIL_CGLL_PURE_WFCHECK`; diagnostic walk, no behavior change).
@@ -18460,7 +18797,10 @@ where
         }
     }
 
-    fn try_step_canonical_pure(&mut self, tokens: &dyn WpdaTokenSource) -> Result<WpdaState, WalkerResourceError> {
+    fn try_step_canonical_pure(
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Result<WpdaState, WalkerResourceError> {
         use rustc_hash::FxHashSet;
 
         // TASK-#16 A1: mark the descriptor-PURE engine active for the whole run
@@ -18647,7 +18987,8 @@ where
                 if let Some(limits) = self.resource_limits {
                     if self.resource_items_used >= limits.parse_items {
                         return Err(WalkerResourceError::ParseItemLimit {
-                            limit: limits.parse_items, position: d.pos,
+                            limit: limits.parse_items,
+                            position: d.pos,
                         });
                     }
                     self.resource_items_used += 1;
@@ -18744,27 +19085,64 @@ where
                     continue; // terminal states never step
                 }
                 if self.engine.supports_structural_holes() {
-                if let WpdaState::PrefixDispatch { cur_bp, .. } = d.state {
-                    // Complete category edge -> existing category continuation.
-                    // Keep all ordinary prefix alternatives below unchanged.
-                    let category = if d.cur_sym.kind == SymbolKind::CollectionMarker {
-                        self.engine.collection_spec(d.cur_sym.category_src_idx,
-                            d.cur_sym.rule_index_in_category, d.cur_sym.bp.unwrap_or(0))
-                            .and_then(|spec| spec.element_src_idx)
-                    } else { Some(d.cur_sym.category_src_idx) };
-                    if let Some(category) = category {
-                        if let Some((end, action)) = self.engine.structural_hole_edge(category, d.pos) {
-                            let symbol = self.sppf.try_intern_symbol(u32::from(category) | CGLL_BIN_TAG,
-                                d.pos as u32, end as u32, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
-                            let packing = self.sppf.try_intern_packing(action, Vec::new(), W::one_ref(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
-                            self.sppf.link_packing_to_symbol(symbol, packing);
-                            self.try_cgll_pure_descend(&mut run, &d, d.cur_sym,
-                                StackSymbolV2::category_entry(category),
-                                WpdaState::InfixLoop { cur_bp }, end, CgllFrameClass::D1,
-                                symbol, 0, CgllPrattHandoff::new(None, Some(cur_bp)))?;
+                    if let WpdaState::PrefixDispatch { cur_bp, .. } = d.state {
+                        // Complete category edge -> existing category continuation.
+                        // Keep all ordinary prefix alternatives below unchanged.
+                        let category = if d.cur_sym.kind == SymbolKind::CollectionMarker {
+                            self.engine
+                                .collection_spec(
+                                    d.cur_sym.category_src_idx,
+                                    d.cur_sym.rule_index_in_category,
+                                    d.cur_sym.bp.unwrap_or(0),
+                                )
+                                .and_then(|spec| spec.element_src_idx)
+                        } else {
+                            Some(d.cur_sym.category_src_idx)
+                        };
+                        if let Some(category) = category {
+                            if let Some((end, action)) =
+                                self.engine.structural_hole_edge(category, d.pos)
+                            {
+                                let symbol = self
+                                    .sppf
+                                    .try_intern_symbol(
+                                        u32::from(category) | CGLL_BIN_TAG,
+                                        d.pos as u32,
+                                        end as u32,
+                                        self.resource_limits.map(|limits| limits.forest_nodes),
+                                    )
+                                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                        limit: error.limit,
+                                        position: self.resource_position,
+                                    })?;
+                                let packing = self
+                                    .sppf
+                                    .try_intern_packing(
+                                        action,
+                                        Vec::new(),
+                                        W::one_ref(),
+                                        self.resource_limits.map(|limits| limits.forest_nodes),
+                                    )
+                                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                        limit: error.limit,
+                                        position: self.resource_position,
+                                    })?;
+                                self.sppf.link_packing_to_symbol(symbol, packing);
+                                self.try_cgll_pure_descend(
+                                    &mut run,
+                                    &d,
+                                    d.cur_sym,
+                                    StackSymbolV2::category_entry(category),
+                                    WpdaState::InfixLoop { cur_bp },
+                                    end,
+                                    CgllFrameClass::D1,
+                                    symbol,
+                                    0,
+                                    CgllPrattHandoff::new(None, Some(cur_bp)),
+                                )?;
+                            }
                         }
                     }
-                }
                 }
                 // ── Transition: the SAME generated engine tables, fed a
                 // SYNTHESIZED frontier node (AV7: no emitter reads
@@ -19256,9 +19634,31 @@ where
                         let lo = self.sppf.span_lo(root).unwrap_or(0);
                         let hi = self.sppf.span_hi(root).unwrap_or(lo);
                         let rule_id = ((c as u32) << 16) | (r as u32);
-                        let z = self.sppf.try_intern_symbol((c as u32) | CGLL_BIN_TAG, lo, hi, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                        let z = self
+                            .sppf
+                            .try_intern_symbol(
+                                (c as u32) | CGLL_BIN_TAG,
+                                lo,
+                                hi,
+                                self.resource_limits.map(|limits| limits.forest_nodes),
+                            )
+                            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                limit: error.limit,
+                                position: self.resource_position,
+                            })?;
                         if !self.sppf.packing_exists(rule_id, &[root]) {
-                            let pk = self.sppf.try_intern_packing(rule_id, vec![root], W::one_ref(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                            let pk = self
+                                .sppf
+                                .try_intern_packing(
+                                    rule_id,
+                                    vec![root],
+                                    W::one_ref(),
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?;
                             self.sppf.link_packing_to_symbol(z, pk);
                         }
                         run.stats.goal_coercions += 1;
@@ -20513,12 +20913,19 @@ where
                         Some(kind) => {
                             let text = tokens.peek_text(d.pos).unwrap_or("");
                             let text_opt = if text.is_empty() { None } else { Some(text) };
-                            self.sppf.try_intern_terminal_occurrence(
-                                kind,
-                                crate::sppf::PosOrSynth::Real(d.pos as u32),
-                                text_opt,
-                                false,
-                                tokens.token_occurrence(d.pos, 0), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?
+                            self.sppf
+                                .try_intern_terminal_occurrence(
+                                    kind,
+                                    crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                    text_opt,
+                                    false,
+                                    tokens.token_occurrence(d.pos, 0),
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?
                         },
                         None => crate::sppf::SPPF_ID_NONE,
                     },
@@ -20526,12 +20933,19 @@ where
                         Some(kind) => {
                             let text = tokens.peek_text(d.pos).unwrap_or("");
                             let text_opt = if text.is_empty() { None } else { Some(text) };
-                            self.sppf.try_intern_trigger_terminal(
-                                kind,
-                                crate::sppf::PosOrSynth::Real(d.pos as u32),
-                                text_opt,
-                                symbol.category_src_idx,
-                                symbol.rule_index_in_category, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?
+                            self.sppf
+                                .try_intern_trigger_terminal(
+                                    kind,
+                                    crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                    text_opt,
+                                    symbol.category_src_idx,
+                                    symbol.rule_index_in_category,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?
                         },
                         None => crate::sppf::SPPF_ID_NONE,
                     },
@@ -20715,21 +21129,35 @@ where
                     let text = tokens.peek_text(d.pos).unwrap_or("");
                     let (leaf, slot) = if zip_binder {
                         (
-                            self.sppf.try_intern_trigger_terminal(
-                                TokenKind::Ident,
-                                crate::sppf::PosOrSynth::Real(d.pos as u32),
-                                Some(text),
-                                u16::MAX,
-                                u16::MAX - 1, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?,
+                            self.sppf
+                                .try_intern_trigger_terminal(
+                                    TokenKind::Ident,
+                                    crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                    Some(text),
+                                    u16::MAX,
+                                    u16::MAX - 1,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?,
                             Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((d.pos as u32) << 1),
                         )
                     } else {
                         (
-                            self.sppf.try_intern_terminal(
-                                TokenKind::Ident,
-                                crate::sppf::PosOrSynth::Real(d.pos as u32),
-                                Some(text),
-                                true, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?,
+                            self.sppf
+                                .try_intern_terminal(
+                                    TokenKind::Ident,
+                                    crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                    Some(text),
+                                    true,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?,
                             Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
                         )
                     };
@@ -20818,7 +21246,18 @@ where
                             Ok((pred, new_pos)) => {
                                 let handle = self.sppf_predicate_arena.len() as u32;
                                 self.sppf_predicate_arena.push(Arc::new(pred));
-                                Some((self.sppf.try_intern_predicate(handle, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?, new_pos))
+                                Some((
+                                    self.sppf
+                                        .try_intern_predicate(
+                                            handle,
+                                            self.resource_limits.map(|limits| limits.forest_nodes),
+                                        )
+                                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                            limit: error.limit,
+                                            position: self.resource_position,
+                                        })?,
+                                    new_pos,
+                                ))
                             },
                             Err(_) => None, // classic CursorOutcome::Drop
                         };
@@ -20885,7 +21324,16 @@ where
                 // classic's skip pushed it (arity receipt: optsmoke
                 // `if true then 1` — the action pops [cond, t, Optional]).
                 run.stats.opt_group_absent += 1;
-                let leaf = self.sppf.try_intern_opt_absent(d.pos as u32, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let leaf = self
+                    .sppf
+                    .try_intern_opt_absent(
+                        d.pos as u32,
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
                     ^ ((d.pos as u32) << 1)
                     ^ 0x0800_0000;
@@ -20925,10 +21373,18 @@ where
                 for flat in flats {
                     // ELECTION weight: the take-branch weight rides the
                     // OPTIONAL packing (see the Absent arm's note).
-                    let z = self.sppf.try_intern_packing(
-                        Self::OPTIONAL_PRESENT_RULE_IDX,
-                        flat,
-                        weight.clone(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                    let z = self
+                        .sppf
+                        .try_intern_packing(
+                            Self::OPTIONAL_PRESENT_RULE_IDX,
+                            flat,
+                            weight.clone(),
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?;
                     // Task #10 item 3: record the take-branch `weight` —
                     // mirrors the OPTIONAL_PRESENT packing intern above.
                     let returns = self
@@ -20952,7 +21408,13 @@ where
                         } else {
                             let slot = Self::cgll_pure_slot_hash(&replace_symbol, &new_state)
                                 ^ ((ret.at_pos as u32) << 1);
-                            self.try_cgll_pure_fold(slot, ret.operand_w, z, ret.at_pos, W::one_ref())?
+                            self.try_cgll_pure_fold(
+                                slot,
+                                ret.operand_w,
+                                z,
+                                ret.at_pos,
+                                W::one_ref(),
+                            )?
                         };
                         run.worklist.push_back(CgllPureDescriptor {
                             state: new_state.clone(),
@@ -21022,7 +21484,7 @@ where
             },
         }
         Ok(())
-}
+    }
 
     /// L9-4: scan a delimited FLT guest region starting at the opener token
     /// (`open_pos`, kind `open_kind`) and assemble its [`GuestBodyData`].
@@ -21054,25 +21516,41 @@ where
     }
 
     fn try_assemble_guest_body(
-        &mut self, tokens: &dyn WpdaTokenSource, open_pos: usize, open_kind: &str,
-        nested_open_kinds: &[String], close_kind: &str,
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
+        open_pos: usize,
+        open_kind: &str,
+        nested_open_kinds: &[String],
+        close_kind: &str,
     ) -> Result<Option<(crate::sppf::SppfId, usize)>, WalkerResourceError> {
         let Some((node, close_pos)) = self.assemble_guest_body_payload(
-            tokens, open_pos, open_kind, nested_open_kinds, close_kind,
-        ) else { return Ok(None); };
+            tokens,
+            open_pos,
+            open_kind,
+            nested_open_kinds,
+            close_kind,
+        ) else {
+            return Ok(None);
+        };
         let handle = self.sppf_guest_body_arena.len() as u32;
         self.sppf_guest_body_arena.push(node);
-        let leaf = self.sppf.try_intern_guest_body(handle,
-            self.resource_limits.map(|limits| limits.forest_nodes))
+        let leaf = self
+            .sppf
+            .try_intern_guest_body(handle, self.resource_limits.map(|limits| limits.forest_nodes))
             .map_err(|error| WalkerResourceError::ForestNodeLimit {
-                limit: error.limit, position: self.resource_position,
+                limit: error.limit,
+                position: self.resource_position,
             })?;
         Ok(Some((leaf, tokens.next_pos(close_pos, 0).unwrap_or(close_pos + 1))))
     }
 
     fn assemble_guest_body_payload(
-        &mut self, tokens: &dyn WpdaTokenSource, open_pos: usize, open_kind: &str,
-        nested_open_kinds: &[String], close_kind: &str,
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
+        open_pos: usize,
+        open_kind: &str,
+        nested_open_kinds: &[String],
+        close_kind: &str,
     ) -> Option<(Arc<crate::wpda_runtime::GuestBodyData>, usize)> {
         let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
         if tokens.peek_kind(open_pos) != Some(TokenKind::Custom(open_kind.to_string())) {
@@ -21274,8 +21752,19 @@ where
         trigger_mode: TriggerMode,
         xcat: u8,
     ) {
-        self.try_cgll_pure_consume_and_push_fork_branch(run, d, br_symbol, br_weight, br_state, pos, class_by_state, tokens, trigger_mode, xcat)
-            .expect("original unbounded canonical helper cannot exhaust installed limits")
+        self.try_cgll_pure_consume_and_push_fork_branch(
+            run,
+            d,
+            br_symbol,
+            br_weight,
+            br_state,
+            pos,
+            class_by_state,
+            tokens,
+            trigger_mode,
+            xcat,
+        )
+        .expect("original unbounded canonical helper cannot exhaust installed limits")
     }
 
     fn try_cgll_pure_consume_and_push_fork_branch(
@@ -21296,12 +21785,19 @@ where
                 Some(kind) => {
                     let text = tokens.peek_text(pos).unwrap_or("");
                     let text_opt = if text.is_empty() { None } else { Some(text) };
-                    self.sppf.try_intern_terminal_occurrence(
-                        kind,
-                        crate::sppf::PosOrSynth::Real(pos as u32),
-                        text_opt,
-                        false,
-                        tokens.token_occurrence(pos, 0), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?
+                    self.sppf
+                        .try_intern_terminal_occurrence(
+                            kind,
+                            crate::sppf::PosOrSynth::Real(pos as u32),
+                            text_opt,
+                            false,
+                            tokens.token_occurrence(pos, 0),
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?
                 },
                 None => crate::sppf::SPPF_ID_NONE,
             },
@@ -21309,12 +21805,19 @@ where
                 Some(kind) => {
                     let text = tokens.peek_text(pos).unwrap_or("");
                     let text_opt = if text.is_empty() { None } else { Some(text) };
-                    self.sppf.try_intern_trigger_terminal(
-                        kind,
-                        crate::sppf::PosOrSynth::Real(pos as u32),
-                        text_opt,
-                        br_symbol.category_src_idx,
-                        br_symbol.rule_index_in_category, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?
+                    self.sppf
+                        .try_intern_trigger_terminal(
+                            kind,
+                            crate::sppf::PosOrSynth::Real(pos as u32),
+                            text_opt,
+                            br_symbol.category_src_idx,
+                            br_symbol.rule_index_in_category,
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?
                 },
                 None => crate::sppf::SPPF_ID_NONE,
             },
@@ -21340,7 +21843,7 @@ where
             pratt_handoff,
         )?;
         Ok(())
-}
+    }
 
     /// Dispatch ONE Fork branch (plan §2 ForkActionKind sub-table, B0
     /// subset). `pos_after` = the fork-level trigger-consume position
@@ -21436,17 +21939,25 @@ where
                     Some(kind) => {
                         let text = tokens.peek_text(d.pos).unwrap_or("");
                         let text_opt = if text.is_empty() { None } else { Some(text) };
-                        self.sppf.try_intern_trigger_terminal(
-                            kind,
-                            crate::sppf::PosOrSynth::Real(d.pos as u32),
-                            text_opt,
-                            br_symbol.category_src_idx,
-                            br_symbol.rule_index_in_category, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?
+                        self.sppf
+                            .try_intern_trigger_terminal(
+                                kind,
+                                crate::sppf::PosOrSynth::Real(d.pos as u32),
+                                text_opt,
+                                br_symbol.category_src_idx,
+                                br_symbol.rule_index_in_category,
+                                self.resource_limits.map(|limits| limits.forest_nodes),
+                            )
+                            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                limit: error.limit,
+                                position: self.resource_position,
+                            })?
                     },
                     None => crate::sppf::SPPF_ID_NONE,
                 };
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
-                let w0 = self.try_cgll_pure_weight_carrier(run, child_slot, leaf, d.pos, &br_weight)?;
+                let w0 =
+                    self.try_cgll_pure_weight_carrier(run, child_slot, leaf, d.pos, &br_weight)?;
                 self.try_cgll_pure_descend(
                     run,
                     d,
@@ -21496,7 +22007,16 @@ where
                 // Optional(None); see the action-level arm's note).
                 run.stats.opt_group_absent += 1;
                 let w = self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight)?;
-                let leaf = self.sppf.try_intern_opt_absent(pos_after as u32, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let leaf = self
+                    .sppf
+                    .try_intern_opt_absent(
+                        pos_after as u32,
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
                     ^ ((pos_after as u32) << 1)
                     ^ 0x0800_0000;
@@ -21571,27 +22091,42 @@ where
                 if start_scope && !zip_binder {
                     run.stats.effects_skipped += 1;
                 }
-                let mut w = self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight)?;
+                let mut w =
+                    self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight)?;
                 if tokens.peek_kind(pos_after).is_some() {
                     let text = tokens.peek_text(pos_after).unwrap_or("");
                     let (leaf, slot) = if zip_binder {
                         (
-                            self.sppf.try_intern_trigger_terminal(
-                                TokenKind::Ident,
-                                crate::sppf::PosOrSynth::Real(pos_after as u32),
-                                Some(text),
-                                u16::MAX,
-                                u16::MAX - 1, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?,
+                            self.sppf
+                                .try_intern_trigger_terminal(
+                                    TokenKind::Ident,
+                                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                    Some(text),
+                                    u16::MAX,
+                                    u16::MAX - 1,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?,
                             Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
                                 ^ ((pos_after as u32) << 1),
                         )
                     } else {
                         (
-                            self.sppf.try_intern_terminal(
-                                TokenKind::Ident,
-                                crate::sppf::PosOrSynth::Real(pos_after as u32),
-                                Some(text),
-                                true, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?,
+                            self.sppf
+                                .try_intern_terminal(
+                                    TokenKind::Ident,
+                                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                    Some(text),
+                                    true,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?,
                             Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
                         )
                     };
@@ -21609,7 +22144,14 @@ where
                 self.try_cgll_pure_reduce(run, d, pos_after, &br_weight, &br_state, tokens)?;
             },
             ForkActionKind::ConsumeAndPop => {
-                self.try_cgll_pure_reduce(run, d, next_of(pos_after), &br_weight, &br_state, tokens)?;
+                self.try_cgll_pure_reduce(
+                    run,
+                    d,
+                    next_of(pos_after),
+                    &br_weight,
+                    &br_state,
+                    tokens,
+                )?;
             },
             ForkActionKind::ConsumeAtAndPop { next_pos } => {
                 self.try_cgll_pure_reduce(run, d, next_pos, &br_weight, &br_state, tokens)?;
@@ -21700,15 +22242,23 @@ where
                 } else {
                     Some(text.as_str())
                 };
-                let leaf = self.sppf.try_intern_terminal_occurrence(
-                    kind,
-                    crate::sppf::PosOrSynth::Real(pos_after as u32),
-                    text_opt,
-                    false,
-                    tokens.token_occurrence(pos_after, usize::from(alt_idx)), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let leaf = self
+                    .sppf
+                    .try_intern_terminal_occurrence(
+                        kind,
+                        crate::sppf::PosOrSynth::Real(pos_after as u32),
+                        text_opt,
+                        false,
+                        tokens.token_occurrence(pos_after, usize::from(alt_idx)),
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
-                let w0 =
-                    self.try_cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight)?;
+                let w0 = self
+                    .try_cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight)?;
                 self.try_cgll_pure_descend(
                     run,
                     d,
@@ -21741,15 +22291,23 @@ where
                 rule_idx: _,
                 next_pos,
             } => {
-                let leaf = self.sppf.try_intern_trigger_terminal(
-                    TokenKind::Fixed(trigger.clone()),
-                    crate::sppf::PosOrSynth::Real(pos_after as u32),
-                    Some(trigger.as_str()),
-                    br_symbol.category_src_idx,
-                    br_symbol.rule_index_in_category, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let leaf = self
+                    .sppf
+                    .try_intern_trigger_terminal(
+                        TokenKind::Fixed(trigger.clone()),
+                        crate::sppf::PosOrSynth::Real(pos_after as u32),
+                        Some(trigger.as_str()),
+                        br_symbol.category_src_idx,
+                        br_symbol.rule_index_in_category,
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
-                let w0 =
-                    self.try_cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight)?;
+                let w0 = self
+                    .try_cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight)?;
                 self.try_cgll_pure_descend(
                     run,
                     d,
@@ -21795,18 +22353,25 @@ where
                     Some(kind) => {
                         let text = tokens.peek_text(pos_after).unwrap_or("");
                         let text_opt = if text.is_empty() { None } else { Some(text) };
-                        self.sppf.try_intern_terminal_occurrence(
-                            kind,
-                            crate::sppf::PosOrSynth::Real(pos_after as u32),
-                            text_opt,
-                            false,
-                            tokens.token_occurrence(pos_after, 0), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?
+                        self.sppf
+                            .try_intern_terminal_occurrence(
+                                kind,
+                                crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                text_opt,
+                                false,
+                                tokens.token_occurrence(pos_after, 0),
+                                self.resource_limits.map(|limits| limits.forest_nodes),
+                            )
+                            .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                limit: error.limit,
+                                position: self.resource_position,
+                            })?
                     },
                     None => crate::sppf::SPPF_ID_NONE,
                 };
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
-                let w0 =
-                    self.try_cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight)?;
+                let w0 = self
+                    .try_cgll_pure_weight_carrier(run, child_slot, leaf, pos_after, &br_weight)?;
                 self.try_cgll_pure_descend(
                     run,
                     d,
@@ -21866,12 +22431,20 @@ where
                     return Ok(());
                 }
                 let text = tokens.peek_text(pos_after).unwrap_or("");
-                let leaf = self.sppf.try_intern_terminal_occurrence(
-                    actual_kind,
-                    crate::sppf::PosOrSynth::Real(pos_after as u32),
-                    Some(text),
-                    false,
-                    tokens.token_occurrence(pos_after, 0), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let leaf = self
+                    .sppf
+                    .try_intern_terminal_occurrence(
+                        actual_kind,
+                        crate::sppf::PosOrSynth::Real(pos_after as u32),
+                        Some(text),
+                        false,
+                        tokens.token_occurrence(pos_after, 0),
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
                 let w = self.try_cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref())?;
                 let w = self.try_cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight)?;
@@ -21908,12 +22481,20 @@ where
                 if !edge_matches || !token_kind_matches_capture_name(&kind_name, &kind) {
                     return Ok(());
                 }
-                let leaf = self.sppf.try_intern_terminal_occurrence(
-                    kind.clone(),
-                    crate::sppf::PosOrSynth::Real(pos_after as u32),
-                    Some(text.as_str()),
-                    false,
-                    tokens.token_occurrence(pos_after, alt_idx), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let leaf = self
+                    .sppf
+                    .try_intern_terminal_occurrence(
+                        kind.clone(),
+                        crate::sppf::PosOrSynth::Real(pos_after as u32),
+                        Some(text.as_str()),
+                        false,
+                        tokens.token_occurrence(pos_after, alt_idx),
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
                 let w = self.try_cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref())?;
                 let w = self.try_cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight)?;
@@ -21939,16 +22520,24 @@ where
                     return Ok(());
                 }
                 let text = tokens.peek_text(pos_after).unwrap_or("");
-                let leaf = self.sppf.try_intern_terminal_occurrence(
-                    actual_kind,
-                    crate::sppf::PosOrSynth::Real(pos_after as u32),
-                    Some(text),
-                    false,
-                    tokens.token_occurrence(pos_after, 0), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let leaf = self
+                    .sppf
+                    .try_intern_terminal_occurrence(
+                        actual_kind,
+                        crate::sppf::PosOrSynth::Real(pos_after as u32),
+                        Some(text),
+                        false,
+                        tokens.token_occurrence(pos_after, 0),
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let child_pos = next_of(pos_after);
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
-                let w0 =
-                    self.try_cgll_pure_weight_carrier(run, child_slot, leaf, child_pos, &br_weight)?;
+                let w0 = self
+                    .try_cgll_pure_weight_carrier(run, child_slot, leaf, child_pos, &br_weight)?;
                 self.try_cgll_pure_descend(
                     run,
                     d,
@@ -21987,14 +22576,23 @@ where
                 if !edge_matches || !token_kind_matches_capture_name(&kind_name, &kind) {
                     return Ok(());
                 }
-                let leaf = self.sppf.try_intern_terminal_occurrence(
-                    kind.clone(),
-                    crate::sppf::PosOrSynth::Real(pos_after as u32),
-                    Some(text.as_str()),
-                    false,
-                    tokens.token_occurrence(pos_after, alt_idx), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                let leaf = self
+                    .sppf
+                    .try_intern_terminal_occurrence(
+                        kind.clone(),
+                        crate::sppf::PosOrSynth::Real(pos_after as u32),
+                        Some(text.as_str()),
+                        false,
+                        tokens.token_occurrence(pos_after, alt_idx),
+                        self.resource_limits.map(|limits| limits.forest_nodes),
+                    )
+                    .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                        limit: error.limit,
+                        position: self.resource_position,
+                    })?;
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
-                let w0 = self.try_cgll_pure_weight_carrier(run, child_slot, leaf, next_pos, &br_weight)?;
+                let w0 =
+                    self.try_cgll_pure_weight_carrier(run, child_slot, leaf, next_pos, &br_weight)?;
                 self.try_cgll_pure_descend(
                     run,
                     d,
@@ -22022,12 +22620,13 @@ where
                     &open_kind,
                     &nested_open_kinds,
                     &close_kind,
-                )? else {
+                )?
+                else {
                     return Ok(());
                 };
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
-                let w0 =
-                    self.try_cgll_pure_weight_carrier(run, child_slot, leaf, child_pos, &br_weight)?;
+                let w0 = self
+                    .try_cgll_pure_weight_carrier(run, child_slot, leaf, child_pos, &br_weight)?;
                 self.try_cgll_pure_descend(
                     run,
                     d,
@@ -22055,7 +22654,8 @@ where
                     &open_kind,
                     &nested_open_kinds,
                     &close_kind,
-                )? else {
+                )?
+                else {
                     return Ok(());
                 };
                 let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
@@ -22070,45 +22670,59 @@ where
                 });
             },
             ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
-                if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
-                    return Ok(());
-                }
                 // P3.e Class-3: zip-binder idents fold the reserved
                 // BINDER-NAME marker (see ConsumeIdentAndReplace above).
                 let zip_binder = start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
-                if start_scope && !zip_binder {
-                    run.stats.effects_skipped += 1;
+                for (alt_idx, text) in identifier_edges_at(tokens, pos_after) {
+                    if start_scope && !zip_binder {
+                        run.stats.effects_skipped += 1;
+                    }
+                    let (leaf, slot) = if zip_binder {
+                        (
+                            self.sppf
+                                .try_intern_trigger_terminal(
+                                    TokenKind::Ident,
+                                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                    Some(text),
+                                    u16::MAX,
+                                    u16::MAX - 1,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?,
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                                ^ ((pos_after as u32) << 1),
+                        )
+                    } else {
+                        (
+                            self.sppf
+                                .try_intern_terminal(
+                                    TokenKind::Ident,
+                                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                    Some(text),
+                                    true,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?,
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
+                        )
+                    };
+                    let w = self.try_cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref())?;
+                    let w =
+                        self.try_cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight)?;
+                    run.worklist.push_back(CgllPureDescriptor {
+                        state: br_state.clone(),
+                        cur_sym: br_symbol,
+                        pos: tokens.next_pos(pos_after, alt_idx).unwrap_or(pos_after + 1),
+                        w,
+                        ..d.clone()
+                    });
                 }
-                let text = tokens.peek_text(pos_after).unwrap_or("");
-                let (leaf, slot) = if zip_binder {
-                    (
-                        self.sppf.try_intern_trigger_terminal(
-                            TokenKind::Ident,
-                            crate::sppf::PosOrSynth::Real(pos_after as u32),
-                            Some(text),
-                            u16::MAX,
-                            u16::MAX - 1, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?,
-                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1),
-                    )
-                } else {
-                    (
-                        self.sppf.try_intern_terminal(
-                            TokenKind::Ident,
-                            crate::sppf::PosOrSynth::Real(pos_after as u32),
-                            Some(text),
-                            true, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?,
-                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
-                    )
-                };
-                let w = self.try_cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref())?;
-                let w = self.try_cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight)?;
-                run.worklist.push_back(CgllPureDescriptor {
-                    state: br_state,
-                    cur_sym: br_symbol,
-                    pos: next_of(pos_after),
-                    w,
-                    ..d.clone()
-                });
             },
             ForkActionKind::GuardedConsume { expected_text } => {
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
@@ -22148,7 +22762,8 @@ where
                 } else {
                     d.w
                 };
-                let w = self.try_cgll_pure_carry_scan_weight(run, d, w_base, pos_after, &br_weight)?;
+                let w =
+                    self.try_cgll_pure_carry_scan_weight(run, d, w_base, pos_after, &br_weight)?;
                 run.worklist.push_back(CgllPureDescriptor {
                     state: br_state,
                     pos: next_of(pos_after),
@@ -22171,7 +22786,8 @@ where
                 // counted no-ops.
                 // Carrier FIRST (pre-consume spine), then the BinderScope
                 // fold — monotone-fold ordering (see the binder-ident arm).
-                let w_c = self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight)?;
+                let w_c =
+                    self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight)?;
                 let w = if matches!(effect, BuilderDelta::EndBinderScope) {
                     let d_c = CgllPureDescriptor { w: w_c, ..d.clone() };
                     self.try_cgll_pure_end_binder_scope(run, &d_c, pos_after, None, tokens)?
@@ -22230,10 +22846,21 @@ where
                     None
                 };
                 // Carrier FIRST — monotone-fold ordering (see above).
-                let w_c = self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight)?;
+                let w_c =
+                    self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, &br_weight)?;
                 let w_coll = if let Some(id) = coll_id {
                     run.stats.coll_empty_closes += 1;
-                    let leaf = self.sppf.try_intern_collection_id(id as u32, Vec::new(), self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                    let leaf = self
+                        .sppf
+                        .try_intern_collection_id(
+                            id as u32,
+                            Vec::new(),
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?;
                     let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
                         ^ ((pos_after as u32) << 1)
                         ^ 0x2000_0000;
@@ -22277,37 +22904,41 @@ where
                 // Terminal fold made the ident a phantom collection ITEM
                 // and broke the close's coverage gate (items=[Name,
                 // Terminal-Ident], seps=0 on `@(0) ? x` — pred3/4 receipt).
-                if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
-                    return Ok(());
-                }
-                let mut folded = d.clone();
-                {
-                    let text = tokens.peek_text(pos_after).unwrap_or("");
-                    let leaf = self.sppf.try_intern_trigger_terminal(
-                        TokenKind::Ident,
-                        crate::sppf::PosOrSynth::Real(pos_after as u32),
-                        Some(text),
-                        u16::MAX,
-                        u16::MAX - 1, self.resource_limits.map(|limits| limits.forest_nodes)).map_err(|error| WalkerResourceError::ForestNodeLimit { limit: error.limit, position: self.resource_position })?;
+                for (alt_idx, text) in identifier_edges_at(tokens, pos_after) {
+                    let mut folded = d.clone();
+                    let leaf = self
+                        .sppf
+                        .try_intern_trigger_terminal(
+                            TokenKind::Ident,
+                            crate::sppf::PosOrSynth::Real(pos_after as u32),
+                            Some(text),
+                            u16::MAX,
+                            u16::MAX - 1,
+                            self.resource_limits.map(|limits| limits.forest_nodes),
+                        )
+                        .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                            limit: error.limit,
+                            position: self.resource_position,
+                        })?;
                     let slot =
                         Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
                     folded.w = self.try_cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref())?;
+                    folded.w = self.try_cgll_pure_carry_scan_weight(
+                        run,
+                        &folded,
+                        folded.w,
+                        pos_after,
+                        &W::one_ref(),
+                    )?;
+                    self.try_cgll_pure_reduce(
+                        run,
+                        &folded,
+                        tokens.next_pos(pos_after, alt_idx).unwrap_or(pos_after + 1),
+                        &br_weight,
+                        &br_state,
+                        tokens,
+                    )?;
                 }
-                folded.w = self.try_cgll_pure_carry_scan_weight(
-                    run,
-                    &folded,
-                    folded.w,
-                    pos_after,
-                    &W::one_ref(),
-                )?;
-                self.try_cgll_pure_reduce(
-                    run,
-                    &folded,
-                    next_of(pos_after),
-                    &br_weight,
-                    &br_state,
-                    tokens,
-                )?;
             },
             ForkActionKind::GuardedConsumeAndPopWithEffect { expected_text, effect } => {
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
@@ -22327,7 +22958,14 @@ where
                     );
                 }
                 run.stats.effects_skipped += 1;
-                self.try_cgll_pure_reduce(run, d, next_of(pos_after), &br_weight, &br_state, tokens)?;
+                self.try_cgll_pure_reduce(
+                    run,
+                    d,
+                    next_of(pos_after),
+                    &br_weight,
+                    &br_state,
+                    tokens,
+                )?;
             },
             ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
                 start_scope: _,
@@ -22380,7 +23018,7 @@ where
             },
         }
         Ok(())
-}
+    }
 
     /// Stage 3.5b (2026-05-01): WPDS configuration ⊕-merging.
     ///
@@ -24160,31 +24798,59 @@ mod tests {
     fn installed_descriptor_limits_stop_before_callbacks_and_refuse_publication() {
         let source = crate::wpda_runtime::SliceTokenSource::new(&[]);
         for cap in [0, 1] {
-            let engine = ScriptedEngine::new(vec![WpdaStepAction::Idle,
-                WpdaStepAction::Advance(WpdaState::Ready { min_bp: 0 })]);
-            let mut walker = WpdaWalker::new_for_category_with_limits(engine, 0, 0,
-                WalkerResourceLimits { parse_items: cap, forest_nodes: 16 });
+            let engine = ScriptedEngine::new(vec![
+                WpdaStepAction::Idle,
+                WpdaStepAction::Advance(WpdaState::Ready { min_bp: 0 }),
+            ]);
+            let mut walker = WpdaWalker::new_for_category_with_limits(
+                engine,
+                0,
+                0,
+                WalkerResourceLimits { parse_items: cap, forest_nodes: 16 },
+            );
             assert_eq!(walker.sppf.len(), 0, "constructor has no uncharged forest nodes");
             let error = WalkerResourceError::ParseItemLimit { limit: cap, position: 0 };
             assert_eq!(walker.run_to_end_of_input_limited(&source), Err(error.clone()));
-            assert_eq!(walker.engine.script.borrow().len(), 2 - cap, "refused dequeue cannot call engine");
+            assert_eq!(
+                walker.engine.script.borrow().len(),
+                2 - cap,
+                "refused dequeue cannot call engine"
+            );
             assert!(walker.branch_cursors.is_empty());
             assert!(matches!(walker.resolve_at_end_of_input(&source),
                 WpdaResolveResult::RealizationFailed { error: RealizationError::Resource(ref actual), .. } if actual == &error));
             assert_eq!(walker.run_to_end_of_input_limited(&source), Err(error));
-            assert_eq!(walker.engine.script.borrow().len(), 2 - cap, "failed instance cannot resume privately");
+            assert_eq!(
+                walker.engine.script.borrow().len(),
+                2 - cap,
+                "failed instance cannot resume privately"
+            );
         }
-        let engine = ScriptedEngine::new(vec![WpdaStepAction::Idle,
-            WpdaStepAction::Advance(WpdaState::Ready { min_bp: 0 })]);
-        let mut exact = WpdaWalker::new_for_category_with_limits(engine, 0, 0,
-            WalkerResourceLimits { parse_items: 2, forest_nodes: 0 });
-        exact.run_to_end_of_input_limited(&source).expect("two original dequeues fit exactly");
+        let engine = ScriptedEngine::new(vec![
+            WpdaStepAction::Idle,
+            WpdaStepAction::Advance(WpdaState::Ready { min_bp: 0 }),
+        ]);
+        let mut exact = WpdaWalker::new_for_category_with_limits(
+            engine,
+            0,
+            0,
+            WalkerResourceLimits { parse_items: 2, forest_nodes: 0 },
+        );
+        exact
+            .run_to_end_of_input_limited(&source)
+            .expect("two original dequeues fit exactly");
         assert_eq!(exact.resource_items_used, 2);
         assert!(exact.engine.script.borrow().is_empty());
-        let mut static_walker = WpdaWalker::new_for_category(ScriptedEngine::new(vec![WpdaStepAction::Idle]), 0, 0);
-        static_walker.run_to_end_of_input(0, &source).expect("static max_steps behavior remains unchanged");
+        let mut static_walker =
+            WpdaWalker::new_for_category(ScriptedEngine::new(vec![WpdaStepAction::Idle]), 0, 0);
+        static_walker
+            .run_to_end_of_input(0, &source)
+            .expect("static max_steps behavior remains unchanged");
         assert!(static_walker.engine.script.borrow().is_empty());
-        assert_eq!(static_walker.run_to_end_of_input_limited(&source), Err(WalkerResourceError::LimitsNotInstalled));
+        assert_eq!(
+            static_walker.run_to_end_of_input_limited(&source),
+            Err(WalkerResourceError::LimitsNotInstalled)
+        );
     }
 
     #[test]
@@ -24192,12 +24858,21 @@ mod tests {
         let kinds = [TokenKind::Integer];
         let texts = ["7"];
         let source = crate::wpda_runtime::SliceTokenSource::with_texts(&kinds, &texts);
-        let engine = ScriptedEngine::new(vec![WpdaStepAction::Idle, WpdaStepAction::ConsumeAndPush {
-            symbol: StackSymbolV2::category_entry(0), weight: LexicographicWeight::one(),
-            new_state: WpdaState::InfixLoop { cur_bp: 0 }, trigger_mode: TriggerMode::CaptureForBuilder,
-        }]);
-        let mut walker = WpdaWalker::new_for_category_with_limits(engine, 0, 0,
-            WalkerResourceLimits { parse_items: 16, forest_nodes: 0 });
+        let engine = ScriptedEngine::new(vec![
+            WpdaStepAction::Idle,
+            WpdaStepAction::ConsumeAndPush {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: LexicographicWeight::one(),
+                new_state: WpdaState::InfixLoop { cur_bp: 0 },
+                trigger_mode: TriggerMode::CaptureForBuilder,
+            },
+        ]);
+        let mut walker = WpdaWalker::new_for_category_with_limits(
+            engine,
+            0,
+            0,
+            WalkerResourceLimits { parse_items: 16, forest_nodes: 0 },
+        );
         let error = WalkerResourceError::ForestNodeLimit { limit: 0, position: 0 };
         assert_eq!(walker.run_to_end_of_input_limited(&source), Err(error.clone()));
         assert_eq!(walker.engine.script.borrow().len(), 1);
@@ -24205,7 +24880,9 @@ mod tests {
         assert_eq!(walker.sppf.link_count(), 0);
         assert!(matches!(walker.resolve_at_end_of_input(&source),
             WpdaResolveResult::RealizationFailed { error: RealizationError::Resource(ref actual), .. } if actual == &error));
-        assert!(matches!(walker.realize_root_complete_with_weights(0, 4), Err(RealizationError::Resource(actual)) if actual == error));
+        assert!(
+            matches!(walker.realize_root_complete_with_weights(0, 4), Err(RealizationError::Resource(actual)) if actual == error)
+        );
     }
 
     #[test]
@@ -24213,21 +24890,31 @@ mod tests {
         let mut walker = kbest_walker(true);
         let root = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
         for local in 0..3 {
-            let packing = walker.sppf.intern_packing(kbest_rule(0, local), vec![],
-                lex(0.125 * f64::from(local + 1), 0, local));
+            let packing = walker.sppf.intern_packing(
+                kbest_rule(0, local),
+                vec![],
+                lex(0.125 * f64::from(local + 1), 0, local),
+            );
             walker.sppf.link_packing_to_symbol(root, packing);
         }
         for limit in [0, 1, 2, usize::MAX] {
             assert!(matches!(walker.realize_root_complete_with_weights(root, limit),
                 Err(RealizationError::ResultOverflow { limit: actual }) if actual == limit));
         }
-        let complete: Vec<_> = walker.realize_root_complete_with_weights(root, 3)
-            .expect("exact complete family fits") .into_iter()
-            .map(|(value, weight)| (*value.downcast_ref::<i64>().expect("original probe carrier"), weight))
+        let complete: Vec<_> = walker
+            .realize_root_complete_with_weights(root, 3)
+            .expect("exact complete family fits")
+            .into_iter()
+            .map(|(value, weight)| {
+                (*value.downcast_ref::<i64>().expect("original probe carrier"), weight)
+            })
             .collect();
         assert_eq!(complete, kbest_family_i64(&walker, root));
         let empty = walker.sppf.intern_symbol(CGLL_BIN_TAG, 2, 2);
-        assert!(walker.realize_root_complete_with_weights(empty, 0).expect("proven empty family fits zero").is_empty());
+        assert!(walker
+            .realize_root_complete_with_weights(empty, 0)
+            .expect("proven empty family fits zero")
+            .is_empty());
     }
 
     #[test]
@@ -24235,19 +24922,36 @@ mod tests {
         let mut walker = kbest_walker(true);
         let child = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
         for local in 0..3 {
-            let packing = walker.sppf.intern_packing(kbest_rule(0, local), vec![],
-                lex(0.125 * f64::from(local + 1), 0, local));
+            let packing = walker.sppf.intern_packing(
+                kbest_rule(0, local),
+                vec![],
+                lex(0.125 * f64::from(local + 1), 0, local),
+            );
             walker.sppf.link_packing_to_symbol(child, packing);
         }
         let root = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 1);
-        let packing = walker.sppf.intern_packing(kbest_rule(1, 8), vec![child], lex(0.125, 1, 8));
+        let packing = walker
+            .sppf
+            .intern_packing(kbest_rule(1, 8), vec![child], lex(0.125, 1, 8));
         walker.sppf.link_packing_to_symbol(root, packing);
-        assert!(matches!(walker.realize_root_complete_with_weights(root, 1),
-            Err(RealizationError::ResultOverflow { limit: 1 })),
-            "empty root with truncated child is neither complete absence nor permission to grow");
-        let complete = walker.realize_root_complete_with_weights(root, 3).expect("larger explicit request completes");
+        assert!(
+            matches!(
+                walker.realize_root_complete_with_weights(root, 1),
+                Err(RealizationError::ResultOverflow { limit: 1 })
+            ),
+            "empty root with truncated child is neither complete absence nor permission to grow"
+        );
+        let complete = walker
+            .realize_root_complete_with_weights(root, 3)
+            .expect("larger explicit request completes");
         assert_eq!(complete.len(), 1);
-        assert_eq!(*complete[0].0.downcast_ref::<i64>().expect("original refusing-parent carrier"), 303);
+        assert_eq!(
+            *complete[0]
+                .0
+                .downcast_ref::<i64>()
+                .expect("original refusing-parent carrier"),
+            303
+        );
         assert_eq!(complete[0].1, lex(0.375, 0, 2).times_ref(&lex(0.125, 1, 8)));
     }
 
@@ -24636,6 +25340,28 @@ mod tests {
 
         let structural = StackSymbolV2::category_entry(0);
         assert_eq!(TestWalker::cgll_pure_resume_floor(&structural, Some(9)), 9);
+    }
+
+    #[test]
+    fn leading_child_epsilon_state_has_distinct_identity_and_exact_floor() {
+        type TestWalker = WpdaWalker<LexicographicWeight, ScriptedEngine>;
+        let state = WpdaState::EnterLeadingChild { source_src_idx: 3, inner_bp: 7 };
+        assert_eq!(TestWalker::state_binding_power_floor(&state), Some(7));
+        assert_ne!(
+            TestWalker::cgll_pure_state_slot_ident(&state),
+            TestWalker::cgll_pure_state_slot_ident(&WpdaState::EnterLeadingChild {
+                source_src_idx: 4,
+                inner_bp: 7,
+            }),
+        );
+        assert_ne!(
+            TestWalker::cgll_pure_state_slot_ident(&state),
+            TestWalker::cgll_pure_state_slot_ident(&WpdaState::EnterLeadingChild {
+                source_src_idx: 3,
+                inner_bp: 8,
+            }),
+        );
+        assert_eq!(TestWalker::cgll_pure_repair_state_at(&state, 91), state);
     }
 
     #[test]

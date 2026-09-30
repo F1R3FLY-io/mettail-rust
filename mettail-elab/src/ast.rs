@@ -187,7 +187,7 @@ pub enum Builder {
     Types(Vec<CatDecl>),
     Exports(Vec<Export>),
     Replacements(Vec<Replacement>),
-    Terms(Vec<TermRule>),
+    Terms(Vec<TermDecl>),
     Equations(Vec<Equation>),
     Rewrites(Vec<RewriteEntry>),
     Options(Vec<OptionSection>),
@@ -262,6 +262,22 @@ pub struct TermRule {
     pub result: Cat,
     pub associativity: Option<TermAssociativity>,
     pub prefix_binding_power: Option<u16>,
+    pub span: Span,
+}
+
+/// Source-order entries of a `Terms` builder. A token declaration contributes
+/// to the same canonical lexer fields as the data-faithful language value;
+/// ordinary judgment rules remain the grammar-production entries.
+#[derive(Clone, Debug)]
+pub enum TermDecl {
+    Rule(TermRule),
+    Token(TokenDecl),
+}
+
+#[derive(Clone, Debug)]
+pub struct TokenDecl {
+    pub name: String,
+    pub pattern: String,
     pub span: Span,
 }
 

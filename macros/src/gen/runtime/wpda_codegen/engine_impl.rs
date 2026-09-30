@@ -782,6 +782,11 @@ pub(crate) fn emit_engine_impl_full(
                             #primary_src_idx, min_bp, lex_w,
                         )
                     }
+                    WpdaState::EnterLeadingChild { source_src_idx, inner_bp } => {
+                        mettail_prattail::wpda_transitions::prefix::enter_leading_child(
+                            *source_src_idx, *inner_bp, _pos, lex_one,
+                        )
+                    }
                     WpdaState::PrefixDispatch { pos, cur_bp } => {
                         impl __MettailWpdaStepFrame<'_> {
                             #[inline(never)]

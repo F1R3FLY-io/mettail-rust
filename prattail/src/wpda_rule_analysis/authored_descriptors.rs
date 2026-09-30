@@ -35,7 +35,7 @@ use super::factoring::{self, CategoryFactoring, PrefixAtomicObservation};
 use super::mixfix::{self, MixfixFactoring};
 use super::parikh::{try_build_parikh_descriptors, ParikhDescriptors};
 use super::prefix::{try_first_set_of_category, try_source_ident_first_is_var_only, FirstToken};
-use super::prefix_bucket::{PrefixBuckets, TryPrefixBucketContext};
+use super::prefix_bucket::{HolePrefixRow, PrefixBuckets, TryPrefixBucketContext};
 use super::prefix_pattern::{NeutralPattern, NeutralPatternKey, PrefixPatternObservation};
 use crate::binding_power::{BindingPowerTable, InfixRuleInfo};
 use mettail_ast::grammar_shapes::classify_unary_prefix_shape_in;
@@ -65,6 +65,7 @@ pub struct OwnedWpdaDescriptors<P> {
     pub prefix_binding_powers: HashMap<(u16, u16), u8>,
     pub leading_binding_powers: HashMap<(u16, u16), crate::binding_power::OperandBindingPowers>,
     pub prefixes: Vec<PrefixBuckets<NeutralPattern, NeutralPatternKey>>,
+    pub hole_prefixes: Vec<Vec<HolePrefixRow>>,
     pub grouping_sources: Vec<Vec<u16>>,
     pub traversal_markers: TraversalMarkerTable,
     pub collections: Vec<GeneratedCollectionSpecArm>,
@@ -256,16 +257,19 @@ fn derive_authored_descriptors_with_reader<'core, P, E>(
             }
         }
         let mut prefixes = Vec::with_capacity(categories.len());
+        let mut hole_prefixes = Vec::with_capacity(categories.len());
         let mut grouping_sources = Vec::with_capacity(categories.len());
         for (category, _) in categories.iter().enumerate() {
             let category_index = u16::try_from(category).expect("validated category width");
-            prefixes.push(derive_category_prefix(
+            let (buckets, hole_rows) = derive_category_prefix(
                 reader,
                 context,
                 &synthesis,
                 category_index,
                 options.crosscat_lex_compat_gate,
-            )?);
+            )?;
+            prefixes.push(buckets);
+            hole_prefixes.push(hole_rows);
             grouping_sources.push(super::grouping::try_grouping_source_categories_for_result(
                 &categories,
                 context.originals,
@@ -464,6 +468,7 @@ fn derive_authored_descriptors_with_reader<'core, P, E>(
             prefix_binding_powers,
             leading_binding_powers,
             prefixes,
+            hole_prefixes,
             grouping_sources,
             traversal_markers,
             collections,
@@ -486,6 +491,7 @@ fn derive_authored_descriptors_with_reader<'core, P, E>(
         prefix_binding_powers,
         leading_binding_powers,
         prefixes,
+        hole_prefixes,
         grouping_sources,
         traversal_markers,
         collections,
@@ -509,6 +515,7 @@ fn derive_authored_descriptors_with_reader<'core, P, E>(
         prefix_binding_powers,
         leading_binding_powers,
         prefixes,
+        hole_prefixes,
         grouping_sources,
         traversal_markers,
         collections,

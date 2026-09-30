@@ -2,7 +2,7 @@ Module RegexExtension {
   Theory RegexSignature() {
     Data({
       "types": [
-        "Pattern",
+        {"name":"Pattern", "admits_variables":false},
         {"name":"Scalar", "carrier":"String", "admits_variables":false},
         {"name":"Text", "carrier":"String", "admits_variables":false},
         {"name":"Bool", "carrier":"bool", "admits_variables":false},

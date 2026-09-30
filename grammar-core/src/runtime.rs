@@ -592,12 +592,9 @@ impl<'a> RuntimeParser<'a> {
         }
         for hole in holes {
             if let Some(category) = hole.category {
-                let Some(definition) = self.grammar.categories.get(category.0 as usize) else {
+                let Some(_definition) = self.grammar.categories.get(category.0 as usize) else {
                     return Err(RuntimeError::InvalidCategory(category));
                 };
-                if !definition.admits_variables {
-                    return Err(RuntimeError::InvalidTemplateHole { id: hole.id });
-                }
             }
         }
         let mut fragments = BTreeMap::new();
@@ -953,11 +950,10 @@ fn structural_hole_edge(
 ) -> Option<StructuralHoleEdge> {
     let position = lexemes.canonical_position(position);
     let hole = holes.get(&position.offset).copied()?;
-    let category = grammar.categories.get(nonterminal as usize)?;
-    if !category.admits_variables
-        || hole
-            .category
-            .is_some_and(|expected| expected.0 != nonterminal)
+    grammar.categories.get(nonterminal as usize)?;
+    if hole
+        .category
+        .is_some_and(|expected| expected.0 != nonterminal)
     {
         return None;
     }
@@ -2630,9 +2626,8 @@ mod tests {
 
     #[test]
     fn lexical_template_session_preserves_fragments_and_structural_occurrences() {
-        let (mut grammar, mut image) = integer_grammar();
-        grammar.categories[0].admits_variables = true;
-        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        let (grammar, image) = integer_grammar();
+        assert!(!grammar.categories[0].admits_variables);
         let parser = RuntimeParser::new(&grammar, &image, "test", "test", &DefaultRuntimeHost)
             .expect("parser");
         let pieces = [
@@ -3106,9 +3101,8 @@ mod tests {
 
     #[test]
     fn structural_template_hole_is_a_category_edge_not_source_text() {
-        let (mut grammar, mut image) = integer_grammar();
-        grammar.categories[0].admits_variables = true;
-        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        let (grammar, image) = integer_grammar();
+        assert!(!grammar.categories[0].admits_variables);
         let host = DefaultRuntimeHost;
         let parser = RuntimeParser::new(&grammar, &image, "test", "test", &host).expect("parser");
         let parsed = parser
@@ -3126,9 +3120,8 @@ mod tests {
 
     #[test]
     fn text_tokens_cannot_span_a_structural_hole() {
-        let (mut grammar, mut image) = integer_grammar();
-        grammar.categories[0].admits_variables = true;
-        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        let (grammar, image) = integer_grammar();
+        assert!(!grammar.categories[0].admits_variables);
         let host = DefaultRuntimeHost;
         let parser = RuntimeParser::new(&grammar, &image, "test", "test", &host).expect("parser");
         let result = parser.parse_template(
@@ -3145,9 +3138,8 @@ mod tests {
 
     #[test]
     fn structural_template_extent_is_bounded_before_occurrence_allocation() {
-        let (mut grammar, mut image) = integer_grammar();
-        grammar.categories[0].admits_variables = true;
-        image.core_fingerprint = grammar.fingerprint().expect("fingerprint");
+        let (grammar, image) = integer_grammar();
+        assert!(!grammar.categories[0].admits_variables);
         let policy = RuntimePolicy {
             max_input_bytes: 2,
             max_capture_bindings: 1,

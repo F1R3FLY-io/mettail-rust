@@ -418,22 +418,16 @@ pub fn prefix<'grammar, W: SemiringRef, K: Copy>(
                             continue;
                         };
                         if __leading_category_seen.insert((info.rule_idx, source_src_idx)) {
-                            __branches.push(crate::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::category_entry(source_src_idx),
-                                weight: lex_w(0.0, primary_src, info.rule_idx),
-                                new_state: WpdaState::PrefixDispatch {
-                                    pos: *pos,
-                                    cur_bp: inner_bp,
-                                },
-                                action_kind: crate::wpda_walker::ForkActionKind::ReplaceAndPush {
-                                    replace_symbol: StackSymbolV2::rule_at(
-                                        primary_src,
-                                        info.rule_idx,
-                                        1u8,
-                                        Some(*cur_bp),
-                                    ),
-                                },
-                            });
+                            __branches.push(super::prefix::leading_category_branch_with_weight(
+                                *cur_bp,
+                                primary_src,
+                                info.rule_idx,
+                                source_src_idx,
+                                inner_bp,
+                                frontier_top.map(|node| node.symbol.kind),
+                                lex_w(0.0, primary_src, info.rule_idx),
+                                *pos,
+                            ));
                             __primary_survived = true;
                         }
                     },
@@ -725,22 +719,16 @@ pub fn prefix<'grammar, W: SemiringRef, K: Copy>(
                         };
                         if __leading_category_seen.insert((info.rule_idx, source_src_idx)) {
                             __secondary_survived = true;
-                            __branches.push(crate::wpda_walker::ForkBranch {
-                                symbol: StackSymbolV2::category_entry(source_src_idx),
-                                weight: lex_w(0.0, primary_src, info.rule_idx),
-                                new_state: WpdaState::PrefixDispatch {
-                                    pos: *pos,
-                                    cur_bp: inner_bp,
-                                },
-                                action_kind: crate::wpda_walker::ForkActionKind::ReplaceAndPush {
-                                    replace_symbol: StackSymbolV2::rule_at(
-                                        primary_src,
-                                        info.rule_idx,
-                                        1u8,
-                                        Some(*cur_bp),
-                                    ),
-                                },
-                            });
+                            __branches.push(super::prefix::leading_category_branch_with_weight(
+                                *cur_bp,
+                                primary_src,
+                                info.rule_idx,
+                                source_src_idx,
+                                inner_bp,
+                                frontier_top.map(|node| node.symbol.kind),
+                                lex_w(0.0, primary_src, info.rule_idx),
+                                *pos,
+                            ));
                         }
                     },
                     crate::wpda_runtime::LexAltRuleKind::LeadingTokenKindCapture {

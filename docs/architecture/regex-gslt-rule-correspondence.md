@@ -19,15 +19,18 @@ these operations.
 ## Representation and entry boundaries
 
 `PFail`, `PEpsilon`, `PLiteral`, `PAny`, `PAlt`, `PConcat`, and `PStar` form the
-seven-constructor core. `PGroup`, `PPlus`, `POptional`, and `PRepeat` extend the
-surface syntax. Surface elaboration returns core patterns before nullable or
+seven-constructor core. `PPlus`, `POptional`, and `PRepeat` extend the
+surface syntax; the shared WPDA handles parentheses transparently without a
+second authored group constructor. Surface elaboration returns core patterns before nullable or
 derivative evaluation begins. Continuations are declared data: `NFrames` for
 nullable, `DFrames` for derivatives, and `EFrames` for surface elaboration.
 
 `Bool` contains ordinary `BTrue` and `BFalse` constructors. `Flag` carries native
 Boolean results of checked intrinsics. The declarations consume a native flag
 through explicit true/false literal patterns; they do not confuse it with a
-nullable result. `Nat` uses a checked nonnegative `i128` carrier:
+nullable result. The constructor surface uses `yes`/`no` rather than the
+lexer's native `true`/`false` terminals; otherwise a selected Boolean token
+would bypass the authored constructor. `Nat` uses a checked nonnegative `i128` carrier:
 
 ```math
 0 \leq n < 2^{127}.
@@ -51,7 +54,7 @@ the finite core, but the DDL spells out disjoint constructor patterns.
 | `NullableFail/Epsilon/Literal/Any/Star/Alt/Concat/Return`; `NullableAltLeft/False/True`, `NullableConcatLeft/False/True` | [RegexGsltNullableMachine](../../formal/rocq/runtime_grammar/theories/RegexGsltNullableMachine.v): `nullable_machine_step`, `nullable_machine_step_preserves_meaning`, `nullable_step_decreases_exact_remaining_work`, and `declared_nullable_machine_computes_reference`. Ordered left/right continuation frames realize disjunction and conjunction without interchanging operands. |
 | `DerivativeFail/Epsilon/Literal/Any/Alt/Concat/Star/Return`; derivative continuation returns, `DerivativeSmartStep/Done`, `DerivativeNullableStep/True/False` | [RegexGsltDerivativeMachine](../../formal/rocq/runtime_grammar/theories/RegexGsltDerivativeMachine.v): `derivative_machine_step`, `nullable_step_lifts_to_derivative`, `smart_step_lifts_to_derivative`, `derivative_core_completes`, and `completed_derivative_cannot_misreport`. Concatenation retains the original left operand for nullable and the original right operand for the product/right derivative. Star concatenates the derivative of its body with the smart star of the original body. |
 | `DerivativeCompare`, `DerivativeSame`, `DerivativeDifferent` | The derivative model's `CompareLiteral` and `DecideLiteral` use scalar equality. The source realizes that comparison through `exact_term_eq` on admitted singleton text and branches on native `Flag`; equality yields `PEpsilon`, inequality yields `PFail`. |
-| `ElaborateFail/Epsilon/Any/Group/Alt/Concat/Star/Plus/Optional/Repeat/Return` and corresponding frame returns; `ElaborateSmartStep/Done`, `ElaborateRepeatStep/Done` | [RegexGsltSurfaceMachine](../../formal/rocq/runtime_grammar/theories/RegexGsltSurfaceMachine.v): `surface_machine_step`, `surface_evaluation_returns_reference`, `declared_surface_computes_reference`, and `completed_surface_cannot_misreport`. Plus uses Star then Concat; Optional uses Alt with Epsilon; Repeat receives the already elaborated body. Grouping changes no pattern denotation. |
+| `ElaborateFail/Epsilon/Any/Alt/Concat/Star/Plus/Optional/Repeat/Return` and corresponding frame returns; `ElaborateSmartStep/Done`, `ElaborateRepeatStep/Done` | [RegexGsltSurfaceMachine](../../formal/rocq/runtime_grammar/theories/RegexGsltSurfaceMachine.v): `surface_machine_step`, `surface_evaluation_returns_reference`, `declared_surface_computes_reference`, and `completed_surface_cannot_misreport`. Plus uses Star then Concat; Optional uses Alt with Epsilon; Repeat receives the already elaborated body. Transparent grouping is discharged by the shared parser before this machine receives a pattern. |
 | `ElaborateLiteral`; `ElaborateScalarStart/Read/Admitted`; `DerivativeScalarStart/Read/Admitted` | [RegexGsltNativeAdmission](../../formal/rocq/runtime_grammar/theories/RegexGsltNativeAdmission.v): `scalar_admission_is_exact`, `scalar_administration_strictly_decreases`, and `scalar_read_decide_admits_exactly_singletons`. Source reads at byte offset zero, compares the entire original text with the returned singleton, and proceeds only on native true. Empty or multiple-scalar inputs cannot manufacture a negative nullable or derivative answer. |
 | `RepeatCheckLower/ReachedLower/BelowLower`, `RepeatCheckRequiredUpper/ReversedBounds/AppendRequired/IncrementRequired`, `RepeatCheckOptionalUpper/ReachedUpper/BelowUpper/IncrementOptional`; `RepeatAppendStep`, `RepeatProductStep/Done`, `RepeatAlternativeStep`, `RepeatFinishStep/Done` | [RegexGsltRepeatMachine](../../formal/rocq/runtime_grammar/theories/RegexGsltRepeatMachine.v): `repeat_machine_step`, `declared_repeat_computes_reference`, `completed_repeat_cannot_misreport`, and `reachable_repeat_controls_are_valid`. Lower is checked before upper; reversed bounds return `PFail`. Required and optional accumulation retain the reference's ordered, right-nested construction. |
 | `RepeatInitialize`, `RepeatAdmitBounds`, and the additional `RCheckUpper` stage | [RegexGsltRepeatAdmission](../../formal/rocq/runtime_grammar/theories/RegexGsltRepeatAdmission.v): `repeat_source_step_simulation`, `source_repeat_run_simulation`, `admitted_source_repeat_computes_reference`, and `completed_source_repeat_requires_admitted_bounds`. This accounts for the source administration around the core Repeat machine. Native admission proves `checked_add_zero_admits_exactly_native_naturals`, `checked_add_one_is_nat_successor`, `required_native_increment_fits`, and `optional_native_increment_fits`. |

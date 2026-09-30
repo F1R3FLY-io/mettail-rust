@@ -9,8 +9,8 @@ use crate::ast::{
     Ast, Binding, Builder, CatDecl, CollKind, DottedPath, Equation, Export, Import, Item,
     LimitAssignment, ModuleFile, ModuleItem, OptionSection, Param, ProjectionBinding,
     ProjectionBody, ProjectionDecl, ProjectionDirection, ProjectionPremise, ProjectionRule,
-    Replacement, RewriteDecl, RewriteEntry, Sort, TermAssociativity, TermRule, TheoryDecl,
-    TheoryExpr,
+    Replacement, RewriteDecl, RewriteEntry, Sort, TermAssociativity, TermDecl, TermRule,
+    TheoryDecl, TheoryExpr, TokenDecl,
 };
 use crate::canonical::{
     admit_canonical_value, admit_canonical_value_resources, RhoValue, ValueDecodeError,
@@ -397,7 +397,7 @@ fn decode_builder(value: RhoValue, path: &str) -> Result<Builder, DdlValueError>
                 .map(Builder::Replacements)
         },
         Some("terms") => {
-            decode_builder_sequence(value, "terms", path, decode_term_rule).map(Builder::Terms)
+            decode_builder_sequence(value, "terms", path, decode_term_decl).map(Builder::Terms)
         },
         Some("equations") => decode_builder_sequence(value, "equations", path, decode_equation)
             .map(Builder::Equations),
@@ -560,6 +560,89 @@ fn decode_replacement(value: RhoValue, path: &str) -> Result<Replacement, DdlVal
         rule: decode_term_rule(fields.next().expect("arity checked"), &format!("{path}.rule"))?,
         span: SYNTHETIC_SPAN,
     })
+}
+
+fn decode_term_decl(value: RhoValue, path: &str) -> Result<TermDecl, DdlValueError> {
+    if node_tag(&value) != Some("token") {
+        return decode_term_rule(value, path).map(TermDecl::Rule);
+    }
+    let mut fields = expect_node(value, "token", Some(2), path.into())?.into_iter();
+    let name = expect_string(fields.next().expect("arity checked"), format!("{path}.name"))?;
+    let pattern =
+        decode_reg_pattern(fields.next().expect("arity checked"), &format!("{path}.reg"))?;
+    Ok(TermDecl::Token(TokenDecl { name, pattern, span: SYNTHETIC_SPAN }))
+}
+
+fn append_reg_spelling(
+    pattern: &mut String,
+    spelling: &str,
+    path: &str,
+) -> Result<(), DdlValueError> {
+    let bytes = pattern
+        .len()
+        .checked_add(spelling.len())
+        .ok_or_else(|| DdlValueError::new(path, "regex pattern byte count overflowed"))?;
+    if bytes > crate::canonical::MAX_CANONICAL_STRING_BYTES {
+        return Err(DdlValueError::new(path, "regex pattern exceeds canonical string limit"));
+    }
+    pattern.push_str(spelling);
+    Ok(())
+}
+
+/// Reconstitute only the exact lexemes of the generated, typed Reg AST. The
+/// existing PraTTaIL regex compiler remains the sole regex-syntax validator
+/// and semantic compiler; this function is not a textual DDL parser.
+fn decode_reg_pattern(value: RhoValue, path: &str) -> Result<String, DdlValueError> {
+    let pieces = expect_sequence(value, path)?;
+    let mut pattern = String::new();
+    for (index, piece) in pieces.into_iter().enumerate() {
+        let piece_path = format!("{path}[{index}]");
+        match node_tag(&piece) {
+            Some("regex-literal" | "regex-escape" | "regex-operator") => {
+                let tag = node_tag(&piece).expect("matched tag").to_owned();
+                let mut fields = expect_node(piece, &tag, Some(1), piece_path.clone())?;
+                let spelling = expect_string(
+                    fields.pop().expect("arity checked"),
+                    format!("{piece_path}.spelling"),
+                )?;
+                append_reg_spelling(&mut pattern, &spelling, &piece_path)?;
+            },
+            Some("regex-class") => {
+                let mut fields = expect_node(piece, "regex-class", Some(1), piece_path.clone())?;
+                append_reg_spelling(&mut pattern, "[", &piece_path)?;
+                let class_pieces = expect_sequence(
+                    fields.pop().expect("arity checked"),
+                    &format!("{piece_path}.pieces"),
+                )?;
+                for (class_index, class_piece) in class_pieces.into_iter().enumerate() {
+                    let class_path = format!("{piece_path}.pieces[{class_index}]");
+                    let Some(
+                        tag @ ("regex-class-literal"
+                        | "regex-class-escape"
+                        | "regex-class-hyphen"
+                        | "regex-class-caret"),
+                    ) = node_tag(&class_piece)
+                    else {
+                        return Err(DdlValueError::new(class_path, "expected a regex class piece"));
+                    };
+                    let tag = tag.to_owned();
+                    let mut fields = expect_node(class_piece, &tag, Some(1), class_path.clone())?;
+                    let spelling = expect_string(
+                        fields.pop().expect("arity checked"),
+                        format!("{class_path}.spelling"),
+                    )?;
+                    append_reg_spelling(&mut pattern, &spelling, &class_path)?;
+                }
+                append_reg_spelling(&mut pattern, "]", &piece_path)?;
+            },
+            Some(tag) => return Err(wrong_tag(&piece_path, tag, "a regex piece")),
+            None => return Err(not_node(&piece_path, "a regex piece")),
+        }
+    }
+    if pattern.is_empty() {
+        return Err(DdlValueError::new(path, "token regex must not be empty"));
+    }
+    Ok(pattern)
 }
 
 fn decode_term_rule(value: RhoValue, path: &str) -> Result<TermRule, DdlValueError> {

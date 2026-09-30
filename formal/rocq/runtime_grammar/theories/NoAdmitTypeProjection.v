@@ -110,4 +110,38 @@ Proof.
   apply String.eqb_neq in distinct; rewrite distinct, recognized; reflexivity.
 Qed.
 
+(** The Regex GSLT's [Pattern] and [Scalar] are closed object categories.
+    Their authored literals and structural FLT holes are independent of the
+    implicit object-variable rules. This models the three readings actually
+    observed for [a] in [fullMatch(a+, ${text:Text})]: a Pattern variable, a
+    [PLiteral] with a Scalar variable, and a [PLiteral] with literal text.
+    The template hole is a fourth, separate judgment. *)
+Inductive RegexReading :=
+| PatternVariable
+| ScalarVariable
+| ScalarLiteral
+| TemplateHole.
+
+Definition regex_reading_allowed (reading : RegexReading) : bool :=
+  match reading with
+  | PatternVariable => synthesize_variable (elaborate (NoAdmit "Pattern"))
+  | ScalarVariable => synthesize_variable (elaborate (NoAdmit "Scalar"))
+  | ScalarLiteral | TemplateHole => true
+  end.
+
+Theorem closed_regex_retains_exactly_literals_and_holes : forall reading,
+  regex_reading_allowed reading = true <->
+  reading = ScalarLiteral \/ reading = TemplateHole.
+Proof.
+  destruct reading; simpl; split; intros H.
+  - discriminate.
+  - destruct H as [H | H]; discriminate.
+  - discriminate.
+  - destruct H as [H | H]; discriminate.
+  - left; reflexivity.
+  - reflexivity.
+  - right; reflexivity.
+  - reflexivity.
+Qed.
+
 End NoAdmitTypeProjection.

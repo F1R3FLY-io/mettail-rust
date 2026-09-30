@@ -2,7 +2,7 @@
 
     Source: grammar-core/runtime.rs complete_template_hole and the
     ForestNode::Nonterminal realization arm. Preserve canonical full-position
-    lookup, hole lookup before category lookup, variable admission, optional
+    lookup, hole lookup before category lookup, category existence, optional
     exact category equality, position.at(end) before canonicalization, and the
     original (category,start,end) completion key. A duplicate completion does
     not advance waiters again. A new completion publishes the actual hole ID
@@ -13,8 +13,10 @@
     alternative consumed by every realization family. A witness-only cache or
     an invented token/production is NOT an implementation of this boundary.
     Existing forest limits, semantic result budgets, root coverage and normal
-    production alternatives stay independent. Canonicalization is the existing
-    worker, not offset sorting and not an assumed context-preserving function.
+    production alternatives stay independent. A structural template metavariable
+    is not a guest-language native variable: the latter's admission bit must
+    not affect this edge. Canonicalization is the existing worker, not offset
+    sorting and not an assumed context-preserving function.
 *)
 From Stdlib Require Import List Arith Bool.
 From PrattailWpdaRuntime Require Import OwnedLexicalAdapter TransitionBodyRelocation.
@@ -58,8 +60,8 @@ Definition observe_edge (canonical : Position -> Position)
       let trace := prefix ++ [CategoryLookup requested] in
       match categories requested with
       | None => (None, trace)
-      | Some admits_variables =>
-          if negb admits_variables || category_mismatch (hole_category hole) requested
+      | Some _ =>
+          if category_mismatch (hole_category hole) requested
           then (None, trace)
           else
             let raw_end := position_at start (hole_end hole) in
@@ -85,13 +87,22 @@ Theorem unknown_category_does_not_observe_endpoint : forall canonical holes cate
     (None, [CanonicalStart position; HoleLookup (offset (canonical position)); CategoryLookup requested]).
 Proof. intros; unfold observe_edge; now rewrite H, H0. Qed.
 
-Theorem nonvariable_category_is_rejected : forall canonical holes categories requested position hole,
-  holes (offset (canonical position)) = Some hole -> categories requested = Some false ->
-  fst (observe_edge canonical holes categories requested position) = None.
-Proof. intros; unfold observe_edge; now rewrite H, H0. Qed.
+Theorem native_variable_authority_cannot_change_structural_hole_edge :
+  forall canonical holes categories requested position authority,
+  observe_edge canonical holes (fun category =>
+    if category =? requested then Some authority else categories category)
+    requested position =
+  observe_edge canonical holes (fun category =>
+    if category =? requested then Some false else categories category)
+    requested position.
+Proof.
+  intros; unfold observe_edge.
+  destruct (holes (offset (canonical position))) as [hole|]; [|reflexivity].
+  now rewrite Nat.eqb_refl.
+Qed.
 
-Theorem wrong_declared_category_is_rejected : forall canonical holes categories requested position hole expected,
-  holes (offset (canonical position)) = Some hole -> categories requested = Some true ->
+Theorem wrong_declared_category_is_rejected : forall canonical holes categories requested position hole expected authority,
+  holes (offset (canonical position)) = Some hole -> categories requested = Some authority ->
   hole_category hole = Some expected -> expected <> requested ->
   fst (observe_edge canonical holes categories requested position) = None.
 Proof.
@@ -101,8 +112,8 @@ Proof.
 Qed.
 
 Theorem untyped_hole_uses_requested_category_and_exact_endpoint :
-  forall canonical holes categories requested position hole,
-  holes (offset (canonical position)) = Some hole -> categories requested = Some true ->
+  forall canonical holes categories requested position hole authority,
+  holes (offset (canonical position)) = Some hole -> categories requested = Some authority ->
   hole_category hole = None ->
   fst (observe_edge canonical holes categories requested position) =
     Some {| edge_id := hole_id hole; edge_category := requested;
@@ -114,8 +125,8 @@ Proof.
 Qed.
 
 Theorem typed_hole_preserves_exact_requested_category :
-  forall canonical holes categories requested position hole,
-  holes (offset (canonical position)) = Some hole -> categories requested = Some true ->
+  forall canonical holes categories requested position hole authority,
+  holes (offset (canonical position)) = Some hole -> categories requested = Some authority ->
   hole_category hole = Some requested ->
   fst (observe_edge canonical holes categories requested position) =
     Some {| edge_id := hole_id hole; edge_category := requested;
@@ -214,7 +225,7 @@ End Seed.
 Print Assumptions position_at_keeps_complete_context.
 Print Assumptions absent_hole_does_not_observe_category.
 Print Assumptions unknown_category_does_not_observe_endpoint.
-Print Assumptions nonvariable_category_is_rejected.
+Print Assumptions native_variable_authority_cannot_change_structural_hole_edge.
 Print Assumptions wrong_declared_category_is_rejected.
 Print Assumptions untyped_hole_uses_requested_category_and_exact_endpoint.
 Print Assumptions typed_hole_preserves_exact_requested_category.

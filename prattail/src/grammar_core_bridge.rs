@@ -174,6 +174,17 @@ impl LanguageSpec {
                     .map_err(|error| error.to_string())?;
             }
         }
+        // The authored `name@TokenKind` syntax is unqualified. Modal token
+        // definitions retain their qualified canonical names, but a modal
+        // token with a globally unique spelling may also be addressed by that
+        // spelling in a generated rule. Never replace a default-mode binding
+        // or choose arbitrarily among equal names in different modes.
+        let mut modal_name_counts = BTreeMap::<&str, usize>::new();
+        for mode in &self.modes {
+            for token in &mode.token_specs {
+                *modal_name_counts.entry(token.name.as_str()).or_default() += 1;
+            }
+        }
         for (mode_index, mode) in self.modes.iter().enumerate() {
             let mode_id = core::ModeId(mode_index as u32 + 1);
             if let Some(bindings) = &mut bindings {
@@ -190,6 +201,11 @@ impl LanguageSpec {
                     &mut token_ids,
                     &token_observations,
                 )?;
+                if modal_name_counts.get(token.name.as_str()) == Some(&1)
+                    && !token_ids.contains_key(token.name.as_str())
+                {
+                    token_ids.insert(token.name.clone(), direct);
+                }
                 if let (Some(bindings), Some(header)) = (&mut bindings, header) {
                     let source = header.modes[mode_index].tokens[token_index] as usize;
                     bindings
@@ -208,7 +224,7 @@ impl LanguageSpec {
         let mut literal_ids = BTreeMap::new();
         for terminal in literal_terminals {
             let id = core::TokenId(output.tokens.len() as u32);
-            token_observations.record(&mut output, id, &TokenKind::Fixed(terminal.clone()))?;
+            token_observations.record_terminal(&mut output, id, &terminal)?;
             literal_ids.insert(terminal.clone(), id);
             let reservation = lower_terminal_reservation(self, &terminal);
             output.tokens.push(core::TokenDefinition {

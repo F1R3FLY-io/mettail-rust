@@ -4,16 +4,16 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe`), stdout(`
 Module RegexGSLT {
   Theory Regex() {
     Types {
-      Pattern;
-      Computation;
-      NFrames;
-      DFrames;
-      EFrames;
-      MatchResult;
-      ReplacementTemplate;
-      PrefixResult;
-      Scalar = String;
-      Text = String;
+      noadmit Pattern;
+      noadmit Computation;
+      noadmit NFrames;
+      noadmit DFrames;
+      noadmit EFrames;
+      noadmit MatchResult;
+      noadmit ReplacementTemplate;
+      noadmit PrefixResult;
+      noadmit Scalar = String;
+      noadmit Text = String;
       noadmit Bool = bool;
       noadmit Flag = bool;
       noadmit Nat = BigInt;
@@ -30,9 +30,8 @@ Module RegexGSLT {
       PEpsilon . |- "()" : Pattern;
       PAny . |- "." : Pattern;
       PLiteral . scalar:Scalar |- scalar : Pattern;
-      PGroup . body:Pattern |- "(" body ")" : Pattern;
-      BFalse . |- "false" : Bool;
-      BTrue . |- "true" : Bool;
+      BFalse . |- "no" : Bool;
+      BTrue . |- "yes" : Bool;
       CallNullable . p:Pattern |- "nullable(" p ")" : Computation;
       CallDerivative . c:Scalar, p:Pattern |- "derivative(" c "," p ")" : Computation;
       DoneBool . b:Bool |- "doneBool(" b ")" : Computation;
@@ -305,7 +304,6 @@ Module RegexGSLT {
       ElaborateEpsilon : (EEval (PEpsilon) K) ~> (EReturn (PEpsilon) K);
       ElaborateLiteral : (EEval (PLiteral C) K) ~> (EScalar C K);
       ElaborateAny : (EEval (PAny) K) ~> (EReturn (PAny) K);
-      ElaborateGroup : (EEval (PGroup P) K) ~> (EEval P K);
       ElaborateAlt : (EEval (PAlt P Q) K) ~> (EEval P (EAltLeft Q K));
       ElaborateConcat : (EEval (PConcat P Q) K) ~> (EEval P (EConcatLeft Q K));
       ElaborateStar : (EEval (PStar P) K) ~> (EEval P (EStar K));
@@ -463,7 +461,7 @@ Module RegexGSLT {
         for(@[1, 0, [[term, receipt]], usage] <- nullable) {
           new result in {
             result!(term) |
-            for(@language:Computation`doneBool(true)` <- result) {
+            for(@language:Computation`doneBool(yes)` <- result) {
               stdout!(["nullable", true]) |
               @"regex.nullable"!([true, receipt, usage])
             }
@@ -481,7 +479,7 @@ Module RegexGSLT {
         for(@[1, 0, [[term, receipt]], usage] <- matched) {
           new result in {
             result!(term) |
-            for(@language:Computation`doneBool(true)` <- result) {
+            for(@language:Computation`doneBool(yes)` <- result) {
               stdout!(["full-match", true]) |
               @"regex.match"!([true, receipt, usage]) |
               @"regex.guard.input"!("abcb")

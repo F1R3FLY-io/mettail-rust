@@ -29,8 +29,7 @@ const REGISTRY_APPLICATION: &str =
 fn noadmit_remains_available_as_a_channel_name() {
     Proc::parse_via_wpda("new ordinary in { ordinary!(1) }")
         .expect("ordinary binder control parses");
-    Proc::parse_via_wpda("noadmit!(1)")
-        .expect("noadmit is available as an ordinary channel name");
+    Proc::parse_via_wpda("noadmit!(1)").expect("noadmit is available as an ordinary channel name");
 }
 
 #[test]

@@ -563,6 +563,11 @@ pub enum WpdaState {
     Ready { min_bp: u8 },
     /// Matching on the current token to choose a prefix rule.
     PrefixDispatch { pos: usize, cur_bp: u8 },
+    /// Epsilon continuation after a category-leading rule has pushed its
+    /// RuleAt(1) frame above a live caller. Enter the first operand without
+    /// replacing that caller; the authored rule weight belongs to the first
+    /// push, while this second push has unit weight.
+    EnterLeadingChild { source_src_idx: u16, inner_bp: u8 },
     /// Looking for an infix/postfix operator with binding power > `cur_bp`.
     InfixLoop { cur_bp: u8 },
     /// Phase F.13 chain_10000 Exp 6 (Plan A first substage, 2026-05-26):
