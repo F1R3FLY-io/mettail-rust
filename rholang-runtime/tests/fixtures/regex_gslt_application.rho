@@ -411,10 +411,20 @@ Module RegexGSLT {
           {"name":"ReplaceAll","action":"replace-all","result":"Computation"},
           {"name":"Nullable", "action":"nullable", "result":"Computation"},
           {"name":"Derivative", "action":"derivative", "result":"Computation"}
-        ],
-        "limits":{"max_term_nodes":16384,"max_proof_nodes":16384,"max_frontier":256,"max_steps":10000000,"max_grade_bits":128}
+        ]
       }
     })
+    Options {
+      Semantics {
+        Limits {
+          max_term_nodes = 16384;
+          max_proof_nodes = 16384;
+          max_frontier = 256;
+          max_steps = 10000000;
+          max_grade_bits = 128;
+        }
+      }
+    }
   }
 
   theory Regex()

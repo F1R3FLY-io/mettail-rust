@@ -475,19 +475,24 @@ fn decode_options_builder(
                             format!("duplicate Semantics.Limits field `{name}`"),
                         ));
                     }
-                    let value = parts.next().expect("arity checked");
-                    let RhoValue::Integer(value) = value else {
-                        return Err(DdlValueError::new(
-                            format!("{entry_path}.value"),
-                            "expected an integer",
-                        ));
-                    };
-                    let value = u32::try_from(value).map_err(|_| {
+                    // Generated `Int` captures use decimal text in the
+                    // structural DDL wire (as do term binding powers). Do
+                    // not silently accept a second representation here.
+                    let value_path = format!("{entry_path}.value");
+                    let spelling =
+                        expect_string(parts.next().expect("arity checked"), value_path.clone())?;
+                    let value = spelling.parse::<u32>().map_err(|_| {
                         DdlValueError::new(
-                            format!("{entry_path}.value"),
-                            "limit is outside the unsigned 32-bit domain",
+                            value_path.clone(),
+                            "expected a canonical unsigned 32-bit decimal limit",
                         )
                     })?;
+                    if spelling != value.to_string() {
+                        return Err(DdlValueError::new(
+                            value_path,
+                            "expected a canonical unsigned 32-bit decimal limit",
+                        ));
+                    }
                     limits.push(LimitAssignment { name, value, span: SYNTHETIC_SPAN });
                 }
                 decoded.push(OptionSection::SemanticsLimits(limits));
@@ -1345,7 +1350,7 @@ mod tests {
                                     "limit-assignment",
                                     vec![
                                         RhoValue::String((*name).into()),
-                                        RhoValue::Integer(*value),
+                                        RhoValue::String(value.to_string()),
                                     ],
                                 )
                             })
@@ -1400,6 +1405,11 @@ mod tests {
 
     #[test]
     fn authored_semantic_limits_reject_unknown_duplicate_and_out_of_range_fields() {
+        assert!(decode_builder(limit_options(&[("max_steps", 0)]), "$.options").is_ok());
+        assert!(
+            decode_builder(limit_options(&[("max_steps", i128::from(u32::MAX))]), "$.options")
+                .is_ok()
+        );
         for entries in [
             vec![("unknown", 1)],
             vec![("max_steps", 1), ("max_steps", 1)],
@@ -1411,6 +1421,18 @@ mod tests {
         let section = node("option-semantics-limits", vec![node("sequence", vec![])]);
         let duplicate = node("options", vec![node("sequence", vec![section.clone(), section])]);
         assert!(decode_builder(duplicate, "$.options").is_err());
+
+        for malformed in [
+            RhoValue::String("+1".into()),
+            RhoValue::String("01".into()),
+            RhoValue::Integer(1),
+        ] {
+            let assignment =
+                node("limit-assignment", vec![RhoValue::String("max_steps".into()), malformed]);
+            let section = node("option-semantics-limits", vec![node("sequence", vec![assignment])]);
+            let options = node("options", vec![node("sequence", vec![section])]);
+            assert!(decode_builder(options, "$.options").is_err());
+        }
     }
 
     #[test]

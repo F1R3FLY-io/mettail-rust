@@ -14,6 +14,40 @@ fn practical_regex_gslt_application_contains_the_checked_declaration_and_parses_
         .expect("one generated host parse includes the complete DDL and qualified FLT uses");
 }
 
+#[test]
+fn authored_regex_limits_preserve_the_data_faithful_canonical_module() {
+    const AUTHORED_TRAILER: &str = r#"        ]
+      }
+    })
+    Options {
+      Semantics {
+        Limits {
+          max_term_nodes = 16384;
+          max_proof_nodes = 16384;
+          max_frontier = 256;
+          max_steps = 10000000;
+          max_grade_bits = 128;
+        }
+      }
+    }"#;
+    const DATA_TRAILER: &str = r#"        ],
+        "limits":{"max_term_nodes":16384,"max_proof_nodes":16384,"max_frontier":256,"max_steps":10000000,"max_grade_bits":128}
+      }
+    })"#;
+    assert_eq!(SOURCE.matches(AUTHORED_TRAILER).count(), 1);
+    let data_faithful = SOURCE.replacen(AUTHORED_TRAILER, DATA_TRAILER, 1);
+
+    let canonical = |source: &str| {
+        let InstallCandidate::Ddl(ParsedDdl::Module(module)) = rholang_ddl_candidate(source) else {
+            panic!("Regex fixture must lower to a module declaration")
+        };
+        mettail_elab::elaborate_module_ast(module, &mettail_elab::resolve::MemResolver::new())
+            .expect("Regex module elaborates")
+            .canonical_value
+    };
+    assert_eq!(canonical(SOURCE), canonical(&data_faithful));
+}
+
 fn text_computation(
     runtime: &RholangLanguageRuntime,
     token: &Par,
