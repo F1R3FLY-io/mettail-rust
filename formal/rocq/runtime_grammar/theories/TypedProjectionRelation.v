@@ -350,4 +350,89 @@ Lemma composition_requires_both_legs : forall first second first_id second_id gu
     applies (Projection second_id HostToGuest) second host guest2 second_origin.
 Proof. intros; exact H. Qed.
 
+(** A source declaration may request a host endpoint, but cannot populate the
+    trusted host registry.  The signature and codec identifiers below model
+    already checked commitments, not user-chosen display names or a claim that
+    natural-number equality proves cryptographic collision resistance.  A
+    successful binding must be unique: source order must not elect one of two
+    registered profiles that satisfy the same request. *)
+Record HostProfile := registered_host_profile {
+  host_signature_id : nat;
+  host_codec_id : nat;
+  host_category_ids : list nat
+}.
+
+Record HostRequest := host_request {
+  requested_signature : nat;
+  requested_codec : nat;
+  requested_category : nat
+}.
+
+Definition host_request_matches (request : HostRequest)
+           (profile : HostProfile) : bool :=
+  Nat.eqb (requested_signature request) (host_signature_id profile) &&
+  Nat.eqb (requested_codec request) (host_codec_id profile) &&
+  existsb (Nat.eqb (requested_category request))
+          (host_category_ids profile).
+
+Definition bind_registered_host (registry : list HostProfile)
+           (request : HostRequest) : option HostProfile :=
+  match filter (host_request_matches request) registry with
+  | [profile] => Some profile
+  | _ => None
+  end.
+
+Lemma bound_host_is_registered : forall registry request profile,
+  bind_registered_host registry request = Some profile -> In profile registry.
+Proof.
+  intros registry request profile Bound.
+  unfold bind_registered_host in Bound.
+  destruct (filter (host_request_matches request) registry) as
+    [|candidate remainder] eqn:Filtered; try discriminate.
+  destruct remainder; try discriminate.
+  inversion Bound; subst candidate.
+  assert (Member : In profile
+    (filter (host_request_matches request) registry)).
+  { rewrite Filtered. now left. }
+  apply filter_In in Member.
+  exact (proj1 Member).
+Qed.
+
+Lemma bound_host_has_exact_commitments : forall registry request profile,
+  bind_registered_host registry request = Some profile ->
+  requested_signature request = host_signature_id profile /\
+  requested_codec request = host_codec_id profile /\
+  In (requested_category request) (host_category_ids profile).
+Proof.
+  intros registry request profile Bound.
+  unfold bind_registered_host in Bound.
+  destruct (filter (host_request_matches request) registry) as
+    [|candidate remainder] eqn:Filtered; try discriminate.
+  destruct remainder; try discriminate.
+  inversion Bound; subst candidate.
+  assert (Member : In profile
+    (filter (host_request_matches request) registry)).
+  { rewrite Filtered. now left. }
+  apply filter_In in Member.
+  destruct Member as [_ Matches].
+  unfold host_request_matches in Matches.
+  repeat rewrite andb_true_iff in Matches.
+  destruct Matches as [[Signature Codec] Category].
+  apply Nat.eqb_eq in Signature.
+  apply Nat.eqb_eq in Codec.
+  apply existsb_exists in Category as [category [Member Equal]].
+  apply Nat.eqb_eq in Equal. subst category.
+  now repeat split.
+Qed.
+
+Lemma duplicate_matching_host_is_refused : forall registry request profile,
+  host_request_matches request profile = true ->
+  bind_registered_host (profile :: profile :: registry) request = None.
+Proof.
+  intros registry request profile Matches.
+  unfold bind_registered_host. cbn [filter].
+  rewrite Matches.
+  destruct (filter (host_request_matches request) registry); reflexivity.
+Qed.
+
 End TypedProjectionRelation.
