@@ -15,7 +15,8 @@ use dovetail::set_automaton::{
 };
 use dovetail::{egraph::EClassId, egraph::EGraph, egraph::EGraphConfig, egraph::ENode};
 use mettail_grammar_core::{
-    CollectionKind, LanguageRight, LanguageRights, PathMapModeV1, SemanticEffectClassV1,
+    CollectionKind, LanguageRight, LanguageRights, PathMapModeV1, ProjectedTheorySemanticImageV1,
+    ProjectionDirectionV1, ProjectionRelationBodyImageV1, SemanticEffectClassV1,
     SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1, TheoryActionId,
     TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryImageIntrinsicV1,
     TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
@@ -23,7 +24,7 @@ use mettail_grammar_core::{
     TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1, TheoryPatternStateFormV1,
     TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1,
     TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheorySemanticImageV1,
-    TheorySortId, TheorySortKindImageV1, TheoryVariableId,
+    TheorySortId, TheorySortKindImageV1, TheoryVariableId, PROJECTED_THEORY_IMAGE_ABI_V1,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -694,6 +695,18 @@ pub(crate) struct SemanticActionMatchRequest<'a> {
     pub limits: SemanticTransitionLimits,
 }
 
+/// Private matching phase for one exact projection direction. Publication and
+/// authority revalidation remain the responsibility of the installed service.
+pub(crate) struct SemanticProjectionMatchRequest<'a> {
+    pub image: &'a ProjectedTheorySemanticImageV1,
+    pub projection: u32,
+    pub direction: ProjectionDirectionV1,
+    pub granted_rights: &'a LanguageRights,
+    pub egraph: &'a mut EGraph<FramedSemanticOperator>,
+    pub root: EClassId,
+    pub limits: SemanticTransitionLimits,
+}
+
 pub struct SemanticJudgmentHeadRequest<'a> {
     pub image: &'a TheorySemanticImageV1,
     pub judgment: TheoryJudgmentId,
@@ -760,6 +773,7 @@ pub struct SemanticTransitionMatcher {
 enum TransitionRuleSelection<'a> {
     ActionRules(&'a [TheoryRuleProgramId]),
     RewriteRelation(TheorySortId),
+    SelectedPrograms(&'a [bool]),
 }
 
 struct TransitionRuleMatchRequest<'a> {
@@ -777,6 +791,10 @@ impl TransitionRuleSelection<'_> {
         }
         match self {
             Self::ActionRules(rules) => Ok(rules.contains(&rule.id)),
+            Self::SelectedPrograms(selected) => selected
+                .get(rule.id.0 as usize)
+                .copied()
+                .ok_or(SemanticMatchUndetermined::InvalidImageEvidence),
             Self::RewriteRelation(sort) => {
                 if !matches!(rule.origin, TheoryRuleOriginV1::Rewrite { .. }) {
                     return Ok(false);
@@ -799,6 +817,143 @@ impl SemanticTransitionMatcher {
                 &image.judgment_patterns,
             )?,
         })
+    }
+
+    /// Reuse the action matcher’s exact-ID selection and complete automaton
+    /// scan for a typed projection relation. No direction is inferred from a
+    /// term's shape, and no ordinary rewrite becomes a projection candidate.
+    pub(crate) fn match_projection_relation_accounted<C>(
+        &self,
+        request: SemanticProjectionMatchRequest<'_>,
+        is_cancelled: C,
+    ) -> (SemanticMatchDecision, u64, SetAutomatonStats)
+    where
+        C: FnMut() -> bool,
+    {
+        let SemanticProjectionMatchRequest {
+            image,
+            projection,
+            direction,
+            granted_rights,
+            egraph,
+            root,
+            limits,
+        } = request;
+        if !granted_rights.contains(LanguageRight::Match) || egraph.nodes(root).is_empty() {
+            return (
+                SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
+                0,
+                SetAutomatonStats::default(),
+            );
+        }
+        if image.abi != PROJECTED_THEORY_IMAGE_ABI_V1
+            || image.execution.language_fingerprint != image.projected_language_fingerprint
+        {
+            return (
+                SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work: 0,
+                    stats: SetAutomatonStats::default(),
+                },
+                0,
+                SetAutomatonStats::default(),
+            );
+        }
+        let Some(relation) = image
+            .relations
+            .iter()
+            .find(|relation| relation.projection == projection && relation.direction == direction)
+        else {
+            return (
+                SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
+                0,
+                SetAutomatonStats::default(),
+            );
+        };
+        let ProjectionRelationBodyImageV1::Rules(rows) = &relation.body else {
+            return (
+                SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
+                0,
+                SetAutomatonStats::default(),
+            );
+        };
+        let mut selected = Vec::new();
+        if selected
+            .try_reserve_exact(image.execution.rules.len())
+            .is_err()
+        {
+            return (
+                SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::AllocationFailed,
+                    work: 0,
+                    stats: SetAutomatonStats::default(),
+                },
+                0,
+                SetAutomatonStats::default(),
+            );
+        }
+        selected.resize(image.execution.rules.len(), false);
+        for row in rows {
+            let Some(rule) = image
+                .execution
+                .rules
+                .get(row.program.0 as usize)
+                .filter(|rule| {
+                    rule.id == row.program
+                        && matches!(rule.origin, TheoryRuleOriginV1::Rewrite { .. })
+                })
+            else {
+                return (
+                    SemanticMatchDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                        work: 0,
+                        stats: SetAutomatonStats::default(),
+                    },
+                    0,
+                    SetAutomatonStats::default(),
+                );
+            };
+            let Some(slot) = selected.get_mut(row.program.0 as usize) else {
+                return (
+                    SemanticMatchDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                        work: 0,
+                        stats: SetAutomatonStats::default(),
+                    },
+                    0,
+                    SetAutomatonStats::default(),
+                );
+            };
+            if row.program.0 < image.base_rule_count
+                || *slot
+                || rule.terms.get(rule.left.0 as usize).map(|term| term.sort)
+                    != Some(relation.input_sort)
+                || rule.terms.get(rule.right.0 as usize).map(|term| term.sort)
+                    != Some(relation.output_sort)
+            {
+                return (
+                    SemanticMatchDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                        work: 0,
+                        stats: SetAutomatonStats::default(),
+                    },
+                    0,
+                    SetAutomatonStats::default(),
+                );
+            }
+            *slot = true;
+        }
+        self.match_transition_rules_accounted(
+            TransitionRuleSelection::SelectedPrograms(&selected),
+            TransitionRuleMatchRequest {
+                image: &image.execution,
+                egraph,
+                root,
+                limits,
+                input_sort: relation.input_sort,
+            },
+            is_cancelled,
+        )
     }
 
     /// Match one action at one canonical root under explicit authority and

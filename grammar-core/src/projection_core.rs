@@ -115,6 +115,7 @@ pub struct ProjectedTheorySemanticImageV1 {
     pub abi: u16,
     pub projected_language_fingerprint: [u8; 32],
     pub base_image_fingerprint: [u8; 32],
+    pub base_rule_count: u32,
     pub host_signature_fingerprint: [u8; 32],
     pub host_codec_profile_fingerprint: [u8; 32],
     pub execution: TheorySemanticImageV1,

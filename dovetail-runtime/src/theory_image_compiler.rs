@@ -190,6 +190,7 @@ pub fn compile_projected_theory_semantic_image(
     let base_image_fingerprint = execution
         .fingerprint()
         .map_err(TheoryImageCompileError::Image)?;
+    let base_rule_count = checked_u32(execution.rules.len())?;
     let projected_language_fingerprint = language
         .fingerprint()
         .map_err(|error| TheoryImageCompileError::Projection(error.to_string()))?;
@@ -359,6 +360,7 @@ pub fn compile_projected_theory_semantic_image(
         abi: PROJECTED_THEORY_IMAGE_ABI_V1,
         projected_language_fingerprint,
         base_image_fingerprint,
+        base_rule_count,
         host_signature_fingerprint: host.signature_fingerprint,
         host_codec_profile_fingerprint: host.codec_profile_fingerprint,
         execution,
@@ -2057,6 +2059,7 @@ fn clone_vec<T: Clone>(source: &[T]) -> Result<Vec<T>, TheoryImageCompileError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::semantic_transition_kernel::SemanticProjectionMatchRequest;
     use crate::{
         restore_theory_pattern_automaton, theory_operator_to_machine,
         SemanticActionExecutionRequest, SemanticActionMatchRequest, SemanticGuardDecision,
@@ -2266,7 +2269,21 @@ mod tests {
 
     #[test]
     fn projected_image_reuses_flat_rules_and_preserves_overlapping_candidates() {
-        let base = fixture();
+        let mut base = fixture();
+        base.theory.rewrites.push(TheoryRewriteV1 {
+            name: "zero-wrap".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: Vec::new(),
+                terms: vec![
+                    term_constructor("Zero", Vec::new()),
+                    term_constructor("Wrap", vec![TheoryTermId(0)]),
+                ],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            },
+            left: TheoryTermId(0),
+            right: TheoryTermId(1),
+        });
         let limits = TheoryImageAdmissionLimits::default();
         let legacy = compile_theory_semantic_image(&base, limits).expect("base image");
         let host = ProjectionHostSignatureV1 {
@@ -2371,6 +2388,73 @@ mod tests {
         assert_eq!(reverse.len(), 1);
         assert_eq!(image.relations[0].input_sort, image.relations[1].output_sort);
         assert_eq!(image.relations[0].output_sort, image.relations[1].input_sort);
+
+        let matcher = SemanticTransitionMatcher::restore(&image.execution).unwrap();
+        let mut graph = EGraph::new();
+        let root = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let rights = LanguageRights::from_rights([LanguageRight::Match]);
+        let (decision, _, _) = matcher.match_projection_relation_accounted(
+            SemanticProjectionMatchRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &rights,
+                egraph: &mut graph,
+                root,
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        let SemanticMatchDecision::Proven(proven) = decision else {
+            panic!("the full forward match set must be proven: {decision:?}");
+        };
+        assert_eq!(proven.matches.len(), 2);
+        assert_eq!(
+            proven
+                .matches
+                .iter()
+                .map(|matched| matched.rule)
+                .collect::<Vec<_>>(),
+            forward.iter().map(|row| row.program).collect::<Vec<_>>()
+        );
+        assert!(proven
+            .matches
+            .iter()
+            .all(|matched| matched.rule.0 >= image.base_rule_count));
+        let (wrong_direction, _, _) = matcher.match_projection_relation_accounted(
+            SemanticProjectionMatchRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::HostToGuest,
+                granted_rights: &rights,
+                egraph: &mut graph,
+                root,
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        assert_eq!(
+            wrong_direction,
+            SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        );
+        let (denied, _, _) = matcher.match_projection_relation_accounted(
+            SemanticProjectionMatchRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &LanguageRights::none(),
+                egraph: &mut graph,
+                root,
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        assert_eq!(
+            denied,
+            SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        );
 
         projected.projections[0].host.signature_fingerprint = [0; 32];
         assert!(matches!(
