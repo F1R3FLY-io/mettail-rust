@@ -5,11 +5,15 @@
 //! rule bodies reuse `TheoryRewriteV1`'s existing flat arena rather than a
 //! second expression language.
 
-use crate::{LanguageCoreV1, TheoryConstructorV1, TheoryRewriteV1, TheorySortV1};
+use crate::{
+    LanguageCoreV1, TheoryConstructorV1, TheoryRewriteV1, TheoryRuleProgramId,
+    TheorySemanticImageV1, TheorySortId, TheorySortV1,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const PROJECTED_LANGUAGE_CORE_ABI_V1: u16 = 1;
+pub const PROJECTED_THEORY_IMAGE_ABI_V1: u16 = 1;
 
 /// The host-side signature and codec profile must be supplied by the caller's
 /// trusted registry. Naming them in a DDL grants neither code nor authority.
@@ -72,6 +76,49 @@ pub struct ProjectedLanguageCoreV1 {
     pub abi: u16,
     pub base: LanguageCoreV1,
     pub projections: Vec<TheoryProjectionV1>,
+}
+
+/// The source occurrence and the exact flat-program entry remain paired;
+/// neither the set automaton nor a request may collapse equal-pattern rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectionRuleImageEntryV1 {
+    pub program: TheoryRuleProgramId,
+    pub source_occurrence: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectionRelationBodyImageV1 {
+    /// The installed exact-profile structural codec handles this direction.
+    Carrier,
+    /// Every authored occurrence remains in source order, even when patterns
+    /// overlap or a direction is non-positional.
+    Rules(Vec<ProjectionRuleImageEntryV1>),
+}
+
+/// An explicitly selected cross-endpoint relation. Input and output sorts
+/// are independent; ordinary guest rewrites retain their same-sort contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectionRelationImageV1 {
+    pub projection: u32,
+    pub direction: ProjectionDirectionV1,
+    pub input_sort: TheorySortId,
+    pub output_sort: TheorySortId,
+    pub body: ProjectionRelationBodyImageV1,
+}
+
+/// A separate versioned artifact over the unchanged V1 image. `execution`
+/// reuses the V1 flat rule programs and set-automaton representation but must
+/// only be entered through a selected projection relation; it is not a V1
+/// language image and cannot pass V1 source admission by itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectedTheorySemanticImageV1 {
+    pub abi: u16,
+    pub projected_language_fingerprint: [u8; 32],
+    pub base_image_fingerprint: [u8; 32],
+    pub host_signature_fingerprint: [u8; 32],
+    pub host_codec_profile_fingerprint: [u8; 32],
+    pub execution: TheorySemanticImageV1,
+    pub relations: Vec<ProjectionRelationImageV1>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

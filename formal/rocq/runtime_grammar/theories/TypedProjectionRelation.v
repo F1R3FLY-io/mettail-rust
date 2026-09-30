@@ -94,6 +94,40 @@ Proof.
     + rewrite Nat.eqb_refl. now destruct d.
 Qed.
 
+(** A compiler may keep independently authored projection groups in one flat
+    image. Concatenation neither drops source occurrences nor changes their
+    order within a selected relation. This is the layout obligation for the
+    shared set-automaton input, not a permission to truncate its candidates. *)
+Lemma selected_group_append : forall selector first second,
+  selected selector (first ++ second) =
+  selected selector first ++ selected selector second.
+Proof.
+  intros selector first second. unfold selected. now rewrite filter_app.
+Qed.
+
+Lemma selected_group_origins_append : forall selector first second,
+  map row_origin (selected selector (first ++ second)) =
+  map row_origin (selected selector first) ++
+  map row_origin (selected selector second).
+Proof.
+  intros selector first second.
+  rewrite selected_group_append. now rewrite map_app.
+Qed.
+
+Lemma absent_selector_has_no_candidates : forall selector image,
+  (forall rule, In rule image -> row_selector rule <> selector) ->
+  selected selector image = [].
+Proof.
+  intros selector image Absent.
+  destruct (selected selector image) as [|rule rest] eqn:Selected;
+    [reflexivity|].
+  exfalso.
+  assert (Member : In rule (selected selector image)).
+  { rewrite Selected. now left. }
+  apply selected_source_correspondence in Member as [Source Equal].
+  exact (Absent rule Source Equal).
+Qed.
+
 Lemma ordinary_projection_separation : forall image sort projection dir input output origin,
   applies (Ordinary sort) image input output origin ->
   ~ (exists rule, In rule (selected (Projection projection dir) image) /\
