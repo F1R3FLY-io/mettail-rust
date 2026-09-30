@@ -1117,6 +1117,65 @@ use crate::wpda_runtime::{
     WpdaTokenSource,
 };
 
+/// Every identifier reading at this lexical position, including a secondary
+/// reading of a contextual keyword. A guarded scan must be driven by lexical
+/// evidence, not by the source's preferred edge. The lexer normally supplies
+/// one longest edge per kind, but the iterator preserves all matching edges
+/// for arbitrary `WpdaTokenSource` implementations as well.
+fn identifier_edges_at<'a>(
+    tokens: &'a dyn WpdaTokenSource,
+    pos: usize,
+) -> impl Iterator<Item = (usize, &'a str)> + 'a {
+    let primary = (tokens.peek_kind(pos) == Some(TokenKind::Ident))
+        .then(|| (0, tokens.peek_text(pos).unwrap_or("")));
+    primary
+        .into_iter()
+        .chain(tokens.peek_alternatives(pos).iter().enumerate().filter_map(
+            |(index, alternative)| {
+                (alternative.kind == TokenKind::Ident)
+                    .then_some((index + 1, alternative.text.as_str()))
+            },
+        ))
+}
+
+#[cfg(test)]
+mod guarded_identifier_lattice_tests {
+    use super::identifier_edges_at;
+    use crate::automata::semiring::TropicalWeight;
+    use crate::automata::TokenKind;
+    use crate::lexer_types::{LexAlternative, LexEntry, LexStream};
+    use crate::wpda_runtime::MultiTokenSource;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn guarded_scan_retains_exactly_the_identifier_edges(
+            identifier_mask in proptest::collection::vec(any::<bool>(), 1..32)
+        ) {
+            let alternatives = identifier_mask.iter().enumerate().map(|(index, is_ident)| {
+                let text = format!("edge{index}");
+                LexAlternative {
+                    kind: if *is_ident { TokenKind::Ident } else { TokenKind::Fixed(text.clone()) },
+                    text,
+                    end_byte: index + 1,
+                    weight: TropicalWeight(index as f64),
+                }
+            }).collect();
+            let source = MultiTokenSource::new(LexStream {
+                entries: vec![LexEntry { byte_start: 0, alternatives }],
+            });
+            let actual: Vec<_> = identifier_edges_at(&source, 0)
+                .map(|(index, text)| (index, text.to_owned()))
+                .collect();
+            let expected: Vec<_> = identifier_mask.iter().enumerate()
+                .filter(|(_, is_ident)| **is_ident)
+                .map(|(index, _)| (index, format!("edge{index}")))
+                .collect();
+            prop_assert_eq!(actual, expected);
+        }
+    }
+}
+
 /// Token-level atom producer available to stack-safe chain synthesis.
 ///
 /// `atom_cat_src_idx`/`atom_rule_idx` identify the rule that consumes the
@@ -16953,42 +17012,39 @@ where
         br_weight: &W,
         end_inline: bool,
     ) -> Result<(), WalkerResourceError> {
-        if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
-            return Ok(());
+        for (alt_idx, text) in identifier_edges_at(tokens, pos_after) {
+            let marker = self
+                .sppf
+                .try_intern_trigger_terminal(
+                    TokenKind::Ident,
+                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                    Some(text),
+                    u16::MAX,
+                    u16::MAX - 1,
+                    self.resource_limits.map(|limits| limits.forest_nodes),
+                )
+                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                    limit: error.limit,
+                    position: self.resource_position,
+                })?;
+            let w_c = self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, br_weight)?;
+            // POSITION-SALTED (see `cgll_pure_end_binder_scope`).
+            let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
+            let w_m = self.try_cgll_pure_fold(slot, w_c, marker, pos_after, W::one_ref())?;
+            let w = if end_inline {
+                let d_m = CgllPureDescriptor { w: w_m, ..d.clone() };
+                self.try_cgll_pure_end_binder_scope(run, &d_m, pos_after, None, tokens)?
+            } else {
+                w_m
+            };
+            run.worklist.push_back(CgllPureDescriptor {
+                state: br_state.clone(),
+                cur_sym: br_symbol,
+                pos: tokens.next_pos(pos_after, alt_idx).unwrap_or(pos_after + 1),
+                w,
+                ..d.clone()
+            });
         }
-        let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
-        let text = tokens.peek_text(pos_after).unwrap_or("").to_string();
-        let marker = self
-            .sppf
-            .try_intern_trigger_terminal(
-                TokenKind::Ident,
-                crate::sppf::PosOrSynth::Real(pos_after as u32),
-                Some(&text),
-                u16::MAX,
-                u16::MAX - 1,
-                self.resource_limits.map(|limits| limits.forest_nodes),
-            )
-            .map_err(|error| WalkerResourceError::ForestNodeLimit {
-                limit: error.limit,
-                position: self.resource_position,
-            })?;
-        let w_c = self.try_cgll_pure_carry_scan_weight(run, d, d.w, pos_after, br_weight)?;
-        // POSITION-SALTED (see `cgll_pure_end_binder_scope`).
-        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
-        let w_m = self.try_cgll_pure_fold(slot, w_c, marker, pos_after, W::one_ref())?;
-        let w = if end_inline {
-            let d_m = CgllPureDescriptor { w: w_m, ..d.clone() };
-            self.try_cgll_pure_end_binder_scope(run, &d_m, pos_after, None, tokens)?
-        } else {
-            w_m
-        };
-        run.worklist.push_back(CgllPureDescriptor {
-            state: br_state,
-            cur_sym: br_symbol,
-            pos: next_of(pos_after),
-            w,
-            ..d.clone()
-        });
         Ok(())
     }
 
@@ -22614,59 +22670,59 @@ where
                 });
             },
             ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
-                if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
-                    return Ok(());
-                }
                 // P3.e Class-3: zip-binder idents fold the reserved
                 // BINDER-NAME marker (see ConsumeIdentAndReplace above).
                 let zip_binder = start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
-                if start_scope && !zip_binder {
-                    run.stats.effects_skipped += 1;
+                for (alt_idx, text) in identifier_edges_at(tokens, pos_after) {
+                    if start_scope && !zip_binder {
+                        run.stats.effects_skipped += 1;
+                    }
+                    let (leaf, slot) = if zip_binder {
+                        (
+                            self.sppf
+                                .try_intern_trigger_terminal(
+                                    TokenKind::Ident,
+                                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                    Some(text),
+                                    u16::MAX,
+                                    u16::MAX - 1,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?,
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+                                ^ ((pos_after as u32) << 1),
+                        )
+                    } else {
+                        (
+                            self.sppf
+                                .try_intern_terminal(
+                                    TokenKind::Ident,
+                                    crate::sppf::PosOrSynth::Real(pos_after as u32),
+                                    Some(text),
+                                    true,
+                                    self.resource_limits.map(|limits| limits.forest_nodes),
+                                )
+                                .map_err(|error| WalkerResourceError::ForestNodeLimit {
+                                    limit: error.limit,
+                                    position: self.resource_position,
+                                })?,
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
+                        )
+                    };
+                    let w = self.try_cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref())?;
+                    let w =
+                        self.try_cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight)?;
+                    run.worklist.push_back(CgllPureDescriptor {
+                        state: br_state.clone(),
+                        cur_sym: br_symbol,
+                        pos: tokens.next_pos(pos_after, alt_idx).unwrap_or(pos_after + 1),
+                        w,
+                        ..d.clone()
+                    });
                 }
-                let text = tokens.peek_text(pos_after).unwrap_or("");
-                let (leaf, slot) = if zip_binder {
-                    (
-                        self.sppf
-                            .try_intern_trigger_terminal(
-                                TokenKind::Ident,
-                                crate::sppf::PosOrSynth::Real(pos_after as u32),
-                                Some(text),
-                                u16::MAX,
-                                u16::MAX - 1,
-                                self.resource_limits.map(|limits| limits.forest_nodes),
-                            )
-                            .map_err(|error| WalkerResourceError::ForestNodeLimit {
-                                limit: error.limit,
-                                position: self.resource_position,
-                            })?,
-                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1),
-                    )
-                } else {
-                    (
-                        self.sppf
-                            .try_intern_terminal(
-                                TokenKind::Ident,
-                                crate::sppf::PosOrSynth::Real(pos_after as u32),
-                                Some(text),
-                                true,
-                                self.resource_limits.map(|limits| limits.forest_nodes),
-                            )
-                            .map_err(|error| WalkerResourceError::ForestNodeLimit {
-                                limit: error.limit,
-                                position: self.resource_position,
-                            })?,
-                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
-                    )
-                };
-                let w = self.try_cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref())?;
-                let w = self.try_cgll_pure_carry_scan_weight(run, d, w, pos_after, &br_weight)?;
-                run.worklist.push_back(CgllPureDescriptor {
-                    state: br_state,
-                    cur_sym: br_symbol,
-                    pos: next_of(pos_after),
-                    w,
-                    ..d.clone()
-                });
             },
             ForkActionKind::GuardedConsume { expected_text } => {
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
@@ -22848,12 +22904,8 @@ where
                 // Terminal fold made the ident a phantom collection ITEM
                 // and broke the close's coverage gate (items=[Name,
                 // Terminal-Ident], seps=0 on `@(0) ? x` — pred3/4 receipt).
-                if tokens.peek_kind(pos_after) != Some(TokenKind::Ident) {
-                    return Ok(());
-                }
-                let mut folded = d.clone();
-                {
-                    let text = tokens.peek_text(pos_after).unwrap_or("");
+                for (alt_idx, text) in identifier_edges_at(tokens, pos_after) {
+                    let mut folded = d.clone();
                     let leaf = self
                         .sppf
                         .try_intern_trigger_terminal(
@@ -22871,22 +22923,22 @@ where
                     let slot =
                         Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
                     folded.w = self.try_cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref())?;
+                    folded.w = self.try_cgll_pure_carry_scan_weight(
+                        run,
+                        &folded,
+                        folded.w,
+                        pos_after,
+                        &W::one_ref(),
+                    )?;
+                    self.try_cgll_pure_reduce(
+                        run,
+                        &folded,
+                        tokens.next_pos(pos_after, alt_idx).unwrap_or(pos_after + 1),
+                        &br_weight,
+                        &br_state,
+                        tokens,
+                    )?;
                 }
-                folded.w = self.try_cgll_pure_carry_scan_weight(
-                    run,
-                    &folded,
-                    folded.w,
-                    pos_after,
-                    &W::one_ref(),
-                )?;
-                self.try_cgll_pure_reduce(
-                    run,
-                    &folded,
-                    next_of(pos_after),
-                    &br_weight,
-                    &br_state,
-                    tokens,
-                )?;
             },
             ForkActionKind::GuardedConsumeAndPopWithEffect { expected_text, effect } => {
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {

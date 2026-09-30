@@ -376,6 +376,7 @@ mod tests {
     fn language() -> LanguageDef {
         let mut language = LanguageDef {
             name: format_ident!("CarrierDemo"),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

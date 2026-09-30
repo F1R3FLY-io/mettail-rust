@@ -7,13 +7,16 @@
 
 use crate::ast::{
     Ast, Binding, Builder, CatDecl, CollKind, DottedPath, Equation, Export, Import, Item,
-    ModuleFile, ModuleItem, Param, Replacement, RewriteDecl, Sort, TermAssociativity, TermDecl,
-    TermRule, TheoryDecl, TheoryExpr, TokenDecl,
+    LimitAssignment, ModuleFile, ModuleItem, OptionSection, Param, ProjectionBinding,
+    ProjectionBody, ProjectionDecl, ProjectionDirection, ProjectionPremise, ProjectionRule,
+    Replacement, RewriteDecl, RewriteEntry, Sort, TermAssociativity, TermDecl, TermRule,
+    TheoryDecl, TheoryExpr, TokenDecl,
 };
 use crate::canonical::{
     admit_canonical_value, admit_canonical_value_resources, RhoValue, ValueDecodeError,
 };
 use crate::lex::Span;
+use std::collections::BTreeSet;
 use std::fmt;
 
 pub const DDL_AST_ENVELOPE_V2: &str = "mettail-ddl-ast/2";
@@ -398,9 +401,9 @@ fn decode_builder(value: RhoValue, path: &str) -> Result<Builder, DdlValueError>
         },
         Some("equations") => decode_builder_sequence(value, "equations", path, decode_equation)
             .map(Builder::Equations),
-        Some("rewrites") => {
-            decode_builder_sequence(value, "rewrites", path, decode_rewrite).map(Builder::Rewrites)
-        },
+        Some("rewrites") => decode_builder_sequence(value, "rewrites", path, decode_rewrite_entry)
+            .map(Builder::Rewrites),
+        Some("options") => decode_options_builder(value, path).map(Builder::Options),
         Some("data") => {
             let mut fields = expect_node(value, "data", Some(1), path.into())?;
             let payload = fields.pop().expect("arity checked");
@@ -410,6 +413,95 @@ fn decode_builder(value: RhoValue, path: &str) -> Result<Builder, DdlValueError>
         Some(tag) => Err(wrong_tag(path, tag, "a DDL builder")),
         None => Err(not_node(path, "a DDL builder")),
     }
+}
+
+fn decode_options_builder(
+    value: RhoValue,
+    path: &str,
+) -> Result<Vec<OptionSection>, DdlValueError> {
+    let mut fields = expect_node(value, "options", Some(1), path.into())?;
+    let sections =
+        expect_sequence(fields.pop().expect("arity checked"), &format!("{path}.sections"))?;
+    let mut seen_semantics = false;
+    let mut decoded = Vec::with_capacity(sections.len());
+    for (index, section) in sections.into_iter().enumerate() {
+        let section_path = format!("{path}.sections[{index}]");
+        match node_tag(&section) {
+            Some("option-semantics-limits") => {
+                if seen_semantics {
+                    return Err(DdlValueError::new(
+                        section_path,
+                        "duplicate Semantics.Limits section",
+                    ));
+                }
+                seen_semantics = true;
+                let mut fields =
+                    expect_node(section, "option-semantics-limits", Some(1), section_path.clone())?;
+                let entries = expect_sequence(
+                    fields.pop().expect("arity checked"),
+                    &format!("{section_path}.entries"),
+                )?;
+                let mut seen_names = BTreeSet::new();
+                let mut limits = Vec::with_capacity(entries.len());
+                for (entry_index, entry) in entries.into_iter().enumerate() {
+                    let entry_path = format!("{section_path}.entries[{entry_index}]");
+                    let mut parts =
+                        expect_node(entry, "limit-assignment", Some(2), entry_path.clone())?
+                            .into_iter();
+                    let name = expect_string(
+                        parts.next().expect("arity checked"),
+                        format!("{entry_path}.name"),
+                    )?;
+                    if !matches!(
+                        name.as_str(),
+                        "max_rule_variables"
+                            | "max_term_nodes"
+                            | "max_premise_nodes"
+                            | "max_proof_nodes"
+                            | "max_frontier"
+                            | "max_steps"
+                            | "max_grade_bits"
+                            | "max_output_nodes"
+                            | "max_output_bytes"
+                    ) {
+                        return Err(DdlValueError::new(
+                            format!("{entry_path}.name"),
+                            format!("unknown Semantics.Limits field `{name}`"),
+                        ));
+                    }
+                    if !seen_names.insert(name.clone()) {
+                        return Err(DdlValueError::new(
+                            format!("{entry_path}.name"),
+                            format!("duplicate Semantics.Limits field `{name}`"),
+                        ));
+                    }
+                    // Generated `Int` captures use decimal text in the
+                    // structural DDL wire (as do term binding powers). Do
+                    // not silently accept a second representation here.
+                    let value_path = format!("{entry_path}.value");
+                    let spelling =
+                        expect_string(parts.next().expect("arity checked"), value_path.clone())?;
+                    let value = spelling.parse::<u32>().map_err(|_| {
+                        DdlValueError::new(
+                            value_path.clone(),
+                            "expected a canonical unsigned 32-bit decimal limit",
+                        )
+                    })?;
+                    if spelling != value.to_string() {
+                        return Err(DdlValueError::new(
+                            value_path,
+                            "expected a canonical unsigned 32-bit decimal limit",
+                        ));
+                    }
+                    limits.push(LimitAssignment { name, value, span: SYNTHETIC_SPAN });
+                }
+                decoded.push(OptionSection::SemanticsLimits(limits));
+            },
+            Some(tag) => return Err(wrong_tag(&section_path, tag, "an Options section")),
+            None => return Err(not_node(&section_path, "an Options section")),
+        }
+    }
+    Ok(decoded)
 }
 
 fn decode_builder_sequence<T>(
@@ -777,6 +869,281 @@ fn decode_rewrite(value: RhoValue, path: &str) -> Result<RewriteDecl, DdlValueEr
     })
 }
 
+fn decode_rewrite_entry(value: RhoValue, path: &str) -> Result<RewriteEntry, DdlValueError> {
+    match node_tag(&value) {
+        Some("rewrite") => decode_rewrite(value, path).map(RewriteEntry::Ordinary),
+        Some("projection-group") | Some("projection-carrier") => {
+            decode_projection(value, path).map(RewriteEntry::Projection)
+        },
+        Some(tag) => Err(wrong_tag(path, tag, "a rewrite or projection declaration")),
+        None => Err(not_node(path, "a rewrite or projection declaration")),
+    }
+}
+
+fn decode_projection(value: RhoValue, path: &str) -> Result<ProjectionDecl, DdlValueError> {
+    let is_carrier = node_tag(&value) == Some("projection-carrier");
+    let tag = if is_carrier {
+        "projection-carrier"
+    } else {
+        "projection-group"
+    };
+    let fields = expect_node(value, tag, Some(if is_carrier { 4 } else { 5 }), path.into())?;
+    let mut fields = fields.into_iter();
+    let name = expect_string(fields.next().expect("arity checked"), format!("{path}.name"))?;
+    let guest = expect_string(fields.next().expect("arity checked"), format!("{path}.guest"))?;
+    let direction = decode_projection_direction(
+        fields.next().expect("arity checked"),
+        &format!("{path}.direction"),
+    )?;
+    let host = expect_string(fields.next().expect("arity checked"), format!("{path}.host"))?;
+    let body = if is_carrier {
+        ProjectionBody::Carrier
+    } else {
+        let rows = expect_sequence(fields.next().expect("arity checked"), &format!("{path}.rows"))?
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| decode_projection_rule(row, &format!("{path}.rows[{index}]")))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (index, row) in rows.iter().enumerate() {
+            if row.direction != direction {
+                return Err(DdlValueError::new(
+                    format!("{path}.rows[{index}].direction"),
+                    "projection row direction must match its group declaration",
+                ));
+            }
+        }
+        ProjectionBody::Rules(rows)
+    };
+    Ok(ProjectionDecl {
+        name,
+        guest,
+        host,
+        direction,
+        body,
+        span: SYNTHETIC_SPAN,
+    })
+}
+
+fn decode_projection_direction(
+    value: RhoValue,
+    path: &str,
+) -> Result<ProjectionDirection, DdlValueError> {
+    let direction = match node_tag(&value) {
+        Some("guest-to-host") => ProjectionDirection::GuestToHost,
+        Some("host-to-guest") => ProjectionDirection::HostToGuest,
+        Some("bidirectional") => ProjectionDirection::Both,
+        Some(tag) => return Err(wrong_tag(path, tag, "a projection direction")),
+        None => return Err(not_node(path, "a projection direction")),
+    };
+    let tag = match direction {
+        ProjectionDirection::GuestToHost => "guest-to-host",
+        ProjectionDirection::HostToGuest => "host-to-guest",
+        ProjectionDirection::Both => "bidirectional",
+    };
+    expect_node(value, tag, Some(0), path.into())?;
+    Ok(direction)
+}
+
+fn decode_projection_rule(value: RhoValue, path: &str) -> Result<ProjectionRule, DdlValueError> {
+    let fields = expect_node(value, "projection-rule", Some(5), path.into())?;
+    let mut fields = fields.into_iter();
+    let mut head = expect_node(
+        fields.next().expect("arity checked"),
+        "projection-head",
+        Some(2),
+        format!("{path}.head"),
+    )?
+    .into_iter();
+    let name = expect_string(head.next().expect("arity checked"), format!("{path}.name"))?;
+    let bindings =
+        expect_sequence(head.next().expect("arity checked"), &format!("{path}.bindings"))?
+            .into_iter()
+            .enumerate()
+            .map(|(index, binding)| {
+                decode_projection_binding(binding, &format!("{path}.bindings[{index}]"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    let premises_value = fields.next().expect("arity checked");
+    let premises = if node_tag(&premises_value) == Some("projection-premises") {
+        let mut fields = expect_node(
+            premises_value,
+            "projection-premises",
+            Some(1),
+            format!("{path}.premises"),
+        )?;
+        expect_sequence(fields.pop().expect("arity checked"), &format!("{path}.premises"))?
+    } else {
+        expect_sequence(premises_value, &format!("{path}.premises"))?
+    }
+    .into_iter()
+    .enumerate()
+    .map(|(index, premise)| {
+        decode_projection_premise(premise, &format!("{path}.premises[{index}]"))
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+    let guest = fields.next().expect("arity checked");
+    validate_projection_term(&guest, &format!("{path}.guest"))?;
+    let direction = decode_projection_direction(
+        fields.next().expect("arity checked"),
+        &format!("{path}.direction"),
+    )?;
+    let host = fields.next().expect("arity checked");
+    validate_projection_term(&host, &format!("{path}.host"))?;
+    Ok(ProjectionRule {
+        name,
+        bindings,
+        premises,
+        guest,
+        host,
+        direction,
+        span: SYNTHETIC_SPAN,
+    })
+}
+
+fn decode_projection_binding(
+    value: RhoValue,
+    path: &str,
+) -> Result<ProjectionBinding, DdlValueError> {
+    let is_host = node_tag(&value) == Some("projection-host-binding");
+    let tag = if is_host {
+        "projection-host-binding"
+    } else {
+        "projection-guest-binding"
+    };
+    let fields = expect_node(value, tag, Some(2), path.into())?;
+    let mut fields = fields.into_iter();
+    let name = expect_string(fields.next().expect("arity checked"), format!("{path}.name"))?;
+    let category =
+        expect_string(fields.next().expect("arity checked"), format!("{path}.category"))?;
+    Ok(if is_host {
+        ProjectionBinding::Host { name, category }
+    } else {
+        ProjectionBinding::Guest { name, category }
+    })
+}
+
+fn decode_projection_premise(
+    value: RhoValue,
+    path: &str,
+) -> Result<ProjectionPremise, DdlValueError> {
+    match node_tag(&value) {
+        Some("projection-call") => {
+            let fields = expect_node(value, "projection-call", Some(3), path.into())?;
+            let mut fields = fields.into_iter();
+            Ok(ProjectionPremise::Call {
+                name: expect_string(fields.next().expect("arity checked"), format!("{path}.name"))?,
+                guest: expect_string(
+                    fields.next().expect("arity checked"),
+                    format!("{path}.guest"),
+                )?,
+                host: expect_string(fields.next().expect("arity checked"), format!("{path}.host"))?,
+            })
+        },
+        Some("projection-transition") => {
+            let (left, right) = decode_pair(value, "projection-transition", path)?;
+            Ok(ProjectionPremise::Transition { left, right })
+        },
+        Some(tag) => Err(wrong_tag(path, tag, "a projection premise")),
+        None => Err(not_node(path, "a projection premise")),
+    }
+}
+
+pub(crate) fn validate_projection_term(value: &RhoValue, path: &str) -> Result<(), DdlValueError> {
+    let mut pending = vec![(value, path.to_string(), 1usize)];
+    while let Some((value, path, depth)) = pending.pop() {
+        require_structural_depth(depth, &path, "projection term")?;
+        let RhoValue::List(items) = value else {
+            return Err(not_node(&path, "a projection term"));
+        };
+        let Some(RhoValue::String(tag)) = items.first() else {
+            return Err(not_node(&path, "a projection term"));
+        };
+        let fields = &items[1..];
+        let arity = match tag.as_str() {
+            "ast-var" | "ast-remainder" | "ast-string" | "ast-integer" | "ast-collection" => 1,
+            "ast-sexp" | "ast-host-sexp" | "ast-subst" | "ast-abs" => 2,
+            "ast-boolean-true" | "ast-boolean-false" => 0,
+            _ => return Err(wrong_tag(&path, tag, "a projection term")),
+        };
+        if fields.len() != arity {
+            return Err(DdlValueError::new(
+                path,
+                format!("`{tag}` has arity {}; expected {arity}", fields.len()),
+            ));
+        }
+        let child_depth = structural_child_depth(depth, &path)?;
+        match tag.as_str() {
+            "ast-var" | "ast-remainder" | "ast-string" => {
+                if !matches!(fields[0], RhoValue::String(_)) {
+                    return Err(DdlValueError::new(
+                        path,
+                        "projection term requires string content",
+                    ));
+                }
+            },
+            "ast-integer" => {
+                if !matches!(fields[0], RhoValue::Integer(_)) {
+                    return Err(DdlValueError::new(
+                        path,
+                        "projection integer requires integer content",
+                    ));
+                }
+            },
+            "ast-sexp" | "ast-host-sexp" | "ast-abs" => {
+                if !matches!(fields[0], RhoValue::String(_)) {
+                    return Err(DdlValueError::new(
+                        path,
+                        "projection label or binder must be a string",
+                    ));
+                }
+                if tag == "ast-abs" {
+                    pending.push((&fields[1], format!("{path}.body"), child_depth));
+                } else {
+                    let RhoValue::List(children) = &fields[1] else {
+                        return Err(not_node(&format!("{path}.arguments"), "a sequence"));
+                    };
+                    if !matches!(children.first(), Some(RhoValue::String(t)) if t == "sequence") {
+                        return Err(not_node(&format!("{path}.arguments"), "a sequence"));
+                    }
+                    pending.extend(
+                        children[1..]
+                            .iter()
+                            .enumerate()
+                            .rev()
+                            .map(|(index, child)| {
+                                (child, format!("{path}.arguments[{index}]"), child_depth)
+                            }),
+                    );
+                }
+            },
+            "ast-subst" => {
+                pending.push((&fields[1], format!("{path}.argument"), child_depth));
+                pending.push((&fields[0], format!("{path}.body"), child_depth));
+            },
+            "ast-collection" => {
+                let RhoValue::List(children) = &fields[0] else {
+                    return Err(not_node(&format!("{path}.elements"), "a sequence"));
+                };
+                if !matches!(children.first(), Some(RhoValue::String(t)) if t == "sequence") {
+                    return Err(not_node(&format!("{path}.elements"), "a sequence"));
+                }
+                pending.extend(
+                    children[1..]
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .map(|(index, child)| {
+                            (child, format!("{path}.elements[{index}]"), child_depth)
+                        }),
+                );
+            },
+            "ast-boolean-true" | "ast-boolean-false" => {},
+            _ => unreachable!("closed projection term tags"),
+        }
+    }
+    Ok(())
+}
+
 fn decode_pair(value: RhoValue, tag: &str, path: &str) -> Result<(String, String), DdlValueError> {
     let mut fields = expect_node(value, tag, Some(2), path.into())?.into_iter();
     Ok((
@@ -1050,6 +1417,107 @@ mod tests {
         )
     }
 
+    fn limit_options(entries: &[(&str, i128)]) -> RhoValue {
+        node(
+            "options",
+            vec![node(
+                "sequence",
+                vec![node(
+                    "option-semantics-limits",
+                    vec![node(
+                        "sequence",
+                        entries
+                            .iter()
+                            .map(|(name, value)| {
+                                node(
+                                    "limit-assignment",
+                                    vec![
+                                        RhoValue::String((*name).into()),
+                                        RhoValue::String(value.to_string()),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    )],
+                )],
+            )],
+        )
+    }
+
+    #[test]
+    fn authored_semantic_limits_project_to_the_existing_theory_core() {
+        let names = [
+            "max_rule_variables",
+            "max_term_nodes",
+            "max_premise_nodes",
+            "max_proof_nodes",
+            "max_frontier",
+            "max_steps",
+            "max_grade_bits",
+            "max_output_nodes",
+            "max_output_bytes",
+        ];
+        let entries: Vec<_> = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (*name, 100 + index as i128))
+            .collect();
+        let builder = decode_builder(limit_options(&entries), "$.options").unwrap();
+        let declaration = TheoryDecl {
+            name: "Limited".into(),
+            params: Vec::new(),
+            body: TheoryExpr::Build {
+                base: Box::new(TheoryExpr::Empty(SYNTHETIC_SPAN)),
+                builder,
+                span: SYNTHETIC_SPAN,
+            },
+            span: SYNTHETIC_SPAN,
+        };
+        let language = crate::elaborate_theory_ast(declaration).unwrap();
+        let limits = language.language_core.theory.limits;
+        assert_eq!(limits.max_rule_variables, 100);
+        assert_eq!(limits.max_term_nodes, 101);
+        assert_eq!(limits.max_premise_nodes, 102);
+        assert_eq!(limits.max_proof_nodes, 103);
+        assert_eq!(limits.max_frontier, 104);
+        assert_eq!(limits.max_steps, 105);
+        assert_eq!(limits.max_grade_bits, 106);
+        assert_eq!(limits.max_output_nodes, 107);
+        assert_eq!(limits.max_output_bytes, 108);
+    }
+
+    #[test]
+    fn authored_semantic_limits_reject_unknown_duplicate_and_out_of_range_fields() {
+        assert!(decode_builder(limit_options(&[("max_steps", 0)]), "$.options").is_ok());
+        assert!(
+            decode_builder(limit_options(&[("max_steps", i128::from(u32::MAX))]), "$.options")
+                .is_ok()
+        );
+        for entries in [
+            vec![("unknown", 1)],
+            vec![("max_steps", 1), ("max_steps", 1)],
+            vec![("max_steps", -1)],
+            vec![("max_steps", i128::from(u32::MAX) + 1)],
+        ] {
+            assert!(decode_builder(limit_options(&entries), "$.options").is_err());
+        }
+        let section = node("option-semantics-limits", vec![node("sequence", vec![])]);
+        let duplicate = node("options", vec![node("sequence", vec![section.clone(), section])]);
+        assert!(decode_builder(duplicate, "$.options").is_err());
+
+        for malformed in [
+            RhoValue::String("+1".into()),
+            RhoValue::String("01".into()),
+            RhoValue::Integer(1),
+        ] {
+            let assignment =
+                node("limit-assignment", vec![RhoValue::String("max_steps".into()), malformed]);
+            let section = node("option-semantics-limits", vec![node("sequence", vec![assignment])]);
+            let options = node("options", vec![node("sequence", vec![section])]);
+            assert!(decode_builder(options, "$.options").is_err());
+        }
+    }
+
     #[test]
     fn category_wire_tags_preserve_variable_admission_and_native_carrier() {
         for (tag, admits_variables, carrier) in [
@@ -1124,6 +1592,61 @@ mod tests {
         };
         assert_eq!(theory.name, "T");
         assert!(matches!(theory.body, TheoryExpr::Empty(_)));
+    }
+
+    #[test]
+    fn projection_wire_preserves_guest_host_endpoints_and_direction() {
+        let row = node(
+            "projection-rule",
+            vec![
+                node(
+                    "projection-head",
+                    vec![RhoValue::String("Yes".into()), node("sequence", vec![])],
+                ),
+                node("sequence", vec![]),
+                node("ast-sexp", vec![RhoValue::String("BTrue".into()), node("sequence", vec![])]),
+                node("bidirectional", vec![]),
+                node("ast-boolean-true", vec![]),
+            ],
+        );
+        let group = node(
+            "projection-group",
+            vec![
+                RhoValue::String("Boolean".into()),
+                RhoValue::String("Bool".into()),
+                node("bidirectional", vec![]),
+                RhoValue::String("Bool".into()),
+                node("sequence", vec![row]),
+            ],
+        );
+        let RewriteEntry::Projection(projection) =
+            decode_rewrite_entry(group.clone(), "$.rewrites[0]").expect("closed projection wire")
+        else {
+            panic!("projection must not become an ordinary guest rewrite")
+        };
+        assert_eq!(projection.name, "Boolean");
+        assert_eq!(projection.guest, "Bool");
+        assert_eq!(projection.host, "Bool");
+        assert_eq!(projection.direction, ProjectionDirection::Both);
+        let ProjectionBody::Rules(rows) = projection.body else {
+            panic!("expected authored rows")
+        };
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].direction, ProjectionDirection::Both);
+        assert_eq!(rows[0].host, node("ast-boolean-true", vec![]));
+
+        let mut wrong = group;
+        let RhoValue::List(fields) = &mut wrong else {
+            unreachable!()
+        };
+        let RhoValue::List(rows) = &mut fields[5] else {
+            unreachable!()
+        };
+        let RhoValue::List(row) = &mut rows[1] else {
+            unreachable!()
+        };
+        row[4] = node("guest-to-host", vec![]);
+        assert!(decode_rewrite_entry(wrong, "$.rewrites[0]").is_err());
     }
 
     #[test]

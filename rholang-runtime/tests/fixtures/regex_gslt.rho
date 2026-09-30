@@ -1,16 +1,16 @@
 Module RegexGSLT {
   Theory Regex() {
     Types {
-      Pattern;
-      Computation;
-      NFrames;
-      DFrames;
-      EFrames;
-      MatchResult;
-      ReplacementTemplate;
-      PrefixResult;
-      Scalar = String;
-      Text = String;
+      noadmit Pattern;
+      noadmit Computation;
+      noadmit NFrames;
+      noadmit DFrames;
+      noadmit EFrames;
+      noadmit MatchResult;
+      noadmit ReplacementTemplate;
+      noadmit PrefixResult;
+      noadmit Scalar = String;
+      noadmit Text = String;
       noadmit Bool = bool;
       noadmit Flag = bool;
       noadmit Nat = BigInt;
@@ -406,10 +406,20 @@ Module RegexGSLT {
           {"name":"ReplaceAll","action":"replace-all","result":"Computation"},
           {"name":"Nullable", "action":"nullable", "result":"Computation"},
           {"name":"Derivative", "action":"derivative", "result":"Computation"}
-        ],
-        "limits":{"max_term_nodes":16384,"max_proof_nodes":16384,"max_frontier":256,"max_steps":10000000,"max_grade_bits":128}
+        ]
       }
     })
+    Options {
+      Semantics {
+        Limits {
+          max_term_nodes = 16384;
+          max_proof_nodes = 16384;
+          max_frontier = 256;
+          max_steps = 10000000;
+          max_grade_bits = 128;
+        }
+      }
+    }
   }
 
   theory Regex()

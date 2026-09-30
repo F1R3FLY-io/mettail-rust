@@ -247,6 +247,7 @@ fn service_diagnostic(error: InstalledSemanticError) -> ReplyBody {
                     )
                 },
                 TheoryImageCompileError::Image(_)
+                | TheoryImageCompileError::Projection(_)
                 | TheoryImageCompileError::Automaton(_)
                 | TheoryImageCompileError::NonProgressing { .. }
                 | TheoryImageCompileError::UnknownReference { .. }

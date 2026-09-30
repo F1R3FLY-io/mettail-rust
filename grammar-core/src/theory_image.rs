@@ -1254,6 +1254,34 @@ impl TheorySemanticImageV1 {
             "theory",
         )?;
 
+        self.validate_resource_limits(limits)?;
+
+        let context = ImageSourceContext::new(&language.theory)?;
+        let expected_resource_profile = match &language.theory.cost {
+            None => TheoryResourceProfileV1::Uncosted,
+            Some(cost) => TheoryResourceProfileV1::Costed {
+                grade_sort: context.sort(&cost.signature_sort)?,
+            },
+        };
+        if self.resource_profile != expected_resource_profile {
+            return Err(TheoryImageError::SourceMismatch { kind: "resource profile", index: 0 });
+        }
+        validate_sorts(self, language, &context)?;
+        validate_constructors(self, language, &context)?;
+        validate_rules(self, language, &context)?;
+        validate_judgments(self, language, &context)?;
+        validate_actions(self, language, &context)?;
+        self.validate_automata(limits)?;
+        Ok(())
+    }
+
+    /// Enforce the common image quotas without assuming a V1 source layout.
+    /// A versioned semantic extension can reuse these exact cumulative bounds
+    /// before its own source-correspondence checks.
+    pub fn validate_resource_limits(
+        &self,
+        limits: TheoryImageAdmissionLimits,
+    ) -> Result<(), TheoryImageError> {
         enforce(self.sorts.len(), limits.max_sorts, "sorts")?;
         enforce(self.constructors.len(), limits.max_constructors, "constructors")?;
         enforce(self.judgments.len(), limits.max_judgments, "judgments")?;
@@ -1291,21 +1319,14 @@ impl TheorySemanticImageV1 {
             "automaton entries",
         )?;
 
-        let context = ImageSourceContext::new(&language.theory)?;
-        let expected_resource_profile = match &language.theory.cost {
-            None => TheoryResourceProfileV1::Uncosted,
-            Some(cost) => TheoryResourceProfileV1::Costed {
-                grade_sort: context.sort(&cost.signature_sort)?,
-            },
-        };
-        if self.resource_profile != expected_resource_profile {
-            return Err(TheoryImageError::SourceMismatch { kind: "resource profile", index: 0 });
-        }
-        validate_sorts(self, language, &context)?;
-        validate_constructors(self, language, &context)?;
-        validate_rules(self, language, &context)?;
-        validate_judgments(self, language, &context)?;
-        validate_actions(self, language, &context)?;
+        Ok(())
+    }
+
+    /// Check the same flat set-automaton correspondence as an ordinary image.
+    pub fn validate_automata(
+        &self,
+        limits: TheoryImageAdmissionLimits,
+    ) -> Result<(), TheoryImageError> {
         validate_pattern_automaton(self, limits)?;
         validate_judgment_pattern_automaton(self, limits)?;
         Ok(())

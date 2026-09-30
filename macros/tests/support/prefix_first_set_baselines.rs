@@ -18,6 +18,7 @@ fn ident(name: &str) -> Ident {
 fn language() -> LanguageDef {
     LanguageDef {
         name: ident("FirstBaseline"),
+        version: None,
         options: Default::default(),
         extends_names: Vec::new(),
         include_names: Vec::new(),

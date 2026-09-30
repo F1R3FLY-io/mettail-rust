@@ -41,6 +41,7 @@ fn rule(label: &str, cat: &str, params: Vec<TermParam>, syntax: Vec<SyntaxExpr>)
 fn language(terms: Vec<GrammarRule>) -> LanguageDef {
     LanguageDef {
         name: id("PrefixDiscoveryBaseline"),
+        version: None,
         options: Default::default(),
         extends_names: vec![],
         include_names: vec![],

@@ -308,6 +308,7 @@ impl<'a> Interp<'a> {
                             terms: Vec::new(),
                             equations: Vec::new(),
                             rewrites: Vec::new(),
+                            projections: Vec::new(),
                             export_origins: presentation.export_origins,
                             opaque_categories: presentation.opaque_categories,
                             ..Presentation::default()
@@ -394,6 +395,7 @@ impl<'a> Interp<'a> {
                             .chain(p.terms.iter().map(|entry| entry.id))
                             .chain(p.equations.iter().map(|entry| entry.id))
                             .chain(p.rewrites.iter().map(|entry| entry.id))
+                            .chain(p.projections.iter().map(|entry| entry.id))
                             .filter(|id| id.0 > fragment_id.0),
                     );
                     p.data_derived_exports.extend(
@@ -615,23 +617,125 @@ impl<'a> Interp<'a> {
                     },
 
                     Builder::Rewrites(rws) => {
-                        for rw in rws {
-                            let mut ls = Vec::new();
-                            rw.lhs.labels(&mut ls);
-                            rw.rhs.labels(&mut ls);
-                            self.check_known(&p, &ls, "Rewrites", rw.span)?;
-                            if p.rewrites.iter().any(|e| e.rw.name == rw.name) {
-                                return Err(Diag::new(
-                                    DiagKind::RepeatLabel,
-                                    format!(
-                                        "rewrite `{}` is declared twice in this theory",
-                                        rw.name
-                                    ),
-                                    rw.span,
-                                ));
+                        for entry in rws {
+                            match entry {
+                                RewriteEntry::Ordinary(rw) => {
+                                    let mut ls = Vec::new();
+                                    rw.lhs.labels(&mut ls);
+                                    rw.rhs.labels(&mut ls);
+                                    self.check_known(&p, &ls, "Rewrites", rw.span)?;
+                                    if p.rewrites.iter().any(|e| e.rw.name == rw.name)
+                                        || p.projections
+                                            .iter()
+                                            .any(|e| e.projection.name == rw.name)
+                                    {
+                                        return Err(Diag::new(
+                                            DiagKind::RepeatLabel,
+                                            format!("rewrite or projection `{}` is declared twice in this theory", rw.name),
+                                            rw.span,
+                                        ));
+                                    }
+                                    let id = self.fresh();
+                                    p.rewrites.push(RwEntry { id, rw: rw.clone() });
+                                },
+                                RewriteEntry::Projection(projection) => {
+                                    if !p.has_cat(&projection.guest) {
+                                        return Err(Diag::new(
+                                            DiagKind::UndeclaredCategory,
+                                            format!("projection `{}` names undeclared guest category `{}`", projection.name, projection.guest),
+                                            projection.span,
+                                        ));
+                                    }
+                                    if p.rewrites.iter().any(|e| e.rw.name == projection.name)
+                                        || p.projections
+                                            .iter()
+                                            .any(|e| e.projection.name == projection.name)
+                                    {
+                                        return Err(Diag::new(
+                                            DiagKind::RepeatLabel,
+                                            format!("rewrite or projection `{}` is declared twice in this theory", projection.name),
+                                            projection.span,
+                                        ));
+                                    }
+                                    let id = self.fresh();
+                                    p.projections.push(ProjectionEntry {
+                                        id,
+                                        projection: projection.clone(),
+                                    });
+                                },
                             }
+                        }
+                        Ok(p)
+                    },
+
+                    Builder::Options(sections) => {
+                        let mut oslf = BTreeMap::new();
+                        for section in sections {
+                            match section {
+                                OptionSection::SemanticsLimits(assignments) => {
+                                    if oslf.contains_key("limits") {
+                                        return Err(Diag::new(
+                                            DiagKind::Value,
+                                            "Semantics.Limits is declared twice in one Options builder",
+                                            span,
+                                        ));
+                                    }
+                                    let mut limits = BTreeMap::new();
+                                    for assignment in assignments {
+                                        if !matches!(
+                                            assignment.name.as_str(),
+                                            "max_rule_variables"
+                                                | "max_term_nodes"
+                                                | "max_premise_nodes"
+                                                | "max_proof_nodes"
+                                                | "max_frontier"
+                                                | "max_steps"
+                                                | "max_grade_bits"
+                                                | "max_output_nodes"
+                                                | "max_output_bytes"
+                                        ) {
+                                            return Err(Diag::new(
+                                                DiagKind::Value,
+                                                format!(
+                                                    "unknown Semantics.Limits field `{}`",
+                                                    assignment.name
+                                                ),
+                                                assignment.span,
+                                            ));
+                                        }
+                                        if limits
+                                            .insert(
+                                                assignment.name.clone(),
+                                                RhoValue::Integer(i128::from(assignment.value)),
+                                            )
+                                            .is_some()
+                                        {
+                                            return Err(Diag::new(
+                                                DiagKind::Value,
+                                                format!(
+                                                    "Semantics.Limits field `{}` is declared twice",
+                                                    assignment.name
+                                                ),
+                                                assignment.span,
+                                            ));
+                                        }
+                                    }
+                                    oslf.insert("limits".into(), RhoValue::Map(limits));
+                                },
+                            }
+                        }
+                        if !oslf.is_empty() {
                             let id = self.fresh();
-                            p.rewrites.push(RwEntry { id, rw: rw.clone() });
+                            p.canonical_fragments.push(CanonicalFragment {
+                                id,
+                                value: RhoValue::Map(BTreeMap::from([(
+                                    "oslf".into(),
+                                    RhoValue::Map(oslf),
+                                )])),
+                            });
+                            crate::canonical::presentation_to_value("Options", &p).map_err(
+                                |error| Diag::new(DiagKind::Value, error.to_string(), span),
+                            )?;
                         }
                         Ok(p)
                     },
@@ -715,7 +819,7 @@ impl<'a> Interp<'a> {
                                 builders.push(Builder::Rewrites(
                                     std::mem::take(&mut fragment.rewrites)
                                         .into_iter()
-                                        .map(|entry| entry.rw)
+                                        .map(|entry| RewriteEntry::Ordinary(entry.rw))
                                         .collect(),
                                 ));
                             }

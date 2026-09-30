@@ -75,7 +75,8 @@ language! {
         contextual_keywords: [
             "Module", "Theory", "theory", "import", "as", "from", "Empty",
             "free", "let", "Types", "Exports", "Replacements", "Terms",
-            "Equations", "Rewrites", "Data", "HashBag", "Set", "List", "sep",
+            "Equations", "Rewrites", "Data", "Options", "Semantics", "Limits",
+            "HashBag", "Set", "List", "sep",
             "subst", "PPar", "noadmit", "token",
         ],
     },
@@ -208,6 +209,8 @@ language! {
         data DdlTheoryExpr
         data DdlCatDecl
         data DdlCarrier
+        data DdlOptionSection
+        data DdlLimitEntry
         data DdlExport
         data DdlReplacement
         data DdlTermRule
@@ -221,6 +224,13 @@ language! {
         data DdlFreshnesses
         data DdlFreshness
         data DdlRewrite
+        data DdlProjectionDirection
+        data DdlProjectionRule
+        data DdlProjectionCarrierMode
+        data DdlProjectionRowHead
+        data DdlProjectionBinding
+        data DdlProjectionPremises
+        data DdlProjectionPremise
         data DdlPremises
         data DdlPremise
         data DdlRuleAstItems
@@ -2632,6 +2642,8 @@ language! {
             |- base "Equations" "{" entries.*sep("") "}" : DdlTheoryExpr same;
         DdlTheoryRewrites . base:DdlTheoryExpr, entries:Vec(DdlRewrite)
             |- base "Rewrites" "{" entries.*sep("") "}" : DdlTheoryExpr same;
+        DdlTheoryOptions . base:DdlTheoryExpr, sections:Vec(DdlOptionSection)
+            |- base "Options" "{" sections.*sep("") "}" : DdlTheoryExpr same;
         DdlTheoryData . base:DdlTheoryExpr, value:Proc
             |- base "Data" "(" value ")" : DdlTheoryExpr same;
 
@@ -2659,6 +2671,8 @@ language! {
             |- "Equations" "{" entries.*sep("") "}" : DdlTheoryExpr;
         DdlTheoryRewritesImplicit . entries:Vec(DdlRewrite)
             |- "Rewrites" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryOptionsImplicit . sections:Vec(DdlOptionSection)
+            |- "Options" "{" sections.*sep("") "}" : DdlTheoryExpr;
         DdlTheoryDataImplicit . value:Proc
             |- "Data" "(" value ")" : DdlTheoryExpr;
 
@@ -2695,6 +2709,10 @@ language! {
             carrier:DdlCarrier |- "noadmit" name@Ident "=" carrier ";" : DdlCatDecl;
         DdlCarrierIdent . |- name@Ident : DdlCarrier;
         DdlCarrierBool . |- "bool" : DdlCarrier;
+        DdlOptionSemanticsLimits . entries:Vec(DdlLimitEntry)
+            |- "Semantics" "{" "Limits" "{" entries.*sep("") "}" "}" : DdlOptionSection;
+        DdlLimitAssignment . value:Int
+            |- key@Ident "=" value ";" : DdlLimitEntry;
         DdlExportDirect . |- name@Ident ";" : DdlExport;
         DdlExportRename .
             |- name@Ident "=>" replacement@Ident ";" : DdlExport;
@@ -2752,11 +2770,52 @@ language! {
             |- name@Ident ":" left "~>" right ";" : DdlRewrite;
         DdlRewriteConditional . premises:DdlPremises, left:DdlRuleAst, right:DdlRuleAst
             |- name@Ident ":" premises left "~>" right ";" : DdlRewrite;
+        DdlRewriteProjection . direction:DdlProjectionDirection, rules:Vec(DdlProjectionRule)
+            |- "projection" name@Ident ":" guest@Ident direction "host" "::" host@Ident
+                "{" rules.*sep("") "}" : DdlRewrite;
+        DdlRewriteCarrierProjection . direction:DdlProjectionDirection,
+            mode:DdlProjectionCarrierMode
+            |- "projection" name@Ident ":" guest@Ident direction "host" "::" host@Ident
+                "via" mode ";" : DdlRewrite;
+
+        // All three source arrows lower to the same directed rule form.
+        // `<~` swaps the elaborated endpoints; `<~>` emits two independently
+        // checked directed rules sharing one authored source occurrence.
+        DdlProjectionForward . |- "~>" : DdlProjectionDirection;
+        DdlProjectionBackward . |- "<~" : DdlProjectionDirection;
+        DdlProjectionBoth . |- "<~>" : DdlProjectionDirection;
+        DdlProjectionCarrierOnly . |- "carrier" : DdlProjectionCarrierMode;
+        DdlProjectionHeadPlain . |- name@Ident ":" : DdlProjectionRowHead;
+        DdlProjectionHeadContext . bindings:Vec(DdlProjectionBinding)
+            |- name@Ident "(" bindings.*sep(",") ")" ":" : DdlProjectionRowHead;
+        DdlProjectionBindingGuest . |- name@Ident ":" sort@Ident : DdlProjectionBinding;
+        DdlProjectionBindingHost .
+            |- name@Ident ":" "host" "::" sort@Ident : DdlProjectionBinding;
+        DdlProjectionPremisesList . clauses:Vec(DdlProjectionPremise)
+            |- "if" clauses.*sep(",") "then" : DdlProjectionPremises;
+        DdlProjectionPremiseCall .
+            |- "projection" name@Ident "(" guest@Ident "," host@Ident ")"
+                : DdlProjectionPremise;
+        DdlProjectionPremiseTransition .
+            |- left@Ident "~>" right@Ident : DdlProjectionPremise;
+        DdlProjectionRuleDirect . head:DdlProjectionRowHead, left:DdlRuleAst,
+            direction:DdlProjectionDirection,
+            right:DdlRuleAst
+            |- head left direction right ";" : DdlProjectionRule;
+        DdlProjectionRuleConditional . head:DdlProjectionRowHead,
+            premises:DdlProjectionPremises, left:DdlRuleAst,
+            direction:DdlProjectionDirection, right:DdlRuleAst
+            |- head premises left direction right ";" : DdlProjectionRule;
 
         DdlRuleAstSubst . abstraction:DdlRuleAst, argument:DdlRuleAst
             |- "(" "subst" abstraction argument ")" : DdlRuleAst;
+        DdlRuleAstHostSExp . arguments:Vec(DdlRuleAst)
+            |- "(" "host" "::" label@Ident arguments.*sep("") ")" : DdlRuleAst;
         DdlRuleAstSExp . arguments:Vec(DdlRuleAst)
             |- "(" label@Ident arguments.*sep("") ")" : DdlRuleAst;
+        DdlRuleAstBoolean . value:Bool |- value : DdlRuleAst;
+        DdlRuleAstString . |- raw@StringLiteral : DdlRuleAst;
+        DdlRuleAstInteger . value:Int |- value : DdlRuleAst;
         DdlRuleAstAbs . body:DdlRuleAst |- "^" binder@Ident "." body : DdlRuleAst;
         DdlRuleAstCollectionEmpty . |- "{" "}" : DdlRuleAst;
         DdlRuleAstCollection . items:DdlRuleAstItems |- "{" items "}" : DdlRuleAst;

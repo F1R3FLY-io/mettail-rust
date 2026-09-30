@@ -2921,6 +2921,7 @@ mod tests {
         use mettail_ast::language::LangType;
         let mut lang = mettail_ast::language::LanguageDef {
             name: Ident::new("Toy", proc_macro2::Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

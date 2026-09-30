@@ -985,6 +985,7 @@ mod tests {
     fn empty_lang() -> mettail_ast::language::LanguageDef {
         mettail_ast::language::LanguageDef {
             name: Ident::new("Test", Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

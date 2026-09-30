@@ -451,6 +451,7 @@ mod tests {
     fn synthetic_language() -> LanguageDef {
         LanguageDef {
             name: Ident::new("ToyLang", Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),
@@ -499,6 +500,7 @@ mod tests {
             .collect();
         LanguageDef {
             name: Ident::new(&format!("ScaleLang{rule_count}"), Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),
@@ -520,6 +522,7 @@ mod tests {
     fn var_only_language() -> LanguageDef {
         LanguageDef {
             name: Ident::new("VarLang", Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),
@@ -578,6 +581,7 @@ mod tests {
     fn empty_language_does_not_panic() {
         let lang = LanguageDef {
             name: Ident::new("Empty", Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

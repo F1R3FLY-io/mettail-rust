@@ -5343,6 +5343,7 @@ mod tests {
     fn language(terms: Vec<GrammarRule>) -> LanguageDef {
         LanguageDef {
             name: ident("DisplayProjectionTest"),
+            version: None,
             options: HashMap::new(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

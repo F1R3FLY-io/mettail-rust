@@ -165,6 +165,7 @@ theories/TermCategoryObservation.v
 theories/LogicalEoiObservation.v
 theories/OwnedLexicalAdapter.v
 theories/StructuralHoleBridge.v
+theories/StructuralHolePrefixRoute.v
 theories/ClosedFltFamily.v
 theories/LeadingCategoryContinuation.v
 theories/ConstructorElectionEvidence.v
@@ -175,6 +176,7 @@ theories/LiteralCarrierContextIndependence.v
 # Nested Optional/BinderList PDA frame identity and typed-continuation laws.
 theories/BinderTraversalFrames.v
 theories/TokenKindBindingObservation.v
+theories/GuardedIdentAlternatives.v
 theories/StructuralTerminalRoster.v
 theories/RegexCharacterProfile.v
 theories/TerminalOccurrence.v

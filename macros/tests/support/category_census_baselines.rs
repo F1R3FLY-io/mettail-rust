@@ -38,6 +38,7 @@ fn token(category: Option<&str>, from_literals: bool) -> TokenDef {
 fn original_census_preserves_five_pass_priority_and_source_order() {
     let language = LanguageDef {
         name: id("CensusBaseline"),
+        version: None,
         options: Default::default(),
         extends_names: vec![],
         include_names: vec![],

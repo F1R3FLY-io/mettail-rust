@@ -1,8 +1,8 @@
 # Complete Module and Theory surface for MeTTaIL declarations
 
-Status: design proposal for Greg and Mike's review. The complete syntax in this document is **not yet implemented**; category carriers, variable admission, and term association/binding metadata already have authored forms. The authored theory uses Greg and Mike's existing `Terms`, `Equations`, and `Rewrites` to define semantics. `Exports` retains its existing category visibility and renaming role; it does **not** redeclare semantic operations. This does not define another host language or remove the data-faithful canonical representation.
+Status: design proposal for Greg and Mike's review, partially implemented. The generated Rholang frontend now parses `noadmit`, simple carrier annotations, term attributes, typed projection groups inside `Rewrites`, the closed `Options { Semantics { Limits { … } } }` form, and an initial BNFC-shaped `token Name ::= Reg;` form. Complete `Reg` validation, the remaining `Options`, and modal-token surfaces proposed below remain to be implemented. The authored theory uses Greg and Mike's existing `Terms`, `Equations`, and `Rewrites` to define semantics. `Exports` retains its existing category visibility and renaming role; it does **not** redeclare semantic operations. This does not define another host language or remove the data-faithful canonical representation.
 
-The immediate motivation is the remaining `Data({...})` blocks in the [Regex GSLT application](../../../rholang-runtime/tests/fixtures/regex_gslt_application.rho). They currently carry (1) literal tokens and (2) typed rewrites, rights, OSLF actions and observations, and limits. Sorts, carriers, variable admission, and operator binding metadata already have authored `Types`/`Terms` forms. The readable `Terms`, `Equations`, and `Rewrites` already state the guest language's semantics. The present runtime service selects named action and observation records, but that implementation requirement does **not** justify making authors duplicate their rewrite rules as new Theory declarations. The data-faithful form remains available for automatic construction and analysis; eliminating presentation `Data` from the authored Regex source requires a general FLT-to-rewrite-relation execution path, not additional semantic syntax.
+The immediate motivation is the two remaining `Data({...})` blocks in the [Regex GSLT application](../../../rholang-runtime/tests/fixtures/regex_gslt_application.rho). They currently carry (1) literal tokens and (2) typed rewrites, rights, and OSLF actions and observations. Semantic limits now use `Options { Semantics { Limits { … } } }`. Category admission, simple carriers, and operator attributes have already moved to authored builders. The readable `Terms`, `Equations`, and `Rewrites` state the guest language's semantics. The present runtime service selects named action and observation records, but that implementation requirement does **not** justify making authors duplicate their rewrite rules as new Theory declarations. The data-faithful form remains available for automatic construction and analysis; eliminating presentation `Data` from the authored Regex source requires a general FLT-to-rewrite-relation execution path, not additional semantic syntax.
 
 The authoritative sources have different jobs: `MeTTaIL/GSLT/src/main/bnfc/metta_venus.cf` is the **BNFC reference for a readable token-regex surface**; `f1r3node-rust-module-syntax/module-syntax/documentation/mettail-ddl-and-modules-2026-08-19.md` supplies **Greg and Mike's `Module`/`Theory`, `Types`, and judgment-form `Terms` structure**. Their document leaves retention of BNFC pragmas, including `token` and `position token`, open in §9.4. This proposal adopts a **BNFC-inspired**, not byte-for-byte BNFC-compatible, token declaration form inside the module structure. The established PraTTaIL regex compiler retains its semantics; similarity of spelling does not import BNFC's character classes or every BNFC operator. The [BNFC LBNF reference](https://github.com/BNFC/bnfc/blob/master/docs/lbnf.rst#lexer-definitions) documents the inspiration. Current implementation boundaries are the generated [Rholang specification](../../../languages/src/rholang.rs), [authoring schema](../../../mettail-elab/src/schema.rs), [canonical language core](../../../grammar-core/src/language_core.rs), and [runtime lexer-image compiler](../../../prattail/src/runtime_backend.rs).
 
@@ -22,16 +22,16 @@ This excerpt shows the authored language definition, not a field-by-field transc
 Module RegexGSLT {
   Theory Regex() {
     Types {
-      Pattern;
-      Computation;
-      NFrames;
-      DFrames;
-      EFrames;
-      MatchResult;
-      ReplacementTemplate;
-      PrefixResult;
-      Scalar = String;
-      Text = String;
+      noadmit Pattern;
+      noadmit Computation;
+      noadmit NFrames;
+      noadmit DFrames;
+      noadmit EFrames;
+      noadmit MatchResult;
+      noadmit ReplacementTemplate;
+      noadmit PrefixResult;
+      noadmit Scalar = String;
+      noadmit Text = String;
       noadmit Bool = bool;
       noadmit Flag = bool;
       noadmit Nat = BigInt;
@@ -84,7 +84,7 @@ Module RegexGSLT {
 }
 ```
 
-The Regex fixture sets `admits_variables: false` for `Bool`, `Flag`, `Nat`, and `Grade` only. The proposed `noadmit Category;` spelling (or `noadmit Category = Carrier;` with a carrier) lowers only that category to the existing `admits_variables: false` schema property; a plain `Category;` retains the current `admits_variables: true` default. A *variable term* is an object-language term admitted by the guest-language category, not a rewrite-rule metavariable such as `p:Pattern` or an FLT hole. The four `noadmit` prefixes reflect those exact false settings; ordinary category declarations have no prefix. This does not remove declared constructors, prevent GSLT rules from executing, or grant or revoke runtime authority. It cannot simply be inferred from an absent variable rule: the existing generated parser can synthesize variable forms for ordinary categories ([implicit-variable rule](../../../macros/src/gen/mod.rs)). The compile-time `data` role is **not** reused: it also changes generated semantic-operation axes and is broader than the single `admits_variables` field ([semantic operation categories](../../../macros/src/logic/common.rs)). The in-Rholang DDL parser already accepts the shown `noadmit` and native-carrier spellings. Neither is related to the exact programmatic `Data(value)` builder.
+The Regex fixture sets `admits_variables: false` for all 14 of its object categories. The implemented `noadmit Category;` spelling (or `noadmit Category = Carrier;` with a carrier) lowers only that category to the existing `admits_variables: false` schema property; a plain `Category;` retains the current `admits_variables: true` default. A *variable term* is an object-language term admitted by the guest-language category, not a rewrite-rule metavariable such as `p:Pattern` or an FLT hole. Regex has no authored object-variable syntax: without closure, the identifier `a` in `fullMatch(a+, …)` has both an object-variable and a literal reading, and `noMatch` can be misread as a `MatchResult` variable. The `noadmit` declarations remove only those implicit variable readings. They do not remove declared constructors, prevent GSLT rules or FLT holes from executing, or grant or revoke runtime authority. This cannot simply be inferred from an absent variable rule: the existing generated parser can synthesize variable forms for ordinary categories ([implicit-variable rule](../../../macros/src/gen/mod.rs)). The compile-time `data` role is **not** reused: it also changes generated semantic-operation axes and is broader than the single `admits_variables` field ([semantic operation categories](../../../macros/src/logic/common.rs)). The generated in-Rholang DDL parser and structural elaborator accept `noadmit`, a simple carrier name, and their combination. The complete carrier/refinement surface shown below remains to be implemented. These declarations are distinct from the exact programmatic `Data(value)` builder.
 
 ### Language semantics, module visibility, and FLT execution
 
@@ -103,6 +103,8 @@ The current [semantic service](../../../rholang-runtime/src/semantic_service.rs)
 For Regex, an FLT containing `fullMatch(...)` is a `Computation` term. The rewrite relation itself decides each successor, including the `StartFullMatch` step; no extra public operation name or entry-rule declaration is needed. A normalizing FLT request must retain every admissible successor until the chosen bounded policy has enough evidence to finish or reports `Undetermined`. A Rholang FLT pattern can then match a completed `doneBool(yes)` or `doneBool(no)` term structurally, as the existing application already does for `yes`. A `where` guard may accept only according to its explicit caller-side pattern and completeness policy; an exhausted, conflicting, or unmatched result must not silently become `false`.
 
 The Regex rule intrinsics are a closed, pure set in the current core. For a general effectful theory, purity and capability requirements must be checked from the actual transition primitives and their trusted signatures before admitting an effectful or guard invocation; a source-level `effect Pure` assertion cannot make an effectful rule pure. Requested rights remain outside `LanguageCoreV1`: omission requests the current native-FLT default set (`Parse`, `Construct`, `Match`, `Observe`, `ReflectAst`, `Reduce`), while an explicit empty request asks for none. Neither request grants authority. `Options.Semantics.Limits` overrides the bounded theory defaults; exhaustion is a refusal or `Undetermined`, never fabricated logical evidence.
+
+The implemented limits block recognizes exactly `max_rule_variables`, `max_term_nodes`, `max_premise_nodes`, `max_proof_nodes`, `max_frontier`, `max_steps`, `max_grade_bits`, `max_output_nodes`, and `max_output_bytes`. Each assignment is a checked unsigned 32-bit integer. Unknown names, repeated names or sections, negative values, and out-of-range values are rejected before they reach the canonical `oslf.limits` field. This is configuration of the existing semantic image, not an additional reduction rule or grant. The other `Options` sections in the example remain proposed syntax.
 
 `token Scalar ::= Reg;` and `token Nat ::= Reg;` deliberately resemble BNFC token declarations, but `Reg` uses all existing PraTTaIL lexer-regex forms. For these two names, the typed `Types` declarations determine the existing native decoder deterministically: `String` maps to the checked `carrier str` representation and `BigInt` to `carrier int`. That inference is a proposed *elaboration rule*; it must be proved equal to the fixture's explicit `literals[].eval` values. A nondefault decoder remains an explicitly typed declaration, never an inference from the spelling of `Scalar` or `Nat`. Unlike BNFC's `["abc"]` enumeration, the unquoted `[A-Z]` character class uses PraTTaIL's existing range semantics. The two declarations lower to the fixture's unchanged runtime patterns `[A-Za-z0-9\u{80}-\u{10FFFF}]` and `[0-9]+` (the JSON source escapes each backslash), with no lexer-language or token-priority change.
 
@@ -182,7 +184,7 @@ The [current schema](../../../mettail-elab/src/schema.rs) accepts more fields th
 | Canonical field family | Authoring role and boundary |
 |---|---|
 | `mettail`, `name` | Derived from the language profile and enclosing `Theory`; ordinary `Data` fragments still may not override them. |
-| `types` | Existing `Types` declares category names. The implemented per-category carrier annotations and `noadmit` prefixes expose the already-present native/collection/extern carrier, `admits_variables`, collection delimiter, and refinement fields; collection delimiter and refinement forms remain proposed. |
+| `types` | Existing `Types` declares category names; the generated parser now accepts `noadmit` and simple carrier names. Collection/extern carrier structure, delimiters, and refinement fields still require the complete authored surface and checked lowering proposed here. |
 | `literals` | BNFC-inspired `token Category ::= Reg;` inside `Terms` for a carrier-backed category; the `Types` carrier supplies the checked default decoder. An explicit typed decoder override covers the other native-evaluation variants. |
 | `tokens` | The same `token Name ::= Reg;` inside `Terms` for named tokens; `Options.Lexer.TokenOptions` attaches optional category/decoder, priority, push/pop, and stream without altering that declaration form. `position token` requires an additional canonical position field. |
 | `modes` | `Modes` declares name, optional `raw`, and its ordered token declarations. |

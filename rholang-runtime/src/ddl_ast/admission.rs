@@ -100,6 +100,10 @@ pub(super) fn expansion(
             },
         ),
         Task::CatDecl(_) | Task::Sort(_) => (1, 1),
+        Task::OptionSection(DdlOptionSection::DdlOptionSemanticsLimits(entries)) => {
+            (2, add(entries.len(), 1)?)
+        },
+        Task::LimitEntry(_) => (1, 2),
         Task::Export(export) => (
             2,
             match export {
@@ -170,13 +174,35 @@ pub(super) fn expansion(
                     },
                     reserve,
                 )?,
+                DdlRewrite::DdlRewriteProjection(_, _, _, _, rules) => rules.len(),
+                DdlRewrite::DdlRewriteCarrierProjection(..) => 0,
             };
-            (2, add(len, 4)?)
+            (2, add(len, 5)?)
+        },
+        Task::ProjectionRule(..) => (2, 5),
+        Task::ProjectionHead(head) => match head {
+            DdlProjectionRowHead::DdlProjectionHeadPlain(..) => (2, 2),
+            DdlProjectionRowHead::DdlProjectionHeadContext(_, bindings) => {
+                (2, add(bindings.len(), 2)?)
+            },
+        },
+        Task::ProjectionBinding(..) => (1, 2),
+        Task::ProjectionPremises(premises) => match premises {
+            DdlProjectionPremises::DdlProjectionPremisesList(clauses) => {
+                (2, add(clauses.len(), 1)?)
+            },
+        },
+        Task::ProjectionPremise(premise) => match premise {
+            DdlProjectionPremise::DdlProjectionPremiseCall(..) => (1, 3),
+            DdlProjectionPremise::DdlProjectionPremiseTransition(..) => (1, 2),
         },
         Task::TheoryExpr(expression) => theory(expression)?,
         Task::RuleAst(ast) => match ast {
             DdlRuleAst::DdlRuleAstSubst(..) | DdlRuleAst::DdlRuleAstAbs(..) => (1, 2),
-            DdlRuleAst::DdlRuleAstSExp(_, arguments) => (2, add(arguments.len(), 2)?),
+            DdlRuleAst::DdlRuleAstSExp(_, arguments)
+            | DdlRuleAst::DdlRuleAstHostSExp(_, arguments) => (2, add(arguments.len(), 2)?),
+            DdlRuleAst::DdlRuleAstBoolean(_) => (1, 0),
+            DdlRuleAst::DdlRuleAstString(_) | DdlRuleAst::DdlRuleAstInteger(_) => (1, 1),
             DdlRuleAst::DdlRuleAstCollectionEmpty => (2, 1),
             DdlRuleAst::DdlRuleAstCollection(items) => {
                 let len = linked_len(
@@ -220,6 +246,7 @@ fn theory(expression: &DdlTheoryExpr) -> Result<(usize, usize), RholangAstLowerE
         DdlTheoryTerms(_, entries) => (3, add(entries.len(), 3)?),
         DdlTheoryEquations(_, entries) => (3, add(entries.len(), 3)?),
         DdlTheoryRewrites(_, entries) => (3, add(entries.len(), 3)?),
+        DdlTheoryOptions(_, sections) => (3, add(sections.len(), 3)?),
         DdlTheoryData(..) => (2, 3),
         DdlTheoryEmpty => (1, 0),
         DdlTheoryFree(_) => (1, 1),
@@ -233,6 +260,7 @@ fn theory(expression: &DdlTheoryExpr) -> Result<(usize, usize), RholangAstLowerE
         DdlTheoryTermsImplicit(entries) => (4, add(entries.len(), 3)?),
         DdlTheoryEquationsImplicit(entries) => (4, add(entries.len(), 3)?),
         DdlTheoryRewritesImplicit(entries) => (4, add(entries.len(), 3)?),
+        DdlTheoryOptionsImplicit(sections) => (4, add(sections.len(), 3)?),
         DdlTheoryDataImplicit(_) => (3, 3),
     })
 }

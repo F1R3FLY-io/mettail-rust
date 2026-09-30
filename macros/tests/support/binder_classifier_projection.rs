@@ -88,6 +88,7 @@ fn rule(params: Vec<TermParam>, syntax: Vec<SyntaxExpr>) -> GrammarRule {
 fn language() -> LanguageDef {
     LanguageDef {
         name: id("ProjectionLanguage"),
+        version: None,
         options: Default::default(),
         extends_names: Vec::new(),
         include_names: Vec::new(),

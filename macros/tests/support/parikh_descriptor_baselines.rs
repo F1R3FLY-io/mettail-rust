@@ -37,6 +37,7 @@ fn rule(category: &str, context: Vec<TermParam>, syntax: Option<Vec<SyntaxExpr>>
 fn language(terms: Vec<GrammarRule>) -> LanguageDef {
     LanguageDef {
         name: ident("ParikhBaseline"),
+        version: None,
         options: Default::default(),
         extends_names: vec![],
         include_names: vec![],

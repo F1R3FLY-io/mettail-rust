@@ -80,7 +80,9 @@ Proof.
   - split; intros H; [discriminate|contradiction].
   - destruct (available bases category); simpl.
     + exact IH.
-    + split; intros; discriminate.
+    + split.
+      * intros _ Hnil; discriminate Hnil.
+      * intros _; reflexivity.
 Qed.
 
 Theorem no_base_is_not_a_grammar_claim : forall bases category,

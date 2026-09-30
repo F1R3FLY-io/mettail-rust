@@ -2192,6 +2192,7 @@ mod tests {
     fn empty_lang() -> LanguageDef {
         LanguageDef {
             name: Ident::new("LexAltPhaseTest", Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

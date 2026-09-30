@@ -59,6 +59,13 @@ pub fn generate_metadata(
     let name = &language.name;
     let name_str = name.to_string();
     let name_lit = LitStr::new(&name_str, name.span());
+    let version = match &language.version {
+        Some(value) => {
+            let literal = LitStr::new(value, name.span());
+            quote! { Some(#literal) }
+        },
+        None => quote! { None },
+    };
     let fingerprint = mettail_ast::identity::language_definition_fingerprint(language);
     let fingerprint_lit = LitStr::new(&fingerprint, name.span());
     let source_lit = LitStr::new(definition_source, Span::call_site());
@@ -113,6 +120,10 @@ pub fn generate_metadata(
 
         impl mettail_runtime::LanguageMetadata for #metadata_name {
             fn name(&self) -> &'static str { #name_lit }
+
+            fn version(&self) -> Option<&'static str> {
+                #version
+            }
 
             fn definition_fingerprint(&self) -> Option<&'static str> {
                 Some(#fingerprint_lit)
@@ -2018,6 +2029,30 @@ mod tests {
     }
 
     #[test]
+    fn generated_metadata_exposes_checked_language_version() {
+        let source = r#"
+            name: MetadataVersion,
+            version: "1.4-preview.2",
+            types { Proc }
+            terms { Zero . |- "0" : Proc ; }
+        "#;
+        let versioned = syn::parse_str::<LanguageDef>(source).expect("versioned fixture");
+        let rendered = generate_metadata(&versioned, source, &[])
+            .expect("versioned metadata")
+            .to_string();
+        assert!(rendered.contains("fn version (& self) -> Option < & 'static str >"));
+        assert!(rendered.contains("Some (\"1.4-preview.2\")"));
+
+        let unversioned =
+            syn::parse_str::<LanguageDef>(&source.replace("version: \"1.4-preview.2\",", ""))
+                .expect("unversioned fixture");
+        let rendered = generate_metadata(&unversioned, source, &[])
+            .expect("unversioned metadata")
+            .to_string();
+        assert!(rendered.contains("fn version (& self) -> Option < & 'static str > { None }"));
+    }
+
+    #[test]
     fn rewrite_metadata_marks_synthetic_injection_guard_as_guarded() {
         let proc = syn::Ident::new("Proc", Span::call_site());
         let p = syn::Ident::new("P", Span::call_site());
@@ -2035,6 +2070,7 @@ mod tests {
         };
         let language = LanguageDef {
             name: syn::Ident::new("TestLang", Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

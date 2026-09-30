@@ -189,7 +189,8 @@ pub enum Builder {
     Replacements(Vec<Replacement>),
     Terms(Vec<TermDecl>),
     Equations(Vec<Equation>),
-    Rewrites(Vec<RewriteDecl>),
+    Rewrites(Vec<RewriteEntry>),
+    Options(Vec<OptionSection>),
     /// A canonical `language/2` partial value. It is decoded through the same
     /// closed schema as a directly published value, then applied in field
     /// order by the elaborator.
@@ -205,9 +206,24 @@ impl Builder {
             Builder::Terms(_) => "Terms",
             Builder::Equations(_) => "Equations",
             Builder::Rewrites(_) => "Rewrites",
+            Builder::Options(_) => "Options",
             Builder::Data(_) => "Data",
         }
     }
+}
+
+/// Closed authored configuration sections. These are not semantic axioms;
+/// they project onto the existing canonical configuration fields.
+#[derive(Clone, Debug)]
+pub enum OptionSection {
+    SemanticsLimits(Vec<LimitAssignment>),
+}
+
+#[derive(Clone, Debug)]
+pub struct LimitAssignment {
+    pub name: String,
+    pub value: u32,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -397,6 +413,64 @@ pub struct RewriteDecl {
     pub lhs: Ast,
     pub rhs: Ast,
     pub span: Span,
+}
+
+/// Entries of one authored `Rewrites` builder remain in source order. A
+/// projection is a selected cross-language relation, never an ordinary
+/// guest-to-guest rewrite.
+#[derive(Clone, Debug)]
+pub enum RewriteEntry {
+    Ordinary(RewriteDecl),
+    Projection(ProjectionDecl),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectionDirection {
+    GuestToHost,
+    HostToGuest,
+    Both,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectionDecl {
+    pub name: Ident,
+    pub guest: Cat,
+    /// A category name from the pinned host grammar signature, not a guest
+    /// declaration and not a new host category.
+    pub host: Cat,
+    pub direction: ProjectionDirection,
+    pub body: ProjectionBody,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectionBody {
+    /// Request an existing checked native-carrier structural codec.
+    Carrier,
+    Rules(Vec<ProjectionRule>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectionRule {
+    pub name: Ident,
+    pub bindings: Vec<ProjectionBinding>,
+    pub premises: Vec<ProjectionPremise>,
+    pub guest: RhoValue,
+    pub host: RhoValue,
+    pub direction: ProjectionDirection,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectionBinding {
+    Guest { name: Ident, category: Cat },
+    Host { name: Ident, category: Cat },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectionPremise {
+    Call { name: Ident, guest: Ident, host: Ident },
+    Transition { left: Ident, right: Ident },
 }
 
 #[derive(Clone, Debug)]

@@ -120,6 +120,18 @@ against the installed category before publication. This lets a theory use
 closed literal syntax while still allowing typed construction and receive
 holes; it does not grant parser, construction or matching authority.
 
+Because a structural hole has no token kind, it cannot enter a rule solely
+through the lexer's FIRST-token buckets. The shared authored prefix classifier
+therefore retains category-leading and transparent projection rows in an
+ordered, token-independent sidecar, including rows whose source category has
+no lexical FIRST token or whose token reading is excluded by a lexical
+compatibility gate. At a hole, the owned WPDA admits each row only if the
+hole's declared category is its source or reaches that source through the
+grammar's category relation; category-leading rows also obey their declared
+binding-power floor. It then invokes the same transition builders used by
+token routing, retaining their weights and continuations. The sidecar adds no
+guest-variable production and does not change ordinary token dispatch.
+
 Scoped interface laws are checked in
 [`InstalledRuntimeBackend`](../../formal/rocq/runtime_grammar/theories/InstalledRuntimeBackend.v),
 [`InstalledWalkerResources`](../../formal/rocq/prattail_wpda_runtime/theories/InstalledWalkerResources.v)

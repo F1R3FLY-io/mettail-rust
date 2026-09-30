@@ -309,6 +309,7 @@ fn nested_optional_binder_rule() -> GrammarRule {
 fn nested_optional_language(rule: GrammarRule) -> LanguageDef {
     LanguageDef {
         name: Ident::new("NestedOptional", Span::call_site()),
+        version: None,
         options: Default::default(),
         extends_names: Vec::new(),
         include_names: Vec::new(),

@@ -1,8 +1,34 @@
 use mettail_languages::rholang::{
     lex, lex_dag, DdlEquation, DdlImport, DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlRewrite,
-    DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
+    DdlLimitEntry, DdlOptionSection, DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
 };
 use mettail_prattail::automata::TokenKind;
+use mettail_runtime::Language;
+
+#[test]
+fn projection_host_categories_are_the_generated_rholang_categories() {
+    use mettail_languages::rholang::RholangLanguage;
+
+    let metadata = RholangLanguage.metadata();
+    let categories = metadata.types();
+    for name in ["Bool", "Str", "Proc"] {
+        assert!(
+            categories.iter().any(|category| category.name == name),
+            "host::{name} must resolve in the generated Rholang grammar"
+        );
+    }
+    assert_eq!(
+        categories.iter().filter(|category| category.name == "Bool").count(),
+        1,
+        "a projection must not introduce another host Bool category"
+    );
+    assert!(
+        metadata
+            .definition_fingerprint()
+            .is_some_and(|fingerprint| !fingerprint.is_empty()),
+        "host category references need the generated grammar identity"
+    );
+}
 
 fn run_ddl_sexp_action(
     items: Vec<mettail_prattail::wpda_runtime::ActionArg>,
@@ -105,6 +131,25 @@ fn assert_theory_ref(expression: &DdlTheoryExpr, expected: &str) {
 }
 
 #[test]
+fn options_semantic_limits_are_structural_in_the_generated_rholang_ast() {
+    let source = "Theory Limited() { Types { Work; } Options { Semantics { Limits { max_steps = 64; max_frontier = 8; } } } }";
+    let term = assert_roundtrip(source);
+    let Proc::DdlTheory(_, _, body) = &term else {
+        panic!("expected structural Theory declaration");
+    };
+    let DdlTheoryExpr::DdlTheoryOptions(base, sections) = body.as_ref() else {
+        panic!("expected structural Options builder, got {body:?}");
+    };
+    assert!(matches!(base.as_ref(), DdlTheoryExpr::DdlTheoryTypesImplicit(_)));
+    let [DdlOptionSection::DdlOptionSemanticsLimits(entries)] = sections.as_slice() else {
+        panic!("expected one Semantics.Limits section");
+    };
+    assert!(matches!(entries.as_slice(),
+        [DdlLimitEntry::DdlLimitAssignment(first, _), DdlLimitEntry::DdlLimitAssignment(second, _)]
+        if first == "max_steps" && second == "max_frontier"));
+}
+
+#[test]
 fn theory_is_a_structural_proc_form() {
     let term = assert_roundtrip("Theory RhoCalc() { Empty }");
     match &term {
@@ -168,6 +213,31 @@ fn judgement_term_and_builder_chain_parse_structurally() {
     let rewrite = DdlRewrite::parse("RDrop : (PDrop (NQuote P)) ~> P;")
         .expect("a named direct rewrite must parse independently");
     assert_eq!(DdlRewrite::parse(&rewrite.to_string()).unwrap(), rewrite);
+
+    let projection = DdlRewrite::parse(
+        "projection Boolean : Bool <~> host::Bool { Yes : (BTrue) <~> true; No : (BFalse) <~> false; }",
+    )
+    .expect("a bidirectional typed projection must parse structurally");
+    assert_eq!(DdlRewrite::parse(&projection.to_string()).unwrap(), projection);
+    let reverse = DdlRewrite::parse(
+        "projection BooleanImport : Bool <~ host::Bool { Yes : (BTrue) <~ true; }",
+    )
+    .expect("a reverse projection keeps the guest on the left");
+    assert_eq!(DdlRewrite::parse(&reverse.to_string()).unwrap(), reverse);
+    let carrier = DdlRewrite::parse("projection TextValue : Text <~> host::Str via carrier;")
+        .expect("carrier transport is an explicit typed declaration");
+    let rendered = carrier.to_string();
+    let reparsed = DdlRewrite::parse(&rendered)
+        .unwrap_or_else(|error| panic!("carrier render `{rendered}` failed: {error}"));
+    assert_eq!(reparsed, carrier);
+    let conditional = DdlRewrite::parse(
+        "projection CompletedBoolean : Computation ~> host::Bool { Done(b:Bool,h:host::Bool): if projection Boolean(b,h) then (DoneBool b) ~> h; }",
+    )
+    .expect("a typed projection premise must parse in its generated Rholang DDL category");
+    let rendered = conditional.to_string();
+    let reparsed = DdlRewrite::parse(&rendered)
+        .unwrap_or_else(|error| panic!("conditional render `{rendered}` failed: {error}"));
+    assert_eq!(reparsed, conditional);
 
     let complete_builder = DdlTheoryExpr::parse(
         r#"

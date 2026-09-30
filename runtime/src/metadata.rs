@@ -21,6 +21,13 @@ pub trait LanguageMetadata: 'static + Send + Sync {
     /// The language name (e.g., "Rholang")
     fn name(&self) -> &'static str;
 
+    /// Explicit grammar version declared by `language!`, when present.
+    /// This label is exact checked definition metadata, not installation
+    /// authority; an omitted version remains `None` for older definitions.
+    fn version(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Stable compiler-facing fingerprint of the macro-expanded `LanguageDef`.
     ///
     /// This is implementation identity data used to reject backend plans derived

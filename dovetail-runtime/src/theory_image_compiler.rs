@@ -13,21 +13,25 @@ use dovetail::set_automaton::{
 };
 use mettail_grammar_core::{
     theory_guard_commitment_v1, CollectionKind, JudgmentAtomV1, JudgmentDeclV1, JudgmentRuleV1,
-    LanguageCoreV1, SemanticActionExecutionV1, SemanticActionV1, TheoryActionExecutionImageV1,
-    TheoryActionId, TheoryActionImageV1, TheoryConstructorId, TheoryConstructorImageV1,
-    TheoryEffectId, TheoryGrammarConstructorV1, TheoryImageAdmissionLimits, TheoryImageError,
-    TheoryImageIntrinsicV1, TheoryImageJudgmentAtomV1, TheoryImageOperatorV1,
-    TheoryImagePremiseFormV1, TheoryImagePremiseNodeV1, TheoryImageTermFormV1,
-    TheoryImageTermNodeV1, TheoryImageVariableV1, TheoryIntrinsicV1, TheoryJudgmentId,
-    TheoryJudgmentImageV1, TheoryJudgmentPatternAutomatonV1, TheoryJudgmentPatternEntryV1,
-    TheoryJudgmentRuleProgramId, TheoryJudgmentRuleProgramV1, TheoryPatternAutomatonV1,
-    TheoryPatternEntryId, TheoryPatternEntryV1, TheoryPatternInvocationV1,
-    TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1, TheoryPremiseFormV1,
-    TheoryResourceProfileV1, TheoryRuleArenaV1, TheoryRuleDirectionV1, TheoryRuleDispositionV1,
-    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheoryRuleReferenceV1,
-    TheoryRuleSuppressionV1, TheorySemanticImageV1, TheorySortId, TheorySortImageV1,
-    TheorySortKindImageV1, TheorySortKindV1, TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1,
-    TheoryVariableId, TheoryWorkChargeV1, THEORY_IMAGE_COMPILER_ABI_CURRENT,
+    LanguageCoreV1, LanguageRight, LanguageRights, ProjectedLanguageCoreV1,
+    ProjectedTheorySemanticImageV1, ProjectionBodyV1, ProjectionDirectionV1,
+    ProjectionHostSignatureV1, ProjectionRelationBodyImageV1, ProjectionRelationImageV1,
+    ProjectionRuleImageEntryV1, SemanticActionExecutionV1, SemanticActionV1, SemanticEffectClassV1,
+    TheoryActionExecutionImageV1, TheoryActionId, TheoryActionImageV1, TheoryConstructorId,
+    TheoryConstructorImageV1, TheoryConstructorV1, TheoryEffectId, TheoryGrammarConstructorV1,
+    TheoryImageAdmissionLimits, TheoryImageError, TheoryImageIntrinsicV1,
+    TheoryImageJudgmentAtomV1, TheoryImageOperatorV1, TheoryImagePremiseFormV1,
+    TheoryImagePremiseNodeV1, TheoryImageTermFormV1, TheoryImageTermNodeV1, TheoryImageVariableV1,
+    TheoryIntrinsicV1, TheoryJudgmentId, TheoryJudgmentImageV1, TheoryJudgmentPatternAutomatonV1,
+    TheoryJudgmentPatternEntryV1, TheoryJudgmentRuleProgramId, TheoryJudgmentRuleProgramV1,
+    TheoryPatternAutomatonV1, TheoryPatternEntryId, TheoryPatternEntryV1,
+    TheoryPatternInvocationV1, TheoryPatternStateFormV1, TheoryPatternStateId,
+    TheoryPatternStateV1, TheoryPremiseFormV1, TheoryResourceProfileV1, TheoryRuleArenaV1,
+    TheoryRuleDirectionV1, TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId,
+    TheoryRuleProgramV1, TheoryRuleReferenceV1, TheoryRuleSuppressionV1, TheorySemanticImageV1,
+    TheorySortId, TheorySortImageV1, TheorySortKindImageV1, TheorySortKindV1, TheorySortV1,
+    TheoryTermFormV1, TheoryTermId, TheoryTermNodeV1, TheoryVariableId, TheoryWorkChargeV1,
+    PROJECTED_THEORY_IMAGE_ABI_V1, THEORY_IMAGE_COMPILER_ABI_CURRENT,
     THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT, THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -59,6 +63,7 @@ pub enum TheoryImageCompileError {
         observation: String,
         reason: SemanticMatchUndetermined,
     },
+    Projection(String),
 }
 
 impl fmt::Display for TheoryImageCompileError {
@@ -88,6 +93,7 @@ impl fmt::Display for TheoryImageCompileError {
                 formatter,
                 "invalid predicate role for observation `{observation}`: {reason:?}"
             ),
+            Self::Projection(reason) => write!(formatter, "invalid projected image: {reason}"),
         }
     }
 }
@@ -115,7 +121,7 @@ pub fn compile_theory_semantic_image(
     limits.validate_source(language)?;
     reject_non_progressing_rules(language)?;
     let context = CompileContext::new(language)?;
-    let sorts = compile_sorts(language, &context)?;
+    let sorts = compile_sorts(&language.theory.sorts, &context)?;
     let constructors = compile_constructors(language, &context)?;
     let rules = compile_rules(language, &context)?;
     let patterns = compile_patterns(&rules)?;
@@ -166,6 +172,364 @@ pub fn compile_theory_semantic_image(
     )
     .0?;
     Ok(image)
+}
+
+/// Compile a versioned projection image without changing the legacy image or
+/// its fingerprint. The embedded execution image is private to projection
+/// dispatch: V1 `Rewrite` origins are the shared transition-program encoding,
+/// while `relations` is the authoritative projection provenance and selector.
+pub fn compile_projected_theory_semantic_image(
+    language: &ProjectedLanguageCoreV1,
+    host: &ProjectionHostSignatureV1,
+    limits: TheoryImageAdmissionLimits,
+) -> Result<ProjectedTheorySemanticImageV1, TheoryImageCompileError> {
+    language
+        .validate_header()
+        .map_err(|error| TheoryImageCompileError::Projection(format!("{error:?}")))?;
+    let mut execution = compile_theory_semantic_image(&language.base, limits)?;
+    let base_image_fingerprint = execution
+        .fingerprint()
+        .map_err(TheoryImageCompileError::Image)?;
+    let base_rule_count = checked_u32(execution.rules.len())?;
+    let projected_language_fingerprint = language
+        .fingerprint()
+        .map_err(|error| TheoryImageCompileError::Projection(error.to_string()))?;
+    let (imported_sorts, imported_constructors) = qualify_host_signature(host, limits)?;
+
+    let sort_count = language
+        .base
+        .theory
+        .sorts
+        .len()
+        .checked_add(imported_sorts.len())
+        .ok_or(TheoryImageCompileError::LengthOverflow)?;
+    let constructor_count = language
+        .base
+        .theory
+        .constructors
+        .len()
+        .checked_add(imported_constructors.len())
+        .ok_or(TheoryImageCompileError::LengthOverflow)?;
+    if sort_count > limits.max_sorts || constructor_count > limits.max_constructors {
+        return Err(TheoryImageCompileError::Image(TheoryImageError::LimitExceeded(
+            "projection signature",
+        )));
+    }
+    let mut all_sorts = empty_vec(sort_count)?;
+    all_sorts.extend_from_slice(&language.base.theory.sorts);
+    all_sorts.extend(imported_sorts);
+    let mut all_constructors = empty_vec(constructor_count)?;
+    all_constructors.extend_from_slice(&language.base.theory.constructors);
+    all_constructors.extend(imported_constructors);
+    let context = CompileContext::with_signature(&language.base, &all_sorts, &all_constructors)?;
+    if context.sorts.len() != all_sorts.len()
+        || context.constructors.len() != all_constructors.len()
+    {
+        return Err(TheoryImageCompileError::Projection(
+            "guest and host signatures contain a qualified name collision".into(),
+        ));
+    }
+
+    execution.sorts = compile_sorts(&all_sorts, &context)?;
+    execution
+        .constructors
+        .try_reserve(host.constructors.len())
+        .map_err(|_| TheoryImageCompileError::Allocation)?;
+    for declaration in &all_constructors[language.base.theory.constructors.len()..] {
+        execution.constructors.push(compile_constructor(
+            TheoryConstructorId(checked_u32(execution.constructors.len())?),
+            declaration,
+            None,
+            &context,
+        )?);
+    }
+
+    let projection_rule_count =
+        language
+            .projections
+            .iter()
+            .try_fold(0usize, |count, projection| {
+                let rows = match &projection.body {
+                    ProjectionBodyV1::Carrier => 0,
+                    ProjectionBodyV1::Rules(rows) => rows.len(),
+                };
+                count
+                    .checked_add(rows)
+                    .ok_or(TheoryImageCompileError::LengthOverflow)
+            })?;
+    if execution
+        .rules
+        .len()
+        .checked_add(projection_rule_count)
+        .ok_or(TheoryImageCompileError::LengthOverflow)?
+        > limits.max_rules
+    {
+        return Err(TheoryImageCompileError::Image(TheoryImageError::LimitExceeded("rules")));
+    }
+    execution
+        .rules
+        .try_reserve(projection_rule_count)
+        .map_err(|_| TheoryImageCompileError::Allocation)?;
+    let direction_count = language
+        .projections
+        .iter()
+        .try_fold(0usize, |count, projection| {
+            count
+                .checked_add(projection.directions.len())
+                .ok_or(TheoryImageCompileError::LengthOverflow)
+        })?;
+    if execution
+        .actions
+        .len()
+        .checked_add(direction_count)
+        .ok_or(TheoryImageCompileError::LengthOverflow)?
+        > limits.max_actions
+    {
+        return Err(TheoryImageCompileError::Image(TheoryImageError::LimitExceeded("actions")));
+    }
+    execution
+        .actions
+        .try_reserve(direction_count)
+        .map_err(|_| TheoryImageCompileError::Allocation)?;
+    let mut relations = empty_vec(
+        language
+            .projections
+            .len()
+            .checked_mul(2)
+            .ok_or(TheoryImageCompileError::LengthOverflow)?,
+    )?;
+    for (projection_index, projection) in language.projections.iter().enumerate() {
+        if projection.host.signature_fingerprint != host.signature_fingerprint
+            || projection.host.codec_profile_fingerprint != host.codec_profile_fingerprint
+            || !host
+                .sorts
+                .iter()
+                .any(|sort| sort.name == projection.host.category)
+        {
+            return Err(TheoryImageCompileError::Projection(format!(
+                "projection `{}` is not bound to the supplied host signature and codec profile",
+                projection.name
+            )));
+        }
+        let guest_sort = context.sort(&projection.guest_category)?;
+        let host_sort = context.sort(&format!("host::{}", projection.host.category))?;
+        for direction in &projection.directions {
+            let (input_sort, output_sort) = match direction {
+                ProjectionDirectionV1::GuestToHost => (guest_sort, host_sort),
+                ProjectionDirectionV1::HostToGuest => (host_sort, guest_sort),
+            };
+            let body = match &projection.body {
+                ProjectionBodyV1::Carrier => ProjectionRelationBodyImageV1::Carrier,
+                ProjectionBodyV1::Rules(rows) => {
+                    let mut entries = empty_vec(rows.len())?;
+                    for row in rows.iter().filter(|row| row.direction == *direction) {
+                        if terms_equal(&row.rule.arena, row.rule.left, row.rule.right)? {
+                            return Err(TheoryImageCompileError::NonProgressing {
+                                rule: row.rule.name.clone(),
+                            });
+                        }
+                        let program_id = checked_program_id(execution.rules.len())?;
+                        let program = compile_rule(
+                            program_id,
+                            TheoryRuleOriginV1::Rewrite { source: program_id.0 },
+                            &row.rule.name,
+                            &row.rule.arena,
+                            row.rule.left,
+                            row.rule.right,
+                            true,
+                            &context,
+                        )?;
+                        if program.disposition != TheoryRuleDispositionV1::Executable {
+                            return Err(TheoryImageCompileError::Projection(format!(
+                                "projection row `{}` has no executable orientation",
+                                row.rule.name
+                            )));
+                        }
+                        let left = program.terms.get(program.left.0 as usize);
+                        let right = program.terms.get(program.right.0 as usize);
+                        if left.map(|term| term.sort) != Some(input_sort)
+                            || right.map(|term| term.sort) != Some(output_sort)
+                        {
+                            return Err(TheoryImageCompileError::Projection(format!(
+                                "projection row `{}` has a root outside its declared endpoints",
+                                row.rule.name
+                            )));
+                        }
+                        execution.rules.push(program);
+                        entries.push(ProjectionRuleImageEntryV1 {
+                            program: program_id,
+                            source_occurrence: row.source_occurrence,
+                        });
+                    }
+                    if entries.is_empty() {
+                        return Err(TheoryImageCompileError::Projection(format!(
+                            "projection `{}` declares an empty direction",
+                            projection.name
+                        )));
+                    }
+                    ProjectionRelationBodyImageV1::Rules(entries)
+                },
+            };
+            let dispatch_action = match &body {
+                ProjectionRelationBodyImageV1::Carrier => None,
+                ProjectionRelationBodyImageV1::Rules(entries) => {
+                    let action_id = TheoryActionId(checked_u32(execution.actions.len())?);
+                    let effect_index = language
+                        .base
+                        .theory
+                        .effects
+                        .len()
+                        .checked_add(relations.len())
+                        .ok_or(TheoryImageCompileError::LengthOverflow)?;
+                    let grade = match execution.resource_profile {
+                        TheoryResourceProfileV1::Uncosted => input_sort,
+                        TheoryResourceProfileV1::Costed { grade_sort } => grade_sort,
+                    };
+                    let mut transitions = empty_vec(entries.len())?;
+                    transitions.extend(entries.iter().map(|entry| entry.program));
+                    execution.actions.push(TheoryActionImageV1 {
+                        id: action_id,
+                        domain: vec![input_sort],
+                        codomain: output_sort,
+                        transitions,
+                        effect: TheoryEffectId(checked_u32(effect_index)?),
+                        effect_class: SemanticEffectClassV1::Pure,
+                        required_rights: projection_required_rights(projection, *direction),
+                        grade,
+                        execution: TheoryActionExecutionImageV1::OneStep,
+                    });
+                    Some(action_id)
+                },
+            };
+            relations.push(ProjectionRelationImageV1 {
+                projection: checked_u32(projection_index)?,
+                direction: *direction,
+                input_sort,
+                output_sort,
+                dispatch_action,
+                body,
+            });
+        }
+    }
+    execution.patterns = compile_patterns(&execution.rules)?;
+    execution.language_fingerprint = projected_language_fingerprint;
+    execution.validate_resource_limits(limits)?;
+    execution.validate_automata(limits)?;
+    Ok(ProjectedTheorySemanticImageV1 {
+        abi: PROJECTED_THEORY_IMAGE_ABI_V1,
+        projected_language_fingerprint,
+        base_image_fingerprint,
+        base_rule_count,
+        host_signature_fingerprint: host.signature_fingerprint,
+        host_codec_profile_fingerprint: host.codec_profile_fingerprint,
+        execution,
+        relations,
+    })
+}
+
+fn projection_required_rights(
+    projection: &mettail_grammar_core::TheoryProjectionV1,
+    direction: ProjectionDirectionV1,
+) -> LanguageRights {
+    let mut required = BTreeSet::from([LanguageRight::Match, LanguageRight::Construct]);
+    if let ProjectionBodyV1::Rules(rows) = &projection.body {
+        for row in rows.iter().filter(|row| row.direction == direction) {
+            for premise in &row.rule.arena.premises {
+                match &premise.form {
+                    TheoryPremiseFormV1::Transition { .. } => {
+                        required.insert(LanguageRight::Reduce);
+                    },
+                    TheoryPremiseFormV1::Judgment(_) => {
+                        required.insert(LanguageRight::Check);
+                    },
+                    TheoryPremiseFormV1::Guard(_) => {
+                        required.insert(LanguageRight::Bridge);
+                    },
+                    TheoryPremiseFormV1::Freshness { .. }
+                    | TheoryPremiseFormV1::ForAll { .. }
+                    | TheoryPremiseFormV1::Intrinsic(_) => {},
+                }
+            }
+        }
+    }
+    LanguageRights::from_rights(required)
+}
+
+fn qualify_host_signature(
+    host: &ProjectionHostSignatureV1,
+    limits: TheoryImageAdmissionLimits,
+) -> Result<(Vec<TheorySortV1>, Vec<TheoryConstructorV1>), TheoryImageCompileError> {
+    if host.sorts.len() > limits.max_sorts || host.constructors.len() > limits.max_constructors {
+        return Err(TheoryImageCompileError::Image(TheoryImageError::LimitExceeded(
+            "host signature",
+        )));
+    }
+    let names: BTreeSet<_> = host.sorts.iter().map(|sort| sort.name.as_str()).collect();
+    if names.len() != host.sorts.len() || names.contains("") {
+        return Err(TheoryImageCompileError::Projection(
+            "host signature has empty or duplicate sort names".into(),
+        ));
+    }
+    let constructor_names: BTreeSet<_> = host
+        .constructors
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect();
+    if constructor_names.len() != host.constructors.len() || constructor_names.contains("") {
+        return Err(TheoryImageCompileError::Projection(
+            "host signature has empty or duplicate constructor names".into(),
+        ));
+    }
+    let qualify = |name: &str| -> Result<String, TheoryImageCompileError> {
+        if !names.contains(name) {
+            return Err(TheoryImageCompileError::UnknownReference {
+                kind: "host sort",
+                name: name.into(),
+            });
+        }
+        Ok(format!("host::{name}"))
+    };
+    let mut sorts = empty_vec(host.sorts.len())?;
+    for sort in &host.sorts {
+        let kind = match &sort.kind {
+            TheorySortKindV1::Syntax { literal } => {
+                TheorySortKindV1::Syntax { literal: literal.clone() }
+            },
+            TheorySortKindV1::Collection { kind, key, element } => TheorySortKindV1::Collection {
+                kind: *kind,
+                key: key.as_deref().map(&qualify).transpose()?,
+                element: qualify(element)?,
+            },
+            TheorySortKindV1::Function { domain, codomain, multiple } => {
+                TheorySortKindV1::Function {
+                    domain: qualify(domain)?,
+                    codomain: qualify(codomain)?,
+                    multiple: *multiple,
+                }
+            },
+            TheorySortKindV1::Product { factors } => TheorySortKindV1::Product {
+                factors: factors
+                    .iter()
+                    .map(|name| qualify(name))
+                    .collect::<Result<_, _>>()?,
+            },
+            TheorySortKindV1::Opaque { abi } => TheorySortKindV1::Opaque { abi: abi.clone() },
+        };
+        sorts.push(TheorySortV1 { name: qualify(&sort.name)?, kind });
+    }
+    let mut constructors = empty_vec(host.constructors.len())?;
+    for constructor in &host.constructors {
+        constructors.push(TheoryConstructorV1 {
+            name: format!("host::{}", constructor.name),
+            domain: constructor
+                .domain
+                .iter()
+                .map(|name| qualify(name))
+                .collect::<Result<_, _>>()?,
+            codomain: qualify(&constructor.codomain)?,
+        });
+    }
+    Ok((sorts, constructors))
 }
 
 pub(crate) struct CompiledClosedTheoryTerm {
@@ -338,11 +702,11 @@ fn observation_predicate_keys<C: FnMut() -> bool>(
 }
 
 fn compile_sorts(
-    language: &LanguageCoreV1,
+    declarations: &[TheorySortV1],
     context: &CompileContext<'_>,
 ) -> Result<Vec<TheorySortImageV1>, TheoryImageCompileError> {
-    let mut sorts = empty_vec(language.theory.sorts.len())?;
-    for (index, source) in language.theory.sorts.iter().enumerate() {
+    let mut sorts = empty_vec(declarations.len())?;
+    for (index, source) in declarations.iter().enumerate() {
         let id = TheorySortId(checked_u32(index)?);
         let kind = match &source.kind {
             TheorySortKindV1::Syntax { literal } => {
@@ -377,7 +741,7 @@ fn compile_sorts(
 }
 
 struct CompileContext<'a> {
-    language: &'a LanguageCoreV1,
+    sort_declarations: &'a [TheorySortV1],
     sorts: BTreeMap<&'a str, TheorySortId>,
     constructors: BTreeMap<&'a str, TheoryConstructorId>,
     judgments: BTreeMap<&'a str, TheoryJudgmentId>,
@@ -386,16 +750,22 @@ struct CompileContext<'a> {
 
 impl<'a> CompileContext<'a> {
     fn new(language: &'a LanguageCoreV1) -> Result<Self, TheoryImageCompileError> {
+        Self::with_signature(language, &language.theory.sorts, &language.theory.constructors)
+    }
+
+    fn with_signature(
+        language: &'a LanguageCoreV1,
+        sort_declarations: &'a [TheorySortV1],
+        constructor_declarations: &'a [TheoryConstructorV1],
+    ) -> Result<Self, TheoryImageCompileError> {
         Ok(Self {
-            language,
+            sort_declarations,
             sorts: dense_names(
-                language.theory.sorts.iter().map(|sort| sort.name.as_str()),
+                sort_declarations.iter().map(|sort| sort.name.as_str()),
                 TheorySortId,
             )?,
             constructors: dense_names(
-                language
-                    .theory
-                    .constructors
+                constructor_declarations
                     .iter()
                     .map(|constructor| constructor.name.as_str()),
                 TheoryConstructorId,
@@ -462,15 +832,12 @@ impl<'a> CompileContext<'a> {
         &self,
         sort: TheorySortId,
     ) -> Result<(TheorySortId, CollectionKind), TheoryImageCompileError> {
-        let declaration = self
-            .language
-            .theory
-            .sorts
-            .get(sort.0 as usize)
-            .ok_or_else(|| TheoryImageCompileError::UnknownReference {
+        let declaration = self.sort_declarations.get(sort.0 as usize).ok_or_else(|| {
+            TheoryImageCompileError::UnknownReference {
                 kind: "collection sort",
                 name: format!("#{}", sort.0),
-            })?;
+            }
+        })?;
         let TheorySortKindV1::Collection { kind, element, .. } = &declaration.kind else {
             return Err(TheoryImageCompileError::UnknownReference {
                 kind: "collection sort",
@@ -499,19 +866,32 @@ fn compile_constructors(
 ) -> Result<Vec<TheoryConstructorImageV1>, TheoryImageCompileError> {
     let mut output = empty_vec(language.theory.constructors.len())?;
     for (index, constructor) in language.theory.constructors.iter().enumerate() {
-        let index = checked_u32(index)?;
-        let mut domain = empty_vec(constructor.domain.len())?;
-        for sort in &constructor.domain {
-            domain.push(context.sort(sort)?);
-        }
-        output.push(TheoryConstructorImageV1 {
-            id: TheoryConstructorId(index),
-            domain,
-            codomain: context.sort(&constructor.codomain)?,
-            grammar: Some(unique_grammar_binding(language, &constructor.name)?),
-        });
+        output.push(compile_constructor(
+            TheoryConstructorId(checked_u32(index)?),
+            constructor,
+            Some(unique_grammar_binding(language, &constructor.name)?),
+            context,
+        )?);
     }
     Ok(output)
+}
+
+fn compile_constructor(
+    id: TheoryConstructorId,
+    declaration: &TheoryConstructorV1,
+    grammar: Option<TheoryGrammarConstructorV1>,
+    context: &CompileContext<'_>,
+) -> Result<TheoryConstructorImageV1, TheoryImageCompileError> {
+    let mut domain = empty_vec(declaration.domain.len())?;
+    for sort in &declaration.domain {
+        domain.push(context.sort(sort)?);
+    }
+    Ok(TheoryConstructorImageV1 {
+        id,
+        domain,
+        codomain: context.sort(&declaration.codomain)?,
+        grammar,
+    })
 }
 
 fn unique_grammar_binding(
@@ -1766,27 +2146,32 @@ fn clone_vec<T: Clone>(source: &[T]) -> Result<Vec<T>, TheoryImageCompileError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::semantic_transition_kernel::SemanticProjectionMatchRequest;
     use crate::{
         restore_theory_pattern_automaton, theory_operator_to_machine,
         SemanticActionExecutionRequest, SemanticActionMatchRequest, SemanticGuardDecision,
         SemanticGuardEvaluator, SemanticGuardRequest, SemanticInputDecision, SemanticInputLimits,
         SemanticJudgmentDecision, SemanticJudgmentHeadDecision, SemanticJudgmentHeadRequest,
         SemanticJudgmentLimits, SemanticJudgmentProofRequest, SemanticMatchDecision,
-        SemanticMatchRefutation, SemanticMatchUndetermined, SemanticRelationExecutionRequest,
+        SemanticMatchRefutation, SemanticMatchUndetermined, SemanticProjectionDecision,
+        SemanticProjectionExecutionRequest, SemanticRelationExecutionRequest,
         SemanticResourceReceipt, SemanticTransitionDecision, SemanticTransitionInput,
         SemanticTransitionLimits, SemanticTransitionMatcher,
     };
     use dovetail::egraph::{EClassId, EGraph, ENode};
     use mettail_grammar_core::{
         Associativity, BuiltinCarrier, CanonicalValue, Carrier, Category, CategoryId,
-        ConstructorId, EffectDeclV1, FieldSource, GrammarCoreV1, JudgmentAtomV1,
-        JudgmentDecisionV1, JudgmentDeclV1, JudgmentRuleV1, LanguageCoreValidationError,
-        LanguageRight, LanguageRights, Precedence, Production, ProductionClass, ProductionId,
-        ReductionPlan, SemanticEffectClassV1, SemanticNormalizationBranchingV1, SyntaxItem,
-        TheoryConstructorV1, TheoryEquationV1, TheoryLiteralCarrierV1, TheoryLiteralV1,
-        TheoryPremiseId, TheoryPremiseNodeV1, TheoryProfileV1, TheoryRewriteV1, TheoryRuleOriginV1,
-        TheorySortV1, TheoryTermNodeV1, TheoryValidationError, TheoryVariableRoleV1,
-        TheoryVariableV1, LANGUAGE_CORE_ABI_CURRENT,
+        ConstructorId, DirectedProjectionRuleV1, EffectDeclV1, FieldSource, GrammarCoreV1,
+        JudgmentAtomV1, JudgmentDecisionV1, JudgmentDeclV1, JudgmentRuleV1,
+        LanguageCoreValidationError, LanguageRight, LanguageRights, Precedence, Production,
+        ProductionClass, ProductionId, ProjectedLanguageCoreV1, ProjectionBodyV1,
+        ProjectionDirectionV1, ProjectionHostEndpointV1, ProjectionHostSignatureV1,
+        ProjectionRelationBodyImageV1, ReductionPlan, SemanticEffectClassV1,
+        SemanticNormalizationBranchingV1, SyntaxItem, TheoryConstructorV1, TheoryEquationV1,
+        TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPremiseId, TheoryPremiseNodeV1,
+        TheoryProfileV1, TheoryProjectionV1, TheoryRewriteV1, TheoryRuleOriginV1, TheorySortV1,
+        TheoryTermNodeV1, TheoryValidationError, TheoryVariableRoleV1, TheoryVariableV1,
+        LANGUAGE_CORE_ABI_CURRENT, PROJECTED_LANGUAGE_CORE_ABI_V1,
     };
 
     fn production(
@@ -1968,6 +2353,304 @@ mod tests {
             grammar,
             theory,
         }
+    }
+
+    #[test]
+    fn projected_image_reuses_flat_rules_and_preserves_overlapping_candidates() {
+        let mut base = fixture();
+        base.theory.rewrites.push(TheoryRewriteV1 {
+            name: "zero-wrap".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: Vec::new(),
+                terms: vec![
+                    term_constructor("Zero", Vec::new()),
+                    term_constructor("Wrap", vec![TheoryTermId(0)]),
+                ],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            },
+            left: TheoryTermId(0),
+            right: TheoryTermId(1),
+        });
+        let limits = TheoryImageAdmissionLimits::default();
+        let legacy = compile_theory_semantic_image(&base, limits).expect("base image");
+        let host = ProjectionHostSignatureV1 {
+            signature_fingerprint: [7; 32],
+            codec_profile_fingerprint: [9; 32],
+            sorts: vec![TheorySortV1 {
+                name: "Bool".into(),
+                kind: TheorySortKindV1::Syntax { literal: None },
+            }],
+            constructors: ["Yes", "No"]
+                .into_iter()
+                .map(|name| TheoryConstructorV1 {
+                    name: name.into(),
+                    domain: Vec::new(),
+                    codomain: "Bool".into(),
+                })
+                .collect(),
+        };
+        let row = |name: &str, host_constructor: &str, direction, occurrence| {
+            let arena = TheoryRuleArenaV1 {
+                variables: Vec::new(),
+                terms: vec![
+                    term_constructor("Zero", Vec::new()),
+                    TheoryTermNodeV1 {
+                        sort: "host::Bool".into(),
+                        form: TheoryTermFormV1::Constructor {
+                            constructor: format!("host::{host_constructor}"),
+                            arguments: Vec::new(),
+                        },
+                    },
+                ],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            };
+            let (left, right) = match direction {
+                ProjectionDirectionV1::GuestToHost => (TheoryTermId(0), TheoryTermId(1)),
+                ProjectionDirectionV1::HostToGuest => (TheoryTermId(1), TheoryTermId(0)),
+            };
+            DirectedProjectionRuleV1 {
+                direction,
+                source_occurrence: occurrence,
+                rule: TheoryRewriteV1 { name: name.into(), arena, left, right },
+            }
+        };
+        let mut projected = ProjectedLanguageCoreV1 {
+            abi: PROJECTED_LANGUAGE_CORE_ABI_V1,
+            base: base.clone(),
+            projections: vec![TheoryProjectionV1 {
+                name: "booleanize".into(),
+                guest_category: "Expr".into(),
+                host: ProjectionHostEndpointV1 {
+                    signature_fingerprint: host.signature_fingerprint,
+                    category: "Bool".into(),
+                    codec_profile_fingerprint: host.codec_profile_fingerprint,
+                },
+                directions: vec![
+                    ProjectionDirectionV1::GuestToHost,
+                    ProjectionDirectionV1::HostToGuest,
+                ],
+                body: ProjectionBodyV1::Rules(vec![
+                    row("yes", "Yes", ProjectionDirectionV1::GuestToHost, 0),
+                    row("no", "No", ProjectionDirectionV1::GuestToHost, 1),
+                    row("from_yes", "Yes", ProjectionDirectionV1::HostToGuest, 0),
+                ]),
+            }],
+        };
+        let image = compile_projected_theory_semantic_image(&projected, &host, limits)
+            .expect("compile grouped projection image");
+        assert_eq!(image.base_image_fingerprint, legacy.fingerprint().unwrap());
+        assert_eq!(compile_theory_semantic_image(&base, limits).unwrap(), legacy);
+        assert_eq!(image.execution.sorts.len(), legacy.sorts.len() + 1);
+        assert_eq!(image.execution.constructors.len(), legacy.constructors.len() + 2);
+        assert_eq!(image.execution.rules.len(), legacy.rules.len() + 3);
+        assert_eq!(image.execution.constructors[legacy.constructors.len()].grammar, None);
+        assert_eq!(image.relations.len(), 2);
+        let ProjectionRelationBodyImageV1::Rules(forward) = &image.relations[0].body else {
+            panic!("forward rule relation");
+        };
+        assert_eq!(forward.len(), 2, "overlapping source patterns must not be pruned");
+        assert_eq!(
+            forward
+                .iter()
+                .map(|row| row.source_occurrence)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        for row in forward {
+            assert!(image
+                .execution
+                .patterns
+                .entries
+                .iter()
+                .any(|entry| entry.rule == row.program));
+            assert_eq!(
+                image.execution.rules[row.program.0 as usize].terms[0].sort,
+                image.relations[0].input_sort
+            );
+        }
+        let ProjectionRelationBodyImageV1::Rules(reverse) = &image.relations[1].body else {
+            panic!("reverse rule relation");
+        };
+        assert_eq!(reverse.len(), 1);
+        assert_eq!(image.relations[0].input_sort, image.relations[1].output_sort);
+        assert_eq!(image.relations[0].output_sort, image.relations[1].input_sort);
+
+        let matcher = SemanticTransitionMatcher::restore_projected(&image).unwrap();
+        let mut graph = EGraph::new();
+        let root = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+        )));
+        let rights = LanguageRights::from_rights([LanguageRight::Match]);
+        let (decision, _, _) = matcher.match_projection_relation_accounted(
+            SemanticProjectionMatchRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &rights,
+                egraph: &mut graph,
+                root,
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        let SemanticMatchDecision::Proven(proven) = decision else {
+            panic!("the full forward match set must be proven: {decision:?}");
+        };
+        assert_eq!(proven.matches.len(), 2);
+        assert_eq!(
+            proven
+                .matches
+                .iter()
+                .map(|matched| matched.rule)
+                .collect::<Vec<_>>(),
+            forward.iter().map(|row| row.program).collect::<Vec<_>>()
+        );
+        assert!(proven
+            .matches
+            .iter()
+            .all(|matched| matched.rule.0 >= image.base_rule_count));
+        let ordinary_rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (ordinary, _, _) = matcher.match_rewrite_relation_accounted(
+            TheorySortId(0),
+            SemanticActionMatchRequest {
+                image: &image.execution,
+                granted_rights: &ordinary_rights,
+                egraph: &mut graph,
+                root,
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        let SemanticMatchDecision::Proven(ordinary) = ordinary else {
+            panic!("the overlapping ordinary rewrite must remain visible");
+        };
+        assert_eq!(ordinary.matches.len(), 1);
+        assert_eq!(ordinary.matches[0].rule.0, image.base_rule_count - 1);
+        let (wrong_direction, _, _) = matcher.match_projection_relation_accounted(
+            SemanticProjectionMatchRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::HostToGuest,
+                granted_rights: &rights,
+                egraph: &mut graph,
+                root,
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        assert_eq!(
+            wrong_direction,
+            SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        );
+        let (denied, _, _) = matcher.match_projection_relation_accounted(
+            SemanticProjectionMatchRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &LanguageRights::none(),
+                egraph: &mut graph,
+                root,
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        assert_eq!(
+            denied,
+            SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        );
+
+        let action = image.relations[0]
+            .dispatch_action
+            .expect("rule relation dispatch");
+        assert!(action.0 as usize >= legacy.actions.len());
+        let rights = LanguageRights::from_rights([LanguageRight::Match, LanguageRight::Construct]);
+        let (executed, _) = matcher.execute_action_accounted(
+            SemanticActionExecutionRequest {
+                image: &image.execution,
+                action,
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 0),
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(proven) = executed else {
+            panic!("the selected cross-sort relation must execute completely");
+        };
+        assert_eq!(proven.transitions.len(), 2);
+        assert_eq!(
+            proven
+                .transitions
+                .iter()
+                .map(|item| item.receipt.rule)
+                .collect::<Vec<_>>(),
+            forward.iter().map(|row| row.program).collect::<Vec<_>>()
+        );
+        assert!(proven.transitions.iter().all(|item| {
+            item.output_sort == image.relations[0].output_sort && item.receipt.action == action
+        }));
+        assert_eq!(
+            proven
+                .transitions
+                .iter()
+                .map(|item| item.receipt.output.as_slice())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            2,
+            "both conflicting host values remain available for later disambiguation"
+        );
+        let (projected_result, _) = matcher.execute_rule_projection_accounted(
+            SemanticProjectionExecutionRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 0),
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        let SemanticProjectionDecision::Proven(projected_values) = projected_result else {
+            panic!("typed projection result must be complete");
+        };
+        assert_eq!(projected_values.values.len(), 2);
+        assert_eq!(
+            projected_values
+                .values
+                .iter()
+                .map(|item| item.receipt.source_occurrence)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([0, 1])
+        );
+        assert!(projected_values.values.iter().all(|item| {
+            item.output_sort == image.relations[0].output_sort
+                && item.receipt.input_sort == image.relations[0].input_sort
+                && item.receipt.host_signature_fingerprint == host.signature_fingerprint
+                && item.receipt.host_codec_profile_fingerprint == host.codec_profile_fingerprint
+        }));
+        let (insufficient, _) = matcher.execute_rule_projection_accounted(
+            SemanticProjectionExecutionRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &LanguageRights::from_rights([LanguageRight::Match]),
+                input: normalization_input(TheoryConstructorId(0), 0),
+                limits: base.theory.limits.into(),
+            },
+            || false,
+        );
+        assert!(matches!(
+            insufficient,
+            SemanticProjectionDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        ));
+
+        projected.projections[0].host.signature_fingerprint = [0; 32];
+        assert!(matches!(
+            compile_projected_theory_semantic_image(&projected, &host, limits),
+            Err(TheoryImageCompileError::Projection(_))
+        ));
     }
 
     fn normalization_fixture(

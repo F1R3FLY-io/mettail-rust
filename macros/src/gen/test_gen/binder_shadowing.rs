@@ -68,6 +68,7 @@ mod tests {
     fn lang(name: &str) -> LanguageDef {
         LanguageDef {
             name: Ident::new(name, Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),
