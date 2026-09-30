@@ -9,8 +9,9 @@ use crate::rholang_ast::RholangAstLowerError;
 use mettail_languages::rholang::{
     DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses,
     DdlImport, DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlPremise, DdlPremises,
-    DdlReplacement, DdlRewrite, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort,
-    DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr, Int, Proc,
+    DdlRegClassPiece, DdlRegPiece, DdlReplacement, DdlRewrite, DdlRuleAst, DdlRuleAstItems,
+    DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr, Int,
+    Proc,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{new_elist_par, new_gstring_par};
@@ -300,6 +301,40 @@ impl<'a> DdlLowerPlan<'a> {
                             ],
                         });
                     },
+                    DdlTermRule::DdlToken(name, _, pieces, _) => tasks.push(Task::Node {
+                        tag: "token",
+                        children: vec![
+                            Task::Text(name),
+                            sequence(pieces.iter().map(Task::RegPiece).collect()),
+                        ],
+                    }),
+                },
+                Task::RegPiece(piece) => match piece {
+                    DdlRegPiece::DdlRegLiteral(text) => tasks.push(Task::Node {
+                        tag: "regex-literal",
+                        children: vec![Task::Text(text)],
+                    }),
+                    DdlRegPiece::DdlRegEscape(text) => tasks.push(Task::Node {
+                        tag: "regex-escape",
+                        children: vec![Task::Text(text)],
+                    }),
+                    DdlRegPiece::DdlRegOperator(text) => tasks.push(Task::Node {
+                        tag: "regex-operator",
+                        children: vec![Task::Text(text)],
+                    }),
+                    DdlRegPiece::DdlRegClass(_, pieces, _) => tasks.push(Task::Node {
+                        tag: "regex-class",
+                        children: vec![sequence(pieces.iter().map(Task::RegClassPiece).collect())],
+                    }),
+                },
+                Task::RegClassPiece(piece) => {
+                    let (tag, text) = match piece {
+                        DdlRegClassPiece::DdlRegClassLiteral(text) => ("regex-class-literal", text),
+                        DdlRegClassPiece::DdlRegClassEscape(text) => ("regex-class-escape", text),
+                        DdlRegClassPiece::DdlRegClassHyphen(text) => ("regex-class-hyphen", text),
+                        DdlRegClassPiece::DdlRegClassCaret(text) => ("regex-class-caret", text),
+                    };
+                    tasks.push(Task::Node { tag, children: vec![Task::Text(text)] });
                 },
                 Task::TermAttr(attribute) => match attribute {
                     DdlTermAttr::DdlTermAttrWord(word) => tasks.push(Task::Node {
@@ -870,6 +905,8 @@ enum Task<'a> {
     Export(&'a DdlExport),
     Replacement(&'a DdlReplacement),
     TermRule(&'a DdlTermRule),
+    RegPiece(&'a DdlRegPiece),
+    RegClassPiece(&'a DdlRegClassPiece),
     TermAttr(&'a DdlTermAttr),
     Binding(&'a DdlBinding),
     Sort(&'a DdlSort),

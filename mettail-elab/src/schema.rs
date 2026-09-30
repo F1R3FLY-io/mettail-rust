@@ -4844,11 +4844,7 @@ impl LanguageSchema {
             if let Some(observations) = &token_observations {
                 observations
                     .producer
-                    .record(
-                        &mut output,
-                        id,
-                        &mettail_prattail::automata::TokenKind::Fixed(terminal.clone()),
-                    )
+                    .record_terminal(&mut output, id, &terminal)
                     .map_err(|message| ValueDecodeError::new("$.terms", message))?;
             }
             literal_ids.insert(terminal.clone(), id);

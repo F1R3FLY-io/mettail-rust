@@ -156,10 +156,19 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
         &host,
     )
     .expect("existing host admission; native actions remain generated Rust");
-    let receipt = grammar.wpda_original_occurrences.as_ref()
+    let receipt = grammar
+        .wpda_original_occurrences
+        .as_ref()
         .expect("real macro producer retains its original occurrence receipt");
-    assert_eq!(receipt, &[core::ProductionId(0), core::ProductionId(1),
-        core::ProductionId(2), core::ProductionId(3)]);
+    assert_eq!(
+        receipt,
+        &[
+            core::ProductionId(0),
+            core::ProductionId(1),
+            core::ProductionId(2),
+            core::ProductionId(3)
+        ]
+    );
     let occurrences: Vec<_> = receipt.iter().map(|id| id.0 as usize).collect();
     let synthesis = derive_authored_rules(&grammar, &occurrences, |_| Ok::<_, Infallible>(()))
         .expect("original native fixture synthesis");
@@ -331,7 +340,13 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
     }
     assert_eq!(counts[0] + counts[1], 1, "one representative of the proved variable class");
     assert_eq!(counts[2], 1, "the distinct literal class must survive");
-    for input in ["a*", "abc", "a|b|c", "(a*)*"] {
+    let (terms, _) = collect("a|aa");
+    assert!(terms.iter().any(|term| matches!(term,
+        Pattern::PAlt(left, right) if literal(left, "a") && matches!(right.as_ref(),
+            Pattern::PConcat(first, second) if literal(first, "a") && literal(second, "a")))),
+        "generated and owned parsers must retain the outer alternation when its RHS begins with a category-leading concatenation: {terms:?}"
+    );
+    for input in ["a*", "abc", "a|b|c", "a|ab", "aa|a", "(a*)*"] {
         collect(input);
     }
 }
@@ -576,8 +591,15 @@ fn owned_and_generated_engines_drive_the_same_walker_to_real_terms() {
     let grammar: core::GrammarCoreV1 =
         postcard::from_bytes(artifacts.grammar_core_postcard).expect("captured grammar decodes");
     let source_occurrences = [0, 1, 2, 3, 4, 5, 6, 7];
-    assert_eq!(grammar.wpda_original_occurrences,
-        Some(source_occurrences.iter().map(|id| core::ProductionId(*id as u32)).collect()));
+    assert_eq!(
+        grammar.wpda_original_occurrences,
+        Some(
+            source_occurrences
+                .iter()
+                .map(|id| core::ProductionId(*id as u32))
+                .collect()
+        )
+    );
     assert_eq!(
         grammar
             .productions

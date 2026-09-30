@@ -39,8 +39,12 @@ use std::collections::BTreeMap;
 /// Contextual action execution is supplied by the installed semantic adapter.
 /// There is no missing-action or guessed-category default.
 pub trait OwnedEngineActions {
-    fn supports_structural_holes(&self) -> bool { false }
-    fn structural_hole_edge(&self, _category: u16, _pos: usize) -> Option<(usize, u32)> { None }
+    fn supports_structural_holes(&self) -> bool {
+        false
+    }
+    fn structural_hole_edge(&self, _category: u16, _pos: usize) -> Option<(usize, u32)> {
+        None
+    }
     fn grouping_boundary_rule(&self) -> Option<u32> {
         None
     }
@@ -71,7 +75,8 @@ pub trait OwnedEngineActions {
         &self,
         _term: &std::sync::Arc<dyn Any + Send + Sync>,
         _cache: &mut mettail_semantic_key::ContentKeyCache,
-    ) -> Result<Option<mettail_semantic_key::ContentKey>, mettail_semantic_key::ContentKeyCacheError> {
+    ) -> Result<Option<mettail_semantic_key::ContentKey>, mettail_semantic_key::ContentKeyCacheError>
+    {
         Ok(None)
     }
 }
@@ -654,7 +659,11 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
     }
 
     fn leading_floor(&self, category: u16, rule: u16, caller: u8) -> Option<u8> {
-        match self.descriptors.leading_binding_powers.get(&(category, rule)) {
+        match self
+            .descriptors
+            .leading_binding_powers
+            .get(&(category, rule))
+        {
             None => Some(0),
             Some(powers) => (caller <= powers.entry).then_some(powers.left),
         }
@@ -719,6 +728,7 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
         category: u16,
         pos: &usize,
         bp: &u8,
+        top: Option<&WpdaGssNode>,
         tokens: &dyn WpdaTokenSource,
         peek: Option<TokenKind>,
     ) -> WpdaStepAction<LexicographicWeight> {
@@ -746,7 +756,9 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                         }
                     }
                     if let UnifiedDescriptor::LeadingCategory { rule_idx, .. } = desc {
-                        if self.leading_floor(category, *rule_idx, *bp).is_none() { continue; }
+                        if self.leading_floor(category, *rule_idx, *bp).is_none() {
+                            continue;
+                        }
                     }
                     return match desc {
                         UnifiedDescriptor::Atomic(arm) => {
@@ -768,7 +780,9 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                                 category,
                                 *rule_idx,
                                 *source_src_idx,
-                                self.leading_floor(category, *rule_idx, *bp).expect("checked leading admission"),
+                                self.leading_floor(category, *rule_idx, *bp)
+                                    .expect("checked leading admission"),
+                                top.map(|node| node.symbol.kind),
                                 cost,
                             )
                         },
@@ -809,7 +823,10 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                                 )
                             },
                             UnifiedDescriptor::LeadingCategory { rule_idx, source_src_idx } => {
-                                let Some(inner_bp) = self.leading_floor(category, *rule_idx, *bp) else { continue; };
+                                let Some(inner_bp) = self.leading_floor(category, *rule_idx, *bp)
+                                else {
+                                    continue;
+                                };
                                 prefix::push_leading_category_with_floor(
                                     branches,
                                     *bp,
@@ -818,6 +835,7 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                                     *rule_idx,
                                     *source_src_idx,
                                     inner_bp,
+                                    top.map(|node| node.symbol.kind),
                                     cost,
                                 )
                             },
@@ -1068,7 +1086,12 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                     .leading_binding_powers
                     .get(&(*category, *rule))
                     .map(|powers| powers.right)
-                    .or_else(|| self.descriptors.prefix_binding_powers.get(&(*category, *rule)).copied())
+                    .or_else(|| {
+                        self.descriptors
+                            .prefix_binding_powers
+                            .get(&(*category, *rule))
+                            .copied()
+                    })
                     .unwrap_or(0),
                 one,
             ),
@@ -1121,7 +1144,9 @@ impl<P> WpdaEngine<LexicographicWeight> for OwnedWpdaEngine<'_, P> {
             WpdaState::Ready { min_bp } => control::ready(self.primary, min_bp, cost),
             WpdaState::PrefixDispatch { pos, cur_bp } => prefix_dispatch::prefix_dispatch(self.primary, pos, cur_bp, top, tokens,
                 || self.prefix_lex(pos, cur_bp, top, tokens, frame), |cat, rule, slot| self.collection_spec(cat, rule, slot), |cat, kind| self.collection_element_can_start(cat, kind), cost,
-                |category, _, peek| self.prefix_route(category, pos, cur_bp, tokens, peek)),
+                |category, _, peek| self.prefix_route(category, pos, cur_bp, top, tokens, peek)),
+            WpdaState::EnterLeadingChild { source_src_idx, inner_bp } =>
+                prefix::enter_leading_child(*source_src_idx, *inner_bp, pos, one),
             WpdaState::Unwinding => unwinding::unwinding_step(self, top, pos, tokens, one,
                 |cat, text| self.category_recognizes_operator(cat, text),
                 |cat, rule| self.parts_len(cat, rule), |cat, rule, part| self.part(cat, rule, part),
@@ -1164,7 +1189,9 @@ impl<P> WpdaEngine<LexicographicWeight> for OwnedWpdaEngine<'_, P> {
     fn structural_hole_edge(&self, category: u16, pos: usize) -> Option<(usize, u32)> {
         self.actions.structural_hole_edge(category, pos)
     }
-    fn supports_structural_holes(&self) -> bool { self.actions.supports_structural_holes() }
+    fn supports_structural_holes(&self) -> bool {
+        self.actions.supports_structural_holes()
+    }
     fn execute_action(
         &self,
         category: u16,
@@ -1192,7 +1219,8 @@ impl<P> WpdaEngine<LexicographicWeight> for OwnedWpdaEngine<'_, P> {
         &self,
         term: &std::sync::Arc<dyn Any + Send + Sync>,
         cache: &mut mettail_semantic_key::ContentKeyCache,
-    ) -> Result<Option<mettail_semantic_key::ContentKey>, mettail_semantic_key::ContentKeyCacheError> {
+    ) -> Result<Option<mettail_semantic_key::ContentKey>, mettail_semantic_key::ContentKeyCacheError>
+    {
         self.actions.semantic_content_key(term, cache)
     }
     fn rule_has_leading_structural_trigger(&self, category: u16, rule: u16) -> bool {

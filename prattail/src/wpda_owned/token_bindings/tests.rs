@@ -151,6 +151,27 @@ fn boolean_uses_original_lexer_payload_not_host_decode() {
 }
 
 #[test]
+fn boolean_terminal_collision_retains_original_selected_kind() {
+    let mut spec = specification(Some("bool"));
+    spec.rules[0].label = "FalseTerm".into();
+    spec.rules[0].syntax = vec![SyntaxItemSpec::Terminal("false".into())];
+    let grammar = spec.to_grammar_core().expect("bridge");
+    let terminal = grammar
+        .tokens
+        .iter()
+        .find(|token| token.name == "literal/false")
+        .expect("Core literal append site");
+    let observation = grammar
+        .wpda_token_observations
+        .as_ref()
+        .and_then(|rows| rows.get(terminal.id.0 as usize))
+        .and_then(Option::as_ref);
+    assert_eq!(observation, Some(&O::BooleanText));
+    let bindings = OwnedTokenBindings::new(&grammar).expect("view");
+    assert_eq!(bindings.resolve(terminal.id, "false"), Ok(TokenKind::False));
+}
+
+#[test]
 fn typed_auxiliary_and_custom_share_the_actual_first_variant_winner() {
     let mut spec = specification(None);
     spec.custom_tokens.push(custom("Rat"));

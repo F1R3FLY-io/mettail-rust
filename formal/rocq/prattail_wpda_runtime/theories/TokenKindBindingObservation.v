@@ -61,6 +61,35 @@ Theorem shared_writer_observation : forall rows variant row text,
   option_map (fun binding => observe binding text) (retained_variant rows variant) =
   Some (observe row text).
 Proof. intros; unfold retained_variant; now rewrite H. Qed.
+
+(** The lexer chooses one terminal kind per text before the token-kind writer
+    runs. In particular, a native Boolean terminal can win over a later fixed
+    grammar literal with the same text. Append-site binding must follow that
+    selected kind's variant, not reconstruct Fixed(text) from the Core row. *)
+Definition selected_terminal_variant (terminals : list (string * string)) text :=
+  option_map snd (find (fun terminal => String.eqb (fst terminal) text) terminals).
+Definition retained_terminal rows terminals text :=
+  match selected_terminal_variant terminals text with
+  | Some variant => retained_variant rows variant
+  | None => None
+  end.
+Theorem selected_terminal_uses_original_writer : forall rows terminals text variant row,
+  find (fun terminal => String.eqb (fst terminal) text) terminals = Some (text, variant) ->
+  first_variant rows variant = Some (variant, row) ->
+  option_map (fun binding => observe binding text) (retained_terminal rows terminals text) =
+  Some (observe row text).
+Proof.
+  intros rows terminals text variant row Hterminal Hwriter.
+  unfold retained_terminal, selected_terminal_variant.
+  rewrite Hterminal; cbn.
+  unfold retained_variant.
+  now rewrite Hwriter.
+Qed.
+Theorem boolean_terminal_collision_uses_payload : forall rows terminals,
+  option_map (fun binding => observe binding "false")
+    (retained_terminal (("Boolean", BooleanPayload) :: rows)
+      (("false", "Boolean") :: terminals) "false") = Some false_kind.
+Proof. intros; reflexivity. Qed.
 End Observation.
 Print Assumptions exact_append_site_observation.
 Print Assumptions absent_is_not_a_default.
@@ -68,4 +97,6 @@ Print Assumptions out_of_bounds_is_not_a_default.
 Print Assumptions boolean_original_composition.
 Print Assumptions first_collision_preserves_selected_body.
 Print Assumptions shared_writer_observation.
+Print Assumptions selected_terminal_uses_original_writer.
+Print Assumptions boolean_terminal_collision_uses_payload.
 End TokenKindBindingObservation.

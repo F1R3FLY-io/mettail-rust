@@ -46,7 +46,7 @@ match any Unicode scalar, including newline. Grouping is not a capture.
 | `.` | `PAny` | Any one scalar, including newline |
 | `(?!)` | `PFail` | Empty language |
 | `()` | `PEpsilon` | Empty text |
-| `(p)` | `PGroup(Pattern)` | Transparent grouping |
+| `(p)` | No constructor (the shared WPDA's grouping route) | Transparent grouping |
 | `p\|q` | `PAlt(Pattern, Pattern)` | Alternative |
 | `pq` | `PConcat(Pattern, Pattern)` | Concatenation |
 | `p*`, `p+`, `p?` | `PStar`, `PPlus`, `POptional` | Repetition and optionality |
@@ -67,7 +67,10 @@ than an implementation-selected alternate interpretation.
 The four quantifier declarations explicitly select `"assoc": "nonassoc"` with
 `"prefix_bp": 30` in their canonical term data. The shared runtime precedence
 check rejects an equal-power postfix operand while admitting the unranked
-`PGroup` boundary. See [runtime postfix admission](runtime-lexical-lattice.md#nonassociative-postfix-declarations)
+parenthesis boundary. The fixture deliberately does not also declare a
+`PGroup` production with the same `(p)` spelling: that would admit a second,
+structurally distinct reading beside the WPDA's built-in transparent grouping.
+See [runtime postfix admission](runtime-lexical-lattice.md#nonassociative-postfix-declarations)
 for the generalized rule and its proof and codec boundaries.
 
 The literal token accepts individual ASCII letters/digits and non-ASCII Unicode
@@ -86,8 +89,9 @@ guest text is preserved exactly; native `Text` and `Scalar` hole values retain
 their whitespace as data and are never lexed as guest source.
 
 The required equations include alternative failure/idempotence, concatenation
-failure/identity, and star of failure/epsilon. Plus, optionality, grouping and
-bounded repetition elaborate through the existing reference expansions. The
+failure/identity, and star of failure/epsilon. Plus, optionality and
+bounded repetition elaborate through the declared reference expansions;
+parentheses are syntax-level grouping with no capture or semantic constructor. The
 rule implementation must establish correspondence to
 [RegexGsltMatch](../../formal/rocq/runtime_grammar/theories/RegexGsltMatch.v),
 not infer matching correctness from the three existing fixture rewrites.
@@ -130,9 +134,20 @@ exactly one valid Unicode scalar. Nat is the checked nonnegative subset of the
 existing signed integer carrier. The carrier name alone does not enforce these
 refinements. `BTrue` and `BFalse` are explicit constructors; native Boolean
 intrinsic results require an explicit declared conversion, not tag coincidence.
-Text and Scalar categories must explicitly admit the typed holes required by
-the application. The present fixture's `admits_variables:false` must not be
-bypassed by the adapter.
+Their guest spellings are `yes` and `no`, respectively, so they do not collide
+with the shared lexer's native `true` and `false` terminals. For example,
+`doneBool(yes)` denotes `DoneBool(BTrue)`; constructor labels, not spelling,
+define the theorem's accepting and rejecting predicate roles.
+`admits_variables` controls guest-language native variable productions; it
+does not control FLT template metavariables. The Regex theory declares its
+categories closed to native variables so an unquoted character is parsed as
+a literal, while typed `Text`, `Scalar`, and `Pattern` FLT holes remain
+structural inputs. Each hole must name an existing category, preserve its
+declared category and occurrence ID, and receive a value admitted by that
+category before construction publishes a term. A hole cannot turn its fill
+into guest source text. Categories such as `Nat` need no native-variable
+permission merely to support a typed structural hole; their carrier and
+refinement checks still apply to fills.
 
 Host String fills use the existing native reflection codec, declared carrier,
 and structural fill admission. A raw host string is not already a reflected

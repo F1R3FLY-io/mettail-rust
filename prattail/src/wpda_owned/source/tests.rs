@@ -217,7 +217,7 @@ fn structural_holes_remain_typed_and_are_never_tokenized() {
     assert_eq!(
         source.structural_hole_edge(core::CategoryId(2), 0),
         None,
-        "nonvariable category"
+        "typed category mismatch is independent of native variable admission"
     );
     assert_eq!(source.structural_hole_edge(core::CategoryId(3), 0), None, "unknown category");
     assert_eq!(source.peek_text(after), Some("123"));
@@ -227,6 +227,20 @@ fn structural_holes_remain_typed_and_are_never_tokenized() {
         .filter(|e| matches!(e, LexicalEdge::Accepted { .. }))
         .count();
     assert_eq!(calls.get(), accepted, "only original text edges invoke token observers");
+
+    let closed_holes = [core::RuntimeTemplateHole {
+        id: 0,
+        category: Some(core::CategoryId(2)),
+    }];
+    let closed_session = parser
+        .lexical_template_session(&pieces, &closed_holes)
+        .expect("a typed structural hole is not a guest-language variable");
+    let closed_source = OwnedTokenSource::new(&closed_session, LIMITS, |id, text| kind(id, text))
+        .expect("owned source");
+    assert!(closed_source
+        .structural_hole_edge(core::CategoryId(2), 0)
+        .is_some());
+    assert_eq!(closed_source.structural_hole_edge(core::CategoryId(1), 0), None);
 }
 
 #[test]

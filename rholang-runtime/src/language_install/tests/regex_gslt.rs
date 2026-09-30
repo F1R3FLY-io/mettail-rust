@@ -3,6 +3,213 @@ use super::*;
 const SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt.rho");
 
 #[test]
+fn practical_regex_default_mode_tokens_have_original_wpda_observations() {
+    let service = LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    );
+    let batch = service
+        .install_all(rholang_ddl_candidate(SOURCE))
+        .expect("declared Regex theory installs");
+    let installed = service
+        .table()
+        .authorize(&batch.exports[0].receipt.handle, LanguageRight::Parse)
+        .expect("installed grammar");
+    let core = installed.core();
+    let observations = core
+        .wpda_token_observations
+        .as_ref()
+        .expect("original token observations");
+    for token in &core.tokens {
+        if token.mode == mettail_grammar_core::ModeId(0) && token.channel == "main" {
+            assert!(
+                observations
+                    .get(token.id.0 as usize)
+                    .and_then(Option::as_ref)
+                    .is_some(),
+                "default-mode token {:?} {} {:?} lacks its original WPDA observation",
+                token.id,
+                token.name,
+                token.pattern
+            );
+        }
+    }
+}
+
+#[test]
+fn practical_regex_full_match_input_has_canonical_closed_heads() {
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(SOURCE))
+        .expect("complete practical regex declaration installs");
+    let token = &batch.exports[0].handle;
+    let handle = runtime
+        .resolve(token, LanguageRight::Construct)
+        .expect("construct right");
+    let installed = runtime
+        .service
+        .table()
+        .authorize(&handle, LanguageRight::Construct)
+        .expect("installed grammar");
+    let category = resolve_required_category(installed.core(), "Computation").expect("sort");
+    let text_category = resolve_required_category(installed.core(), "Text").expect("hole sort");
+    let pieces = [
+        RuntimeTemplatePiece::Text("fullMatch(a(b|c)+,".into()),
+        RuntimeTemplatePiece::Hole(0),
+        RuntimeTemplatePiece::Text(")".into()),
+    ];
+    let parses = runtime
+        .service
+        .parse_template(
+            &handle,
+            &pieces,
+            &[RuntimeTemplateHole { id: 0, category: Some(text_category) }],
+            Some(category),
+            LanguageRight::Construct,
+            runtime.host.as_ref(),
+        )
+        .expect("complete template parse family");
+    let distinct_syntax = parses
+        .iter()
+        .map(|parse| &parse.syntax)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let distinct_values = parses
+        .iter()
+        .map(|parse| &parse.value)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    assert_eq!(distinct_syntax, 1, "grouping must have one structural meaning");
+    assert_eq!(distinct_values, 1, "grouping must have one semantic value");
+    let bool_category = resolve_required_category(installed.core(), "Bool").expect("sort");
+    let bool_family = runtime
+        .service
+        .parse(&handle, "yes", Some(bool_category), runtime.host.as_ref())
+        .expect("declared Boolean constructor parses");
+    assert!(bool_family.iter().all(|parse| matches!(
+        &parse.syntax,
+        DynamicValue::Term(term) if installed.core().productions.iter().any(|production| {
+            production.constructor == term.constructor && production.label == "BTrue"
+        })
+    )));
+    let input = text_computation(&runtime, token, &["fullMatch(a(b|c)+,", ")"], &["abcb"]);
+    let owner = grammar_fingerprint_label(handle.fingerprint());
+    let mut work = 0;
+    let mut cancel = || false;
+    let mut budget = mettail_rholang_codegen::ReflectedCodecBudget::new(
+        &mut work,
+        1_000_000,
+        1_000_000,
+        &mut cancel,
+    );
+    let context = mettail_rholang_codegen::ReflectedPositionalContext::new(&owner, &mut budget)
+        .expect("canonical owner");
+    let mut nodes = vec![(&input, 0usize)];
+    while let Some((node, depth)) = nodes.pop() {
+        let head = context
+            .view(node, &mut budget)
+            .expect("bounded view")
+            .unwrap_or_else(|| {
+                panic!(
+                "noncanonical reflected node at depth {depth}; complete parses={}, expressions={}",
+                parses.len(),
+                node.exprs.len()
+            )
+            });
+        nodes.extend(head.children().iter().map(|child| (child, depth + 1)));
+    }
+}
+
+#[test]
+fn practical_regex_search_alt_concat_template_parses() {
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(SOURCE))
+        .expect("complete practical regex declaration installs");
+    let token = &batch.exports[0].handle;
+    let handle = runtime
+        .resolve(token, LanguageRight::Construct)
+        .expect("construct right");
+    let installed = runtime
+        .service
+        .table()
+        .authorize(&handle, LanguageRight::Construct)
+        .expect("installed grammar");
+    let pattern = resolve_required_category(installed.core(), "Pattern").expect("sort");
+    let computation = resolve_required_category(installed.core(), "Computation").expect("sort");
+    let text = resolve_required_category(installed.core(), "Text").expect("sort");
+    let parser = mettail_grammar_core::RuntimeParser::new(
+        installed.core(),
+        installed.parser_image().expect("runtime parser image"),
+        &installed.commitment().compiler_abi,
+        &installed.commitment().unicode_abi,
+        runtime.host.as_ref(),
+    )
+    .expect("admitted parser");
+    let label = |constructor| {
+        installed
+            .core()
+            .productions
+            .iter()
+            .find(|production| production.constructor == constructor)
+            .map(|production| production.label.as_str())
+    };
+    for (source, concat_side, concat_span) in [
+        ("a|aa", 1, mettail_grammar_core::SourceSpan { start: 2, end: 4 }),
+        ("a|ab", 1, mettail_grammar_core::SourceSpan { start: 2, end: 4 }),
+        ("aa|a", 0, mettail_grammar_core::SourceSpan { start: 0, end: 2 }),
+    ] {
+        let forest = parser
+            .parse_category(source, pattern)
+            .expect("original forest reference must recognize the same complete input");
+        let family = runtime.service.parse(&handle, source, Some(pattern), runtime.host.as_ref())
+            .unwrap_or_else(|error| panic!("{source}: shared WPDA failed while original forest returned {} complete readings: {error:?}", forest.len()));
+        assert_eq!(family.len(), 1, "one complete shared reading for {source}");
+        assert_eq!(forest.len(), 1, "one complete reference reading for {source}");
+        assert_eq!(family[0].syntax, forest[0].syntax, "exact constructor family for {source}");
+        assert_eq!(family[0].value, forest[0].value, "exact semantic result for {source}");
+        let DynamicValue::Term(root) = &family[0].syntax else {
+            panic!("alternation must retain its constructor root for {source}")
+        };
+        assert_eq!(label(root.constructor), Some("PAlt"), "{source}");
+        assert_eq!(root.span, mettail_grammar_core::SourceSpan { start: 0, end: 4 });
+        assert_eq!(root.fields.len(), 2, "alternation arity for {source}");
+        let DynamicValue::Term(concat) = &root.fields[concat_side] else {
+            panic!("alternation must retain its concatenation operand for {source}")
+        };
+        assert_eq!(label(concat.constructor), Some("PConcat"), "{source}");
+        assert_eq!(concat.span, concat_span, "{source}");
+        assert_eq!(concat.fields.len(), 2, "concatenation arity for {source}");
+    }
+    let holes = [RuntimeTemplateHole { id: 0, category: Some(text) }];
+    for (name, before, after) in [
+        ("search input", "search(a|aa,", ")"),
+        ("search output", "doneMatch(found(0,2,", "))"),
+    ] {
+        let pieces = [
+            RuntimeTemplatePiece::Text(before.into()),
+            RuntimeTemplatePiece::Hole(0),
+            RuntimeTemplatePiece::Text(after.into()),
+        ];
+        let family = runtime.service.parse_template(
+            &handle,
+            &pieces,
+            &holes,
+            Some(computation),
+            LanguageRight::Construct,
+            runtime.host.as_ref(),
+        );
+        assert!(family.is_ok(), "{name}: {family:?}");
+    }
+}
+
+#[test]
 fn practical_regex_gslt_application_contains_the_checked_declaration_and_parses_once() {
     let application = include_str!("../../../tests/fixtures/regex_gslt_application.rho");
     assert_eq!(
@@ -73,10 +280,7 @@ fn practical_regex_guest_text_is_exact_and_native_text_holes_preserve_whitespace
         category: Some("Text".into()),
     }];
     let text = " \tλ\n${not_a_hole:Text}` ";
-    let fills = BTreeMap::from([(
-        "text".into(),
-        new_gstring_par(text.into(), Vec::new(), false),
-    )]);
+    let fills = BTreeMap::from([("text".into(), new_gstring_par(text.into(), Vec::new(), false))]);
     for prefix in ["fullMatch(a(b|c)+,", "search(λ+,"] {
         let pieces = [
             RuntimeTemplatePiece::Text(prefix.into()),
@@ -122,6 +326,10 @@ fn assert_regex_observation(
         panic!("{name}: {error:?}; work={}, kernel={:?}", report.work, report.kernel_work)
     });
     assert_eq!(outputs.len(), 1, "{name}: one complete deterministic observation");
+    if outputs[0].term.cmp(expected) != std::cmp::Ordering::Equal {
+        eprintln!("{name}: actual={:?}", outputs[0].term);
+        eprintln!("{name}: expected={expected:?}");
+    }
     assert_eq!(
         outputs[0].term.cmp(expected),
         std::cmp::Ordering::Equal,
@@ -161,9 +369,9 @@ fn practical_regex_gslt_full_match_search_and_replacement_application_matrix() {
             &runtime,
             token,
             if matches {
-                "doneBool(true)"
+                "doneBool(yes)"
             } else {
-                "doneBool(false)"
+                "doneBool(no)"
             },
         );
         let work = assert_regex_observation(&runtime, token, "FullMatch", &input, &expected);
@@ -225,7 +433,7 @@ fn practical_regex_gslt_full_match_result_is_controlled_by_the_declared_driver()
         LanguageInstallPolicy::default(),
     )));
     let mut commitments = Vec::with_capacity(2);
-    for (source, result) in [(SOURCE, "doneBool(true)"), (changed.as_str(), "doneBool(false)")] {
+    for (source, result) in [(SOURCE, "doneBool(yes)"), (changed.as_str(), "doneBool(no)")] {
         let batch = runtime
             .install_all(rholang_ddl_candidate(source))
             .expect("independent inline application declaration");
@@ -261,7 +469,7 @@ fn practical_regex_gslt_application_limits_refuse_without_partial_results() {
             "FullMatch",
             vec!["fullMatch(a+,", ")"],
             vec!["aaa"],
-            vec!["doneBool(true)"],
+            vec!["doneBool(yes)"],
             vec![],
         ),
         (
@@ -341,21 +549,21 @@ fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_en
     assert_eq!(batch.exports[0].name, "Regex");
     let token = &batch.exports[0].handle;
     for (source, action, expected) in [
-        ("nullable((?!))", "nullable", "doneBool(false)"),
-        ("nullable(())", "nullable", "doneBool(true)"),
-        ("nullable(a)", "nullable", "doneBool(false)"),
-        ("nullable(.)", "nullable", "doneBool(false)"),
-        ("nullable((a))", "nullable", "doneBool(false)"),
-        ("nullable(a|())", "nullable", "doneBool(true)"),
-        ("nullable(a())", "nullable", "doneBool(false)"),
-        ("nullable(a*)", "nullable", "doneBool(true)"),
-        ("nullable(a+)", "nullable", "doneBool(false)"),
-        ("nullable(a?)", "nullable", "doneBool(true)"),
+        ("nullable((?!))", "nullable", "doneBool(no)"),
+        ("nullable(())", "nullable", "doneBool(yes)"),
+        ("nullable(a)", "nullable", "doneBool(no)"),
+        ("nullable(.)", "nullable", "doneBool(no)"),
+        ("nullable((a))", "nullable", "doneBool(no)"),
+        ("nullable(a|())", "nullable", "doneBool(yes)"),
+        ("nullable(a())", "nullable", "doneBool(no)"),
+        ("nullable(a*)", "nullable", "doneBool(yes)"),
+        ("nullable(a+)", "nullable", "doneBool(no)"),
+        ("nullable(a?)", "nullable", "doneBool(yes)"),
         ("derivative(a,a+)", "derivative", "donePattern(a*)"),
-        ("nullable(a{2,3})", "nullable", "doneBool(false)"),
-        ("nullable(a{0,0})", "nullable", "doneBool(true)"),
-        ("nullable(a{3,2})", "nullable", "doneBool(false)"),
-        ("nullable(λ?)", "nullable", "doneBool(true)"),
+        ("nullable(a{2,3})", "nullable", "doneBool(no)"),
+        ("nullable(a{0,0})", "nullable", "doneBool(yes)"),
+        ("nullable(a{3,2})", "nullable", "doneBool(no)"),
+        ("nullable(λ?)", "nullable", "doneBool(yes)"),
         ("derivative(a,(?!))", "derivative", "donePattern((?!))"),
         ("derivative(a,())", "derivative", "donePattern((?!))"),
         ("derivative(a,a)", "derivative", "donePattern(())"),
@@ -420,7 +628,7 @@ fn practical_regex_gslt_declared_rule_controls_observation() {
         LanguageInstallPolicy::default(),
     )));
     let mut commitments = Vec::with_capacity(2);
-    for (source, expected) in [(SOURCE, "doneBool(false)"), (changed.as_str(), "doneBool(true)")] {
+    for (source, expected) in [(SOURCE, "doneBool(no)"), (changed.as_str(), "doneBool(yes)")] {
         let batch = runtime
             .install_all(rholang_ddl_candidate(source))
             .expect("inline declaration");
@@ -499,7 +707,26 @@ fn practical_regex_gslt_scalar_holes_admit_singletons_and_refuse_other_text() {
                     Some("Computation"),
                     &BTreeMap::from([("scalar".into(), fill.clone())]),
                 )
-                .expect("typed native text hole constructs without textual interpolation");
+                .unwrap_or_else(|error| {
+                    let parser = mettail_grammar_core::RuntimeParser::new(
+                        installed.core(),
+                        installed.parser_image().expect("runtime parser image"),
+                        &installed.commitment().compiler_abi,
+                        &installed.commitment().unicode_abi,
+                        runtime.host.as_ref(),
+                    )
+                    .expect("admitted reference parser");
+                    let reference = parser.parse_template(
+                        &[
+                            RuntimeTemplatePiece::Text(prefix.into()),
+                            RuntimeTemplatePiece::Hole(0),
+                            RuntimeTemplatePiece::Text(suffix.into()),
+                        ],
+                        &[RuntimeTemplateHole { id: 0, category: Some(resolve_required_category(installed.core(), "Scalar").expect("Scalar category")) }],
+                        Some(resolve_required_category(installed.core(), "Computation").expect("Computation category")),
+                    ).map(|family| family.len());
+                    panic!("{action}({text:?}) shared template parse failed: {error:?}; original forest: {reference:?}");
+                });
             let request = |limits| SemanticServiceRequest {
                 handle: token,
                 operation: SemanticOperation::Reduce(action),
@@ -510,7 +737,7 @@ fn practical_regex_gslt_scalar_holes_admit_singletons_and_refuse_other_text() {
                 runtime.execute_semantic(request(SemanticServiceLimits::default()), || false);
             if text.chars().count() == 1 {
                 let expected = match (action, text) {
-                    ("nullable", _) => "doneBool(false)",
+                    ("nullable", _) => "doneBool(no)",
                     (_, "a") => "donePattern(())",
                     _ => "donePattern((?!))",
                 };
@@ -545,7 +772,7 @@ fn practical_regex_gslt_scalar_holes_admit_singletons_and_refuse_other_text() {
 }
 
 #[test]
-fn practical_regex_gslt_structural_repeat_bounds_preserve_nat_hole_policy() {
+fn practical_regex_gslt_structural_repeat_bounds_preserve_native_nat_variable_policy() {
     use mettail_grammar_core::{DynamicTerm, DynamicValue, SourceSpan};
     let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
         Arc::new(MemoryRegistry::default()),
@@ -616,7 +843,7 @@ fn practical_regex_gslt_structural_repeat_bounds_preserve_nat_hole_policy() {
                 Some("Computation"),
                 &BTreeMap::from([("pattern".into(), fill)]),
             )
-            .expect("whole Pattern hole is authorized; Nat holes remain forbidden");
+            .expect("whole Pattern hole is authorized independently of guest variables");
         let report = runtime.execute_semantic(
             SemanticServiceRequest {
                 handle: token,
@@ -635,9 +862,9 @@ fn practical_regex_gslt_structural_repeat_bounds_preserve_nat_hole_policy() {
                         &runtime,
                         token,
                         if value {
-                            "doneBool(true)"
+                            "doneBool(yes)"
                         } else {
-                            "doneBool(false)"
+                            "doneBool(no)"
                         }
                     )),
                     std::cmp::Ordering::Equal

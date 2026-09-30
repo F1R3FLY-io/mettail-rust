@@ -1,14 +1,14 @@
 # Complete Module and Theory surface for MeTTaIL declarations
 
-Status: design proposal for Greg and Mike's review. The syntax in this document is **not yet implemented**. The authored theory uses Greg and Mike's existing `Terms`, `Equations`, and `Rewrites` to define semantics. `Exports` retains its existing category visibility and renaming role; it does **not** redeclare semantic operations. This does not define another host language or remove the data-faithful canonical representation.
+Status: design proposal for Greg and Mike's review. The complete syntax in this document is **not yet implemented**; category carriers, variable admission, and term association/binding metadata already have authored forms. The authored theory uses Greg and Mike's existing `Terms`, `Equations`, and `Rewrites` to define semantics. `Exports` retains its existing category visibility and renaming role; it does **not** redeclare semantic operations. This does not define another host language or remove the data-faithful canonical representation.
 
-The immediate motivation is the three `Data({...})` blocks in the [Regex GSLT application](../../../rholang-runtime/tests/fixtures/regex_gslt_application.rho). They currently carry (1) sorts, carriers, and literal tokens, (2) operator binding metadata, and (3) typed rewrites, rights, OSLF actions and observations, and limits. The readable `Terms`, `Equations`, and `Rewrites` already state the guest language's semantics. The present runtime service selects named action and observation records, but that implementation requirement does **not** justify making authors duplicate their rewrite rules as new Theory declarations. The data-faithful form remains available for automatic construction and analysis; eliminating presentation `Data` from the authored Regex source requires a general FLT-to-rewrite-relation execution path, not additional semantic syntax.
+The immediate motivation is the remaining `Data({...})` blocks in the [Regex GSLT application](../../../rholang-runtime/tests/fixtures/regex_gslt_application.rho). They currently carry (1) literal tokens and (2) typed rewrites, rights, OSLF actions and observations, and limits. Sorts, carriers, variable admission, and operator binding metadata already have authored `Types`/`Terms` forms. The readable `Terms`, `Equations`, and `Rewrites` already state the guest language's semantics. The present runtime service selects named action and observation records, but that implementation requirement does **not** justify making authors duplicate their rewrite rules as new Theory declarations. The data-faithful form remains available for automatic construction and analysis; eliminating presentation `Data` from the authored Regex source requires a general FLT-to-rewrite-relation execution path, not additional semantic syntax.
 
 The authoritative sources have different jobs: `MeTTaIL/GSLT/src/main/bnfc/metta_venus.cf` is the **BNFC reference for a readable token-regex surface**; `f1r3node-rust-module-syntax/module-syntax/documentation/mettail-ddl-and-modules-2026-08-19.md` supplies **Greg and Mike's `Module`/`Theory`, `Types`, and judgment-form `Terms` structure**. Their document leaves retention of BNFC pragmas, including `token` and `position token`, open in §9.4. This proposal adopts a **BNFC-inspired**, not byte-for-byte BNFC-compatible, token declaration form inside the module structure. The established PraTTaIL regex compiler retains its semantics; similarity of spelling does not import BNFC's character classes or every BNFC operator. The [BNFC LBNF reference](https://github.com/BNFC/bnfc/blob/master/docs/lbnf.rst#lexer-definitions) documents the inspiration. Current implementation boundaries are the generated [Rholang specification](../../../languages/src/rholang.rs), [authoring schema](../../../mettail-elab/src/schema.rs), [canonical language core](../../../grammar-core/src/language_core.rs), and [runtime lexer-image compiler](../../../prattail/src/runtime_backend.rs).
 
 ## Terms and architecture
 
-The *host* is the one Rholang language parsed by the generated frontend. A *theory* is an immutable language definition; it is not an installed parser or an authority. A *guest term* is parsed under an explicitly selected installed-language handle. `Data` denotes a structurally parsed Rholang value, not text passed to another DDL parser. A *carrier* specifies a native value representation; an ordinary theory constructor is still a distinct structural term. A graph-structured lambda theory (GSLT) presents grammar, equations, and reductions; Operational Semantics in Logical Form (OSLF) derives behavioral observations and logic over that presentation for a specified observational setting ([Stay and Meredith 2017](https://doi.org/10.48550/arXiv.1704.03080), [GSLT context](../../../context/gslt-context.md)). The current action/observation service is one runtime interface over the theory, not OSLF's definition. FLT means foreign-language term. The proposed `token Name Reg;` expressions specify **lexer tokens** using PraTTaIL regex semantics; they are not the Regex guest language being specified by the application.
+The *host* is the one Rholang language parsed by the generated frontend. A *theory* is an immutable language definition; it is not an installed parser or an authority. A *guest term* is parsed under an explicitly selected installed-language handle. `Data` denotes a structurally parsed Rholang value, not text passed to another DDL parser. A *carrier* specifies a native value representation; an ordinary theory constructor is still a distinct structural term. A graph-structured lambda theory (GSLT) presents grammar, equations, and reductions; Operational Semantics in Logical Form (OSLF) derives behavioral observations and logic over that presentation for a specified observational setting ([Stay and Meredith 2017](https://doi.org/10.48550/arXiv.1704.03080), [GSLT context](../../../context/gslt-context.md)). The current action/observation service is one runtime interface over the theory, not OSLF's definition. FLT means foreign-language term. The proposed `token Name ::= Reg;` expressions specify **lexer tokens** using PraTTaIL regex semantics; they are not the Regex guest language being specified by the application.
 
 ![Proposed authored-to-installed-language flow](figures/module-ddl-full-surface-flow.svg)
 
@@ -16,22 +16,22 @@ The declaration path is one-way and structural: generated host AST, typed declar
 
 ## Authored Regex spelling
 
-This excerpt shows the authored language definition, not a field-by-field transcription of the current service records. The ordinary `Exports` builder is omitted because the example does not need to hide or rename categories. Requested rights remain installation policy rather than a `Theory` attribute. `Options` owns optional lexer, parser, and semantic controls, including semantic limits. The two lexical declarations use a **BNFC-inspired `token Name Reg;` form** inside `Terms`. They are not an invented `Literals { Category ::= Reg => carrier … }` language. `Types` carries the separate canonical carrier and variable-admission metadata. Greg and Mike's plain `Types { Category; }` form remains the minimum. The optional `noadmit` prefix applies to one category declaration and forbids only implicit guest-language variable terms; it is not a block or another builder. The short rewrite sample illustrates the rule grammar; the migration rule in [Typed rules](#typed-rules-and-native-values) applies to every remaining rewrite in the fixture. Each form shown is proposed syntax, not an assertion that the current parser accepts it.
+This excerpt shows the authored language definition, not a field-by-field transcription of the current service records. The ordinary `Exports` builder is omitted because the example does not need to hide or rename categories. Requested rights remain installation policy rather than a `Theory` attribute. `Options` owns optional lexer, parser, and semantic controls, including semantic limits. The two lexical declarations use a **BNFC-inspired `token Name ::= Reg;` form** inside `Terms`. They are not an invented `Literals { Category ::= Reg => carrier … }` language. `Types` carries the separate canonical carrier and variable-admission metadata. Greg and Mike's plain `Types { Category; }` form remains the minimum. The optional `noadmit` prefix applies to one category declaration and forbids only implicit guest-language variable terms; it is not a block or another builder. The short rewrite sample illustrates the rule grammar; the migration rule in [Typed rules](#typed-rules-and-native-values) applies to every remaining rewrite in the fixture. Each form shown is proposed syntax, not an assertion that the current parser accepts it.
 
 ```text
 Module RegexGSLT {
   Theory Regex() {
     Types {
-      noadmit Pattern;
-      noadmit Computation;
-      noadmit NFrames;
-      noadmit DFrames;
-      noadmit EFrames;
-      noadmit MatchResult;
-      noadmit ReplacementTemplate;
-      noadmit PrefixResult;
-      noadmit Scalar = String;
-      noadmit Text = String;
+      Pattern;
+      Computation;
+      NFrames;
+      DFrames;
+      EFrames;
+      MatchResult;
+      ReplacementTemplate;
+      PrefixResult;
+      Scalar = String;
+      Text = String;
       noadmit Bool = bool;
       noadmit Flag = bool;
       noadmit Nat = BigInt;
@@ -39,8 +39,8 @@ Module RegexGSLT {
     }
 
     Terms {
-      token Scalar [A-Za-z0-9\u{80}-\u{10FFFF}];
-      token Nat [0-9]+;
+      token Scalar ::= [A-Za-z0-9\u{80}-\u{10FFFF}];
+      token Nat ::= [0-9]+;
 
       PAlt . p:Pattern, q:Pattern
         |- p "|" q : Pattern left prefix(10);
@@ -84,7 +84,7 @@ Module RegexGSLT {
 }
 ```
 
-The Regex fixture sets `admits_variables: false` for every listed category. The proposed `noadmit Category;` spelling (or `noadmit Category = Carrier;` with a carrier) lowers only that category to the existing `admits_variables: false` schema property; a plain `Category;` retains the current `admits_variables: true` default. A *variable term* is an object-language term admitted by the guest-language category, not a rewrite-rule metavariable such as `p:Pattern` or an FLT hole. The repeated `noadmit` prefixes reflect the fixture's fourteen explicit false settings; ordinary category declarations have no prefix. This does not remove declared constructors, prevent GSLT rules from executing, or grant or revoke runtime authority. It cannot simply be inferred from an absent variable rule: the existing generated parser can synthesize variable forms for ordinary categories ([implicit-variable rule](../../../macros/src/gen/mod.rs)). The compile-time `data` role is **not** reused: it also changes generated semantic-operation axes and is broader than the single `admits_variables` field ([semantic operation categories](../../../macros/src/logic/common.rs)). The current in-Rholang DDL parser accepts only `Category;`, so the proposed `noadmit` prefix and native-carrier spellings shown here require separate syntax and elaboration work. Neither is related to the exact programmatic `Data(value)` builder.
+The Regex fixture sets `admits_variables: false` for `Bool`, `Flag`, `Nat`, and `Grade` only. The proposed `noadmit Category;` spelling (or `noadmit Category = Carrier;` with a carrier) lowers only that category to the existing `admits_variables: false` schema property; a plain `Category;` retains the current `admits_variables: true` default. A *variable term* is an object-language term admitted by the guest-language category, not a rewrite-rule metavariable such as `p:Pattern` or an FLT hole. The four `noadmit` prefixes reflect those exact false settings; ordinary category declarations have no prefix. This does not remove declared constructors, prevent GSLT rules from executing, or grant or revoke runtime authority. It cannot simply be inferred from an absent variable rule: the existing generated parser can synthesize variable forms for ordinary categories ([implicit-variable rule](../../../macros/src/gen/mod.rs)). The compile-time `data` role is **not** reused: it also changes generated semantic-operation axes and is broader than the single `admits_variables` field ([semantic operation categories](../../../macros/src/logic/common.rs)). The in-Rholang DDL parser already accepts the shown `noadmit` and native-carrier spellings. Neither is related to the exact programmatic `Data(value)` builder.
 
 ### Language semantics, module visibility, and FLT execution
 
@@ -104,7 +104,7 @@ For Regex, an FLT containing `fullMatch(...)` is a `Computation` term. The rewri
 
 The Regex rule intrinsics are a closed, pure set in the current core. For a general effectful theory, purity and capability requirements must be checked from the actual transition primitives and their trusted signatures before admitting an effectful or guard invocation; a source-level `effect Pure` assertion cannot make an effectful rule pure. Requested rights remain outside `LanguageCoreV1`: omission requests the current native-FLT default set (`Parse`, `Construct`, `Match`, `Observe`, `ReflectAst`, `Reduce`), while an explicit empty request asks for none. Neither request grants authority. `Options.Semantics.Limits` overrides the bounded theory defaults; exhaustion is a refusal or `Undetermined`, never fabricated logical evidence.
 
-`token Scalar Reg;` and `token Nat Reg;` deliberately resemble BNFC token declarations, but `Reg` uses all existing PraTTaIL lexer-regex forms. For these two names, the typed `Types` declarations determine the existing native decoder deterministically: `String` maps to the checked `carrier str` representation and `BigInt` to `carrier int`. That inference is a proposed *elaboration rule*; it must be proved equal to the fixture's explicit `literals[].eval` values. A nondefault decoder remains an explicitly typed declaration, never an inference from the spelling of `Scalar` or `Nat`. Unlike BNFC's `["abc"]` enumeration, the unquoted `[A-Z]` character class uses PraTTaIL's existing range semantics. The two declarations lower to the fixture's unchanged runtime patterns `[A-Za-z0-9\u{80}-\u{10FFFF}]` and `[0-9]+` (the JSON source escapes each backslash), with no lexer-language or token-priority change.
+`token Scalar ::= Reg;` and `token Nat ::= Reg;` deliberately resemble BNFC token declarations, but `Reg` uses all existing PraTTaIL lexer-regex forms. For these two names, the typed `Types` declarations determine the existing native decoder deterministically: `String` maps to the checked `carrier str` representation and `BigInt` to `carrier int`. That inference is a proposed *elaboration rule*; it must be proved equal to the fixture's explicit `literals[].eval` values. A nondefault decoder remains an explicitly typed declaration, never an inference from the spelling of `Scalar` or `Nat`. Unlike BNFC's `["abc"]` enumeration, the unquoted `[A-Z]` character class uses PraTTaIL's existing range semantics. The two declarations lower to the fixture's unchanged runtime patterns `[A-Za-z0-9\u{80}-\u{10FFFF}]` and `[0-9]+` (the JSON source escapes each backslash), with no lexer-language or token-priority change.
 
 ### Why a BNFC-inspired token regex, not `regex("…")`
 
@@ -112,14 +112,16 @@ The Regex rule intrinsics are a closed, pure set in the current core. For a gene
 
 ```text
 Terms {
-  token Identifier [A-Za-z_][A-Za-z_0-9]*;
-  position token MarkedIdentifier [A-Za-z_]+;
+  token Identifier ::= [A-Za-z_][A-Za-z_0-9]*;
+  position token MarkedIdentifier ::= [A-Za-z_]+;
 }
 ```
 
-This is intentionally close to BNFC declaration syntax, not a claim of complete BNFC compatibility. `position token` is a proposed compatible-looking form but needs an explicit occurrence/position field in the canonical authoring schema, which does not currently have one; it must not be claimed as implemented by the present `TokenDecl`. Richer optional metadata—category/decoder override, priority, mode push/pop, and stream—belongs under `Options.Lexer.TokenOptions`, keyed by a previously declared token. It does not alter `token Name Reg;`. For example, `Options { Lexer { TokenOptions { Identifier : category Name, priority 10, stream Main; } } }` lowers to the existing token fields. `position token` requests source-location observation; it never turns a token's spelling into an authority.
+This is intentionally close to BNFC declaration syntax, not a claim of complete BNFC compatibility. `position token` is a proposed compatible-looking form but needs an explicit occurrence/position field in the canonical authoring schema, which does not currently have one; it must not be claimed as implemented by the present `TokenDecl`. Richer optional metadata—category/decoder override, priority, mode push/pop, and stream—belongs under `Options.Lexer.TokenOptions`, keyed by a previously declared token. It does not alter `token Name ::= Reg;`. For example, `Options { Lexer { TokenOptions { Identifier : category Name, priority 10, stream Main; } } }` lowers to the existing token fields. `position token` requests source-location observation; it never turns a token's spelling into an authority.
 
 The proposed `Reg` surface grammar exposes **every existing PraTTaIL lexer-regex form**, including classes, escapes, and bounded repetition. The following is a precedence sketch; `Escape` and `ClassBody` denote the existing PraTTaIL lexical forms, not new regex operations:
+
+The `::=` delimiter is deliberate. PraTTaIL chooses a lexical mode before parsing, and ordinary Rholang may use `token` as an identifier. A mode-changing `token Name ` prefix would misclassify valid host source such as `new token in { ... }`. The distinct `::=` token changes mode only at the regex boundary; it neither reserves `token` globally nor asks the lexer to infer parser context. The generated host AST retains regex operators, escapes, class delimiters, and literal segments as typed children; elaboration preserves their exact spelling when invoking PraTTaIL's existing regex compiler.
 
 ```text
 Reg       := Reg1
@@ -132,7 +134,7 @@ Bound     := "{" n "}" | "{" n "," "}" | "{" n "," m "}"
 RegAtom   := Literal | Escape | "." | "[" ClassBody "]" | "(" Reg ")"
 ```
 
-The grammar above specifies **what the author writes**, not a second regex semantics. The generated Rholang parser must structurally recognize these forms with source occurrences; the adapter emits the same canonical `TokenPattern::Regex` pattern under the current character profile. The BNFC influence is the `token Name Reg;` declaration shape, not additional BNFC-only regex atoms or semantics. Full PraTTaIL lexer-regex coverage is the required surface contract:
+The grammar above specifies **what the author writes**, not a second regex semantics. The generated Rholang parser must structurally recognize these forms with source occurrences; the adapter emits the same canonical `TokenPattern::Regex` pattern under the current character profile. The BNFC influence is the `token Name ::= Reg;` declaration shape, not additional BNFC-only regex atoms or semantics. Full PraTTaIL lexer-regex coverage is the required surface contract:
 
 | Existing lexer feature | Required authored form |
 |---|---|
@@ -143,7 +145,7 @@ The grammar above specifies **what the author writes**, not a second regex seman
 | Wildcard, grouping, concatenation, and alternation | `.` with its existing newline exclusion, `(...)` as noncapturing grouping, adjacency, and alternation as in <code>a&#124;b</code>. |
 | Repetition | `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}`, `{,n}`, and `{,}`, with PraTTaIL's existing bounds and nullable-token checks. |
 
-The generated host parser must retain regex punctuation and escapes in a typed `Reg` AST; it may not hand an opaque DDL substring to another DDL parser. A top-level semicolon terminates `token Name Reg;`; a literal semicolon can be written `[;]` or `\u{3B}`. The full feature matrix needs source-to-canonical-pattern tests and installed-lexer differential tests, including class ranges, Unicode, negation, all bounded forms, invalid escapes, and declaration-delimiter cases. The existing lexer still rejects backreferences, lookaround, lazy quantifiers, named groups, and anchors; the new syntax must not pretend to support them. These are requirements to preserve the current supported surface, not to change its meaning.
+The generated host parser must retain regex punctuation and escapes in a typed `Reg` AST; it may not hand an opaque DDL substring to another DDL parser. A top-level semicolon terminates `token Name ::= Reg;`; a literal semicolon can be written `[;]` or `\u{3B}`. The full feature matrix needs source-to-canonical-pattern tests and installed-lexer differential tests, including class ranges, Unicode, negation, all bounded forms, invalid escapes, and declaration-delimiter cases. The existing lexer still rejects backreferences, lookaround, lazy quantifiers, named groups, and anchors; the new syntax must not pretend to support them. These are requirements to preserve the current supported surface, not to change its meaning.
 
 BNFC general subtraction is outside this BNFC-inspired surface because it is not an existing PraTTaIL lexer-regex feature. That boundary is not an invitation to invent another regex evaluator or change the lexer. PraTTaIL's [existing regex compiler](../../../prattail/src/automata/regex.rs) handles target patterns with its stack-safe Thompson NFA, alphabet partitioning, subset construction, and DFA minimization. The [existing runtime compiler](../../../prattail/src/runtime_backend.rs) and [lexer-image verifier](../../../grammar-core/src/image.rs) continue to consume `TokenPattern::Regex` unchanged. No new canonical `Reg` arm, DFA-product operator, or alternative regex semantics is part of this proposal. The host grammar must distinguish regex punctuation from enclosing DDL syntax by its grammar state, not global character guessing.
 
@@ -180,9 +182,9 @@ The [current schema](../../../mettail-elab/src/schema.rs) accepts more fields th
 | Canonical field family | Authoring role and boundary |
 |---|---|
 | `mettail`, `name` | Derived from the language profile and enclosing `Theory`; ordinary `Data` fragments still may not override them. |
-| `types` | Existing `Types` declares category names. Proposed optional per-category carrier annotations and `noadmit` prefixes would expose the already-present native/collection/extern carrier, `admits_variables`, collection delimiter, and refinement fields; these are not yet accepted by the in-Rholang DDL parser. |
-| `literals` | BNFC-inspired `token Category Reg;` inside `Terms` for a carrier-backed category; the `Types` carrier supplies the checked default decoder. An explicit typed decoder override covers the other native-evaluation variants. |
-| `tokens` | The same `token Name Reg;` inside `Terms` for named tokens; `Options.Lexer.TokenOptions` attaches optional category/decoder, priority, push/pop, and stream without altering that declaration form. `position token` requires an additional canonical position field. |
+| `types` | Existing `Types` declares category names. The implemented per-category carrier annotations and `noadmit` prefixes expose the already-present native/collection/extern carrier, `admits_variables`, collection delimiter, and refinement fields; collection delimiter and refinement forms remain proposed. |
+| `literals` | BNFC-inspired `token Category ::= Reg;` inside `Terms` for a carrier-backed category; the `Types` carrier supplies the checked default decoder. An explicit typed decoder override covers the other native-evaluation variants. |
+| `tokens` | The same `token Name ::= Reg;` inside `Terms` for named tokens; `Options.Lexer.TokenOptions` attaches optional category/decoder, priority, push/pop, and stream without altering that declaration form. `position token` requires an additional canonical position field. |
 | `modes` | `Modes` declares name, optional `raw`, and its ordered token declarations. |
 | `sync` | `Sync` declares alignments and location tracking without changing stream membership implicitly. |
 | `terms` | `Terms` preserves label, result sort, context, one of judgment syntax or BNFC items, evaluation, mode, association, `prefix_bp`, previous-level sharing, tier, and documentation. |
@@ -209,7 +211,7 @@ Types {
     collection { open = "{"; close = "}"; sep = ","; key_val_sep = ":"; };
   noadmit Positive = BigInt refine n:Nat where cmp(n, ">", 0);
 }
-Modes { Quoted raw { token CloseQuote ["]; } }
+Modes { Quoted raw { token CloseQuote ::= ["]; } }
 Options {
   Lexer { TokenOptions { Quoted.CloseQuote : pop; } }
   Parser { beam_width = auto; }
@@ -218,7 +220,7 @@ Options {
 Sync { align Main Auxiliary at {"\n"}; track Locations with Main; }
 ```
 
-The `Modes` example keeps the same `token Name Reg;` form inside a mode; `Options.Lexer.TokenOptions` supplies mode-stack behavior. The `Sync` example uses a BNFC-style sequence. Field blocks are closed and type-checked, not arbitrary host-code evaluation. The existing data-schema option keys are `beam_width`, `log_semiring_model_path`, `dispatch`, `emit_tests`, `emit_blockly`, `emit_simulator`, `parse_only`, `case_insensitive`, `unicode_normalization`, `reserved_keywords`, `contextual_keywords`, and `recovery`; the proposed nested grouping is surface organization, not a new interpretation of those keys. Recovery must include every current key: `skip_per_token`, `delete_cost`, `substitute_cost`, `insert_cost`, `swap_cost`, `max_skip_lookahead`, `deep_nesting_threshold`, `deep_nesting_skip_mult`, `shallow_depth_threshold`, `shallow_depth_skip_mult`, `low_bp_threshold`, `low_bp_skip_mult`, `collection_insert_mult`, `group_insert_mult`, `bracket_insert_mult`, `mixfix_substitute_mult`, `simulation_valid_mult`, `simulation_fail_penalty`, `beam_width`, `cascade_window`, `vpa_nesting_ceiling`, `adaptive_weight_threshold`, `deterministic_skip_discount`, `ambiguous_insert_discount`, and `max_recovery_depth`.
+The `Modes` example keeps the same `token Name ::= Reg;` form inside a mode; `Options.Lexer.TokenOptions` supplies mode-stack behavior. The `Sync` example uses a BNFC-style sequence. Field blocks are closed and type-checked, not arbitrary host-code evaluation. The existing data-schema option keys are `beam_width`, `log_semiring_model_path`, `dispatch`, `emit_tests`, `emit_blockly`, `emit_simulator`, `parse_only`, `case_insensitive`, `unicode_normalization`, `reserved_keywords`, `contextual_keywords`, and `recovery`; the proposed nested grouping is surface organization, not a new interpretation of those keys. Recovery must include every current key: `skip_per_token`, `delete_cost`, `substitute_cost`, `insert_cost`, `swap_cost`, `max_skip_lookahead`, `deep_nesting_threshold`, `deep_nesting_skip_mult`, `shallow_depth_threshold`, `shallow_depth_skip_mult`, `low_bp_threshold`, `low_bp_skip_mult`, `collection_insert_mult`, `group_insert_mult`, `bracket_insert_mult`, `mixfix_substitute_mult`, `simulation_valid_mult`, `simulation_fail_penalty`, `beam_width`, `cascade_window`, `vpa_nesting_ceiling`, `adaptive_weight_threshold`, `deterministic_skip_discount`, `ambiguous_insert_discount`, and `max_recovery_depth`.
 
 Guard and tree-query data remain available in the exact programmatic schema. A readable Rholang query language may expose positive/negative calls, finite domains, bounded quantification, linear constraints, equality/inequality, comparisons, logical connectives, AC matching, and tree references where their profiles admit them. Those are *queries over* the theory and its OSLF-derived logic, not additional definitions of the guest language's syntax or reduction semantics. Unsupported modal or profile-specific forms remain rejected.
 
@@ -274,7 +276,7 @@ One migration hazard is nonsemantic-looking identity change. Unnamed equations c
 
 ## Grammar and implementation plan
 
-Braces delimit builders and semicolons terminate declarations. The generated host grammar distinguishes `token Name Reg;` from Greg and Mike's judgment-form term rules inside `Terms`, and both from ordinary Rholang process syntax. It also distinguishes regex alternation from Rholang process parallel composition. New keywords should be contextual where possible; making `char`, `digit`, or `token` globally reserved would be a Rholang regression. Rule constructors stay parenthesized S-expressions. A native literal stays distinct from a constructor, and a typed collection's element annotation stays distinct from a result-sort annotation. Existing theory-algebra precedence, module imports, lexical scope, and full-expression extent remain unchanged.
+Braces delimit builders and semicolons terminate declarations. The generated host grammar distinguishes `token Name ::= Reg;` from Greg and Mike's judgment-form term rules inside `Terms`, and both from ordinary Rholang process syntax. It also distinguishes regex alternation from Rholang process parallel composition. New keywords should be contextual where possible; making `char`, `digit`, or `token` globally reserved would be a Rholang regression. Rule constructors stay parenthesized S-expressions. A native literal stays distinct from a constructor, and a typed collection's element annotation stays distinct from a result-sort annotation. Existing theory-algebra precedence, module imports, lexical scope, and full-expression extent remain unchanged.
 
 Implementation should proceed as one reviewed contract, with these independently verifiable increments:
 

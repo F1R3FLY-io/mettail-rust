@@ -1448,8 +1448,13 @@ mod collection_projection_tests {
             },
         });
         let specification = language_def_to_spec(&language).expect("project original rules");
-        assert_eq!(specification.wpda_original_occurrences,
-            Some(vec![mettail_grammar_core::ProductionId(0), mettail_grammar_core::ProductionId(1)]));
+        assert_eq!(
+            specification.wpda_original_occurrences,
+            Some(vec![
+                mettail_grammar_core::ProductionId(0),
+                mettail_grammar_core::ProductionId(1)
+            ])
+        );
         let owner = &specification.rules[0]
             .authored
             .as_ref()
@@ -1504,9 +1509,11 @@ mod collection_projection_tests {
             terms { PZero . |- "0" : Proc; },
         });
         let specification = language_def_to_spec(&language).expect("project synthetic collection");
-        assert_eq!(specification.wpda_original_occurrences,
+        assert_eq!(
+            specification.wpda_original_occurrences,
             Some(vec![mettail_grammar_core::ProductionId(0)]),
-            "the exact original prefix excludes appended collection helper productions");
+            "the exact original prefix excludes appended collection helper productions"
+        );
         let original = specification
             .rules
             .iter()
@@ -1523,8 +1530,14 @@ mod collection_projection_tests {
             .to_grammar_core()
             .expect("project mixed authored availability");
         assert_eq!(core.wpda_original_occurrences, specification.wpda_original_occurrences);
-        assert!(core.productions.len() > core.wpda_original_occurrences.as_ref()
-            .expect("explicit original prefix").len());
+        assert!(
+            core.productions.len()
+                > core
+                    .wpda_original_occurrences
+                    .as_ref()
+                    .expect("explicit original prefix")
+                    .len()
+        );
         assert!(core
             .productions
             .iter()

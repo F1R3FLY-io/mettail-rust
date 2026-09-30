@@ -139,6 +139,7 @@ pub fn matches_prefix(
 /// roster. Calling this builds no automaton and renders no generated source.
 pub struct TokenObservationProducer {
     by_variant: BTreeMap<String, O>,
+    selected_terminals: BTreeMap<String, TokenKind>,
 }
 
 impl TokenObservationProducer {
@@ -174,7 +175,35 @@ impl TokenObservationProducer {
         crate::automata::codegen::visit_token_kind_projection(&kinds, &custom, |row| {
             by_variant.insert(row.variant, retain(row.kind));
         });
-        Self { by_variant }
+        // TerminalPattern is selected by source text in the original lexer.
+        // A native Boolean terminal can therefore win over a later grammar
+        // Fixed("true")/Fixed("false") declaration with the same text.
+        let selected_terminals = input
+            .terminals
+            .iter()
+            .map(|terminal| (terminal.text.clone(), terminal.kind.clone()))
+            .collect();
+        Self { by_variant, selected_terminals }
+    }
+
+    /// Retain the kind selected by the original lexer's terminal roster.
+    /// The Core append site supplies the exact terminal text, not a guessed
+    /// token family; the original token-kind writer supplies its observation.
+    pub fn record_terminal(
+        &self,
+        core: &mut GrammarCoreV1,
+        token: TokenId,
+        terminal: &str,
+    ) -> Result<(), String> {
+        let kind = self
+            .selected_terminals
+            .get(terminal)
+            .ok_or_else(|| format!("original lexer has no selected terminal {terminal:?}"))?;
+        let variant = crate::automata::codegen::token_projection_variant(kind);
+        let observation = self.by_variant.get(&variant).cloned().ok_or_else(|| {
+            format!("original token-kind writer has no observation for selected {variant:?}")
+        })?;
+        self.record_observation(core, token, || Some(observation))
     }
 
     /// Called beside each existing TokenDefinition append, with its actual

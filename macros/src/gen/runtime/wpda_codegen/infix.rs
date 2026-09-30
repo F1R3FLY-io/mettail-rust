@@ -15,9 +15,7 @@
 use crate::gen::native::NativeTypeFromSynType;
 use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
-use mettail_prattail::binding_power::{
-    analyze_binding_powers, BindingPowerTable, InfixRuleInfo,
-};
+use mettail_prattail::binding_power::{analyze_binding_powers, BindingPowerTable, InfixRuleInfo};
 use mettail_prattail::wpda_rule_analysis::{InfixRuleShape, IDENT_CAPTURE_KIND_NAME};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
