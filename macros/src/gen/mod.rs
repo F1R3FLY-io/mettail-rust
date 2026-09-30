@@ -3091,6 +3091,7 @@ pub(crate) fn shape_refusal(rule_label: &syn::Ident, expected: &str) -> proc_mac
 pub(crate) fn empty_language_for_tests() -> mettail_ast::language::LanguageDef {
     mettail_ast::language::LanguageDef {
         name: quote::format_ident!("TestLang"),
+        version: None,
         options: std::collections::HashMap::new(),
         extends_names: Vec::new(),
         include_names: Vec::new(),

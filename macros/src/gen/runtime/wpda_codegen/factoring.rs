@@ -2009,6 +2009,7 @@ mod tests {
     fn mk_language(name: &str, types: Vec<LangType>, terms: Vec<GrammarRule>) -> LanguageDef {
         LanguageDef {
             name: id(name),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

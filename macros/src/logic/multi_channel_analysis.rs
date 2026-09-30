@@ -357,6 +357,7 @@ mod tests {
     fn minimal_language() -> LanguageDef {
         LanguageDef {
             name: ident("TestLang"),
+            version: None,
             options: HashMap::<String, AttributeValue>::new(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

@@ -231,6 +231,7 @@ pub fn merge_language_defs(
     Ok(LanguageDef {
         // Use the extension's name (the consuming language)
         name: extension.name.clone(),
+        version: extension.version.clone(),
         options: merged_options,
         // Composition clauses are consumed during merge; the merged result has none
         extends_names: Vec::new(),
@@ -942,6 +943,7 @@ mod tests {
     fn make_lang(name: &str) -> LanguageDef {
         LanguageDef {
             name: Ident::new(name, Span::call_site()),
+            version: None,
             options: HashMap::new(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

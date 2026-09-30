@@ -2269,6 +2269,7 @@ mod tests {
     fn lang_with_rules(rules: Vec<GrammarRule>) -> LanguageDef {
         LanguageDef {
             name: Ident::new("Toy", Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

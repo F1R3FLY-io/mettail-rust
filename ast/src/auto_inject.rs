@@ -670,6 +670,7 @@ mod tests {
     fn empty_language() -> LanguageDef {
         LanguageDef {
             name: ident("Test"),
+            version: None,
             options: HashMap::new(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

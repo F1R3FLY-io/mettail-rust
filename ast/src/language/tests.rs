@@ -9,6 +9,42 @@ fn ident(name: &str) -> Ident {
     Ident::new(name, proc_macro2::Span::call_site())
 }
 
+#[test]
+fn language_version_is_optional_and_preserved_exactly() {
+    let unversioned = parse_lang(quote::quote! {
+        name: Versioned,
+        types { Proc }
+        terms { Zero . |- "0" : Proc ; }
+    });
+    assert_eq!(unversioned.version, None);
+
+    let versioned = parse_lang(quote::quote! {
+        name: Versioned,
+        version: "1.4-preview.2",
+        types { Proc }
+        terms { Zero . |- "0" : Proc ; }
+    });
+    assert_eq!(versioned.version.as_deref(), Some("1.4-preview.2"));
+}
+
+#[test]
+fn language_version_rejects_empty_or_padded_labels() {
+    for version in ["", " ", " 1.4", "1.4 ", "1.4\n"] {
+        let source = format!(
+            "name: Versioned, version: {version:?}, types {{ Proc }} terms {{ Zero . |- \"0\" : Proc ; }}"
+        );
+        let error = syn::parse_str::<LanguageDef>(&source).expect_err("invalid version label");
+        assert!(error
+            .to_string()
+            .contains("language version must be a nonempty string"));
+    }
+    let error = syn::parse_str::<LanguageDef>(
+        "name: Versioned, version: 1.4, types { Proc } terms { Zero . |- \"0\" : Proc ; }",
+    )
+    .expect_err("version must be a string literal");
+    assert!(error.to_string().contains("string literal"));
+}
+
 fn ac_match_pred() -> BehavioralPred {
     BehavioralPred::AcMatch {
         bag: ident("bag"),

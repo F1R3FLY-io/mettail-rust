@@ -804,7 +804,15 @@ fn run_identity_tasks<'identity>(
 fn write_language(language: &LanguageDef, out: &mut impl IdentitySink) {
     out.push_str("language(");
     push_ident(out, &language.name);
-    out.push_str(");options[");
+    if let Some(version) = &language.version {
+        out.push_str(");version(");
+        out.push_str(version);
+        out.push(')');
+        out.push_str(";options[");
+    } else {
+        // Keep the exact v2 framing of every pre-version LanguageDef.
+        out.push_str(");options[");
+    }
     let mut options = language.options.iter().collect::<Vec<_>>();
     options.sort_by_key(|(left, _)| *left);
     for (key, value) in options {
@@ -1415,6 +1423,39 @@ mod tests {
         let right = syn::parse_str::<LanguageDef>(src).expect("right parse");
 
         assert_eq!(language_definition_fingerprint(&left), language_definition_fingerprint(&right));
+    }
+
+    #[test]
+    fn fingerprint_commits_explicit_language_version() {
+        let source = r#"
+            name: FingerprintVersion,
+            types { Proc }
+            terms { Zero . |- "0" : Proc ; }
+        "#;
+        let unversioned = syn::parse_str::<LanguageDef>(source).expect("unversioned parse");
+        let mut versioned = unversioned.clone();
+        versioned.version = Some("1.4".to_owned());
+        let mut next = versioned.clone();
+        next.version = Some("1.5".to_owned());
+
+        assert_ne!(
+            language_definition_fingerprint(&unversioned),
+            language_definition_fingerprint(&versioned)
+        );
+        assert_ne!(
+            language_definition_fingerprint(&versioned),
+            language_definition_fingerprint(&next)
+        );
+        let parsed =
+            syn::parse_str::<LanguageDef>(&source.replace(
+                "name: FingerprintVersion,",
+                "name: FingerprintVersion, version: \"1.4\",",
+            ))
+            .expect("versioned parse");
+        assert_eq!(
+            language_definition_fingerprint(&versioned),
+            language_definition_fingerprint(&parsed)
+        );
     }
 
     #[test]

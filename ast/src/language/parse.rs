@@ -46,6 +46,26 @@ impl Parse for LanguageDef {
         let name = input.parse::<Ident>()?;
         let _ = input.parse::<Token![,]>()?;
 
+        // An explicit version is grammar identity, not a runtime option. Keep
+        // omission valid for existing language definitions, but reject empty or
+        // padded labels so a present version always names an exact release.
+        let version = if input.peek(Ident) && input.fork().parse::<Ident>()? == "version" {
+            let _ = input.parse::<Ident>()?;
+            let _ = input.parse::<Token![:]>()?;
+            let literal = input.parse::<syn::LitStr>()?;
+            let value = literal.value();
+            if value.is_empty() || value.trim() != value || value.chars().any(char::is_control) {
+                return Err(syn::Error::new(
+                    literal.span(),
+                    "language version must be a nonempty string without surrounding whitespace or control characters",
+                ));
+            }
+            let _ = input.parse::<Token![,]>()?;
+            Some(value)
+        } else {
+            None
+        };
+
         // Parse: options { ... } (optional)
         let options = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
@@ -283,6 +303,7 @@ impl Parse for LanguageDef {
 
         Ok(LanguageDef {
             name,
+            version,
             options,
             extends_names,
             include_names,

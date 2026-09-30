@@ -286,6 +286,7 @@ mod tests {
     fn lang_with_int_and_bool_literals() -> LanguageDef {
         LanguageDef {
             name: Ident::new("Test", Span::call_site()),
+            version: None,
             options: Default::default(),
             extends_names: Vec::new(),
             include_names: Vec::new(),

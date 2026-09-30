@@ -36,6 +36,9 @@ pub enum AttributeValue {
 #[derive(Debug, Clone)]
 pub struct LanguageDef {
     pub name: Ident,
+    /// Explicit checked grammar version from `version: "..."`.
+    /// An omitted version remains `None` for existing `language!` definitions.
+    pub version: Option<String>,
     /// Configuration options parsed from `options { ... }` block. Empty if block omitted.
     pub options: HashMap<String, AttributeValue>,
     /// Languages to fully inherit from (types + terms + equations + rewrites + logic).

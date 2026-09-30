@@ -99,6 +99,7 @@ impl FragmentDef {
     pub fn to_language_def(&self) -> LanguageDef {
         LanguageDef {
             name: self.name.clone(),
+            version: None,
             options: HashMap::new(),
             extends_names: Vec::new(),
             include_names: Vec::new(),
