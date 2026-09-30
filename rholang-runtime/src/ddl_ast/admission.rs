@@ -100,6 +100,10 @@ pub(super) fn expansion(
             },
         ),
         Task::CatDecl(_) | Task::Sort(_) => (1, 1),
+        Task::OptionSection(DdlOptionSection::DdlOptionSemanticsLimits(entries)) => {
+            (2, add(entries.len(), 1)?)
+        },
+        Task::LimitEntry(_) => (1, 2),
         Task::Export(export) => (
             2,
             match export {
@@ -231,6 +235,7 @@ fn theory(expression: &DdlTheoryExpr) -> Result<(usize, usize), RholangAstLowerE
         DdlTheoryTerms(_, entries) => (3, add(entries.len(), 3)?),
         DdlTheoryEquations(_, entries) => (3, add(entries.len(), 3)?),
         DdlTheoryRewrites(_, entries) => (3, add(entries.len(), 3)?),
+        DdlTheoryOptions(_, sections) => (3, add(sections.len(), 3)?),
         DdlTheoryData(..) => (2, 3),
         DdlTheoryEmpty => (1, 0),
         DdlTheoryFree(_) => (1, 1),
@@ -244,6 +249,7 @@ fn theory(expression: &DdlTheoryExpr) -> Result<(usize, usize), RholangAstLowerE
         DdlTheoryTermsImplicit(entries) => (4, add(entries.len(), 3)?),
         DdlTheoryEquationsImplicit(entries) => (4, add(entries.len(), 3)?),
         DdlTheoryRewritesImplicit(entries) => (4, add(entries.len(), 3)?),
+        DdlTheoryOptionsImplicit(sections) => (4, add(sections.len(), 3)?),
         DdlTheoryDataImplicit(_) => (3, 3),
     })
 }

@@ -1,0 +1,47 @@
+@startuml
+skinparam backgroundColor #F8FAFC
+skinparam shadowing false
+skinparam sequence {
+  ArrowColor #334155
+  LifeLineBorderColor #64748B
+  LifeLineBackgroundColor #F1F5F9
+  ParticipantBorderColor #334155
+  ParticipantFontColor #0F172A
+  GroupBorderColor #64748B
+  GroupBackgroundColor #E2E8F0
+  NoteBorderColor #B45309
+  NoteBackgroundColor #FEF3C7
+}
+title Versioned generated host profile: derivation, admission, use
+participant "Checked language!\ndefinition" as Macro #DBEAFE
+participant "Generated typed\nadapter/layout" as Adapter #CCFBF1
+participant "Canonical profile\nand digest" as Profile #D1FAE5
+participant "Trusted installer\nand handle" as Install #DDD6FE
+participant "Projection compiler\nand shared kernel" as Kernel #FDE68A
+participant "Rholang FLT\napplication" as App #FECACA
+
+group Derive from one checked grammar
+  Macro -> Adapter : emit exact structural field layout
+  Adapter -> Profile : canonical roster, version, ABI, withheld fields
+  Profile --> Install : payload plus recomputable content digest
+end
+
+group Admit executable authority
+  Install -> Adapter : verify exact codec provider and grammar identity
+  Adapter --> Install : checked executable binding
+  Install -> Install : verify trust policy and publish sealed handle
+end
+
+group Select and run one typed relation
+  App -> Install : request guest/host handles and direction
+  Install -> Kernel : checked profile, codec, rights, image and budgets
+  Kernel --> Install : complete result family and receipts
+  Install -> Install : revalidate both epochs before publication
+  Install --> App : values with evidence or typed refusal
+end
+
+note over Profile, Install
+  A digest identifies content, not authority.
+  External Registry publication additionally requires signer trust.
+end note
+@enduml

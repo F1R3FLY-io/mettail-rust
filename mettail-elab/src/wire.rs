@@ -7,14 +7,16 @@
 
 use crate::ast::{
     Ast, Binding, Builder, CatDecl, CollKind, DottedPath, Equation, Export, Import, Item,
-    ModuleFile, ModuleItem, Param, ProjectionBinding, ProjectionBody, ProjectionDecl,
-    ProjectionDirection, ProjectionPremise, ProjectionRule, Replacement, RewriteDecl, RewriteEntry,
-    Sort, TermAssociativity, TermRule, TheoryDecl, TheoryExpr,
+    LimitAssignment, ModuleFile, ModuleItem, OptionSection, Param, ProjectionBinding,
+    ProjectionBody, ProjectionDecl, ProjectionDirection, ProjectionPremise, ProjectionRule,
+    Replacement, RewriteDecl, RewriteEntry, Sort, TermAssociativity, TermRule, TheoryDecl,
+    TheoryExpr,
 };
 use crate::canonical::{
     admit_canonical_value, admit_canonical_value_resources, RhoValue, ValueDecodeError,
 };
 use crate::lex::Span;
+use std::collections::BTreeSet;
 use std::fmt;
 
 pub const DDL_AST_ENVELOPE_V2: &str = "mettail-ddl-ast/2";
@@ -401,6 +403,7 @@ fn decode_builder(value: RhoValue, path: &str) -> Result<Builder, DdlValueError>
             .map(Builder::Equations),
         Some("rewrites") => decode_builder_sequence(value, "rewrites", path, decode_rewrite_entry)
             .map(Builder::Rewrites),
+        Some("options") => decode_options_builder(value, path).map(Builder::Options),
         Some("data") => {
             let mut fields = expect_node(value, "data", Some(1), path.into())?;
             let payload = fields.pop().expect("arity checked");
@@ -410,6 +413,90 @@ fn decode_builder(value: RhoValue, path: &str) -> Result<Builder, DdlValueError>
         Some(tag) => Err(wrong_tag(path, tag, "a DDL builder")),
         None => Err(not_node(path, "a DDL builder")),
     }
+}
+
+fn decode_options_builder(
+    value: RhoValue,
+    path: &str,
+) -> Result<Vec<OptionSection>, DdlValueError> {
+    let mut fields = expect_node(value, "options", Some(1), path.into())?;
+    let sections =
+        expect_sequence(fields.pop().expect("arity checked"), &format!("{path}.sections"))?;
+    let mut seen_semantics = false;
+    let mut decoded = Vec::with_capacity(sections.len());
+    for (index, section) in sections.into_iter().enumerate() {
+        let section_path = format!("{path}.sections[{index}]");
+        match node_tag(&section) {
+            Some("option-semantics-limits") => {
+                if seen_semantics {
+                    return Err(DdlValueError::new(
+                        section_path,
+                        "duplicate Semantics.Limits section",
+                    ));
+                }
+                seen_semantics = true;
+                let mut fields =
+                    expect_node(section, "option-semantics-limits", Some(1), section_path.clone())?;
+                let entries = expect_sequence(
+                    fields.pop().expect("arity checked"),
+                    &format!("{section_path}.entries"),
+                )?;
+                let mut seen_names = BTreeSet::new();
+                let mut limits = Vec::with_capacity(entries.len());
+                for (entry_index, entry) in entries.into_iter().enumerate() {
+                    let entry_path = format!("{section_path}.entries[{entry_index}]");
+                    let mut parts =
+                        expect_node(entry, "limit-assignment", Some(2), entry_path.clone())?
+                            .into_iter();
+                    let name = expect_string(
+                        parts.next().expect("arity checked"),
+                        format!("{entry_path}.name"),
+                    )?;
+                    if !matches!(
+                        name.as_str(),
+                        "max_rule_variables"
+                            | "max_term_nodes"
+                            | "max_premise_nodes"
+                            | "max_proof_nodes"
+                            | "max_frontier"
+                            | "max_steps"
+                            | "max_grade_bits"
+                            | "max_output_nodes"
+                            | "max_output_bytes"
+                    ) {
+                        return Err(DdlValueError::new(
+                            format!("{entry_path}.name"),
+                            format!("unknown Semantics.Limits field `{name}`"),
+                        ));
+                    }
+                    if !seen_names.insert(name.clone()) {
+                        return Err(DdlValueError::new(
+                            format!("{entry_path}.name"),
+                            format!("duplicate Semantics.Limits field `{name}`"),
+                        ));
+                    }
+                    let value = parts.next().expect("arity checked");
+                    let RhoValue::Integer(value) = value else {
+                        return Err(DdlValueError::new(
+                            format!("{entry_path}.value"),
+                            "expected an integer",
+                        ));
+                    };
+                    let value = u32::try_from(value).map_err(|_| {
+                        DdlValueError::new(
+                            format!("{entry_path}.value"),
+                            "limit is outside the unsigned 32-bit domain",
+                        )
+                    })?;
+                    limits.push(LimitAssignment { name, value, span: SYNTHETIC_SPAN });
+                }
+                decoded.push(OptionSection::SemanticsLimits(limits));
+            },
+            Some(tag) => return Err(wrong_tag(&section_path, tag, "an Options section")),
+            None => return Err(not_node(&section_path, "an Options section")),
+        }
+    }
+    Ok(decoded)
 }
 
 fn decode_builder_sequence<T>(
@@ -1240,6 +1327,90 @@ mod tests {
                 .chain(fields)
                 .collect(),
         )
+    }
+
+    fn limit_options(entries: &[(&str, i128)]) -> RhoValue {
+        node(
+            "options",
+            vec![node(
+                "sequence",
+                vec![node(
+                    "option-semantics-limits",
+                    vec![node(
+                        "sequence",
+                        entries
+                            .iter()
+                            .map(|(name, value)| {
+                                node(
+                                    "limit-assignment",
+                                    vec![
+                                        RhoValue::String((*name).into()),
+                                        RhoValue::Integer(*value),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    )],
+                )],
+            )],
+        )
+    }
+
+    #[test]
+    fn authored_semantic_limits_project_to_the_existing_theory_core() {
+        let names = [
+            "max_rule_variables",
+            "max_term_nodes",
+            "max_premise_nodes",
+            "max_proof_nodes",
+            "max_frontier",
+            "max_steps",
+            "max_grade_bits",
+            "max_output_nodes",
+            "max_output_bytes",
+        ];
+        let entries: Vec<_> = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (*name, 100 + index as i128))
+            .collect();
+        let builder = decode_builder(limit_options(&entries), "$.options").unwrap();
+        let declaration = TheoryDecl {
+            name: "Limited".into(),
+            params: Vec::new(),
+            body: TheoryExpr::Build {
+                base: Box::new(TheoryExpr::Empty(SYNTHETIC_SPAN)),
+                builder,
+                span: SYNTHETIC_SPAN,
+            },
+            span: SYNTHETIC_SPAN,
+        };
+        let language = crate::elaborate_theory_ast(declaration).unwrap();
+        let limits = language.language_core.theory.limits;
+        assert_eq!(limits.max_rule_variables, 100);
+        assert_eq!(limits.max_term_nodes, 101);
+        assert_eq!(limits.max_premise_nodes, 102);
+        assert_eq!(limits.max_proof_nodes, 103);
+        assert_eq!(limits.max_frontier, 104);
+        assert_eq!(limits.max_steps, 105);
+        assert_eq!(limits.max_grade_bits, 106);
+        assert_eq!(limits.max_output_nodes, 107);
+        assert_eq!(limits.max_output_bytes, 108);
+    }
+
+    #[test]
+    fn authored_semantic_limits_reject_unknown_duplicate_and_out_of_range_fields() {
+        for entries in [
+            vec![("unknown", 1)],
+            vec![("max_steps", 1), ("max_steps", 1)],
+            vec![("max_steps", -1)],
+            vec![("max_steps", i128::from(u32::MAX) + 1)],
+        ] {
+            assert!(decode_builder(limit_options(&entries), "$.options").is_err());
+        }
+        let section = node("option-semantics-limits", vec![node("sequence", vec![])]);
+        let duplicate = node("options", vec![node("sequence", vec![section.clone(), section])]);
+        assert!(decode_builder(duplicate, "$.options").is_err());
     }
 
     #[test]

@@ -75,7 +75,8 @@ language! {
         contextual_keywords: [
             "Module", "Theory", "theory", "import", "as", "from", "Empty",
             "free", "let", "Types", "Exports", "Replacements", "Terms",
-            "Equations", "Rewrites", "Data", "HashBag", "Set", "List", "sep",
+            "Equations", "Rewrites", "Data", "Options", "Semantics", "Limits",
+            "HashBag", "Set", "List", "sep",
             "subst", "PPar", "noadmit",
         ],
     },
@@ -208,6 +209,8 @@ language! {
         data DdlTheoryExpr
         data DdlCatDecl
         data DdlCarrier
+        data DdlOptionSection
+        data DdlLimitEntry
         data DdlExport
         data DdlReplacement
         data DdlTermRule
@@ -2616,6 +2619,8 @@ language! {
             |- base "Equations" "{" entries.*sep("") "}" : DdlTheoryExpr same;
         DdlTheoryRewrites . base:DdlTheoryExpr, entries:Vec(DdlRewrite)
             |- base "Rewrites" "{" entries.*sep("") "}" : DdlTheoryExpr same;
+        DdlTheoryOptions . base:DdlTheoryExpr, sections:Vec(DdlOptionSection)
+            |- base "Options" "{" sections.*sep("") "}" : DdlTheoryExpr same;
         DdlTheoryData . base:DdlTheoryExpr, value:Proc
             |- base "Data" "(" value ")" : DdlTheoryExpr same;
 
@@ -2643,6 +2648,8 @@ language! {
             |- "Equations" "{" entries.*sep("") "}" : DdlTheoryExpr;
         DdlTheoryRewritesImplicit . entries:Vec(DdlRewrite)
             |- "Rewrites" "{" entries.*sep("") "}" : DdlTheoryExpr;
+        DdlTheoryOptionsImplicit . sections:Vec(DdlOptionSection)
+            |- "Options" "{" sections.*sep("") "}" : DdlTheoryExpr;
         DdlTheoryDataImplicit . value:Proc
             |- "Data" "(" value ")" : DdlTheoryExpr;
 
@@ -2679,6 +2686,10 @@ language! {
             carrier:DdlCarrier |- "noadmit" name@Ident "=" carrier ";" : DdlCatDecl;
         DdlCarrierIdent . |- name@Ident : DdlCarrier;
         DdlCarrierBool . |- "bool" : DdlCarrier;
+        DdlOptionSemanticsLimits . entries:Vec(DdlLimitEntry)
+            |- "Semantics" "{" "Limits" "{" entries.*sep("") "}" "}" : DdlOptionSection;
+        DdlLimitAssignment . value:Int
+            |- key@Ident "=" value ";" : DdlLimitEntry;
         DdlExportDirect . |- name@Ident ";" : DdlExport;
         DdlExportRename .
             |- name@Ident "=>" replacement@Ident ";" : DdlExport;

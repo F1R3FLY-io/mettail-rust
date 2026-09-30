@@ -1,6 +1,6 @@
 use mettail_languages::rholang::{
     lex, lex_dag, DdlEquation, DdlImport, DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlRewrite,
-    DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
+    DdlLimitEntry, DdlOptionSection, DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
 };
 use mettail_prattail::automata::TokenKind;
 use mettail_runtime::Language;
@@ -128,6 +128,25 @@ fn assert_theory_ref(expression: &DdlTheoryExpr, expected: &str) {
         matches!(path.as_ref(), DdlPath::DdlPathName(name) if name == expected),
         "expected theory reference `{expected}`, got {path:?}",
     );
+}
+
+#[test]
+fn options_semantic_limits_are_structural_in_the_generated_rholang_ast() {
+    let source = "Theory Limited() { Types { Work; } Options { Semantics { Limits { max_steps = 64; max_frontier = 8; } } } }";
+    let term = assert_roundtrip(source);
+    let Proc::DdlTheory(_, _, body) = &term else {
+        panic!("expected structural Theory declaration");
+    };
+    let DdlTheoryExpr::DdlTheoryOptions(base, sections) = body.as_ref() else {
+        panic!("expected structural Options builder, got {body:?}");
+    };
+    assert!(matches!(base.as_ref(), DdlTheoryExpr::DdlTheoryTypesImplicit(_)));
+    let [DdlOptionSection::DdlOptionSemanticsLimits(entries)] = sections.as_slice() else {
+        panic!("expected one Semantics.Limits section");
+    };
+    assert!(matches!(entries.as_slice(),
+        [DdlLimitEntry::DdlLimitAssignment(first, _), DdlLimitEntry::DdlLimitAssignment(second, _)]
+        if first == "max_steps" && second == "max_frontier"));
 }
 
 #[test]

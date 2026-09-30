@@ -112,6 +112,7 @@ macro_rules! rholang_source_profile_rows {
             DdlTheoryExpr::DdlTheoryTerms => [Arc<DdlTheoryExpr> => D, Vec<DdlTermRule> => D];
             DdlTheoryExpr::DdlTheoryEquations => [Arc<DdlTheoryExpr> => D, Vec<DdlEquation> => D];
             DdlTheoryExpr::DdlTheoryRewrites => [Arc<DdlTheoryExpr> => D, Vec<DdlRewrite> => D];
+            DdlTheoryExpr::DdlTheoryOptions => [Arc<DdlTheoryExpr> => D, Vec<DdlOptionSection> => D];
             DdlTheoryExpr::DdlTheoryData => [Arc<DdlTheoryExpr> => D, Arc<Proc> => T];
             DdlTheoryExpr::DdlTheoryTypesImplicit => [Vec<DdlCatDecl> => D];
             DdlTheoryExpr::DdlTheoryExportsImplicit => [Vec<DdlExport> => D];
@@ -119,7 +120,10 @@ macro_rules! rholang_source_profile_rows {
             DdlTheoryExpr::DdlTheoryTermsImplicit => [Vec<DdlTermRule> => D];
             DdlTheoryExpr::DdlTheoryEquationsImplicit => [Vec<DdlEquation> => D];
             DdlTheoryExpr::DdlTheoryRewritesImplicit => [Vec<DdlRewrite> => D];
+            DdlTheoryExpr::DdlTheoryOptionsImplicit => [Vec<DdlOptionSection> => D];
             DdlTheoryExpr::DdlTheoryDataImplicit => [Arc<Proc> => T];
+            DdlOptionSection::DdlOptionSemanticsLimits => [Vec<DdlLimitEntry> => D];
+            DdlLimitEntry::DdlLimitAssignment => [String => Opaque, Arc<Int> => Opaque];
             DdlCatDecl::DdlCategory => [String => Opaque];
             DdlExport::DdlExportDirect => [String => Opaque];
             DdlExport::DdlExportRename => [String => Opaque, String => Opaque];

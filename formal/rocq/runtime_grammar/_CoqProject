@@ -55,6 +55,7 @@ theories/DataCategoryCapabilities.v
 theories/NoAdmitTypeProjection.v
 theories/TypeCarrierProjection.v
 theories/TermAttributeProjection.v
+theories/OptionsLimitsProjection.v
 theories/CanonicalDispatchTable.v
 theories/BackendModuleEncapsulation.v
 theories/ExhaustiveGeneratedMatch.v
@@ -131,6 +132,7 @@ theories/RegexGsltApplicationMachine.v
 theories/WherePredicateCommit.v
 theories/NativeBooleanPredicate.v
 theories/TypedProjectionRelation.v
+theories/HostProfileLifecycle.v
 theories/ParserBackendSelection.v
 theories/OwnedPrecedenceAdmission.v
 theories/OwnedExplicitPrattLevels.v

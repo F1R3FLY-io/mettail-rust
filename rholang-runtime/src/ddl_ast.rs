@@ -8,11 +8,11 @@
 use crate::rholang_ast::RholangAstLowerError;
 use mettail_languages::rholang::{
     Bool, DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses,
-    DdlImport, DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlPremise, DdlPremises,
-    DdlProjectionBinding, DdlProjectionDirection, DdlProjectionPremise, DdlProjectionPremises,
-    DdlProjectionRowHead, DdlProjectionRule, DdlReplacement, DdlRewrite, DdlRuleAst,
-    DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem, DdlTermAttr, DdlTermRule,
-    DdlTheoryExpr, Int, Proc,
+    DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem, DdlOptionSection, DdlParam, DdlPath,
+    DdlPremise, DdlPremises, DdlProjectionBinding, DdlProjectionDirection, DdlProjectionPremise,
+    DdlProjectionPremises, DdlProjectionRowHead, DdlProjectionRule, DdlReplacement, DdlRewrite,
+    DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem, DdlTermAttr,
+    DdlTermRule, DdlTheoryExpr, Int, Proc,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{new_elist_par, new_gstring_par};
@@ -246,6 +246,24 @@ impl<'a> DdlLowerPlan<'a> {
                                 Task::Text(category),
                                 Task::Text(carrier_spelling(carrier)),
                             ],
+                        });
+                    },
+                },
+                Task::OptionSection(section) => match section {
+                    DdlOptionSection::DdlOptionSemanticsLimits(entries) => {
+                        tasks.push(Task::Node {
+                            tag: "option-semantics-limits",
+                            children: vec![sequence(
+                                entries.iter().map(Task::LimitEntry).collect(),
+                            )],
+                        });
+                    },
+                },
+                Task::LimitEntry(entry) => match entry {
+                    DdlLimitEntry::DdlLimitAssignment(name, value) => {
+                        tasks.push(Task::Node {
+                            tag: "limit-assignment",
+                            children: vec![Task::Text(name), Task::Number(value.as_ref())],
                         });
                     },
                 },
@@ -725,6 +743,9 @@ fn theory_expression_task<'a>(expression: &'a DdlTheoryExpr) -> Task<'a> {
         DdlTheoryRewrites(base, entries) => {
             build(base, "rewrites", entries.iter().map(Task::Rewrite).collect())
         },
+        DdlTheoryOptions(base, sections) => {
+            build(base, "options", sections.iter().map(Task::OptionSection).collect())
+        },
         DdlTheoryData(base, value) => Task::Node {
             tag: "build",
             children: vec![
@@ -777,6 +798,9 @@ fn theory_expression_task<'a>(expression: &'a DdlTheoryExpr) -> Task<'a> {
         },
         DdlTheoryRewritesImplicit(entries) => {
             implicit_build("rewrites", entries.iter().map(Task::Rewrite).collect())
+        },
+        DdlTheoryOptionsImplicit(sections) => {
+            implicit_build("options", sections.iter().map(Task::OptionSection).collect())
         },
         DdlTheoryDataImplicit(value) => Task::Node {
             tag: "build",
@@ -1013,6 +1037,8 @@ enum Task<'a> {
     Path(&'a DdlPath),
     TheoryExpr(&'a DdlTheoryExpr),
     CatDecl(&'a DdlCatDecl),
+    OptionSection(&'a DdlOptionSection),
+    LimitEntry(&'a DdlLimitEntry),
     Export(&'a DdlExport),
     Replacement(&'a DdlReplacement),
     TermRule(&'a DdlTermRule),

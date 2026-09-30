@@ -190,6 +190,7 @@ pub enum Builder {
     Terms(Vec<TermRule>),
     Equations(Vec<Equation>),
     Rewrites(Vec<RewriteEntry>),
+    Options(Vec<OptionSection>),
     /// A canonical `language/2` partial value. It is decoded through the same
     /// closed schema as a directly published value, then applied in field
     /// order by the elaborator.
@@ -205,9 +206,24 @@ impl Builder {
             Builder::Terms(_) => "Terms",
             Builder::Equations(_) => "Equations",
             Builder::Rewrites(_) => "Rewrites",
+            Builder::Options(_) => "Options",
             Builder::Data(_) => "Data",
         }
     }
+}
+
+/// Closed authored configuration sections. These are not semantic axioms;
+/// they project onto the existing canonical configuration fields.
+#[derive(Clone, Debug)]
+pub enum OptionSection {
+    SemanticsLimits(Vec<LimitAssignment>),
+}
+
+#[derive(Clone, Debug)]
+pub struct LimitAssignment {
+    pub name: String,
+    pub value: u32,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
