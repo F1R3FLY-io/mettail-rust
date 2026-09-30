@@ -1,0 +1,21 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam activity {
+  BackgroundColor #E8F3FF
+  BorderColor #255A89
+  FontColor #17324D
+  DiamondBackgroundColor #FFF0C2
+  DiamondBorderColor #8A6214
+}
+title Category-leading entry preserves its caller
+start
+:Inspect the current GSS top frame;
+if (No top frame?) then (yes)
+  #D6F2D8:Retain the historical root fallback;\nReplace and push source CategoryEntry;
+else (live caller, including CategoryEntry)
+  #DCE7FF:Weighted Fork Push RuleAt(1);\nKeep the caller below it;
+  #DCE7FF:EnterLeadingChild epsilon state;\nUnit Push source CategoryEntry;
+endif
+#D6F2D8:PrefixDispatch at the admitted child floor;\nInput position is unchanged;
+stop
+@enduml

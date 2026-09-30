@@ -5,7 +5,7 @@ use crate::canonical::RhoValue;
 use crate::diag::{Diag, DiagKind};
 use crate::pres::*;
 use crate::resolve::{ModuleRef, Program};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub struct Interp<'a> {
     prog: &'a Program,
@@ -468,19 +468,97 @@ impl<'a> Interp<'a> {
                         Ok(p)
                     },
 
-                    Builder::Terms(rules) => {
-                        for r in rules {
-                            self.check_rule(&p, r)?;
-                            if p.has_label(&r.label) {
-                                return Err(Diag::new(
-                                    DiagKind::RepeatLabel,
-                                    format!("label `{}` is declared twice in this theory", r.label),
-                                    r.span,
-                                ));
+                    Builder::Terms(declarations) => {
+                        for declaration in declarations {
+                            match declaration {
+                                TermDecl::Rule(r) => {
+                                    self.check_rule(&p, r)?;
+                                    if p.has_label(&r.label) {
+                                        return Err(Diag::new(
+                                            DiagKind::RepeatLabel,
+                                            format!(
+                                                "label `{}` is declared twice in this theory",
+                                                r.label
+                                            ),
+                                            r.span,
+                                        ));
+                                    }
+                                    let id = self.fresh();
+                                    p.terms
+                                        .push(TermEntry { id, rule: r.clone(), span: r.span });
+                                },
+                                TermDecl::Token(token) => {
+                                    if token.pattern.is_empty() {
+                                        return Err(Diag::new(
+                                            DiagKind::Value,
+                                            "token regex must not be empty",
+                                            token.span,
+                                        ));
+                                    }
+                                    let (field, entry) = match p
+                                        .types
+                                        .iter()
+                                        .find(|category| category.cat == token.name)
+                                        .and_then(|category| category.carrier.as_deref())
+                                    {
+                                        Some(carrier) => {
+                                            let kind = match carrier {
+                                                "String" => "str",
+                                                "BigInt" => "int",
+                                                "bool" => "bool",
+                                                _ => {
+                                                    return Err(Diag::new(
+                                                        DiagKind::Value,
+                                                        format!("token `{}` has no default decoder for carrier `{carrier}`", token.name),
+                                                        token.span,
+                                                    ));
+                                                },
+                                            };
+                                            (
+                                                "literals",
+                                                RhoValue::Map(BTreeMap::from([
+                                                    (
+                                                        "category".into(),
+                                                        RhoValue::String(token.name.clone()),
+                                                    ),
+                                                    (
+                                                        "pattern".into(),
+                                                        RhoValue::String(token.pattern.clone()),
+                                                    ),
+                                                    (
+                                                        "eval".into(),
+                                                        RhoValue::List(vec![
+                                                            RhoValue::String("carrier".into()),
+                                                            RhoValue::String(kind.into()),
+                                                            RhoValue::Map(BTreeMap::new()),
+                                                        ]),
+                                                    ),
+                                                ])),
+                                            )
+                                        },
+                                        None => (
+                                            "tokens",
+                                            RhoValue::Map(BTreeMap::from([
+                                                (
+                                                    "name".into(),
+                                                    RhoValue::String(token.name.clone()),
+                                                ),
+                                                (
+                                                    "pattern".into(),
+                                                    RhoValue::String(token.pattern.clone()),
+                                                ),
+                                            ])),
+                                        ),
+                                    };
+                                    p.canonical_fragments.push(CanonicalFragment {
+                                        id: self.fresh(),
+                                        value: RhoValue::Map(BTreeMap::from([(
+                                            field.into(),
+                                            RhoValue::List(vec![entry]),
+                                        )])),
+                                    });
+                                },
                             }
-                            let id = self.fresh();
-                            p.terms
-                                .push(TermEntry { id, rule: r.clone(), span: r.span });
                         }
                         Ok(p)
                     },
@@ -621,7 +699,7 @@ impl<'a> Interp<'a> {
                                 builders.push(Builder::Terms(
                                     std::mem::take(&mut fragment.terms)
                                         .into_iter()
-                                        .map(|entry| entry.rule)
+                                        .map(|entry| TermDecl::Rule(entry.rule))
                                         .collect(),
                                 ));
                             }

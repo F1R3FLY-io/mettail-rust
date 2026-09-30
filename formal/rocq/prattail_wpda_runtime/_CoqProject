@@ -165,6 +165,8 @@ theories/TermCategoryObservation.v
 theories/LogicalEoiObservation.v
 theories/OwnedLexicalAdapter.v
 theories/StructuralHoleBridge.v
+theories/ClosedFltFamily.v
+theories/LeadingCategoryContinuation.v
 theories/ConstructorElectionEvidence.v
 
 # Divergence I (2026-07-25): the numeral-carrier partition.

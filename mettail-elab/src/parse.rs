@@ -585,7 +585,7 @@ impl Parser {
             Tok::KwTerms => {
                 let mut v = Vec::new();
                 while !self.at(&Tok::RBrace) {
-                    v.push(self.term_rule()?);
+                    v.push(TermDecl::Rule(self.term_rule()?));
                 }
                 Builder::Terms(v)
             },

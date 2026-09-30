@@ -44,11 +44,11 @@
 //!   TokenStream (Rust source code)
 //! ```
 
+pub use mettail_grammar_core::native_variable;
 pub use mettail_grammar_core::{
     decode_double_quoted_string_literal, encode_double_quoted_string_literal,
     StringLiteralDecodeError,
 };
-pub use mettail_grammar_core::native_variable;
 
 // `trace_diag!` (the compile-time `walker-trace` gate for parser diagnostics)
 // must be in textual macro scope for every module below that uses it, so this
@@ -71,8 +71,8 @@ pub mod wpda_rule_analysis;
 pub mod ebnf;
 pub mod lexer;
 pub mod lexer_types;
-pub mod token_declarations;
 pub mod pipeline;
+pub mod token_declarations;
 // Stage 10.5b conclusion (2026-05-05): `pub mod pratt` DELETED (file deleted,
 // ~2,172 LoC). Trampoline-side Pratt parser emitter; superseded by Walker
 // codegen at `macros/src/gen/runtime/wpda_codegen/{prefix,infix,binder}.rs`.
@@ -186,11 +186,11 @@ pub mod runtime_types;
 pub mod transducer;
 pub mod wpds;
 
+pub mod wpda_owned;
 /// WPDS runtime: reactive FSM types (`WpdaState`/`Event`/`Transition`),
 /// integer-indexed `StackSymbolV2`, and `WpdaControl` directives.
 /// Stage 1 of W7 plan v5.1 — see `prattail/docs/design/wpds-migration-survey.md`.
 pub mod wpda_runtime;
-pub mod wpda_owned;
 
 pub mod wpda_transitions;
 

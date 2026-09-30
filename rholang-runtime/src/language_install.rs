@@ -1782,9 +1782,11 @@ impl RholangLanguageRuntime {
     }
 
     /// Parse one structural FLT template through an installed capability and
-    /// reflect every admitted recognition alternative into the common Rho term
-    /// algebra. Text and holes remain separate through lexing; fills are spliced
-    /// only after recognition, so no fill can become guest source.
+    /// reflect its unique closed term into the common Rho term algebra.
+    /// Duplicate weighted derivations of that exact syntax and value agree;
+    /// distinct readings fail closed instead of becoming parallel processes.
+    /// Text and holes remain separate through lexing; fills are spliced only
+    /// after recognition, so no fill can become guest source.
     pub fn construct_template(
         &self,
         token: &Par,
@@ -1896,24 +1898,27 @@ impl RholangLanguageRuntime {
         }
         let fills = adapted_fills.as_ref().unwrap_or(fills);
         let admission = self.admission_for(handle.fingerprint(), core)?;
-        let mut alternatives = Vec::with_capacity(parses.len());
-        let mut inferred_categories = None;
+        let mut parses = parses.into_iter();
+        let first = parses
+            .next()
+            .ok_or(LanguageFltConstructionError::AmbiguousConstruction)?;
+        let inferred_categories = dynamic_template_hole_categories(&first.syntax, holes.len())
+            .map_err(LanguageFltConstructionError::Reflection)?;
         for parse in parses {
+            budget
+                .charge(1, 0)
+                .map_err(LanguageFltConstructionError::Reflection)?;
             let categories = dynamic_template_hole_categories(&parse.syntax, holes.len())
                 .map_err(LanguageFltConstructionError::Reflection)?;
-            if inferred_categories
-                .as_ref()
-                .is_some_and(|inferred| inferred != &categories)
-            {
+            if inferred_categories != categories {
                 return Err(LanguageFltConstructionError::AmbiguousHoleCategories);
             }
-            inferred_categories.get_or_insert_with(|| categories.clone());
-            alternatives.push(
-                dynamic_syntax_to_ground_term(&parse.syntax, core, &hole_names)
-                    .map_err(LanguageFltConstructionError::Reflection)?,
-            );
+            if first.syntax != parse.syntax || first.value != parse.value {
+                return Err(LanguageFltConstructionError::AmbiguousConstruction);
+            }
         }
-        let inferred_categories = inferred_categories.unwrap_or_default();
+        let ground = dynamic_syntax_to_ground_term(&first.syntax, core, &hole_names)
+            .map_err(LanguageFltConstructionError::Reflection)?;
         for (hole, category) in holes.iter().zip(&inferred_categories) {
             let fill = fills
                 .get(&hole.name)
@@ -1929,16 +1934,8 @@ impl RholangLanguageRuntime {
                 });
             }
         }
-        let mut reflected = Par::default();
-        for ground in alternatives {
-            let alternative = reflect_flt_construction(&ground, fills, &fingerprint)
-                .map_err(LanguageFltConstructionError::Construction)?;
-            // Preserve every weighted recognition alternative in the same
-            // deterministic order returned by GrammarCore. Selecting the first
-            // parse here would be an implicit and authority-free disambiguation.
-            reflected = reflected.append(alternative);
-        }
-        Ok(reflected)
+        reflect_flt_construction(&ground, fills, &fingerprint)
+            .map_err(LanguageFltConstructionError::Construction)
     }
 
     /// Parse and reflect an installed-language receive pattern before the
@@ -2203,6 +2200,7 @@ pub enum LanguageFltConstructionError {
         category: String,
     },
     AmbiguousHoleCategories,
+    AmbiguousConstruction,
     AmbiguousPattern,
     PatternTelescopeMismatch,
     TemplateHoleLimit {
@@ -2244,6 +2242,9 @@ impl fmt::Display for LanguageFltConstructionError {
             ),
             Self::AmbiguousHoleCategories => formatter.write_str(
                 "FLT template alternatives infer different hole categories",
+            ),
+            Self::AmbiguousConstruction => formatter.write_str(
+                "FLT construction has more than one structurally distinct weighted parse",
             ),
             Self::AmbiguousPattern => formatter.write_str(
                 "FLT receive pattern has more than one structurally distinct weighted parse",
@@ -6260,11 +6261,8 @@ pub(crate) mod tests {
             ),
             "the installed {category} category must admit its parsed reflected value",
         );
-        // Scalar deliberately forbids template variables. Test its membership
-        // without bypassing that policy; Pattern also exercises actual filling.
-        if !admits_variables {
-            return;
-        }
+        // Native guest-variable admission is independent of typed FLT holes.
+        // Both the direct Scalar and nested Pattern fills must remain valid.
         let constructed = runtime
             .construct_template(
                 token,
@@ -6288,7 +6286,7 @@ pub(crate) mod tests {
 
     #[test]
     fn installed_regex_literal_fill_preserves_nested_pattern_category() {
-        assert_installed_regex_literal_fill("Pattern", true);
+        assert_installed_regex_literal_fill("Pattern", false);
     }
 
     #[test]
@@ -6599,6 +6597,31 @@ pub(crate) mod tests {
         assert!(
             matches!(result, Err(LanguageFltConstructionError::AmbiguousPattern)),
             "unexpected pattern-preparation result: {result:?}",
+        );
+    }
+
+    #[test]
+    fn construction_rejects_ambiguous_structural_meanings() {
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let handle = runtime
+            .install(InstallCandidate::Canonical(ambiguous_value(
+                "AmbiguousConstruction",
+                l([s("Parse"), s("Construct")]),
+            )))
+            .expect("ambiguous grammar installs");
+        let result = runtime.construct_template(
+            &handle,
+            &[RuntimeTemplatePiece::Text("0".into())],
+            &[],
+            Some("Expr"),
+            &BTreeMap::new(),
+        );
+        assert!(
+            matches!(result, Err(LanguageFltConstructionError::AmbiguousConstruction)),
+            "distinct readings must not become parallel processes: {result:?}",
         );
     }
 

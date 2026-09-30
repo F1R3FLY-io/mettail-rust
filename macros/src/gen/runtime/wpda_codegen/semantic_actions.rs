@@ -224,7 +224,8 @@ pub fn emit_min_terminal_span_body(
         for (rule_idx, rule) in rules {
             let post_param_literals =
                 mettail_prattail::wpda_rule_analysis::rule_observation::min_terminal_span(
-                    &super::binder::MacroBinderSyntaxReader, *rule,
+                    &super::binder::MacroBinderSyntaxReader,
+                    *rule,
                 );
             if post_param_literals > 0 {
                 let r = *rule_idx;
@@ -275,8 +276,11 @@ pub fn emit_rule_leads_with_literal_body(per_cat: &[Vec<(u16, &GrammarRule)>]) -
         let cat_u16 = ci as u16;
         for (rule_idx, rule) in rules {
             if mettail_prattail::wpda_rule_analysis::rule_observation::leading_literal(
-                &super::binder::MacroBinderSyntaxReader, *rule,
-            ).is_some() {
+                &super::binder::MacroBinderSyntaxReader,
+                *rule,
+            )
+            .is_some()
+            {
                 let r = *rule_idx;
                 arms.push(quote! { (#cat_u16, #r) => true, });
             }
@@ -529,12 +533,15 @@ pub fn emit_single_hop_coercion_body(
         mettail_prattail::wpda_rule_analysis::rule_observation::single_hop_coercions(
             &super::binder::MacroBinderSyntaxReader,
             per_cat,
-            |source_cat_name, rule| super::binder::resolve_cat_idx(
-                source_cat_name,
-                categories,
-                "a single-hop coercion's source position",
-                &rule.label.to_string(),
-            ).map_err(|unresolved| unresolved.compile_error(rule.label.span())),
+            |source_cat_name, rule| {
+                super::binder::resolve_cat_idx(
+                    source_cat_name,
+                    categories,
+                    "a single-hop coercion's source position",
+                    &rule.label.to_string(),
+                )
+                .map_err(|unresolved| unresolved.compile_error(rule.label.span()))
+            },
         );
     if let Some(refusal) = coercion_table_refusal(&refusals, quote! { &[] }) {
         return refusal;
@@ -2204,24 +2211,56 @@ mod tests {
         use mettail_prattail::wpda_rule_analysis::rule_observation;
         let mut fixture = rule_fixture(parse_quote!(R), parse_quote!(Term));
         let patterns = vec![
-            None, Some(vec![]),
+            None,
+            Some(vec![]),
             Some(vec![SyntaxExpr::Literal("head".into())]),
-            Some(vec![SyntaxExpr::Literal("head".into()), SyntaxExpr::Param(parse_quote!(p)), SyntaxExpr::Literal("tail".into()), SyntaxExpr::Literal("end".into())]),
+            Some(vec![
+                SyntaxExpr::Literal("head".into()),
+                SyntaxExpr::Param(parse_quote!(p)),
+                SyntaxExpr::Literal("tail".into()),
+                SyntaxExpr::Literal("end".into()),
+            ]),
             Some(vec![SyntaxExpr::Param(parse_quote!(p)), SyntaxExpr::Literal("tail".into())]),
-            Some(vec![SyntaxExpr::Param(parse_quote!(p)), SyntaxExpr::Literal("tail".into()), SyntaxExpr::Op(PatternOp::Opt { inner: vec![] })]),
+            Some(vec![
+                SyntaxExpr::Param(parse_quote!(p)),
+                SyntaxExpr::Literal("tail".into()),
+                SyntaxExpr::Op(PatternOp::Opt { inner: vec![] }),
+            ]),
         ];
-        let contexts = vec![None, Some(vec![]), Some(vec![TermParam::Simple { name: parse_quote!(p), ty: mettail_ast::types::TypeExpr::Base(parse_quote!(Term)) }]), Some(vec![TermParam::GuardBody { name: parse_quote!(g) }]), Some(vec![TermParam::Optional { params: vec![] }])];
+        let contexts = vec![
+            None,
+            Some(vec![]),
+            Some(vec![TermParam::Simple {
+                name: parse_quote!(p),
+                ty: mettail_ast::types::TypeExpr::Base(parse_quote!(Term)),
+            }]),
+            Some(vec![TermParam::GuardBody { name: parse_quote!(g) }]),
+            Some(vec![TermParam::Optional { params: vec![] }]),
+        ];
         for pattern in &patterns {
             for context in &contexts {
                 fixture.syntax_pattern = pattern.clone();
                 fixture.term_context = context.clone();
                 // Original bodies, retained as an independent source oracle.
-                let old_leading = fixture.syntax_pattern.as_ref().and_then(|sp| match sp.first() {
-                    Some(SyntaxExpr::Literal(text)) => Some(text.as_str()), _ => None,
-                });
+                let old_leading = fixture
+                    .syntax_pattern
+                    .as_ref()
+                    .and_then(|sp| match sp.first() {
+                        Some(SyntaxExpr::Literal(text)) => Some(text.as_str()),
+                        _ => None,
+                    });
                 let old_span = fixture.syntax_pattern.as_ref().map_or(0, |sp| {
-                    if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(_))) { return 0; }
-                    if !fixture.term_context.as_ref().map(|tc| tc.iter().all(|p| matches!(p, TermParam::Simple { .. }))).unwrap_or(true) { return 0; }
+                    if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(_))) {
+                        return 0;
+                    }
+                    if !fixture
+                        .term_context
+                        .as_ref()
+                        .map(|tc| tc.iter().all(|p| matches!(p, TermParam::Simple { .. })))
+                        .unwrap_or(true)
+                    {
+                        return 0;
+                    }
                     let mut seen_param = false;
                     let mut count = 0;
                     for item in sp {
@@ -2233,8 +2272,20 @@ mod tests {
                     }
                     count
                 });
-                assert_eq!(rule_observation::leading_literal(&super::super::binder::MacroBinderSyntaxReader, &fixture), old_leading);
-                assert_eq!(rule_observation::min_terminal_span(&super::super::binder::MacroBinderSyntaxReader, &fixture), old_span);
+                assert_eq!(
+                    rule_observation::leading_literal(
+                        &super::super::binder::MacroBinderSyntaxReader,
+                        &fixture
+                    ),
+                    old_leading
+                );
+                assert_eq!(
+                    rule_observation::min_terminal_span(
+                        &super::super::binder::MacroBinderSyntaxReader,
+                        &fixture
+                    ),
+                    old_span
+                );
             }
         }
     }

@@ -37,10 +37,10 @@ pub(crate) mod pathmap;
 pub mod receive;
 #[path = "rholang/runtime.rs"]
 pub(crate) mod runtime;
-#[path = "rholang/type_inference.rs"]
-mod type_inference;
 #[path = "rholang/source_profile.rs"]
 pub mod source_profile;
+#[path = "rholang/type_inference.rs"]
+mod type_inference;
 #[path = "rholang/zipper.rs"]
 pub(crate) mod zipper;
 
@@ -76,7 +76,7 @@ language! {
             "Module", "Theory", "theory", "import", "as", "from", "Empty",
             "free", "let", "Types", "Exports", "Replacements", "Terms",
             "Equations", "Rewrites", "Data", "HashBag", "Set", "List", "sep",
-            "subst", "PPar", "noadmit",
+            "subst", "PPar", "noadmit", "token",
         ],
     },
 
@@ -212,6 +212,8 @@ language! {
         data DdlReplacement
         data DdlTermRule
         data DdlTermAttr
+        data DdlRegPiece
+        data DdlRegClassPiece
         data DdlBinding
         data DdlSort
         data DdlSyntaxItem
@@ -579,6 +581,13 @@ language! {
         // also keeps this token's language disjoint from the doubled suffix of
         // an FLT fence; modal delimiters therefore retain a unique scan.
         UriLiteral = "`[^`]+`" ;
+        // A distinct delimiter lets the generated lexer enter the regex mode
+        // without reserving `token` or guessing whether a host Ident is a DDL
+        // keyword. Every regex component remains a typed parser token.
+        // Layout immediately after `::=` belongs to the declaration
+        // delimiter, not to the pattern. To start a pattern with a literal
+        // whitespace scalar, write a character class such as `[ ]`.
+        DdlRegexOpen = "::=[ \\t\\r\\n]*" push(ddl_regex_body) ;
 
         // ── Comments — routed to the retained `COMMENTS` channel (task #18) ──────────────
         //
@@ -636,6 +645,20 @@ language! {
             FltCloseBrace = "\\}" pop ;
             Hole = "\\$\\{[^}]*\\}" ;
             GuestChunk = "[^{}$]+" ;
+        }
+        raw mode ddl_regex_body {
+            DdlRegexEnd = ";" pop ;
+            DdlRegexClassOpen = "\\[" push(ddl_regex_class) ;
+            DdlRegexEscape = "\\\\." ;
+            DdlRegexOperator = "[()|.*+?{},]" ;
+            DdlRegexLiteral = "[^;\\\\\\[()|.*+?{},]+" ;
+        }
+        raw mode ddl_regex_class {
+            DdlRegexClassEnd = "\\]" pop ;
+            DdlRegexClassEscape = "\\\\." ;
+            DdlRegexClassHyphen = "-" ;
+            DdlRegexClassCaret = "\\^" ;
+            DdlRegexClassLiteral = "[^\\]\\\\\\-\\^]+" ;
         }
     },
 
@@ -2684,6 +2707,17 @@ language! {
             first:DdlTermAttr, rest:Vec(DdlTermAttr)
             |- label@Ident "." bindings.*sep(",") "|-" syntax.*sep("") ":" result@Ident
                 first rest.*sep("") ";" : DdlTermRule;
+        DdlToken . pieces:Vec(DdlRegPiece)
+            |- "token" name@Ident open@DdlRegexOpen pieces.*sep("") close@DdlRegexEnd : DdlTermRule;
+        DdlRegLiteral . |- text@DdlRegexLiteral : DdlRegPiece;
+        DdlRegEscape . |- text@DdlRegexEscape : DdlRegPiece;
+        DdlRegOperator . |- text@DdlRegexOperator : DdlRegPiece;
+        DdlRegClass . pieces:Vec(DdlRegClassPiece)
+            |- open@DdlRegexClassOpen pieces.*sep("") close@DdlRegexClassEnd : DdlRegPiece;
+        DdlRegClassLiteral . |- text@DdlRegexClassLiteral : DdlRegClassPiece;
+        DdlRegClassEscape . |- text@DdlRegexClassEscape : DdlRegClassPiece;
+        DdlRegClassHyphen . |- text@DdlRegexClassHyphen : DdlRegClassPiece;
+        DdlRegClassCaret . |- text@DdlRegexClassCaret : DdlRegClassPiece;
         DdlTermAttrWord . |- word@Ident : DdlTermAttr;
         DdlTermAttrCall . value:Int |- word@Ident "(" value ")" : DdlTermAttr;
         DdlBindingPlain . sort:DdlSort |- name@Ident ":" sort : DdlBinding;

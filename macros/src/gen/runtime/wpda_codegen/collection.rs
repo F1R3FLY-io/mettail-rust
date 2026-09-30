@@ -667,8 +667,10 @@ pub(crate) fn emit_rule_has_leading_structural_trigger_lookup(
         for (rule_i, rule) in rules.iter().enumerate() {
             let leads_with_literal =
                 mettail_prattail::wpda_rule_analysis::rule_observation::leading_literal(
-                    &super::binder::MacroBinderSyntaxReader, rule,
-                ).is_some();
+                    &super::binder::MacroBinderSyntaxReader,
+                    rule,
+                )
+                .is_some();
             if leads_with_literal {
                 let result_src_idx = cat_i as u16;
                 let rule_idx = rule_i as u16;

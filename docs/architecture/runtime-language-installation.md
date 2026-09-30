@@ -99,6 +99,27 @@ complete original `LexicographicWeight`, without conversion or fabricated rank.
 There is no cross-profile ordering. These parsing weights are distinct from
 semantic cost grades and node funding/settlement.
 
+A closed construction FLT is one reflected term, whereas the WPDA may report
+several weighted derivations. The construction boundary inspects the complete
+admitted family. If every reading has the same structural syntax, value and
+hole-category telescope, it reflects that term once; differing readings fail
+closed as ambiguous. It never elects the first reading by rank, turns the
+family into Rholang parallel composition, or changes the parser's weighted
+result. Receive-pattern preparation applies the same distinct-meaning refusal.
+This is a publication rule for closed FLTs, not general parse pruning. Its
+[closed-family proof](../../formal/rocq/prattail_wpda_runtime/theories/ClosedFltFamily.v)
+states the exact-identity condition; semantic equivalence between distinct
+trees requires separate checked evidence.
+
+Guest-language variables and FLT template holes have different admission
+rules. `admits_variables` gates the grammar's native variable production. A
+typed FLT hole is supplied as a structural lattice edge by the host, not
+lexed from guest text. Its ID, category and endpoint must be checked, and an
+unknown or mismatched category is refused. A construction fill is then checked
+against the installed category before publication. This lets a theory use
+closed literal syntax while still allowing typed construction and receive
+holes; it does not grant parser, construction or matching authority.
+
 Scoped interface laws are checked in
 [`InstalledRuntimeBackend`](../../formal/rocq/runtime_grammar/theories/InstalledRuntimeBackend.v),
 [`InstalledWalkerResources`](../../formal/rocq/prattail_wpda_runtime/theories/InstalledWalkerResources.v)

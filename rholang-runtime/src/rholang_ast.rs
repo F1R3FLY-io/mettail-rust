@@ -63,8 +63,8 @@ mod recursive_oracle;
 mod target;
 use target::DirectNodeTarget as Target;
 
-pub(crate) mod construction_receipt;
 pub(crate) mod constructed_value;
+pub(crate) mod construction_receipt;
 
 mod graph;
 pub use graph::{interpret_construction_graph, GraphInterpretationError};

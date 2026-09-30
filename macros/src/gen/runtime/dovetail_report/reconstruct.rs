@@ -3291,7 +3291,10 @@ mod factored_assembly_tests {
         for category in layout.categories() {
             let constructor = rebuild_construct_fn_name(category.category()).to_string();
             assert_eq!(
-                definitions.iter().filter(|name| **name == constructor).count(),
+                definitions
+                    .iter()
+                    .filter(|name| **name == constructor)
+                    .count(),
                 1,
                 "expected exactly one definition of {constructor}",
             );
