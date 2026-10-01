@@ -384,7 +384,6 @@ Module RegexGSLT {
         {"name":"RepeatBelowUpper","left":["ROptionalAtUpper",["lit","bool",false],"p","hi","i","one","req","acc"],"right":["RProduct","p","hi","i","one","req",["SConcat","p","acc"]]},
         {"name":"RepeatIncrementOptional","context":[["typed","p","Pattern"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","req","Pattern"],["typed","acc","Pattern"]],"left":["RAlternative","p","hi","i","one","req",["SDone","acc"]],"premises":[["intrinsic",{"op":"checked_nat_add","inputs":["i","one"],"outputs":[["typed","next","Nat"]]}]],"right":["ROptional","p","hi","next","one","req","acc"]}
       ],
-      "rights": ["Parse", "Construct", "Match", "Reduce", "Observe", "ReflectAst"],
       "oslf": {
         "effects": [{"name":"Pure", "class":"pure", "requires":[], "emits":[]}],
         "actions": [

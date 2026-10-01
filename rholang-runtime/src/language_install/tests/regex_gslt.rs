@@ -11,6 +11,11 @@ fn practical_regex_default_mode_tokens_have_original_wpda_observations() {
     let batch = service
         .install_all(rholang_ddl_candidate(SOURCE))
         .expect("declared Regex theory installs");
+    assert_eq!(
+        batch.exports[0].receipt.requested_rights,
+        LanguageRights::native_flt_default(),
+        "omitting the redundant rights row keeps the exact requested-right set"
+    );
     let installed = service
         .table()
         .authorize(&batch.exports[0].receipt.handle, LanguageRight::Parse)
