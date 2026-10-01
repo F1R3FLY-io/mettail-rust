@@ -51,6 +51,7 @@ ascent_syntax_export = { workspace = true }
 pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
 rustc-hash = "1.1"
 postcard = { version = "1", features = ["alloc"] }
+blake3 = "1"
 
 [dev-dependencies]
 trybuild = "1.0"

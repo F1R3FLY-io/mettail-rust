@@ -16,6 +16,11 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{LitByteStr, LitStr};
 
+use crate::gen::runtime::dovetail_report::semantic_adapter::{
+    derive_scalar_host_profile_record, derive_semantic_artifacts, SemanticAdapterLayout,
+    SemanticAdapterLayoutError,
+};
+
 fn collection_type_name(coll_type: &CollectionType) -> &'static str {
     match coll_type {
         CollectionType::HashBag => "HashBag",
@@ -112,7 +117,10 @@ pub fn generate_metadata(
     // derivation every lowering consumer shares.
     let lowering_disposition_defs =
         crate::gen::runtime::disposition::emit_disposition_defs(lowering_dispositions);
-    let semantic_artifact_methods = generate_semantic_artifact_methods(language);
+    let adapter_layout = SemanticAdapterLayout::derive(language);
+    let semantic_artifact_methods =
+        generate_semantic_artifact_methods(language, adapter_layout.as_ref());
+    let host_profile_methods = generate_host_profile_methods(language, adapter_layout.as_ref());
 
     Ok(quote! {
         /// Static metadata for the #name language
@@ -134,6 +142,7 @@ pub fn generate_metadata(
             }
 
             #semantic_artifact_methods
+            #host_profile_methods
 
             fn types(&self) -> &'static [mettail_runtime::TypeDef] {
                 #type_defs
@@ -192,13 +201,15 @@ pub fn generate_metadata(
     })
 }
 
-fn generate_semantic_artifact_methods(language: &LanguageDef) -> TokenStream {
-    use crate::gen::runtime::dovetail_report::semantic_adapter::{
-        derive_semantic_artifacts, SemanticAdapterLayout,
-    };
-
-    let result = SemanticAdapterLayout::derive(language)
-        .and_then(|layout| derive_semantic_artifacts(language, &layout));
+fn generate_semantic_artifact_methods(
+    language: &LanguageDef,
+    layout: Result<&SemanticAdapterLayout, &SemanticAdapterLayoutError>,
+) -> TokenStream {
+    let result = layout
+        .map_err(|error| error.to_string())
+        .and_then(|layout| {
+            derive_semantic_artifacts(language, layout).map_err(|error| error.to_string())
+        });
     let artifacts = match result {
         Ok(artifacts) => artifacts,
         Err(error) => {
@@ -275,6 +286,38 @@ fn generate_semantic_artifact_methods(language: &LanguageDef) -> TokenStream {
                 semantic_machine_image: #machine,
             })
         }
+    }
+}
+
+fn generate_host_profile_methods(
+    language: &LanguageDef,
+    layout: Result<&SemanticAdapterLayout, &SemanticAdapterLayoutError>,
+) -> TokenStream {
+    let result = layout
+        .map_err(|error| error.to_string())
+        .and_then(|layout| derive_scalar_host_profile_record(language, layout))
+        .and_then(|record| {
+            record
+                .canonical_bytes()
+                .map_err(|error| format!("{error:?}"))
+        });
+    match result {
+        Ok(bytes) => {
+            let bytes = LitByteStr::new(&bytes, Span::call_site());
+            quote! {
+                fn generated_projection_host_profile_record_v1(&self) -> Option<&'static [u8]> {
+                    Some(#bytes)
+                }
+            }
+        },
+        Err(reason) => {
+            let refusal = LitStr::new(&reason, Span::call_site());
+            quote! {
+                fn generated_projection_host_profile_refusal_v1(&self) -> Option<&'static str> {
+                    Some(#refusal)
+                }
+            }
+        },
     }
 }
 
@@ -2019,7 +2062,8 @@ mod tests {
             "#,
         )
         .expect("metadata artifact fixture must parse");
-        let methods = generate_semantic_artifact_methods(&language).to_string();
+        let layout = SemanticAdapterLayout::derive(&language);
+        let methods = generate_semantic_artifact_methods(&language, layout.as_ref()).to_string();
         assert!(methods.contains("generated_semantic_artifacts_v1"));
         assert!(methods.contains("grammar_core_postcard"));
         assert!(methods.contains("semantic_signature_postcard"));

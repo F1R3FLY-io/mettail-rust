@@ -710,5 +710,39 @@ Proof.
   exact (Absent Present).
 Qed.
 
+(** A category can be present in a profile while only its ground literal
+    constructor is exactly transportable.  In particular, a generated
+    variable constructor never becomes admitted merely because the sort name
+    is present.  Provider admission must enforce this checked domain. *)
+Record CheckedVariant := checked_variant {
+  variant_category : nat;
+  variant_tag : nat;
+  is_ground_literal : bool
+}.
+
+Definition ground_literal_domain (roster : list CheckedVariant) : list CheckedVariant :=
+  filter (fun variant => is_ground_literal variant) roster.
+
+Theorem ground_literal_domain_never_admits_other_forms :
+  forall roster variant,
+  In variant (ground_literal_domain roster) ->
+  In variant roster /\ is_ground_literal variant = true.
+Proof.
+  intros roster variant Member.
+  unfold ground_literal_domain in Member. now apply filter_In in Member.
+Qed.
+
+Theorem a_nonliteral_prevents_complete_coverage :
+  forall roster variant,
+  In variant roster ->
+  is_ground_literal variant = false ->
+  ~ (forall form, In form roster -> In form (ground_literal_domain roster)).
+Proof.
+  intros roster variant Present Nonliteral Complete.
+  specialize (Complete variant Present).
+  apply ground_literal_domain_never_admits_other_forms in Complete as [_ Accepted].
+  congruence.
+Qed.
+
 End GeneratedFragment.
 End HostProfileLifecycle.

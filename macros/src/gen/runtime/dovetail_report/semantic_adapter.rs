@@ -917,6 +917,168 @@ pub(crate) fn derive_semantic_artifacts(
     Ok(GeneratedSemanticArtifacts { grammar, signature, machine })
 }
 
+/// Derive a data-only exact scalar host-profile fragment from the same checked
+/// grammar bridge and typed adapter census as the generated semantic backend.
+/// This does not install a codec. A category enters the fragment only when it
+/// has exactly one native Boolean literal variant with an exact carrier. Other
+/// variants make the entry's value domain ground-literal-only. Closed data uses
+/// its grammar category identity, never an invented semantic-transit operator;
+/// the provider must independently verify and seal the descriptor before use.
+pub(crate) fn derive_scalar_host_profile_record(
+    language: &LanguageDef,
+    layout: &SemanticAdapterLayout,
+) -> Result<core::ProjectionHostProfileRecordV1, String> {
+    let version = language
+        .version
+        .as_deref()
+        .ok_or_else(|| "host profile requires an explicit grammar version".to_string())?;
+    let spec = crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(language)
+        .map_err(|error| format!("checked grammar bridge failed: {error}"))?;
+    let grammar = spec
+        .to_grammar_core()
+        .map_err(|error| format!("checked grammar-core conversion failed: {error}"))?;
+    let grammar_fingerprint = grammar
+        .fingerprint()
+        .map_err(|error| format!("checked grammar fingerprint failed: {error:?}"))?;
+
+    let mut sorts = Vec::new();
+    let mut entries = Vec::new();
+    for category in &grammar.categories {
+        if !matches!(&category.carrier, core::Carrier::Builtin(core::BuiltinCarrier::Boolean)) {
+            continue;
+        }
+        let definition = language
+            .types
+            .iter()
+            .find(|definition| definition.name.to_string() == category.name)
+            .ok_or_else(|| format!("checked definition omits category `{}`", category.name))?;
+        let variants = collect_category_variants(&definition.name, language);
+        let mut literals = variants
+            .iter()
+            .filter(|variant| matches!(variant, VariantKind::Literal { .. }));
+        let Some(literal) = literals.next() else {
+            continue;
+        };
+        if literals.next().is_some() {
+            return Err(format!(
+                "Boolean category `{}` has multiple native literal variants",
+                category.name
+            ));
+        }
+        let native_type = definition
+            .native_type
+            .as_ref()
+            .map(crate::gen::native::native_type_to_full_string)
+            .ok_or_else(|| format!("Boolean category `{}` has no native carrier", category.name))?;
+        if native_type
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+            != "bool"
+        {
+            return Err(format!(
+                "Boolean category `{}` has incompatible native carrier `{native_type}`",
+                category.name
+            ));
+        }
+        let adapter = layout
+            .categories()
+            .iter()
+            .find(|candidate| candidate.category() == &definition.name);
+        let route = if definition.is_data() {
+            if adapter.is_some() {
+                return Err(format!(
+                    "closed data category `{}` unexpectedly entered semantic transit",
+                    category.name
+                ));
+            }
+            core::ProjectionHostScalarRouteV1::ClosedData { grammar_category_id: category.id.0 }
+        } else {
+            let adapter = adapter.ok_or_else(|| {
+                format!("object category `{}` is absent from the semantic adapter", category.name)
+            })?;
+            let variant = adapter
+                .variants()
+                .iter()
+                .find(|variant| variant.label() == literal.label())
+                .ok_or_else(|| {
+                    format!("checked adapter omits Boolean literal `{}`", literal.label())
+                })?;
+            let Some(operator_discriminant) = variant.operator_discriminant() else {
+                return Err(format!(
+                    "Boolean literal `{}` has no executable operator discriminant",
+                    literal.label()
+                ));
+            };
+            core::ProjectionHostScalarRouteV1::SemanticTransit {
+                category_tag: adapter.category_tag(),
+                literal_constructor_tag: variant.constructor_tag(),
+                operator_discriminant,
+            }
+        };
+        sorts.push(core::TheorySortV1 {
+            name: category.name.clone(),
+            kind: core::TheorySortKindV1::Syntax {
+                literal: Some(core::TheoryLiteralCarrierV1::Boolean),
+            },
+        });
+        entries.push(core::ProjectionHostScalarCodecEntryV1 {
+            sort: category.name.clone(),
+            route,
+            domain: if variants.len() == 1 {
+                core::ProjectionHostScalarDomainV1::AllValues
+            } else {
+                core::ProjectionHostScalarDomainV1::GroundLiteralOnly
+            },
+            native_type,
+            carrier: core::TheoryLiteralCarrierV1::Boolean,
+        });
+    }
+    if entries.is_empty() {
+        return Err("checked grammar has no exact native Boolean scalar category".to_string());
+    }
+    let complete_scalar_roster = sorts.len() == grammar.categories.len()
+        && entries
+            .iter()
+            .all(|entry| entry.domain == core::ProjectionHostScalarDomainV1::AllValues);
+    let semantic_key_abi = entries
+        .iter()
+        .any(|entry| {
+            matches!(&entry.route, core::ProjectionHostScalarRouteV1::SemanticTransit { .. })
+        })
+        .then_some(mettail_runtime::GeneratedSemanticKeyAbiV1::StructuralV2 as u16);
+    let descriptor = core::ProjectionHostScalarCodecDescriptorV1 { semantic_key_abi, entries };
+    let descriptor = postcard::to_allocvec(&descriptor)
+        .map_err(|error| format!("host scalar codec descriptor encoding failed: {error}"))?;
+    let mut commitment = blake3::Hasher::new();
+    commitment.update(b"mettail-generated-typed-scalar-provider/1\0");
+    commitment.update(include_bytes!("typed_lowering.rs"));
+    commitment.update(include_bytes!("reconstruct.rs"));
+    commitment.update(&descriptor);
+    let payload = core::ProjectionHostProfilePayloadV1 {
+        profile_abi: core::PROJECTION_HOST_PROFILE_ABI_V1,
+        language_name: language.name.to_string(),
+        language_version: version.to_string(),
+        definition_fingerprint: mettail_ast::identity::language_definition_fingerprint(language),
+        grammar_fingerprint,
+        coverage: if complete_scalar_roster {
+            core::ProjectionHostCoverageV1::Complete
+        } else {
+            core::ProjectionHostCoverageV1::ExactFragment
+        },
+        sorts,
+        constructors: Vec::new(),
+        codec: core::ProjectionHostCodecProfileV1 {
+            codec_abi: core::PROJECTION_HOST_CODEC_ABI_V1,
+            provider_abi: "mettail-generated-typed-scalar-provider/1".to_string(),
+            implementation_commitment: *commitment.finalize().as_bytes(),
+            descriptor,
+        },
+    };
+    core::ProjectionHostProfileRecordV1::new(payload)
+        .map_err(|error| format!("generated host profile is invalid: {error:?}"))
+}
+
 fn generated_variant_family(kind: &VariantKind) -> &'static str {
     match kind {
         VariantKind::Var { .. } => "implicit-variable",
@@ -1752,6 +1914,104 @@ pub(crate) fn derive_byte_string(language: &LanguageDef) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_scalar_fragment_commits_literal_route_grammar_and_version() {
+        let source = r#"
+            name: ScalarHost,
+            version: "1.0-preview.1",
+            types { Proc ![bool] as Bool },
+            terms {
+                Zero . |- "0" : Proc;
+                Cast . value:Bool |- value : Proc;
+            },
+            equations {},
+            rewrites {},
+        "#;
+        let language: LanguageDef = syn::parse_str(source).unwrap();
+        let layout = SemanticAdapterLayout::derive(&language).unwrap();
+        let record =
+            derive_scalar_host_profile_record(&language, &layout).unwrap_or_else(|error| {
+                let checked_grammar =
+                    crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(&language)
+                        .unwrap()
+                        .to_grammar_core()
+                        .unwrap();
+                let bool_name: Ident = syn::parse_str("Bool").unwrap();
+                panic!(
+                    "{error}; Bool grammar={:?}, role={:?}, variants={:?}, transit={:?}",
+                    checked_grammar
+                        .categories
+                        .iter()
+                        .find(|category| category.name == "Bool"),
+                    language
+                        .get_type(&bool_name)
+                        .map(|definition| definition.role),
+                    collect_category_variants(&bool_name, &language),
+                    layout
+                        .categories()
+                        .iter()
+                        .map(|category| category.category().to_string())
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(record.payload.coverage, core::ProjectionHostCoverageV1::ExactFragment);
+        assert_eq!(record.payload.sorts.len(), 1);
+        assert_eq!(record.payload.sorts[0].name, "Bool");
+        let descriptor: core::ProjectionHostScalarCodecDescriptorV1 =
+            postcard::from_bytes(&record.payload.codec.descriptor).unwrap();
+        let [entry] = descriptor.entries.as_slice() else {
+            panic!("expected one checked Boolean scalar codec entry")
+        };
+        let bool_name: Ident = syn::parse_str("Bool").unwrap();
+        assert!(!language.get_type(&bool_name).unwrap().is_data());
+        let bool_layout = layout
+            .categories()
+            .iter()
+            .find(|category| category.category() == &bool_name)
+            .unwrap();
+        let literal = bool_layout
+            .variants()
+            .iter()
+            .find(|variant| matches!(variant.kind(), VariantKind::Literal { .. }))
+            .unwrap();
+        let checked_grammar =
+            crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(&language)
+                .unwrap()
+                .to_grammar_core()
+                .unwrap();
+        assert_eq!(record.payload.grammar_fingerprint, checked_grammar.fingerprint().unwrap());
+        assert_eq!(descriptor.semantic_key_abi, Some(2));
+        assert_eq!(entry.domain, core::ProjectionHostScalarDomainV1::GroundLiteralOnly);
+        assert_eq!(
+            entry.route,
+            core::ProjectionHostScalarRouteV1::SemanticTransit {
+                category_tag: bool_layout.category_tag(),
+                literal_constructor_tag: literal.constructor_tag(),
+                operator_discriminant: literal.operator_discriminant().unwrap(),
+            }
+        );
+
+        let changed_version: LanguageDef =
+            syn::parse_str(&source.replace("1.0-preview.1", "1.0-preview.2")).unwrap();
+        let changed_version_layout = SemanticAdapterLayout::derive(&changed_version).unwrap();
+        let version_record =
+            derive_scalar_host_profile_record(&changed_version, &changed_version_layout).unwrap();
+        assert_ne!(
+            record.claimed_digests.profile_fingerprint,
+            version_record.claimed_digests.profile_fingerprint
+        );
+
+        let changed_grammar: LanguageDef =
+            syn::parse_str(&source.replace("Zero .", "Other .")).unwrap();
+        let changed_grammar_layout = SemanticAdapterLayout::derive(&changed_grammar).unwrap();
+        let grammar_record =
+            derive_scalar_host_profile_record(&changed_grammar, &changed_grammar_layout).unwrap();
+        assert_ne!(
+            record.claimed_digests.signature_fingerprint,
+            grammar_record.claimed_digests.signature_fingerprint
+        );
+    }
 
     fn fixture() -> LanguageDef {
         syn::parse_str(

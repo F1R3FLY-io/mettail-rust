@@ -68,6 +68,18 @@ pub trait LanguageMetadata: 'static + Send + Sync {
         None
     }
 
+    /// Canonical, data-only host-profile record produced from the checked
+    /// definition and shared generated adapter layout. A consumer must still
+    /// validate and bind it to an independently trusted executable provider.
+    fn generated_projection_host_profile_record_v1(&self) -> Option<&'static [u8]> {
+        None
+    }
+
+    /// Exact reason why this language has no generated host-profile record.
+    fn generated_projection_host_profile_refusal_v1(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Derived automata-facing model for parser/runtime planning.
     ///
     /// This is the stable metadata boundary that parser tables, Dovetail rule

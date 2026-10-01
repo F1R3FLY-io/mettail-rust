@@ -45,6 +45,48 @@ pub enum ProjectionHostCoverageV1 {
     ExactFragment,
 }
 
+/// A native scalar is either closed data, which is intentionally absent from
+/// object-language semantic transit, or an object term with a generated
+/// semantic operator. Both routes retain checked structural identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectionHostScalarRouteV1 {
+    ClosedData {
+        grammar_category_id: u32,
+    },
+    SemanticTransit {
+        category_tag: u32,
+        literal_constructor_tag: u32,
+        operator_discriminant: u32,
+    },
+}
+
+/// A scalar entry does not imply that every syntactic form of its category is
+/// transportable. Ground literals are an exact, intentionally partial domain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectionHostScalarDomainV1 {
+    GroundLiteralOnly,
+    AllValues,
+}
+
+/// Exact scalar positions in the checked grammar and generated typed code.
+/// Admission compares this descriptor with the independently compiled provider.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectionHostScalarCodecEntryV1 {
+    pub sort: String,
+    pub route: ProjectionHostScalarRouteV1,
+    pub domain: ProjectionHostScalarDomainV1,
+    pub native_type: String,
+    pub carrier: crate::TheoryLiteralCarrierV1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectionHostScalarCodecDescriptorV1 {
+    /// Only present when an entry uses object-language semantic transit.
+    /// Closed data has a structural codec, not a semantic e-class key.
+    pub semantic_key_abi: Option<u16>,
+    pub entries: Vec<ProjectionHostScalarCodecEntryV1>,
+}
+
 /// Raw, versioned host-profile evidence derived from a checked language
 /// definition. This is never an installed trust root or a digital signature.
 /// Vector order is significant: sort and constructor IDs are positional.

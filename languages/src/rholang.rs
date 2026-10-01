@@ -46,6 +46,10 @@ pub(crate) mod zipper;
 
 language! {
     name: Rholang,
+    // Preview grammar identity; the profile also commits the exact checked
+    // definition and grammar digests, so later syntax amendments cannot be
+    // mistaken for this build even before the final 1.4 release is pinned.
+    version: "1.4-preview.1",
 
     options {
         // Grammar-derived keyword reservation (2026-07-06). Reserving `Nil` (and

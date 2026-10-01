@@ -189,6 +189,7 @@ proptest = "1"
 rand_distr = "0.4"
 mettail-elab = { path = "../mettail-elab" }
 mettail-grammar-core = { path = "../grammar-core" }
+postcard = { version = "1", features = ["alloc"] }
 mettail-testkit = { package = "testkit", path = "../testkit" }
 # Lets the GuardedRho Rho-default backend test (guarded_rho_rho_backend.rs) name
 # `LanguageDef` directly when reconstructing the real augmented definition. It is
