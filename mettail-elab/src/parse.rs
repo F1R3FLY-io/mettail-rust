@@ -599,7 +599,11 @@ impl Parser {
             Tok::KwRewrites => {
                 let mut v = Vec::new();
                 while !self.at(&Tok::RBrace) {
-                    v.push(RewriteEntry::Ordinary(self.rewrite_decl()?));
+                    if self.at_projection_declaration() {
+                        v.push(RewriteEntry::Projection(self.projection_decl()?));
+                    } else {
+                        v.push(RewriteEntry::Ordinary(self.rewrite_decl()?));
+                    }
                 }
                 Builder::Rewrites(v)
             },
@@ -960,6 +964,358 @@ impl Parser {
         Ok(RewriteDecl { name, premises, lhs, rhs, span })
     }
 
+    fn at_projection_declaration(&self) -> bool {
+        matches!(self.peek(), Tok::Ident(word) if word == "projection")
+            && matches!(self.toks.get(self.pos + 1).map(|lexeme| &lexeme.tok), Some(Tok::Ident(_)))
+    }
+
+    fn at_host_qualifier(&self) -> bool {
+        matches!(self.peek(), Tok::Ident(word) if word == "host")
+            && matches!(self.toks.get(self.pos + 1).map(|lexeme| &lexeme.tok), Some(Tok::Namespace))
+    }
+
+    fn projection_direction(&mut self) -> PResult<ProjectionDirection> {
+        let direction = match self.peek() {
+            Tok::Squiggle => ProjectionDirection::GuestToHost,
+            Tok::BackwardSquiggle => ProjectionDirection::HostToGuest,
+            Tok::BothSquiggles => ProjectionDirection::Both,
+            other => {
+                return self.err(format!("expected a projection arrow, found {}", other.describe()))
+            },
+        };
+        self.bump();
+        Ok(direction)
+    }
+
+    fn projection_decl(&mut self) -> PResult<ProjectionDecl> {
+        let span = self.span();
+        self.expect(Tok::Ident("projection".into()))?;
+        let name = self.ident()?;
+        self.expect(Tok::Colon)?;
+        let guest = self.ident()?;
+        let direction = self.projection_direction()?;
+        self.expect(Tok::Ident("host".into()))?;
+        self.expect(Tok::Namespace)?;
+        let host = self.ident()?;
+        let body = if self.eat(&Tok::Ident("via".into())) {
+            self.expect(Tok::Ident("carrier".into()))?;
+            self.expect(Tok::Semi)?;
+            ProjectionBody::Carrier
+        } else {
+            self.expect(Tok::LBrace)?;
+            let mut rows = Vec::new();
+            while !self.at(&Tok::RBrace) {
+                rows.push(self.projection_rule(direction)?);
+            }
+            self.expect(Tok::RBrace)?;
+            ProjectionBody::Rules(rows)
+        };
+        Ok(ProjectionDecl { name, guest, host, direction, body, span })
+    }
+
+    fn projection_rule(&mut self, group_direction: ProjectionDirection) -> PResult<ProjectionRule> {
+        let span = self.span();
+        let name = self.ident()?;
+        let mut bindings = Vec::new();
+        if self.eat(&Tok::LParen) {
+            if !self.at(&Tok::RParen) {
+                loop {
+                    let binding_name = self.ident()?;
+                    self.expect(Tok::Colon)?;
+                    let host = self.at_host_qualifier();
+                    if host {
+                        self.bump();
+                        self.expect(Tok::Namespace)?;
+                    }
+                    let category = self.ident()?;
+                    bindings.push(if host {
+                        ProjectionBinding::Host { name: binding_name, category }
+                    } else {
+                        ProjectionBinding::Guest { name: binding_name, category }
+                    });
+                    if !self.eat(&Tok::Comma) {
+                        break;
+                    }
+                }
+            }
+            self.expect(Tok::RParen)?;
+        }
+        self.expect(Tok::Colon)?;
+        let mut premises = Vec::new();
+        if self.eat(&Tok::KwIf) {
+            loop {
+                if self.at_projection_declaration() {
+                    self.bump();
+                    let name = self.ident()?;
+                    self.expect(Tok::LParen)?;
+                    let guest = self.ident()?;
+                    self.expect(Tok::Comma)?;
+                    let host = self.ident()?;
+                    self.expect(Tok::RParen)?;
+                    premises.push(ProjectionPremise::Call { name, guest, host });
+                } else {
+                    let left = self.ident()?;
+                    self.expect(Tok::Squiggle)?;
+                    let right = self.ident()?;
+                    premises.push(ProjectionPremise::Transition { left, right });
+                }
+                if !self.eat(&Tok::Comma) {
+                    break;
+                }
+            }
+            self.expect(Tok::KwThen)?;
+        }
+        let guest = self.projection_term()?;
+        let direction = self.projection_direction()?;
+        if direction != group_direction {
+            return self.err("projection row arrow must match its group arrow");
+        }
+        let host = self.projection_term()?;
+        self.expect(Tok::Semi)?;
+        Ok(ProjectionRule {
+            name,
+            bindings,
+            premises,
+            guest,
+            host,
+            direction,
+            span,
+        })
+    }
+
+    fn projection_node(tag: &str, fields: Vec<RhoValue>) -> RhoValue {
+        let mut items = Vec::with_capacity(fields.len() + 1);
+        items.push(RhoValue::String(tag.into()));
+        items.extend(fields);
+        RhoValue::List(items)
+    }
+
+    fn projection_sequence(values: Vec<Parsed<RhoValue>>) -> RhoValue {
+        Self::projection_node("sequence", values.into_iter().map(|value| value.value).collect())
+    }
+
+    /// Parse the same structural rule-term algebra as generated DdlRuleAst.
+    /// Jobs and values live on the heap; deeply nested authored terms cannot
+    /// recurse on the native stack or evade the shared structural-depth gate.
+    fn projection_term(&mut self) -> PResult<RhoValue> {
+        enum Job {
+            Term {
+                remainder_allowed: bool,
+            },
+            FinishAbs(String),
+            ContinueCollection(Vec<Parsed<RhoValue>>),
+            AfterCollectionValue(Vec<Parsed<RhoValue>>),
+            FinishSubstLeft,
+            FinishSubst(Parsed<RhoValue>),
+            ContinueSExp {
+                label: String,
+                host: bool,
+                args: Vec<Parsed<RhoValue>>,
+            },
+            AfterSExpArg {
+                label: String,
+                host: bool,
+                args: Vec<Parsed<RhoValue>>,
+            },
+        }
+        let mut jobs = vec![Job::Term { remainder_allowed: false }];
+        let mut values = Vec::new();
+        while let Some(job) = jobs.pop() {
+            match job {
+                Job::Term { remainder_allowed } => match self.peek().clone() {
+                    Tok::Ident(name) => {
+                        self.bump();
+                        values.push(self.parsed(
+                            Self::projection_node("ast-var", vec![RhoValue::String(name)]),
+                            1,
+                            "projection term",
+                        )?);
+                    },
+                    Tok::Ellipsis => {
+                        if !remainder_allowed {
+                            return self.err(
+                                "a projection collection remainder must occur inside a collection",
+                            );
+                        }
+                        self.bump();
+                        let name = self.ident()?;
+                        values.push(self.parsed(
+                            Self::projection_node("ast-remainder", vec![RhoValue::String(name)]),
+                            1,
+                            "projection term",
+                        )?);
+                    },
+                    Tok::KwTrue | Tok::KwFalse => {
+                        let tag = if self.eat(&Tok::KwTrue) {
+                            "ast-boolean-true"
+                        } else {
+                            self.expect(Tok::KwFalse)?;
+                            "ast-boolean-false"
+                        };
+                        values.push(self.parsed(
+                            Self::projection_node(tag, Vec::new()),
+                            1,
+                            "projection term",
+                        )?);
+                    },
+                    Tok::Str(value) => {
+                        self.bump();
+                        values.push(self.parsed(
+                            Self::projection_node("ast-string", vec![RhoValue::String(value)]),
+                            1,
+                            "projection term",
+                        )?);
+                    },
+                    Tok::Integer(value) => {
+                        self.bump();
+                        if i64::try_from(value).is_err() {
+                            return self.err(
+                                "projection integer is outside the Rholang i64 literal range",
+                            );
+                        }
+                        values.push(self.parsed(
+                            Self::projection_node("ast-integer", vec![RhoValue::Integer(value)]),
+                            1,
+                            "projection term",
+                        )?);
+                    },
+                    Tok::Caret => {
+                        self.bump();
+                        let binder = self.ident()?;
+                        self.expect(Tok::Dot)?;
+                        jobs.push(Job::FinishAbs(binder));
+                        jobs.push(Job::Term { remainder_allowed: false });
+                    },
+                    Tok::LBrace => {
+                        self.bump();
+                        jobs.push(Job::ContinueCollection(Vec::new()));
+                    },
+                    Tok::LParen => {
+                        self.bump();
+                        if self.eat(&Tok::KwSubst) {
+                            jobs.push(Job::FinishSubstLeft);
+                            jobs.push(Job::Term { remainder_allowed: false });
+                        } else {
+                            let host = self.at_host_qualifier();
+                            if host {
+                                self.bump();
+                                self.expect(Tok::Namespace)?;
+                            }
+                            let label = self.ident()?;
+                            jobs.push(Job::ContinueSExp { label, host, args: Vec::new() });
+                        }
+                    },
+                    other => {
+                        return self
+                            .err(format!("expected a projection term, found {}", other.describe()))
+                    },
+                },
+                Job::FinishAbs(binder) => {
+                    let body = values.pop().ok_or_else(|| {
+                        Diag::new(DiagKind::Parse, "missing abstraction body", self.span())
+                    })?;
+                    values.push(self.parsed(
+                        Self::projection_node(
+                            "ast-abs",
+                            vec![RhoValue::String(binder), body.value],
+                        ),
+                        body.depth + 1,
+                        "projection term",
+                    )?);
+                },
+                Job::ContinueCollection(items) => {
+                    if self.eat(&Tok::RBrace) {
+                        values.push(self.finish_projection_collection(items)?);
+                    } else {
+                        jobs.push(Job::AfterCollectionValue(items));
+                        jobs.push(Job::Term { remainder_allowed: true });
+                    }
+                },
+                Job::AfterCollectionValue(mut items) => {
+                    items.push(values.pop().ok_or_else(|| {
+                        Diag::new(DiagKind::Parse, "missing collection term", self.span())
+                    })?);
+                    if self.eat(&Tok::Comma) {
+                        jobs.push(Job::ContinueCollection(items));
+                    } else {
+                        self.expect(Tok::RBrace)?;
+                        values.push(self.finish_projection_collection(items)?);
+                    }
+                },
+                Job::FinishSubstLeft => {
+                    let left = values.pop().ok_or_else(|| {
+                        Diag::new(DiagKind::Parse, "missing substitution abstraction", self.span())
+                    })?;
+                    jobs.push(Job::FinishSubst(left));
+                    jobs.push(Job::Term { remainder_allowed: false });
+                },
+                Job::FinishSubst(left) => {
+                    let right = values.pop().ok_or_else(|| {
+                        Diag::new(DiagKind::Parse, "missing substitution argument", self.span())
+                    })?;
+                    self.expect(Tok::RParen)?;
+                    let depth = 1 + left.depth.max(right.depth);
+                    values.push(self.parsed(
+                        Self::projection_node("ast-subst", vec![left.value, right.value]),
+                        depth,
+                        "projection term",
+                    )?);
+                },
+                Job::ContinueSExp { label, host, args } => {
+                    if self.eat(&Tok::RParen) {
+                        let depth = 1 + args.iter().map(|arg| arg.depth).max().unwrap_or(0);
+                        let tag = if host { "ast-host-sexp" } else { "ast-sexp" };
+                        values.push(self.parsed(
+                            Self::projection_node(
+                                tag,
+                                vec![RhoValue::String(label), Self::projection_sequence(args)],
+                            ),
+                            depth,
+                            "projection term",
+                        )?);
+                    } else {
+                        jobs.push(Job::AfterSExpArg { label, host, args });
+                        jobs.push(Job::Term { remainder_allowed: false });
+                    }
+                },
+                Job::AfterSExpArg { label, host, mut args } => {
+                    args.push(values.pop().ok_or_else(|| {
+                        Diag::new(DiagKind::Parse, "missing constructor argument", self.span())
+                    })?);
+                    jobs.push(Job::ContinueSExp { label, host, args });
+                },
+            }
+        }
+        if values.len() != 1 {
+            return self.err("projection-term PDA produced an invalid value stack");
+        }
+        Ok(values.pop().expect("checked one projection term").value)
+    }
+
+    fn finish_projection_collection(
+        &self,
+        items: Vec<Parsed<RhoValue>>,
+    ) -> PResult<Parsed<RhoValue>> {
+        let mut remainder = false;
+        for (index, item) in items.iter().enumerate() {
+            let is_remainder = matches!(&item.value, RhoValue::List(fields) if matches!(fields.first(), Some(RhoValue::String(tag)) if tag == "ast-remainder"));
+            if is_remainder {
+                if remainder || index + 1 != items.len() {
+                    return self.err(
+                        "a collection remainder must occur exactly once and in final position",
+                    );
+                }
+                remainder = true;
+            }
+        }
+        let depth = 1 + items.iter().map(|item| item.depth).max().unwrap_or(0);
+        self.parsed(
+            Self::projection_node("ast-collection", vec![Self::projection_sequence(items)]),
+            depth,
+            "projection term",
+        )
+    }
+
     fn ast(&mut self) -> PResult<Ast> {
         enum Job {
             Ast,
@@ -1144,6 +1500,119 @@ mod tests {
     use super::*;
     use crate::rholang_literal::render_rholang_value_literal;
     use std::collections::BTreeMap;
+
+    fn projection_entries(source: &str) -> Vec<RewriteEntry> {
+        let theory = parse_theory(source).expect("theory with projections parses");
+        let TheoryExpr::Build { builder: Builder::Rewrites(entries), .. } = theory.body else {
+            panic!("theory ends in a Rewrites builder");
+        };
+        entries
+    }
+
+    #[test]
+    fn standalone_projection_surface_preserves_direction_rows_and_native_terms() {
+        let entries = projection_entries(
+            r#"
+            Theory T() { Rewrites {
+              projection Boolean : Bool <~> host::Bool {
+                Yes : (BTrue) <~> true;
+                No : (BFalse) <~> false;
+              }
+              projection Import : Entry <~ host::Proc {
+                Take(x:Entry,h:host::Proc): if projection Boolean(x,h), x ~> h then (Wrap x) <~ (host::Par h);
+              }
+              projection TextValue : Text <~> host::Str via carrier;
+            } }
+        "#,
+        );
+        assert_eq!(entries.len(), 3);
+        let RewriteEntry::Projection(boolean) = &entries[0] else {
+            panic!("Boolean projection");
+        };
+        assert_eq!(boolean.direction, ProjectionDirection::Both);
+        assert_eq!(boolean.guest, "Bool");
+        assert_eq!(boolean.host, "Bool");
+        let ProjectionBody::Rules(rows) = &boolean.body else {
+            panic!("Boolean rows");
+        };
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "Yes");
+        assert_eq!(rows[0].direction, ProjectionDirection::Both);
+        assert_eq!(
+            rows[0].guest,
+            Parser::projection_node(
+                "ast-sexp",
+                vec![RhoValue::String("BTrue".into()), Parser::projection_node("sequence", vec![])]
+            )
+        );
+        assert_eq!(rows[0].host, Parser::projection_node("ast-boolean-true", vec![]));
+        assert!(rows[0].span.line < rows[1].span.line);
+        let RewriteEntry::Projection(import) = &entries[1] else {
+            panic!("Import projection");
+        };
+        assert_eq!(import.direction, ProjectionDirection::HostToGuest);
+        let ProjectionBody::Rules(rows) = &import.body else {
+            panic!("Import rows");
+        };
+        assert_eq!(rows[0].bindings.len(), 2);
+        assert!(matches!(rows[0].bindings[1], ProjectionBinding::Host { .. }));
+        assert_eq!(rows[0].premises.len(), 2);
+        assert!(matches!(rows[0].premises[0], ProjectionPremise::Call { .. }));
+        assert!(matches!(rows[0].premises[1], ProjectionPremise::Transition { .. }));
+        assert_eq!(
+            rows[0].host,
+            Parser::projection_node(
+                "ast-host-sexp",
+                vec![
+                    RhoValue::String("Par".into()),
+                    Parser::projection_node(
+                        "sequence",
+                        vec![Parser::projection_node(
+                            "ast-var",
+                            vec![RhoValue::String("h".into())]
+                        )]
+                    )
+                ]
+            )
+        );
+        let RewriteEntry::Projection(carrier) = &entries[2] else {
+            panic!("carrier projection");
+        };
+        assert!(matches!(carrier.body, ProjectionBody::Carrier));
+    }
+
+    #[test]
+    fn standalone_projection_surface_refuses_direction_mismatch_and_deep_terms() {
+        let wrong_arrow =
+            "Theory T() { Rewrites { projection P : A <~ host::B { R : (A) ~> (host::B); } } }";
+        assert!(parse_theory(wrong_arrow).is_err());
+        let misplaced_remainder =
+            "Theory T() { Rewrites { projection P : A ~> host::B { R : ...rest ~> true; } } }";
+        assert!(parse_theory(misplaced_remainder).is_err());
+        let collection_remainder =
+            "Theory T() { Rewrites { projection P : A ~> host::B { R : {x, ...rest} ~> true; } } }";
+        assert!(parse_theory(collection_remainder).is_ok());
+        let nonfinal_remainder =
+            "Theory T() { Rewrites { projection P : A ~> host::B { R : {...rest, x} ~> true; } } }";
+        assert!(parse_theory(nonfinal_remainder).is_err());
+        let duplicate_remainder =
+            "Theory T() { Rewrites { projection P : A ~> host::B { R : {...first, ...second} ~> true; } } }";
+        assert!(parse_theory(duplicate_remainder).is_err());
+        let mut term = "x".to_string();
+        for _ in 0..MAX_DDL_STRUCTURAL_DEPTH {
+            term = format!("(Wrap {term})");
+        }
+        let source = format!(
+            "Theory T() {{ Rewrites {{ projection P : A ~> host::B {{ R : {term} ~> true; }} }} }}"
+        );
+        let result = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || parse_theory(&source))
+            .expect("small-stack parser worker")
+            .join()
+            .expect("projection parser must not overflow");
+        assert!(result.is_err(), "overdeep projection term must be refused");
+    }
 
     fn run_on_small_stack(source: String) -> Result<ModuleFile, Diag> {
         std::thread::Builder::new()

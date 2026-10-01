@@ -72,7 +72,11 @@ pub(super) fn expansion(
     // Pay the borrowed discriminant/length selection before inspection.
     parts(1, 0, 0, reserve)?;
     let (count, slots) = match task {
-        Task::Text(_) | Task::QuotedText(_) | Task::Number(_) | Task::FinishNode { .. } => {
+        Task::Text(_)
+        | Task::QuotedText(_)
+        | Task::Number(_)
+        | Task::Integer(_)
+        | Task::FinishNode { .. } => {
             return parts(3, 1, 0, reserve);
         },
         Task::Process(_) => return parts(6, 2, 0, reserve),

@@ -15,7 +15,7 @@ use mettail_languages::rholang::{
     DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr, Int, Proc,
 };
 use models::rhoapi::Par;
-use models::rust::utils::{new_elist_par, new_gstring_par};
+use models::rust::utils::{new_elist_par, new_gint_par, new_gstring_par};
 
 mod admission;
 type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), RholangAstLowerError> + 'a;
@@ -25,6 +25,7 @@ type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), RholangAstLowerErro
 /// the supplied reservation. Process leaves are moved through unchanged.
 pub(crate) trait DdlWireValue: Sized {
     fn text(value: String, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
+    fn integer(value: i64, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
     fn closed_list(
         children: Vec<Self>,
         reserve: &mut Reservation<'_>,
@@ -34,6 +35,10 @@ pub(crate) trait DdlWireValue: Sized {
 impl DdlWireValue for Par {
     fn text(value: String, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
         Ok(string_par(value))
+    }
+
+    fn integer(value: i64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(new_gint_par(value, Vec::new(), false))
     }
 
     fn closed_list(
@@ -47,6 +52,10 @@ impl DdlWireValue for Par {
 impl DdlWireValue for crate::rholang_ast::constructed_value::ConstructedValue {
     fn text(value: String, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
         Self::text(value)
+    }
+
+    fn integer(value: i64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Self::integer(value)
     }
 
     fn closed_list(
@@ -81,6 +90,7 @@ enum WireOp<'a> {
     Text(&'a str),
     QuotedText(&'a str),
     Number(&'a Int),
+    Integer(&'a Int),
     Process(usize),
     Node { tag: &'static str, child_count: usize },
 }
@@ -123,9 +133,11 @@ impl<'a> DdlLowerPlan<'a> {
             };
             admission::expansion(&task, reserve)?;
             let (pending, emitted, process_count) = match &task {
-                Task::Text(_) | Task::QuotedText(_) | Task::Number(_) | Task::FinishNode { .. } => {
-                    (0, 1, 0)
-                },
+                Task::Text(_)
+                | Task::QuotedText(_)
+                | Task::Number(_)
+                | Task::Integer(_)
+                | Task::FinishNode { .. } => (0, 1, 0),
                 Task::Process(_) => (0, 1, 1),
                 Task::Node { children, .. } => (
                     children
@@ -153,6 +165,7 @@ impl<'a> DdlLowerPlan<'a> {
                 Task::Text(value) => operations.push(WireOp::Text(value)),
                 Task::QuotedText(value) => operations.push(WireOp::QuotedText(value)),
                 Task::Number(value) => operations.push(WireOp::Number(value)),
+                Task::Integer(value) => operations.push(WireOp::Integer(value)),
                 Task::Process(process) => {
                     let index = processes.len();
                     processes.push(process);
@@ -653,6 +666,20 @@ impl<'a> DdlLowerPlan<'a> {
                     admission::text(spelling.len(), false, reserve)?;
                     values.push(V::text(spelling, reserve)?);
                 },
+                WireOp::Integer(value) => {
+                    let Int::NumLit(number) = value else {
+                        let message = "DDL projection integer must be an integer literal";
+                        admission::parts(1, 1, message.len(), reserve)?;
+                        return Err(RholangAstLowerError::DdlWire(message.into()));
+                    };
+                    let value = i64::try_from(*number).map_err(|_| {
+                        RholangAstLowerError::DdlWire(
+                            "DDL projection integer is outside the Rholang i64 range".into(),
+                        )
+                    })?;
+                    admission::parts(8, 2, 0, reserve)?;
+                    values.push(V::integer(value, reserve)?);
+                },
                 WireOp::Process(index) => {
                     let value = process_values.get_mut(index).and_then(Option::take);
                     match value {
@@ -992,7 +1019,7 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Result<Task<'a>, RholangAstLowerErr
         },
         DdlRuleAst::DdlRuleAstInteger(value) => Task::Node {
             tag: "ast-integer",
-            children: vec![Task::Number(value.as_ref())],
+            children: vec![Task::Integer(value.as_ref())],
         },
         DdlRuleAst::DdlRuleAstAbs(binder, body) => Task::Node {
             tag: "ast-abs",
@@ -1048,6 +1075,7 @@ enum Task<'a> {
     Text(&'a str),
     QuotedText(&'a str),
     Number(&'a Int),
+    Integer(&'a Int),
     Process(&'a Proc),
     Node {
         tag: &'static str,

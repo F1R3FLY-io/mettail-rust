@@ -94,6 +94,7 @@ fn paid_plan_preserves_exact_postorder_process_identity_and_closed_wire_metadata
             WireOp::Text(text) => format!("text:{text}"),
             WireOp::QuotedText(text) => format!("quoted:{text}"),
             WireOp::Number(_) => "number".into(),
+            WireOp::Integer(_) => "integer".into(),
             WireOp::Process(index) => format!("process:{index}"),
             WireOp::Node { tag, child_count } => format!("{tag}:{child_count}"),
         })

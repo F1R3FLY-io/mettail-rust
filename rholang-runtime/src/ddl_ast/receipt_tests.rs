@@ -2,7 +2,113 @@ use super::*;
 use crate::rholang_ast::constructed_value::ConstructedValue;
 use crate::rholang_ast::construction_receipt::{NativeCounts, NativeReceipt};
 use mettail_rholang_codegen::DynamicReflectionError;
+use proptest::prelude::*;
 use prost::Message;
+
+impl DdlWireValue for mettail_elab::canonical::RhoValue {
+    fn text(value: String, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(Self::String(value))
+    }
+
+    fn integer(value: i64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(Self::Integer(i128::from(value)))
+    }
+
+    fn closed_list(
+        children: Vec<Self>,
+        _: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Ok(Self::List(children))
+    }
+}
+
+#[test]
+fn generated_and_standalone_projection_frontends_agree_on_typed_native_rows() {
+    use mettail_elab::ast::{Builder, ProjectionBody, RewriteEntry, TheoryExpr};
+    use mettail_elab::wire::{decode_ddl_value, ParsedDdl};
+    use mettail_languages::rholang::DdlTheoryExpr;
+
+    let body_source = r#"Rewrites {
+        projection Scalar : Number <~> host::Int {
+            One(n:Number,h:host::Int): if n ~> h then (Number n) <~> 1;
+            Two : (Number 2) <~> (host::CastInt 2);
+        }
+        projection TextValue : Text <~> host::Str via carrier;
+        projection TextLiteral : Text ~> host::Str {
+            Hello : (Text) ~> "λ";
+        }
+        projection Import : Entry <~ host::Proc {
+            Take : (Entry) <~ (host::Par);
+        }
+    }"#;
+    let generated = DdlTheoryExpr::parse(body_source).expect("generated DDL syntax");
+    let wire = DdlLowerPlan::build(DdlRoot::Theory {
+        name: "T",
+        parameters: &[],
+        body: &generated,
+    })
+    .try_finish_with::<mettail_elab::canonical::RhoValue>(Vec::new(), &mut |_, _| Ok(()))
+    .expect("structural DDL wire");
+    let ParsedDdl::Theory(decoded) = decode_ddl_value(wire).expect("typed projection wire") else {
+        panic!("theory wire must remain a theory");
+    };
+    let standalone = mettail_elab::parse::parse_theory(&format!("Theory T() {{ {body_source} }}"))
+        .expect("standalone DDL syntax");
+    let TheoryExpr::Build {
+        builder: Builder::Rewrites(generated_entries),
+        ..
+    } = decoded.body
+    else {
+        panic!("generated theory has Rewrites");
+    };
+    let TheoryExpr::Build {
+        builder: Builder::Rewrites(standalone_entries),
+        ..
+    } = standalone.body
+    else {
+        panic!("standalone theory has Rewrites");
+    };
+    assert_eq!(generated_entries.len(), standalone_entries.len());
+    for (generated, standalone) in generated_entries.iter().zip(&standalone_entries) {
+        let (RewriteEntry::Projection(generated), RewriteEntry::Projection(standalone)) =
+            (generated, standalone)
+        else {
+            panic!("each entry is a projection");
+        };
+        assert_eq!(generated.name, standalone.name);
+        assert_eq!(generated.guest, standalone.guest);
+        assert_eq!(generated.host, standalone.host);
+        assert_eq!(generated.direction, standalone.direction);
+        match (&generated.body, &standalone.body) {
+            (ProjectionBody::Carrier, ProjectionBody::Carrier) => {},
+            (ProjectionBody::Rules(generated_rows), ProjectionBody::Rules(standalone_rows)) => {
+                assert_eq!(generated_rows.len(), standalone_rows.len());
+                for (generated_row, standalone_row) in generated_rows.iter().zip(standalone_rows) {
+                    assert_eq!(generated_row.name, standalone_row.name);
+                    assert_eq!(generated_row.bindings, standalone_row.bindings);
+                    assert_eq!(generated_row.premises, standalone_row.premises);
+                    assert_eq!(generated_row.guest, standalone_row.guest);
+                    assert_eq!(generated_row.host, standalone_row.host);
+                    assert_eq!(generated_row.direction, standalone_row.direction);
+                }
+            },
+            _ => panic!("projection body kind differs"),
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn projection_integer_wire_preserves_every_admitted_i64(value in any::<i64>()) {
+        let literal = Int::NumLit(value);
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::Integer(&literal)],
+            processes: Vec::new(),
+        };
+        let expected = new_gint_par(value, Vec::new(), false);
+        prop_assert_eq!(plan.finish(Vec::new()).expect("native integer wire"), expected);
+    }
+}
 
 fn refused() -> RholangAstLowerError {
     RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled)

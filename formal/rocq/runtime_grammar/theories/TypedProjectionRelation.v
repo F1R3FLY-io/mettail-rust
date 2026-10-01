@@ -436,3 +436,67 @@ Proof.
 Qed.
 
 End TypedProjectionRelation.
+
+(** The generated DDL grammar admits a remainder only as the final direct
+    element of a collection: `{...rest}` or `{term, ..., ...rest}`.  The
+    standalone author's iterative parser carries the term-frame context in
+    each pending job, then checks the completed collection.  This model is
+    deliberately about that control invariant, not about the structural
+    matcher or the meaning of a remainder after elaboration. *)
+Module ProjectionRemainderSurface.
+
+Inductive TermFrame := Root | AbstractionBody | SubstitutionLeft
+                    | SubstitutionRight | ConstructorArgument | CollectionElement.
+
+Definition remainder_allowed (frame : TermFrame) : bool :=
+  match frame with CollectionElement => true | _ => false end.
+
+Lemma only_collection_elements_admit_remainders : forall frame,
+  remainder_allowed frame = true -> frame = CollectionElement.
+Proof.
+  intros frame Allowed. destruct frame; simpl in Allowed;
+    try discriminate; reflexivity.
+Qed.
+
+Lemma collection_elements_admit_remainders :
+  remainder_allowed CollectionElement = true.
+Proof. reflexivity. Qed.
+
+Inductive DirectElement := OrdinaryElement | RemainderElement.
+
+(** This is the parser's closing check after it has admitted direct elements
+    in CollectionElement frames.  Seeing a remainder while there is any later
+    element refuses the collection, irrespective of that later element's kind. *)
+Fixpoint close_collection (elements : list DirectElement) : bool :=
+  match elements with
+  | [] => true
+  | OrdinaryElement :: tail => close_collection tail
+  | [RemainderElement] => true
+  | RemainderElement :: _ :: _ => false
+  end.
+
+(** The corresponding generated grammar shape: ordinary direct elements may
+    precede one final remainder; there is no constructor that can put a
+    remainder before another element or outside a collection. *)
+Inductive CollectionGrammar : list DirectElement -> Prop :=
+| CollectionEmpty : CollectionGrammar []
+| CollectionOrdinary : forall tail,
+    CollectionGrammar tail -> CollectionGrammar (OrdinaryElement :: tail)
+| CollectionFinalRemainder : CollectionGrammar [RemainderElement].
+
+Theorem collection_close_exactly_matches_grammar : forall elements,
+  close_collection elements = true <-> CollectionGrammar elements.
+Proof.
+  intro elements. split.
+  - induction elements as [|head tail IH]; intro Closed.
+    + constructor.
+    + destruct head.
+      * apply CollectionOrdinary. apply IH. exact Closed.
+      * destruct tail as [|later rest].
+        -- constructor.
+        -- discriminate Closed.
+  - intro Grammar. induction Grammar; simpl; try reflexivity.
+    exact IHGrammar.
+Qed.
+
+End ProjectionRemainderSurface.

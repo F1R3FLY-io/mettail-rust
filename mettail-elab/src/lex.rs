@@ -65,16 +65,19 @@ pub enum Tok {
     Star,
     Hash,
     Caret,
-    Turnstile, // |-
-    FatArrow,  // =>
-    Squiggle,  // ~>
-    ThinArrow, // ->
-    EqEq,      // ==
-    Meet,      // /\
-    Join,      // \/
-    Diff,      // backslash
-    Ellipsis,  // ...
-    Eq,        // =
+    Turnstile,        // |-
+    FatArrow,         // =>
+    Squiggle,         // ~>
+    BackwardSquiggle, // <~
+    BothSquiggles,    // <~>
+    Namespace,        // ::
+    ThinArrow,        // ->
+    EqEq,             // ==
+    Meet,             // /\
+    Join,             // \/
+    Diff,             // backslash
+    Ellipsis,         // ...
+    Eq,               // =
     Eof,
 }
 
@@ -136,6 +139,9 @@ impl Tok {
             Tok::Turnstile => "|-",
             Tok::FatArrow => "=>",
             Tok::Squiggle => "~>",
+            Tok::BackwardSquiggle => "<~",
+            Tok::BothSquiggles => "<~>",
+            Tok::Namespace => "::",
             Tok::ThinArrow => "->",
             Tok::EqEq => "==",
             Tok::Meet => "/\\",
@@ -418,10 +424,17 @@ pub fn lex(src: &str) -> Result<Vec<Lexeme>, String> {
             out.push(Lexeme { tok: Tok::Ellipsis, span });
             continue;
         }
+        if three == "<~>" {
+            bump!(3);
+            out.push(Lexeme { tok: Tok::BothSquiggles, span });
+            continue;
+        }
         let two_tok = match two.as_str() {
             "|-" => Some(Tok::Turnstile),
             "=>" => Some(Tok::FatArrow),
             "~>" => Some(Tok::Squiggle),
+            "<~" => Some(Tok::BackwardSquiggle),
+            "::" => Some(Tok::Namespace),
             "->" => Some(Tok::ThinArrow),
             "==" => Some(Tok::EqEq),
             "/\\" => Some(Tok::Meet),

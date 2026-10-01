@@ -85,7 +85,8 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.RegexGsltReplace \
 	RuntimeGrammar.RegexGsltRules \
 	RuntimeGrammar.RegexGsltOracle \
-	RuntimeGrammar.RegexGsltApplication
+	RuntimeGrammar.RegexGsltApplication \
+	RuntimeGrammar.TypedProjectionRelation
 
 all: check-security-kernel
 
