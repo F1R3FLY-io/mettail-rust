@@ -21,6 +21,7 @@ use mettail_elab::resolve::{
 use mettail_elab::wire::{decode_ddl_value, ParsedDdl};
 use mettail_grammar_core::{
     CategoryId, DefaultRuntimeHost, ExecutableLanguageInstall, InstallLanguageError,
+    InstalledHostProfileGrant, InstalledHostProfileHandle, InstalledHostProfileSnapshot,
     InstalledLanguageHandle, InstalledLanguageTable, InstalledParseError, LanguageAccessError,
     LanguageRevocationAuthority, LanguageRight, LanguageRights, ParserImageAdmissionLimits,
     RuntimeCapabilityError, RuntimeError, RuntimeHost, RuntimePolicy, RuntimeTemplateHole,
@@ -327,6 +328,8 @@ pub struct LanguageInstallService {
     registry: Arc<dyn RegistrySnapshot>,
     table: Arc<InstalledLanguageTable>,
     policy: LanguageInstallPolicy,
+    builtin_host_profile:
+        Result<InstalledHostProfileGrant, crate::host_profile::RholangHostProfileError>,
     revocations: RwLock<BTreeMap<[u8; 32], LanguageRevocationAuthority>>,
 }
 
@@ -335,14 +338,45 @@ impl LanguageInstallService {
         // Public policy fields may have been adjusted by the host. Freeze the
         // actual values, never a stale caller-supplied fingerprint.
         policy.refresh_fingerprint();
+        let table = Arc::new(InstalledLanguageTable::with_runtime_factory(Arc::new(
+            mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
+        )));
+        let host_rights = policy.host_grants.attenuate(&LanguageRights::from_rights([
+            LanguageRight::Bridge,
+            LanguageRight::ReflectAst,
+        ]));
+        // A source value may describe a host endpoint, but only this checked
+        // compiled provider can install its process-local authority. Keep a
+        // refusal for the projection path without disabling legacy languages.
+        let builtin_host_profile =
+            crate::host_profile::RholangHostProfileProvider::from_generated()
+                .and_then(|provider| provider.install(&table, host_rights));
         Self {
             registry,
-            table: Arc::new(InstalledLanguageTable::with_runtime_factory(Arc::new(
-                mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
-            ))),
+            table,
             policy,
+            builtin_host_profile,
             revocations: RwLock::new(BTreeMap::new()),
         }
+    }
+
+    /// Return the live built-in binding and its checked fragment. Callers
+    /// must reauthorize the handle immediately before publishing projected
+    /// results; a borrowed digest alone never grants projection authority.
+    pub fn builtin_host_profile_binding(
+        &self,
+    ) -> Result<(InstalledHostProfileHandle, InstalledHostProfileSnapshot), InstallServiceError>
+    {
+        let grant = self.builtin_host_profile.as_ref().map_err(|error| {
+            InstallServiceError::HostProfile(format!("compiled profile refused: {error:?}"))
+        })?;
+        let snapshot = self
+            .table
+            .authorize_host_profile(&grant.handle, &[LanguageRight::Bridge])
+            .map_err(|error| {
+                InstallServiceError::HostProfile(format!("host binding unavailable: {error:?}"))
+            })?;
+        Ok((grant.handle.clone(), snapshot))
     }
 
     pub fn table(&self) -> &Arc<InstalledLanguageTable> {
@@ -861,6 +895,7 @@ impl VersionedRegistryReader for PinnedRegistryReader<'_> {
 
 #[derive(Debug)]
 pub enum InstallServiceError {
+    HostProfile(String),
     Surface(mettail_elab::Diag),
     StagedProgramShape(String),
     ExportNameMismatch {
@@ -904,6 +939,7 @@ pub enum InstallServiceError {
 impl fmt::Display for InstallServiceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::HostProfile(error) => write!(formatter, "Rholang host profile refused: {error}"),
             Self::Surface(error) => write!(formatter, "surface DDL rejected: {error}"),
             Self::StagedProgramShape(error) => {
                 write!(formatter, "staged module program rejected: {error}")
@@ -3700,6 +3736,9 @@ pub(crate) fn error_response(code: &str, message: &str) -> Par {
 
 fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
     match error {
+        LanguageRuntimeError::Install(InstallServiceError::HostProfile(_)) => {
+            "HostProfileUnavailable"
+        },
         LanguageRuntimeError::Install(InstallServiceError::Surface(_)) => "InvalidSurfaceDdl",
         LanguageRuntimeError::Install(InstallServiceError::StagedProgramShape(_)) => {
             "InvalidStagedProgram"
@@ -6523,10 +6562,11 @@ pub(crate) mod tests {
             runtime.parse_source(&right, "r", "RightExpr"),
             Ok(LanguageParseOutcome::Accepted)
         ));
-        assert!(matches!(
-            runtime.parse_source(&left, "r", "LeftExpr"),
-            Ok(LanguageParseOutcome::Rejected(_))
-        ));
+        let cross_language = runtime.parse_source(&left, "r", "LeftExpr");
+        assert!(
+            matches!(cross_language, Ok(LanguageParseOutcome::Rejected(_))),
+            "left parser accepted the right-language literal: {cross_language:?}"
+        );
         assert!(matches!(
             runtime.parse_source(&right, "l", "RightExpr"),
             Ok(LanguageParseOutcome::Rejected(_))

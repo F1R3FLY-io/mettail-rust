@@ -82,6 +82,8 @@ pub mod guard_par_substrate;
 #[cfg(feature = "rholang-runtime")]
 pub(crate) mod guard_predicate;
 #[cfg(feature = "rholang-runtime")]
+pub mod host_profile;
+#[cfg(feature = "rholang-runtime")]
 mod installed_flt;
 /// Atomic installation of Rholang-authored MeTTaIL specifications. Both Greg/Mike
 /// DDL nodes and ordinary `language/2` values cross the same canonical boundary.

@@ -64,6 +64,7 @@ dstage-instrumentation = ["runtime-report"]
 # Rholang source text that has to be reparsed.
 rholang-runtime = [
     "runtime-report",
+    "dep:postcard",
     "dep:mettail-rholang-frontend",
     "dep:mettail-ast",
     "dep:mettail-elab",
@@ -423,6 +424,7 @@ mettail-ast = { package = "ast", path = "../ast", optional = true }
 mettail-elab = { path = "../mettail-elab", optional = true }
 mettail-grammar-core = { path = "../grammar-core", optional = true }
 blake3 = "1"
+postcard = { version = "1", features = ["alloc"], optional = true }
 syn = { workspace = true, optional = true }
 # Reactive single-step COMM stepper (step.rs): a lock-free bounded channel carries the RAW COMM
 # payload (Pars) from the worker thread's observer to the REPL driver (no rendering under the

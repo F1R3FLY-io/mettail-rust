@@ -745,4 +745,44 @@ Proof.
 Qed.
 
 End GeneratedFragment.
+
+(** The executable Boolean fragment has exactly two ground values.  This is
+    the abstract shape of the existing generated [BoolLit] to host [GBool]
+    route and its ground-value inverse.  A variable is deliberately outside
+    the admitted fragment; no theorem below asserts a codec for every Bool
+    term.  The Rust round-trip test checks the concrete lowering/decoder
+    refinement for both Boolean inhabitants. *)
+Module GroundBooleanCodec.
+
+Inductive GeneratedBool := BoolLit (value : bool) | BVar (index : nat).
+Inductive HostGround := GBool (value : bool) | GOther (tag : nat).
+
+Definition to_host (value : GeneratedBool) : option HostGround :=
+  match value with
+  | BoolLit bit => Some (GBool bit)
+  | BVar _ => None
+  end.
+
+Definition from_host (value : HostGround) : option GeneratedBool :=
+  match value with
+  | GBool bit => Some (BoolLit bit)
+  | GOther _ => None
+  end.
+
+Theorem every_admitted_generated_boolean_round_trips :
+  forall bit, from_host (GBool bit) = Some (BoolLit bit) /\
+              to_host (BoolLit bit) = Some (GBool bit).
+Proof. intros []; split; reflexivity. Qed.
+
+Theorem variables_and_other_host_values_remain_outside_the_fragment :
+  forall index tag, to_host (BVar index) = None /\
+                    from_host (GOther tag) = None.
+Proof. intros. split; reflexivity. Qed.
+
+Theorem admitted_decode_is_injective :
+  forall left right,
+    to_host (BoolLit left) = to_host (BoolLit right) -> left = right.
+Proof. intros [] [] Equal; reflexivity || discriminate. Qed.
+
+End GroundBooleanCodec.
 End HostProfileLifecycle.
