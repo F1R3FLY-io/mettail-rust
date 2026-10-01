@@ -20,6 +20,8 @@ The optional `generated_semantic_artifacts_v1()` export is a *different* interfa
 
 The current [projection descriptor](../../../grammar-core/src/projection_core.rs) contains `signature_fingerprint` and `codec_profile_fingerprint`, but its fields can be supplied by a caller. The [image compiler](../../../dovetail-runtime/src/theory_image_compiler.rs) checks roster consistency and equality against those fields; it does not authenticate their provenance. The current [static installation path](../../../grammar-core/src/installed.rs) records `semantic_image: None` and installs a structural parser only. Therefore raw descriptor equality and `install_static` cannot be used as evidence of an executable, trusted Rholang host binding.
 
+The profile schema now distinguishes `Complete` coverage from `ExactFragment` coverage. A fragment identifies only the categories for which the checked provider has an exact codec; its grammar fingerprint still commits the complete checked grammar. In particular, a scalar fragment must not be advertised as a complete Rholang semantic export while the withheld receiver remains unsupported by the neutral artifact format. A portable profile record carries claimed digests, but decoding recomputes all of them from its canonical payload and rejects a mismatched claim. Neither a matching record nor a fragment installs an executable provider or grants authority. The generated producer, provider check, and sealed installation described below remain necessary.
+
 ## Identity, version, and trust
 
 The profile payload is canonically encoded and contains at least:

@@ -668,4 +668,47 @@ Proof.
 Qed.
 
 End Lifecycle.
+
+(** A host may expose a checked exact-codec fragment while its full neutral
+    semantic export refuses an unsupported field.  The producer enumerates
+    only categories in the checked definition, in source roster order; a
+    caller-supplied name or matching digest cannot add a category.  The
+    [codec_supported] decision is an implementation obligation of the
+    generated adapter/provider, not a source-language predicate. *)
+Module GeneratedFragment.
+
+Definition exact_categories (definition : CheckedDefinition)
+           (codec_supported : nat -> bool) : list nat :=
+  filter codec_supported (category_roster definition).
+
+Theorem exact_fragment_has_no_invented_categories :
+  forall definition codec_supported category,
+  In category (exact_categories definition codec_supported) ->
+  In category (category_roster definition) /\ codec_supported category = true.
+Proof.
+  intros definition codec_supported category Member.
+  unfold exact_categories in Member. now apply filter_In in Member.
+Qed.
+
+Theorem rejected_category_never_enters_fragment :
+  forall definition codec_supported category,
+  codec_supported category = false ->
+  ~ In category (exact_categories definition codec_supported).
+Proof.
+  intros definition codec_supported category Refused Member.
+  apply exact_fragment_has_no_invented_categories in Member as [_ Accepted].
+  congruence.
+Qed.
+
+Theorem exact_fragment_ignores_untrusted_extra_category :
+  forall definition codec_supported category,
+  ~ In category (category_roster definition) ->
+  ~ In category (exact_categories definition codec_supported).
+Proof.
+  intros definition codec_supported category Absent Member.
+  apply exact_fragment_has_no_invented_categories in Member as [Present _].
+  exact (Absent Present).
+Qed.
+
+End GeneratedFragment.
 End HostProfileLifecycle.

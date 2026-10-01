@@ -35,6 +35,16 @@ pub struct ProjectionHostCodecProfileV1 {
     pub descriptor: Vec<u8>,
 }
 
+/// Which part of the checked host grammar has an exact executable codec.
+/// `ExactFragment` is not a claim that the omitted categories are absent from
+/// the grammar: it identifies the selected, exact subset in `sorts`.  Only an
+/// independently checked provider may attest either coverage claim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectionHostCoverageV1 {
+    Complete,
+    ExactFragment,
+}
+
 /// Raw, versioned host-profile evidence derived from a checked language
 /// definition. This is never an installed trust root or a digital signature.
 /// Vector order is significant: sort and constructor IDs are positional.
@@ -48,6 +58,9 @@ pub struct ProjectionHostProfilePayloadV1 {
     pub language_version: String,
     pub definition_fingerprint: String,
     pub grammar_fingerprint: [u8; 32],
+    /// A complete roster or a checked exact-codec fragment of that grammar.
+    /// The whole-grammar fingerprint remains bound in both cases.
+    pub coverage: ProjectionHostCoverageV1,
     pub sorts: Vec<TheorySortV1>,
     pub constructors: Vec<TheoryConstructorV1>,
     pub codec: ProjectionHostCodecProfileV1,
@@ -55,11 +68,19 @@ pub struct ProjectionHostProfilePayloadV1 {
 
 /// Content commitments only. None is an authorization or cryptographic
 /// signature by a trusted principal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectionHostProfileDigestsV1 {
     pub signature_fingerprint: [u8; 32],
     pub codec_profile_fingerprint: [u8; 32],
     pub profile_fingerprint: [u8; 32],
+}
+
+/// Portable data record with claims that must be recomputed on admission.
+/// Successful decoding does not install a provider or confer authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectionHostProfileRecordV1 {
+    pub payload: ProjectionHostProfilePayloadV1,
+    pub claimed_digests: ProjectionHostProfileDigestsV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +91,8 @@ pub enum ProjectionHostProfileErrorV1 {
     EmptyLanguageVersion,
     EmptyDefinitionFingerprint,
     EmptyProviderAbi,
+    EmptyCodecDescriptor,
+    MissingImplementationCommitment,
     EmptySorts,
     EmptySortName,
     DuplicateSort(String),
@@ -81,6 +104,7 @@ pub enum ProjectionHostProfileErrorV1 {
     Encoding(String),
     Decoding(String),
     NoncanonicalEncoding,
+    ClaimedDigestMismatch,
 }
 
 fn host_commitment(domain: &[u8], bytes: &[u8]) -> [u8; 32] {
@@ -114,6 +138,12 @@ impl ProjectionHostProfilePayloadV1 {
         }
         if self.codec.provider_abi.is_empty() {
             return Err(Error::EmptyProviderAbi);
+        }
+        if self.codec.descriptor.is_empty() {
+            return Err(Error::EmptyCodecDescriptor);
+        }
+        if self.codec.implementation_commitment == [0; 32] {
+            return Err(Error::MissingImplementationCommitment);
         }
         if self.sorts.is_empty() {
             return Err(Error::EmptySorts);
@@ -207,6 +237,7 @@ impl ProjectionHostProfilePayloadV1 {
             &self.language_version,
             &self.definition_fingerprint,
             &self.grammar_fingerprint,
+            self.coverage,
             &self.sorts,
             &self.constructors,
         ))
@@ -233,6 +264,40 @@ impl ProjectionHostProfilePayloadV1 {
             sorts: self.sorts.clone(),
             constructors: self.constructors.clone(),
         })
+    }
+}
+
+impl ProjectionHostProfileRecordV1 {
+    pub fn new(
+        payload: ProjectionHostProfilePayloadV1,
+    ) -> Result<Self, ProjectionHostProfileErrorV1> {
+        let claimed_digests = payload.digests()?;
+        Ok(Self { payload, claimed_digests })
+    }
+
+    /// Validate content claims against the canonical payload; content equality
+    /// alone is not proof of origin or of an installed executable codec.
+    pub fn validate(&self) -> Result<(), ProjectionHostProfileErrorV1> {
+        if self.payload.digests()? != self.claimed_digests {
+            return Err(ProjectionHostProfileErrorV1::ClaimedDigestMismatch);
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, ProjectionHostProfileErrorV1> {
+        self.validate()?;
+        postcard::to_allocvec(self)
+            .map_err(|error| ProjectionHostProfileErrorV1::Encoding(error.to_string()))
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, ProjectionHostProfileErrorV1> {
+        let record: Self = postcard::from_bytes(bytes)
+            .map_err(|error| ProjectionHostProfileErrorV1::Decoding(error.to_string()))?;
+        let canonical = record.canonical_bytes()?;
+        if canonical != bytes {
+            return Err(ProjectionHostProfileErrorV1::NoncanonicalEncoding);
+        }
+        Ok(record)
     }
 }
 
@@ -467,6 +532,7 @@ mod tests {
             language_version: "1.2.3".into(),
             definition_fingerprint: "checked-definition-v1".into(),
             grammar_fingerprint: [7; 32],
+            coverage: ProjectionHostCoverageV1::Complete,
             sorts: vec![
                 TheorySortV1 {
                     name: "Name".into(),
@@ -523,14 +589,40 @@ mod tests {
     }
 
     #[test]
+    fn host_profile_record_rejects_spoofed_content_claims() {
+        let record = ProjectionHostProfileRecordV1::new(host_profile()).unwrap();
+        let bytes = record.canonical_bytes().unwrap();
+        assert_eq!(ProjectionHostProfileRecordV1::decode_canonical(&bytes).unwrap(), record);
+
+        let mut altered_payload = record.clone();
+        altered_payload.payload.coverage = ProjectionHostCoverageV1::ExactFragment;
+        assert_eq!(
+            altered_payload.validate(),
+            Err(ProjectionHostProfileErrorV1::ClaimedDigestMismatch)
+        );
+
+        let mut altered_claim = record.clone();
+        altered_claim.claimed_digests.codec_profile_fingerprint[0] ^= 1;
+        assert_eq!(
+            altered_claim.validate(),
+            Err(ProjectionHostProfileErrorV1::ClaimedDigestMismatch)
+        );
+
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(ProjectionHostProfileRecordV1::decode_canonical(&trailing).is_err());
+    }
+
+    #[test]
     fn host_profile_commits_all_checked_identity_and_positional_rosters() {
         let payload = host_profile();
         let baseline = payload.digests().unwrap();
-        let mutations: [fn(&mut ProjectionHostProfilePayloadV1); 8] = [
+        let mutations: [fn(&mut ProjectionHostProfilePayloadV1); 9] = [
             |p| p.language_name.push('!'),
             |p| p.language_version.push('!'),
             |p| p.definition_fingerprint.push('!'),
             |p| p.grammar_fingerprint[0] ^= 1,
+            |p| p.coverage = ProjectionHostCoverageV1::ExactFragment,
             |p| p.sorts.swap(0, 1),
             |p| p.sorts[0].kind = TheorySortKindV1::Opaque { abi: "name/1".into() },
             |p| p.constructors.swap(0, 1),
@@ -573,6 +665,17 @@ mod tests {
         let mut payload = host_profile();
         payload.codec.codec_abi += 1;
         assert_eq!(payload.validate(), Err(ProjectionHostProfileErrorV1::UnsupportedCodecAbi(2)));
+
+        let mut payload = host_profile();
+        payload.codec.descriptor.clear();
+        assert_eq!(payload.validate(), Err(ProjectionHostProfileErrorV1::EmptyCodecDescriptor));
+
+        let mut payload = host_profile();
+        payload.codec.implementation_commitment = [0; 32];
+        assert_eq!(
+            payload.validate(),
+            Err(ProjectionHostProfileErrorV1::MissingImplementationCommitment)
+        );
 
         let mut payload = host_profile();
         payload.sorts.push(payload.sorts[0].clone());
