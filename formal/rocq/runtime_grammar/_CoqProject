@@ -116,6 +116,7 @@ theories/SemanticIntrinsics.v
 theories/SemanticIntrinsicSchema.v
 theories/AuthoredRegexRewrites.v
 theories/SemanticNormalization.v
+theories/InstalledLookaheadEveryTrace.v
 theories/RegexGsltSyntax.v
 theories/RegexGsltMatch.v
 theories/RegexGsltNullableMachine.v
