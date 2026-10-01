@@ -15,6 +15,9 @@ use std::thread::ThreadId;
 
 static NEXT_REGISTRY_ID: AtomicU64 = AtomicU64::new(1);
 
+mod host_profile;
+pub use host_profile::*;
+
 /// Independently attenuable authority over one installed language.
 ///
 /// Proof search, live-space administration, and factory administration are
@@ -905,6 +908,7 @@ struct InstalledEntry {
 struct InstalledState {
     next_entry_id: u64,
     entries: BTreeMap<[u8; 32], InstalledEntry>,
+    host_profiles: BTreeMap<[u8; 32], host_profile::HostProfileEntry>,
 }
 
 /// Fingerprint-indexed table shared by dynamic and compile-time grammars.
