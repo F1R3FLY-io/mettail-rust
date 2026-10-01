@@ -667,6 +667,60 @@ Proof.
   rewrite revocation_during_execution_prevents_publication. apply andb_false_r.
 Qed.
 
+(** Projected guest images have a distinct identity from their V1 base image.
+    These abstract numbers stand for checked canonical commitments.  The
+    compiler's semantic correctness and concrete hash collision resistance
+    remain separate obligations; this admission law proves that an image
+    cannot be accepted under a different live host or guest commitment. *)
+Record GuestProjectionClaim := guest_projection_claim {
+  guest_projected_id : nat;
+  guest_base_id : nat;
+  guest_host_profile_id : nat;
+  guest_host_codec_id : nat
+}.
+
+Record ProjectedImageClaim := projected_image_claim {
+  image_projected_id : nat;
+  image_base_id : nat;
+  image_host_profile_id : nat;
+  image_host_codec_id : nat
+}.
+
+Definition projected_image_admissibleb
+    (guest : GuestProjectionClaim) (image : ProjectedImageClaim)
+    (host : Binding) (credential : Handle) (bridge_right : nat) : bool :=
+  binding_authorizedb host credential [bridge_right] &&
+  Nat.eqb (image_projected_id image) (guest_projected_id guest) &&
+  Nat.eqb (image_base_id image) (guest_base_id guest) &&
+  Nat.eqb (image_host_profile_id image) (guest_host_profile_id guest) &&
+  Nat.eqb (image_host_profile_id image) (binding_digest host) &&
+  Nat.eqb (image_host_codec_id image) (guest_host_codec_id guest) &&
+  Nat.eqb (image_host_codec_id image)
+    (provider_code_digest (provider_contract (binding_provider host))).
+
+Theorem admitted_projected_image_pins_both_endpoints :
+  forall guest image host credential bridge_right,
+  projected_image_admissibleb guest image host credential bridge_right = true ->
+  binding_authorizedb host credential [bridge_right] = true /\
+  image_projected_id image = guest_projected_id guest /\
+  image_base_id image = guest_base_id guest /\
+  image_host_profile_id image = guest_host_profile_id guest /\
+  image_host_profile_id image = binding_digest host /\
+  image_host_codec_id image = guest_host_codec_id guest /\
+  image_host_codec_id image =
+    provider_code_digest (provider_contract (binding_provider host)).
+Proof.
+  intros guest image host credential bridge_right Admitted.
+  unfold projected_image_admissibleb in Admitted.
+  repeat rewrite andb_true_iff in Admitted.
+  repeat split; try tauto; apply Nat.eqb_eq; tauto.
+Qed.
+
+Theorem revoked_host_cannot_admit_projected_image :
+  forall guest image host credential bridge_right,
+  projected_image_admissibleb guest image (revoke host) credential bridge_right = false.
+Proof. intros. reflexivity. Qed.
+
 End Lifecycle.
 
 (** A host may expose a checked exact-codec fragment while its full neutral

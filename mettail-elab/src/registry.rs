@@ -6,13 +6,15 @@
 //! field has been verified against that result.
 
 use crate::canonical::{
-    InstallableLanguageCore, LanguageValueResolver, RhoValue, ValueToCoreError,
+    InstallableAnyLanguageCore, InstallableLanguageCore, LanguageValueResolver, RhoValue,
+    ValueToCoreError,
 };
 use crate::module::{CanonicalModuleDependency, CanonicalModuleValue};
 use mettail_grammar_core::{
     GrammarCoreV1, ImageError, InstallLanguageError, InstalledLanguageGrant,
     InstalledLanguageTable, LanguageCoreV1, LanguageRights, ParserImageAdmissionLimits,
-    ParserImageV1, TheoryImageAdmissionLimits, TheoryImageError, TheorySemanticImageV1,
+    ParserImageV1, ProjectedLanguageCoreV1, ProjectionHostSignatureV1, TheoryImageAdmissionLimits,
+    TheoryImageError, TheorySemanticImageV1,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -427,6 +429,47 @@ impl RegistryLanguageRecord {
         )
     }
 
+    /// Share the existing cache validation and parser preparation while
+    /// retaining the distinct versioned projected core for host-bound guests.
+    /// The caller supplies a signature obtained from an installed host; this
+    /// data-only layer itself never grants host authority.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_executable_install_with_registry_and_artifact_limits_with_host(
+        &self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: TheoryImageAdmissionLimits,
+        registry: &dyn VersionedLanguageRegistryReader,
+        host: Option<&ProjectionHostSignatureV1>,
+    ) -> Result<
+        (PreparedRegistryExecutableLanguage, Option<ProjectedLanguageCoreV1>),
+        PrepareRegistryError<ValueToCoreError>,
+    > {
+        let resolver = RegistryLanguageResolver { registry };
+        let mut projected = None;
+        let prepared = self.prepare_executable_install_with_artifact_limits(
+            compiler_abi,
+            unicode_version,
+            parser_limits,
+            semantic_limits,
+            |value| match crate::canonical::value_to_installable_any_language_core_with_resolver(
+                value, &resolver, host,
+            )? {
+                InstallableAnyLanguageCore::Legacy(language) => Ok(language),
+                InstallableAnyLanguageCore::Projected(language) => {
+                    let base = language.language.base.clone();
+                    projected = Some(language.language);
+                    Ok(InstallableLanguageCore {
+                        language: base,
+                        requested_rights: language.requested_rights,
+                    })
+                },
+            },
+        )?;
+        Ok((prepared, projected))
+    }
+
     pub fn install<E, C>(
         &self,
         compiler_abi: &str,
@@ -618,7 +661,64 @@ pub struct PreparedRegistryExecutableLanguage {
     pub semantic_limits: TheoryImageAdmissionLimits,
 }
 
+fn prepare_executable_parser_image<PC>(
+    language: &LanguageCoreV1,
+    cache: ParserCache,
+    compiler_abi: &str,
+    unicode_version: &str,
+    limits: ParserImageAdmissionLimits,
+    compile: impl FnOnce(&GrammarCoreV1) -> Result<ParserImageV1, PC>,
+) -> Result<(ParserImageV1, ParserCacheDisposition), FinishRegistryInstallError<PC>> {
+    match cache {
+        ParserCache::Verified(image) => Ok((*image, ParserCacheDisposition::ReusedVerified)),
+        other @ (ParserCache::Missing | ParserCache::Rejected(_)) => {
+            let image = compile(&language.grammar).map_err(FinishRegistryInstallError::Compile)?;
+            image
+                .verify_executable_with_limits(
+                    &language.grammar,
+                    compiler_abi,
+                    unicode_version,
+                    limits,
+                )
+                .map_err(FinishRegistryInstallError::InvalidCompilerImage)?;
+            let disposition = match other {
+                ParserCache::Missing => ParserCacheDisposition::CompiledMissing,
+                ParserCache::Rejected(reason) => {
+                    ParserCacheDisposition::RecompiledRejected { reason }
+                },
+                ParserCache::Verified(_) => unreachable!("handled above"),
+            };
+            Ok((image, disposition))
+        },
+    }
+}
+
 impl PreparedRegistryExecutableLanguage {
+    /// Prepare only the shared parser image for a versioned projection guest.
+    /// Its semantic image is compiled once under the live host binding by the
+    /// installed-language table; the untrusted V1 semantic cache is ignored.
+    pub fn install_parser_for_projected<PC>(
+        self,
+        compiler_abi: &str,
+        unicode_version: &str,
+        compile_parser: impl FnOnce(&GrammarCoreV1) -> Result<ParserImageV1, PC>,
+    ) -> Result<InstalledRegistryParserForProjected, FinishRegistryInstallError<PC>> {
+        let (parser_image, parser_cache_disposition) = prepare_executable_parser_image(
+            &self.language,
+            self.parser_cache,
+            compiler_abi,
+            unicode_version,
+            self.parser_limits,
+            compile_parser,
+        )?;
+        Ok(InstalledRegistryParserForProjected {
+            language: self.language,
+            requested_rights: self.requested_rights,
+            parser_image,
+            parser_cache_disposition,
+        })
+    }
+
     pub fn install<PC, SC>(
         self,
         compiler_abi: &str,
@@ -630,35 +730,22 @@ impl PreparedRegistryExecutableLanguage {
         ) -> Result<TheorySemanticImageV1, SC>,
     ) -> Result<InstalledRegistryExecutableLanguage, FinishExecutableRegistryInstallError<PC, SC>>
     {
-        let (parser_image, parser_cache_disposition) = match self.parser_cache {
-            ParserCache::Verified(image) => (*image, ParserCacheDisposition::ReusedVerified),
-            ParserCache::Missing => {
-                let image = compile_parser(&self.language.grammar)
-                    .map_err(FinishExecutableRegistryInstallError::CompileParser)?;
-                image
-                    .verify_executable_with_limits(
-                        &self.language.grammar,
-                        compiler_abi,
-                        unicode_version,
-                        self.parser_limits,
-                    )
-                    .map_err(FinishExecutableRegistryInstallError::InvalidParserImage)?;
-                (image, ParserCacheDisposition::CompiledMissing)
+        let (parser_image, parser_cache_disposition) = prepare_executable_parser_image(
+            &self.language,
+            self.parser_cache,
+            compiler_abi,
+            unicode_version,
+            self.parser_limits,
+            compile_parser,
+        )
+        .map_err(|error| match error {
+            FinishRegistryInstallError::Compile(error) => {
+                FinishExecutableRegistryInstallError::CompileParser(error)
             },
-            ParserCache::Rejected(reason) => {
-                let image = compile_parser(&self.language.grammar)
-                    .map_err(FinishExecutableRegistryInstallError::CompileParser)?;
-                image
-                    .verify_executable_with_limits(
-                        &self.language.grammar,
-                        compiler_abi,
-                        unicode_version,
-                        self.parser_limits,
-                    )
-                    .map_err(FinishExecutableRegistryInstallError::InvalidParserImage)?;
-                (image, ParserCacheDisposition::RecompiledRejected { reason })
+            FinishRegistryInstallError::InvalidCompilerImage(error) => {
+                FinishExecutableRegistryInstallError::InvalidParserImage(error)
             },
-        };
+        })?;
         let (semantic_image, semantic_cache_disposition) = match self.semantic_cache {
             SemanticCache::Verified(image) => (*image, SemanticCacheDisposition::ReusedVerified),
             SemanticCache::Missing => {
@@ -690,6 +777,13 @@ impl PreparedRegistryExecutableLanguage {
             semantic_limits: self.semantic_limits,
         })
     }
+}
+
+pub struct InstalledRegistryParserForProjected {
+    pub language: LanguageCoreV1,
+    pub requested_rights: LanguageRights,
+    pub parser_image: ParserImageV1,
+    pub parser_cache_disposition: ParserCacheDisposition,
 }
 
 pub struct InstalledRegistryExecutableLanguage {
@@ -769,7 +863,12 @@ pub enum ParserCacheDisposition {
 pub enum SemanticCacheDisposition {
     ReusedVerified,
     CompiledMissing,
-    RecompiledRejected { reason: String },
+    RecompiledRejected {
+        reason: String,
+    },
+    /// A projected semantic image was compiled under the live host binding;
+    /// the legacy V1 semantic cache was not applicable or consulted.
+    ProjectedCompiled,
 }
 
 pub enum ParserCache {

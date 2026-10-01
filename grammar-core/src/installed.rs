@@ -1,10 +1,11 @@
 use crate::{
     runtime_capability_requirements, CategoryId, DefaultRuntimeHost, GrammarCoreV1, ImageError,
-    LanguageCoreV1, ParserImageAdmissionLimits, ParserImageV1, RuntimeCapabilityBindings,
+    LanguageCoreV1, ParserImageAdmissionLimits, ParserImageV1, ProjectedLanguageCoreV1,
+    ProjectedTheorySemanticImageV1, ProjectionHostSignatureV1, RuntimeCapabilityBindings,
     RuntimeCapabilityError, RuntimeEffect, RuntimeError, RuntimeHost, RuntimeLexicalSession,
     RuntimeParser, RuntimePolicy, RuntimeTemplateHole, RuntimeTemplatePiece, SyntaxItem,
     TheoryImageAdmissionLimits, TheoryImageError, TheorySemanticImageV1, TokenDecoder,
-    WeightedParse,
+    WeightedParse, PROJECTED_THEORY_IMAGE_ABI_V1,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -239,10 +240,44 @@ pub struct ExecutableLanguageInstall {
     pub granted_rights: LanguageRights,
 }
 
+/// A projected guest keeps the V1 parser grammar but installs a distinct
+/// semantic identity and one selected, host-bound projection image.
+pub struct ExecutableProjectedLanguageInstall {
+    pub projected: ProjectedLanguageCoreV1,
+    pub parser_image: ParserImageV1,
+    pub host_profile: InstalledHostProfileHandle,
+    pub granted_rights: LanguageRights,
+}
+
+/// A Module may export ordinary and host-projected languages together. Both
+/// variants enter one prepared batch and one all-or-nothing table commit.
+pub enum ExecutableLanguageInstallRequest {
+    Legacy(ExecutableLanguageInstall),
+    Projected(ExecutableProjectedLanguageInstall),
+}
+
+/// Trusted compiler supplied by the node, not by a Theory or Registry value.
+/// It reuses the common projected semantic image compiler. No source parser or
+/// second evaluator is introduced at this boundary.
+pub trait ProjectionImageCompiler: Send + Sync {
+    fn compile_projected(
+        &self,
+        language: &ProjectedLanguageCoreV1,
+        host: &ProjectionHostSignatureV1,
+        limits: TheoryImageAdmissionLimits,
+    ) -> Result<ProjectedTheorySemanticImageV1, String>;
+}
+
+struct ProjectedBundleInstall {
+    core: ProjectedLanguageCoreV1,
+    host_profile: InstalledHostProfileHandle,
+}
+
 struct RuntimeLanguageBundleInstall {
     language: LanguageCoreV1,
     parser_image: ParserImageV1,
     semantic_image: Option<TheorySemanticImageV1>,
+    projected: Option<ProjectedBundleInstall>,
     granted_rights: LanguageRights,
 }
 
@@ -255,6 +290,9 @@ pub enum InstalledParserKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstallCommitment {
     pub language_fingerprint: [u8; 32],
+    /// Distinct projected identity when this is a host-bound GSLT extension.
+    pub projected_language_fingerprint: Option<[u8; 32]>,
+    pub host_profile_fingerprint: Option<[u8; 32]>,
     pub grammar_fingerprint: [u8; 32],
     pub theory_fingerprint: [u8; 32],
     pub parser_image_fingerprint: Option<[u8; 32]>,
@@ -567,10 +605,18 @@ pub struct InstalledLanguage {
     language: Arc<LanguageCoreV1>,
     parser: InstalledParser,
     semantic_image: Option<Arc<TheorySemanticImageV1>>,
+    projected: Option<InstalledProjectionBundle>,
     commitment: InstallCommitment,
     effect_rights: LanguageRights,
     capability_bindings: RuntimeCapabilityBindings,
     symbolic_template_cache: SymbolicTemplateCache,
+}
+
+#[derive(PartialEq)]
+struct InstalledProjectionBundle {
+    core: Arc<ProjectedLanguageCoreV1>,
+    image: Arc<ProjectedTheorySemanticImageV1>,
+    host_profile: InstalledHostProfileHandle,
 }
 
 impl InstalledLanguage {
@@ -584,6 +630,18 @@ impl InstalledLanguage {
 
     pub fn semantic_image(&self) -> Option<&TheorySemanticImageV1> {
         self.semantic_image.as_deref()
+    }
+
+    pub fn projected_core(&self) -> Option<&ProjectedLanguageCoreV1> {
+        self.projected.as_ref().map(|bundle| bundle.core.as_ref())
+    }
+
+    pub fn projected_image(&self) -> Option<&ProjectedTheorySemanticImageV1> {
+        self.projected.as_ref().map(|bundle| bundle.image.as_ref())
+    }
+
+    pub fn projected_host_profile(&self) -> Option<&InstalledHostProfileHandle> {
+        self.projected.as_ref().map(|bundle| &bundle.host_profile)
     }
 
     pub fn commitment(&self) -> &InstallCommitment {
@@ -918,6 +976,7 @@ pub struct InstalledLanguageTable {
     registry_id: u64,
     state: RwLock<InstalledState>,
     runtime_factory: Option<Arc<dyn RuntimeParserFactory>>,
+    projection_compiler: Option<Arc<dyn ProjectionImageCompiler>>,
 }
 
 impl Default for InstalledLanguageTable {
@@ -934,6 +993,7 @@ impl InstalledLanguageTable {
             registry_id,
             state: RwLock::new(InstalledState::default()),
             runtime_factory: None,
+            projection_compiler: None,
         }
     }
 
@@ -942,6 +1002,17 @@ impl InstalledLanguageTable {
     pub fn with_runtime_factory(factory: Arc<dyn RuntimeParserFactory>) -> Self {
         Self {
             runtime_factory: Some(factory),
+            ..Self::new()
+        }
+    }
+
+    pub fn with_runtime_and_projection_compiler(
+        factory: Arc<dyn RuntimeParserFactory>,
+        compiler: Arc<dyn ProjectionImageCompiler>,
+    ) -> Self {
+        Self {
+            runtime_factory: Some(factory),
+            projection_compiler: Some(compiler),
             ..Self::new()
         }
     }
@@ -1046,6 +1117,7 @@ impl InstalledLanguageTable {
                 language: LanguageCoreV1::structural(request.core),
                 parser_image: request.image,
                 semantic_image: None,
+                projected: None,
                 granted_rights: request.granted_rights,
             })
             .collect();
@@ -1156,6 +1228,7 @@ impl InstalledLanguageTable {
                 language: request.language,
                 parser_image: request.parser_image,
                 semantic_image: Some(request.semantic_image),
+                projected: None,
                 granted_rights: request.granted_rights,
             })
             .collect();
@@ -1169,6 +1242,145 @@ impl InstalledLanguageTable {
             Some(semantic_limits),
             host,
         )
+    }
+
+    /// Compile and publish projected guests under the same parser/runtime
+    /// factory and atomic table commit as ordinary languages. The compiler is
+    /// trusted node code injected into this table, never a callback from DDL.
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_projected_runtime_batch_with_artifact_limits_and_host(
+        &self,
+        requests: Vec<ExecutableProjectedLanguageInstall>,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: TheoryImageAdmissionLimits,
+        host: &dyn RuntimeHost,
+    ) -> Result<Vec<InstalledLanguageGrant>, InstallLanguageError> {
+        self.install_executable_mixed_runtime_batch_with_artifact_limits_and_host(
+            requests
+                .into_iter()
+                .map(ExecutableLanguageInstallRequest::Projected)
+                .collect(),
+            compiler_abi,
+            unicode_abi,
+            capability_abi,
+            policy_fingerprint,
+            parser_limits,
+            semantic_limits,
+            host,
+        )
+    }
+
+    /// One atomic transaction for mixed ordinary/projected Module exports.
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_executable_mixed_runtime_batch_with_artifact_limits_and_host(
+        &self,
+        requests: Vec<ExecutableLanguageInstallRequest>,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: TheoryImageAdmissionLimits,
+        host: &dyn RuntimeHost,
+    ) -> Result<Vec<InstalledLanguageGrant>, InstallLanguageError> {
+        let requests = requests
+            .into_iter()
+            .map(|request| match request {
+                ExecutableLanguageInstallRequest::Legacy(request) => RuntimeLanguageBundleInstall {
+                    language: request.language,
+                    parser_image: request.parser_image,
+                    semantic_image: Some(request.semantic_image),
+                    projected: None,
+                    granted_rights: request.granted_rights,
+                },
+                ExecutableLanguageInstallRequest::Projected(request) => {
+                    RuntimeLanguageBundleInstall {
+                        language: request.projected.base.clone(),
+                        parser_image: request.parser_image,
+                        semantic_image: None,
+                        projected: Some(ProjectedBundleInstall {
+                            core: request.projected,
+                            host_profile: request.host_profile,
+                        }),
+                        granted_rights: request.granted_rights,
+                    }
+                },
+            })
+            .collect();
+        self.install_runtime_language_batch_with_host(
+            requests,
+            compiler_abi,
+            unicode_abi,
+            capability_abi,
+            policy_fingerprint,
+            parser_limits,
+            Some(semantic_limits),
+            host,
+        )
+    }
+
+    fn compile_bound_projection(
+        &self,
+        projected: ProjectedBundleInstall,
+        base: &LanguageCoreV1,
+        limits: TheoryImageAdmissionLimits,
+    ) -> Result<([u8; 32], TheorySemanticImageV1, InstalledProjectionBundle), InstallLanguageError>
+    {
+        projected
+            .core
+            .validate_header()
+            .map_err(|error| InstallLanguageError::InvalidProjection(format!("{error:?}")))?;
+        if projected.core.base != *base {
+            return Err(InstallLanguageError::InvalidProjection(
+                "projected base differs from the admitted parser language".into(),
+            ));
+        }
+        let profile = self
+            .authorize_host_profile(&projected.host_profile, &[LanguageRight::Bridge])
+            .map_err(InstallLanguageError::HostProfile)?;
+        let signature = profile.raw_signature().map_err(|error| {
+            InstallLanguageError::InvalidProjection(format!("host signature: {error:?}"))
+        })?;
+        let compiler = self
+            .projection_compiler
+            .as_ref()
+            .ok_or(InstallLanguageError::MissingProjectionCompiler)?;
+        let image = compiler
+            .compile_projected(&projected.core, &signature, limits)
+            .map_err(InstallLanguageError::InvalidProjection)?;
+        let fingerprint = projected
+            .core
+            .fingerprint()
+            .map_err(|error| InstallLanguageError::InvalidProjection(error.to_string()))?;
+        if image.abi != PROJECTED_THEORY_IMAGE_ABI_V1
+            || image.projected_language_fingerprint != fingerprint
+            || image.execution.language_fingerprint != fingerprint
+            || image.host_signature_fingerprint != signature.signature_fingerprint
+            || image.host_codec_profile_fingerprint != signature.codec_profile_fingerprint
+            || image.base_rule_count as usize > image.execution.rules.len()
+        {
+            return Err(InstallLanguageError::InvalidProjection(
+                "trusted compiler returned an image for a different guest or host".into(),
+            ));
+        }
+        // Compilation is outside the write lock. Revocation during that work
+        // fails here and again inside the atomic commit lock.
+        self.authorize_host_profile(&projected.host_profile, &[LanguageRight::Bridge])
+            .map_err(InstallLanguageError::HostProfile)?;
+        let execution = image.execution.clone();
+        Ok((
+            fingerprint,
+            execution,
+            InstalledProjectionBundle {
+                core: Arc::new(projected.core),
+                image: Arc::new(image),
+                host_profile: projected.host_profile,
+            },
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1201,10 +1413,24 @@ impl InstalledLanguageTable {
                 parser_limits,
             )
             .map_err(InstallLanguageError::InvalidImage)?;
-            let language_fingerprint = request
+            let mut language_fingerprint = request
                 .language
                 .fingerprint()
                 .map_err(InstallLanguageError::EncodeCore)?;
+            let mut semantic_image = request.semantic_image;
+            let mut projected_bundle = None;
+            if let Some(projected) = request.projected {
+                if semantic_image.is_some() {
+                    return Err(InstallLanguageError::SemanticArtifactPolicyMismatch);
+                }
+                let limits =
+                    semantic_limits.ok_or(InstallLanguageError::SemanticArtifactPolicyMismatch)?;
+                let (fingerprint, execution, bundle) =
+                    self.compile_bound_projection(projected, &request.language, limits)?;
+                language_fingerprint = fingerprint;
+                semantic_image = Some(execution);
+                projected_bundle = Some(bundle);
+            }
             let grammar_fingerprint = request
                 .language
                 .grammar_fingerprint()
@@ -1223,11 +1449,13 @@ impl InstalledLanguageTable {
                 semantic_compiler_abi,
                 primitive_substrate_abi,
                 semantic_limits_fingerprint,
-            ) = match (&request.semantic_image, semantic_limits) {
+            ) = match (&semantic_image, semantic_limits) {
                 (Some(image), Some(limits)) => {
-                    image
-                        .validate(&request.language, limits)
-                        .map_err(InstallLanguageError::InvalidTheoryImage)?;
+                    if projected_bundle.is_none() {
+                        image
+                            .validate(&request.language, limits)
+                            .map_err(InstallLanguageError::InvalidTheoryImage)?;
+                    }
                     (
                         Some(
                             image
@@ -1264,6 +1492,12 @@ impl InstalledLanguageTable {
                 .map_err(InstallLanguageError::RuntimeBackend)?;
             let commitment = InstallCommitment {
                 language_fingerprint,
+                projected_language_fingerprint: projected_bundle
+                    .as_ref()
+                    .map(|_| language_fingerprint),
+                host_profile_fingerprint: projected_bundle
+                    .as_ref()
+                    .map(|bundle: &InstalledProjectionBundle| bundle.host_profile.fingerprint()),
                 grammar_fingerprint,
                 theory_fingerprint,
                 parser_image_fingerprint: Some(parser_image_fingerprint),
@@ -1292,7 +1526,8 @@ impl InstalledLanguageTable {
                         backend,
                         epoch,
                     },
-                    semantic_image: request.semantic_image.map(Arc::new),
+                    semantic_image: semantic_image.map(Arc::new),
+                    projected: projected_bundle,
                     commitment,
                     effect_rights,
                     capability_bindings,
@@ -1334,6 +1569,8 @@ impl InstalledLanguageTable {
         let capability_bindings = RuntimeCapabilityBindings::default();
         let commitment = InstallCommitment {
             language_fingerprint,
+            projected_language_fingerprint: None,
+            host_profile_fingerprint: None,
             grammar_fingerprint,
             theory_fingerprint,
             parser_image_fingerprint: None,
@@ -1361,6 +1598,7 @@ impl InstalledLanguageTable {
                 language: Arc::new(language),
                 parser: InstalledParser::Static(adapter),
                 semantic_image: None,
+                projected: None,
                 commitment,
                 effect_rights,
                 capability_bindings,
@@ -1397,10 +1635,26 @@ impl InstalledLanguageTable {
         // an existing entry's maximum-rights ceiling.
         let mut unique = BTreeMap::<[u8; 32], usize>::new();
         for (index, (fingerprint, _, language)) in requests.iter().enumerate() {
+            if let Some(projected) = &language.projected {
+                let host = state
+                    .host_profiles
+                    .get(&projected.host_profile.fingerprint())
+                    .ok_or(InstallLanguageError::HostProfile(
+                        HostProfileAccessError::UnknownHandle,
+                    ))?;
+                if !host.authorizes(
+                    self.registry_id,
+                    &projected.host_profile,
+                    LanguageRight::Bridge,
+                ) {
+                    return Err(InstallLanguageError::HostProfile(HostProfileAccessError::Revoked));
+                }
+            }
             if let Some(previous) = unique.insert(*fingerprint, index) {
                 let previous_language = &requests[previous].2;
                 if previous_language.language != language.language
                     || previous_language.semantic_image != language.semantic_image
+                    || previous_language.projected != language.projected
                     || previous_language.commitment != language.commitment
                 {
                     return Err(InstallLanguageError::ConflictingInstallation(*fingerprint));
@@ -1413,6 +1667,7 @@ impl InstalledLanguageTable {
             {
                 if entry.language.language != language.language
                     || entry.language.semantic_image != language.semantic_image
+                    || entry.language.projected != language.projected
                     || entry.language.commitment != language.commitment
                 {
                     return Err(InstallLanguageError::ConflictingInstallation(*fingerprint));
@@ -1802,6 +2057,9 @@ impl LanguageAliasScope {
 #[derive(Debug)]
 pub enum InstallLanguageError {
     MissingRuntimeFactory,
+    MissingProjectionCompiler,
+    InvalidProjection(String),
+    HostProfile(HostProfileAccessError),
     RuntimeBackend(RuntimeError),
     InvalidGrammar(Vec<crate::ValidationError>),
     InvalidLanguage(Vec<crate::LanguageCoreValidationError>),

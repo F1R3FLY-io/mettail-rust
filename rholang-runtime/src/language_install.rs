@@ -20,12 +20,13 @@ use mettail_elab::resolve::{
 };
 use mettail_elab::wire::{decode_ddl_value, ParsedDdl};
 use mettail_grammar_core::{
-    CategoryId, DefaultRuntimeHost, ExecutableLanguageInstall, InstallLanguageError,
-    InstalledHostProfileGrant, InstalledHostProfileHandle, InstalledHostProfileSnapshot,
-    InstalledLanguageHandle, InstalledLanguageTable, InstalledParseError, LanguageAccessError,
-    LanguageRevocationAuthority, LanguageRight, LanguageRights, ParserImageAdmissionLimits,
-    RuntimeCapabilityError, RuntimeError, RuntimeHost, RuntimePolicy, RuntimeTemplateHole,
-    RuntimeTemplatePiece, TheoryImageAdmissionLimits, WeightedParse,
+    CategoryId, DefaultRuntimeHost, ExecutableLanguageInstall, ExecutableLanguageInstallRequest,
+    ExecutableProjectedLanguageInstall, InstallLanguageError, InstalledHostProfileGrant,
+    InstalledHostProfileHandle, InstalledHostProfileSnapshot, InstalledLanguageHandle,
+    InstalledLanguageTable, InstalledParseError, LanguageAccessError, LanguageRevocationAuthority,
+    LanguageRight, LanguageRights, ParserImageAdmissionLimits, RuntimeCapabilityError,
+    RuntimeError, RuntimeHost, RuntimePolicy, RuntimeTemplateHole, RuntimeTemplatePiece,
+    TheoryImageAdmissionLimits, WeightedParse,
 };
 use mettail_prattail::runtime_backend::{
     compile_parser_image, RuntimeCompileError, RUNTIME_COMPILER_ABI, RUNTIME_UNICODE_ABI,
@@ -338,9 +339,10 @@ impl LanguageInstallService {
         // Public policy fields may have been adjusted by the host. Freeze the
         // actual values, never a stale caller-supplied fingerprint.
         policy.refresh_fingerprint();
-        let table = Arc::new(InstalledLanguageTable::with_runtime_factory(Arc::new(
-            mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory,
-        )));
+        let table = Arc::new(InstalledLanguageTable::with_runtime_and_projection_compiler(
+            Arc::new(mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory),
+            Arc::new(crate::host_profile::SharedProjectedTheoryImageCompiler),
+        ));
         let host_rights = policy.host_grants.attenuate(&LanguageRights::from_rights([
             LanguageRight::Bridge,
             LanguageRight::ReflectAst,
@@ -450,13 +452,26 @@ impl LanguageInstallService {
         let mut pending = Vec::with_capacity(records.len());
         let mut requests = Vec::with_capacity(records.len());
         for (expected_name, record) in records {
-            let prepared = record
-                .prepare_executable_install_with_registry_and_artifact_limits(
+            let host_binding = if canonical_value_schema(&record.spec) == Some("language/4") {
+                Some(self.builtin_host_profile_binding()?)
+            } else {
+                None
+            };
+            let host_signature = host_binding
+                .as_ref()
+                .map(|(_, snapshot)| snapshot.raw_signature())
+                .transpose()
+                .map_err(|error| {
+                    InstallServiceError::HostProfile(format!("host signature: {error:?}"))
+                })?;
+            let (prepared, projected) = record
+                .prepare_executable_install_with_registry_and_artifact_limits_with_host(
                     RUNTIME_COMPILER_ABI,
                     RUNTIME_UNICODE_ABI,
                     self.policy.parser_image,
                     self.policy.semantic_image,
                     &reader,
+                    host_signature.as_ref(),
                 )
                 .map_err(|error| {
                     InstallServiceError::Canonical(InstallExecutableRegistryError::Prepare(error))
@@ -484,6 +499,52 @@ impl LanguageInstallService {
                 return Err(InstallServiceError::TheoryRightsNotRequested {
                     action: action.id.clone(),
                 });
+            }
+            let granted_rights = self.policy.host_grants.attenuate(&requested_rights);
+            if let Some(projected) = projected {
+                let host_profile = host_binding
+                    .ok_or_else(|| {
+                        InstallServiceError::HostProfile(
+                            "projected language has no checked host binding".into(),
+                        )
+                    })?
+                    .0;
+                let parser = prepared
+                    .install_parser_for_projected(
+                        RUNTIME_COMPILER_ABI,
+                        RUNTIME_UNICODE_ABI,
+                        compile_parser_image,
+                    )
+                    .map_err(|error| {
+                        InstallServiceError::Canonical(match error {
+                            mettail_elab::registry::FinishRegistryInstallError::Compile(error) => {
+                                InstallExecutableRegistryError::CompileParser(error)
+                            },
+                            mettail_elab::registry::FinishRegistryInstallError::InvalidCompilerImage(error) => {
+                                InstallExecutableRegistryError::InvalidParserImage(error)
+                            },
+                        })
+                    })?;
+                let fingerprint = projected
+                    .fingerprint()
+                    .map_err(|error| InstallServiceError::Fingerprint(error.to_string()))?;
+                pending.push((
+                    name,
+                    fingerprint,
+                    requested_rights,
+                    granted_rights.clone(),
+                    parser.parser_cache_disposition,
+                    SemanticCacheDisposition::ProjectedCompiled,
+                ));
+                requests.push(ExecutableLanguageInstallRequest::Projected(
+                    ExecutableProjectedLanguageInstall {
+                        projected,
+                        parser_image: parser.parser_image,
+                        host_profile,
+                        granted_rights,
+                    },
+                ));
+                continue;
             }
             let installed = prepared
                 .install(
@@ -526,7 +587,6 @@ impl LanguageInstallService {
                     error,
                 ))
             })?;
-            let granted_rights = self.policy.host_grants.attenuate(&requested_rights);
             let fingerprint = installed
                 .language
                 .fingerprint()
@@ -539,12 +599,12 @@ impl LanguageInstallService {
                 installed.parser_cache_disposition,
                 installed.semantic_cache_disposition,
             ));
-            requests.push(ExecutableLanguageInstall {
+            requests.push(ExecutableLanguageInstallRequest::Legacy(ExecutableLanguageInstall {
                 language: installed.language,
                 parser_image: installed.parser_image,
                 semantic_image: installed.semantic_image,
                 granted_rights,
-            });
+            }));
         }
         if requests.is_empty() {
             return Err(InstallServiceError::EmptyExportSet);
@@ -575,7 +635,7 @@ impl LanguageInstallService {
         }
         let grants = self
             .table
-            .install_executable_runtime_batch_with_artifact_limits_and_host(
+            .install_executable_mixed_runtime_batch_with_artifact_limits_and_host(
                 requests,
                 RUNTIME_COMPILER_ABI,
                 RUNTIME_UNICODE_ABI,
@@ -749,8 +809,15 @@ impl LanguageInstallService {
                     ));
                 }
                 let name = theory.name.clone();
-                let elaborated = mettail_elab::elaborate_theory_ast(theory)
-                    .map_err(InstallServiceError::Surface)?;
+                let host_signature = self
+                    .builtin_host_profile_binding()
+                    .ok()
+                    .and_then(|(_, snapshot)| snapshot.raw_signature().ok());
+                let elaborated = match host_signature.as_ref() {
+                    Some(host) => mettail_elab::elaborate_theory_ast_with_host(theory, host),
+                    None => mettail_elab::elaborate_theory_ast(theory),
+                }
+                .map_err(InstallServiceError::Surface)?;
                 Ok(CanonicalCandidateSet {
                     module_name: None,
                     records: vec![(
@@ -764,8 +831,17 @@ impl LanguageInstallService {
                 validate_staged_programs(&module, &staged_programs)?;
                 let resolver =
                     RegistryResolver::new(RegistryLanguageReader(self.registry.as_ref()));
-                let module = mettail_elab::elaborate_module_ast(module, &resolver)
-                    .map_err(InstallServiceError::Surface)?;
+                let host_signature = self
+                    .builtin_host_profile_binding()
+                    .ok()
+                    .and_then(|(_, snapshot)| snapshot.raw_signature().ok());
+                let module = match host_signature.as_ref() {
+                    Some(host) => {
+                        mettail_elab::elaborate_module_ast_with_host(module, &resolver, host)
+                    },
+                    None => mettail_elab::elaborate_module_ast(module, &resolver),
+                }
+                .map_err(InstallServiceError::Surface)?;
                 Ok(CanonicalCandidateSet {
                     module_name: Some(module.name),
                     records: module

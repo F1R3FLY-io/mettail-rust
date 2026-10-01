@@ -9,10 +9,11 @@
 use crate::{fold_contract::par_ground_to_proc, rholang_ast};
 use mettail_grammar_core::{
     HostProfileInstallError, InstalledHostProfileGrant, InstalledLanguageTable, LanguageRights,
-    ProjectionHostCodecProvider, ProjectionHostCoverageV1, ProjectionHostProfileRecordV1,
-    ProjectionHostScalarCodecDescriptorV1, ProjectionHostScalarDomainV1,
-    ProjectionHostScalarRouteV1, RuntimeCapabilityKey, RuntimeCapabilityManifest, RuntimeEffect,
-    RuntimeLogicalCost, TheoryLiteralCarrierV1, TheorySortKindV1,
+    ProjectedLanguageCoreV1, ProjectedTheorySemanticImageV1, ProjectionHostCodecProvider,
+    ProjectionHostCoverageV1, ProjectionHostProfileRecordV1, ProjectionHostScalarCodecDescriptorV1,
+    ProjectionHostScalarDomainV1, ProjectionHostScalarRouteV1, ProjectionHostSignatureV1,
+    ProjectionImageCompiler, RuntimeCapabilityKey, RuntimeCapabilityManifest, RuntimeEffect,
+    RuntimeLogicalCost, TheoryImageAdmissionLimits, TheoryLiteralCarrierV1, TheorySortKindV1,
 };
 use mettail_languages::rholang::{Bool, Proc, RholangMetadata};
 use mettail_runtime::{GeneratedSemanticKeyAbiV1, LanguageMetadata};
@@ -20,6 +21,22 @@ use models::rhoapi::Par;
 use std::{collections::BTreeSet, sync::Arc};
 
 const PROVIDER_ABI: &str = "mettail-rholang-ground-scalar-provider/1";
+
+/// The already-established projected theory image compiler, injected through
+/// grammar-core's callback boundary to preserve dependency direction.
+pub struct SharedProjectedTheoryImageCompiler;
+
+impl ProjectionImageCompiler for SharedProjectedTheoryImageCompiler {
+    fn compile_projected(
+        &self,
+        language: &ProjectedLanguageCoreV1,
+        host: &ProjectionHostSignatureV1,
+        limits: TheoryImageAdmissionLimits,
+    ) -> Result<ProjectedTheorySemanticImageV1, String> {
+        mettail_dovetail_runtime::compile_projected_theory_semantic_image(language, host, limits)
+            .map_err(|error| format!("{error:?}"))
+    }
+}
 
 #[derive(Debug)]
 pub enum RholangHostProfileError {
@@ -231,5 +248,160 @@ mod tests {
         );
         let restricted = LanguageInstallService::new(registry, no_bridge);
         assert!(restricted.builtin_host_profile_binding().is_err());
+    }
+
+    #[test]
+    fn projected_guest_uses_shared_parser_and_selected_semantic_image() {
+        use mettail_grammar_core::{DefaultRuntimeHost, ExecutableProjectedLanguageInstall};
+        use mettail_prattail::runtime_backend::{
+            compile_parser_image, RUNTIME_COMPILER_ABI, RUNTIME_UNICODE_ABI,
+        };
+        let service = LanguageInstallService::new(
+            Arc::new(EmptyRegistrySnapshot),
+            LanguageInstallPolicy::default(),
+        );
+        let (host_handle, host) = service.builtin_host_profile_binding().unwrap();
+        let signature = host.raw_signature().unwrap();
+        let source = r#"
+            Module Predicate {
+              Theory T() {
+                Types { noadmit Bool = bool; }
+                Terms {
+                  BTrue . |- "yes" : Bool;
+                  BFalse . |- "no" : Bool;
+                }
+                Rewrites { projection Boolean : Bool <~> host::Bool via carrier; }
+              }
+              theory T()
+            }
+        "#;
+        let module = mettail_elab::parse::parse_module(source).unwrap();
+        let resolver = mettail_elab::resolve::MemResolver::new().with("Predicate.module", source);
+        let elaborated =
+            mettail_elab::elaborate_module_ast_with_host(module, &resolver, &signature).unwrap();
+        let projected = elaborated
+            .exports
+            .into_iter()
+            .next()
+            .unwrap()
+            .language
+            .projected_language_core
+            .unwrap();
+        let parser = compile_parser_image(&projected.base.grammar).unwrap();
+        let policy = service.policy();
+        let grants = service
+            .table()
+            .install_projected_runtime_batch_with_artifact_limits_and_host(
+                vec![ExecutableProjectedLanguageInstall {
+                    projected,
+                    parser_image: parser,
+                    host_profile: host_handle,
+                    granted_rights: LanguageRights::from_rights([
+                        LanguageRight::Parse,
+                        LanguageRight::Bridge,
+                        LanguageRight::Reduce,
+                    ]),
+                }],
+                RUNTIME_COMPILER_ABI,
+                RUNTIME_UNICODE_ABI,
+                &policy.capability_abi,
+                policy.fingerprint,
+                policy.parser_image,
+                policy.semantic_image,
+                &DefaultRuntimeHost,
+            )
+            .unwrap();
+        let installed = service
+            .table()
+            .authorize_all(&grants[0].handle, &[LanguageRight::Parse])
+            .unwrap();
+        let image = installed
+            .projected_image()
+            .expect("projected image survives installation");
+        assert_eq!(image.execution.language_fingerprint, grants[0].handle.fingerprint());
+        assert_eq!(
+            installed.commitment().projected_language_fingerprint,
+            Some(grants[0].handle.fingerprint())
+        );
+        assert_eq!(
+            installed.commitment().host_profile_fingerprint,
+            Some(host.record().claimed_digests.profile_fingerprint)
+        );
+        assert_eq!(installed.projected_core().unwrap().base, *installed.language_core());
+    }
+
+    #[test]
+    fn rholang_service_installs_parsed_projected_module_without_reparsing() {
+        use crate::language_install::InstallCandidate;
+        use mettail_elab::wire::ParsedDdl;
+        let service = LanguageInstallService::new(
+            Arc::new(EmptyRegistrySnapshot),
+            LanguageInstallPolicy::default(),
+        );
+        let source = r#"
+            Module Predicate {
+              Theory T() {
+                Types { noadmit Bool = bool; }
+                Terms {
+                  BTrue . |- "yes" : Bool;
+                  BFalse . |- "no" : Bool;
+                }
+                Rewrites { projection Boolean : Bool <~> host::Bool via carrier; }
+              }
+              theory T()
+            }
+        "#;
+        let module = mettail_elab::parse::parse_module(source).unwrap();
+        let receipt = service
+            .install_all(InstallCandidate::Ddl(ParsedDdl::Module(module)))
+            .unwrap();
+        assert_eq!(receipt.exports.len(), 1);
+        let installed = service
+            .table()
+            .authorize_all(&receipt.exports[0].receipt.handle, &[LanguageRight::Parse])
+            .unwrap();
+        assert!(installed.projected_image().is_some());
+        assert_eq!(
+            receipt.exports[0].receipt.semantic_cache_disposition,
+            mettail_elab::registry::SemanticCacheDisposition::ProjectedCompiled
+        );
+    }
+
+    #[test]
+    fn projected_and_ordinary_exports_commit_in_one_module_batch() {
+        use crate::language_install::InstallCandidate;
+        use mettail_elab::wire::ParsedDdl;
+        let service = LanguageInstallService::new(
+            Arc::new(EmptyRegistrySnapshot),
+            LanguageInstallPolicy::default(),
+        );
+        let source = r#"
+            Module Mixed {
+              Theory Predicate() {
+                Types { noadmit Bool = bool; }
+                Terms { BTrue . |- "yes" : Bool; BFalse . |- "no" : Bool; }
+                Rewrites { projection Boolean : Bool <~> host::Bool via carrier; }
+              }
+              Theory Plain() {
+                Types { P; }
+                Terms { P0 . |- "p" : P; }
+              }
+              theory Predicate()
+              theory Plain()
+            }
+        "#;
+        let module = mettail_elab::parse::parse_module(source).unwrap();
+        let batch = service
+            .install_all(InstallCandidate::Ddl(ParsedDdl::Module(module)))
+            .unwrap();
+        assert_eq!(batch.exports.len(), 2);
+        assert_eq!(service.installed_count().unwrap(), 2);
+        for (ordinal, projected) in [(0, true), (1, false)] {
+            let installed = service
+                .table()
+                .authorize_all(&batch.exports[ordinal].receipt.handle, &[LanguageRight::Parse])
+                .unwrap();
+            assert_eq!(installed.projected_image().is_some(), projected);
+        }
     }
 }

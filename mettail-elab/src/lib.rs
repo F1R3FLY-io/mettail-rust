@@ -278,6 +278,22 @@ pub fn elaborate_theory_language(source: &str) -> Result<ElaboratedLanguage, Dia
 /// Rholang. This is the structural twin of [`elaborate_theory_language`], with
 /// the source parser intentionally absent.
 pub fn elaborate_theory_ast(declaration: ast::TheoryDecl) -> Result<ElaboratedLanguage, Diag> {
+    elaborate_theory_ast_with_optional_host(declaration, None)
+}
+
+/// Elaborate an already-parsed standalone Theory against a checked host
+/// signature supplied by the install service, without reparsing its source.
+pub fn elaborate_theory_ast_with_host(
+    declaration: ast::TheoryDecl,
+    host: &mettail_grammar_core::ProjectionHostSignatureV1,
+) -> Result<ElaboratedLanguage, Diag> {
+    elaborate_theory_ast_with_optional_host(declaration, Some(host))
+}
+
+fn elaborate_theory_ast_with_optional_host(
+    declaration: ast::TheoryDecl,
+    host: Option<&mettail_grammar_core::ProjectionHostSignatureV1>,
+) -> Result<ElaboratedLanguage, Diag> {
     if !declaration.params.is_empty() {
         return Err(Diag::new(
             DiagKind::Resolution,
@@ -309,7 +325,7 @@ pub fn elaborate_theory_ast(declaration: ast::TheoryDecl) -> Result<ElaboratedLa
     let program = resolve::Program::from_single_module(entry, module)?;
     let mut interpreter = interp::Interp::new(&program);
     let presentation = interpreter.run()?;
-    finish_language(&name, presentation, None)
+    finish_language(&name, presentation, host)
 }
 
 fn finish_language(

@@ -55,6 +55,19 @@ impl fmt::Debug for InstalledHostProfileHandle {
     }
 }
 
+impl PartialEq for InstalledHostProfileHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.registry_id == other.registry_id
+            && self.entry_id == other.entry_id
+            && self.epoch == other.epoch
+            && self.fingerprint == other.fingerprint
+            && self.rights == other.rights
+            && Arc::ptr_eq(&self.seal, &other.seal)
+    }
+}
+
+impl Eq for InstalledHostProfileHandle {}
+
 pub struct HostProfileRevocationAuthority {
     registry_id: u64,
     entry_id: u64,
@@ -132,6 +145,21 @@ pub(super) struct HostProfileEntry {
 }
 
 impl HostProfileEntry {
+    pub(super) fn authorizes(
+        &self,
+        registry_id: u64,
+        handle: &InstalledHostProfileHandle,
+        right: LanguageRight,
+    ) -> bool {
+        !self.revoked
+            && handle.registry_id == registry_id
+            && handle.entry_id == self.entry_id
+            && handle.epoch == self.epoch
+            && Arc::ptr_eq(&handle.seal, &self.seal)
+            && handle.rights.is_subset_of(&self.ceiling)
+            && handle.rights.contains(right)
+    }
+
     fn grant(&self, registry_id: u64, fingerprint: [u8; 32]) -> InstalledHostProfileGrant {
         InstalledHostProfileGrant {
             handle: InstalledHostProfileHandle {
