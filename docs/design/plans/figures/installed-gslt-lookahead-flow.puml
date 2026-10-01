@@ -1,0 +1,38 @@
+@startuml
+title Installed GSLT lookahead reuses the existing speculative search
+left to right direction
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam ArrowColor #37474F
+skinparam rectangle {
+  BorderColor #37474F
+  FontColor #102027
+  RoundCorner 16
+}
+
+rectangle "Rholang application\ninline Theory/Module and FLT send" as app #DCEEFF
+rectangle "F1R3Lang checked lowering\nP[n] or P[*] request" as lower #BBDEFB
+rectangle "Lookahead request server\ninstalled handle and host budget" as server #B2DFDB
+rectangle "Existing breadth-first Explorer\nEveryTrace frontier" as search #D1C4E9
+rectangle "RSpace enabled COMM edges" as rho #E1BEE7
+rectangle "Checked GSLT one-step roster\nsemantic transition kernel" as guest #E1BEE7
+rectangle "Success / failure / truncated\ntrace-indexed PathMaps" as maps #FFF9C4
+rectangle "Rholang receive and query\nauthorized observation" as receive #C8E6C9
+rectangle "Typed refusal\nno partial publication" as refusal #FFCDD2
+
+app --> lower
+lower --> server
+server --> search : checked request
+server --> refusal : missing authority or budget
+search --> rho : enumerate and fire
+search --> guest : enumerate and fire
+rho --> search : exact successor state
+guest --> search : term and receipt
+search --> maps : complete branch evidence
+maps --> receive : approved reply wire
+
+note bottom of guest
+  Rule and proof occurrences remain distinct.
+  Whole normalization is not one lookahead step.
+end note
+@enduml
