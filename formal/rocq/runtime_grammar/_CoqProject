@@ -114,6 +114,7 @@ theories/SemanticReplyCompletion.v
 theories/SemanticPreparationContext.v
 theories/SemanticIntrinsics.v
 theories/SemanticIntrinsicSchema.v
+theories/AuthoredRegexRewrites.v
 theories/SemanticNormalization.v
 theories/RegexGsltSyntax.v
 theories/RegexGsltMatch.v
