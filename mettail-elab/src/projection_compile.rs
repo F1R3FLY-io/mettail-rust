@@ -149,6 +149,35 @@ fn canonical_rule_term(value: &RhoValue, path: &str) -> Result<RhoValue, ValueDe
                             fields[0].clone(),
                         ]));
                     },
+                    "ast-bytes" => {
+                        if fields.len() != 1 || !matches!(fields[0], RhoValue::Bytes(_)) {
+                            return error(&path, "byte literal has wrong payload");
+                        }
+                        values.push(RhoValue::List(vec![
+                            string("lit"),
+                            string("Bytes"),
+                            fields[0].clone(),
+                        ]));
+                    },
+                    "ast-float" => {
+                        let [RhoValue::FloatBits(bits)] = fields else {
+                            return error(&path, "float literal has wrong payload");
+                        };
+                        let number = f64::from_bits(*bits);
+                        if !number.is_finite()
+                            || mettail_runtime::CanonicalFloat64::from(number)
+                                .get()
+                                .to_bits()
+                                != *bits
+                        {
+                            return error(&path, "float literal must have finite canonical bits");
+                        }
+                        values.push(RhoValue::List(vec![
+                            string("lit"),
+                            string("f64"),
+                            RhoValue::FloatBits(*bits),
+                        ]));
+                    },
                     "ast-boolean-true" | "ast-boolean-false" => {
                         if !fields.is_empty() {
                             return error(&path, "Boolean literal has wrong arity");
@@ -436,6 +465,71 @@ mod tests {
             assert_eq!(rows[0].rule.arena.terms[rows[0].rule.right.0 as usize].sort, host_sort);
             assert_eq!(rows[1].rule.arena.terms[rows[1].rule.left.0 as usize].sort, host_sort);
             assert_eq!(rows[1].rule.arena.terms[rows[1].rule.right.0 as usize].sort, guest);
+        }
+    }
+
+    #[test]
+    fn native_bytes_and_float_compile_as_typed_literal_nodes() {
+        let span = Span { line: 1, col: 1 };
+        let mut theory = core::TheoryCoreV1::structural();
+        let mut host = core::ProjectionHostSignatureV1 {
+            signature_fingerprint: [3; 32],
+            codec_profile_fingerprint: [4; 32],
+            sorts: Vec::new(),
+            constructors: Vec::new(),
+        };
+        let cases = [
+            (
+                "Blob",
+                core::TheoryLiteralCarrierV1::Bytes,
+                node("ast-bytes", [RhoValue::Bytes(vec![0, 0xab, 0xff])]),
+                core::TheoryLiteralV1::Bytes(vec![0, 0xab, 0xff]),
+            ),
+            (
+                "Real",
+                core::TheoryLiteralCarrierV1::Float,
+                node("ast-float", [RhoValue::FloatBits(1.5f64.to_bits())]),
+                core::TheoryLiteralV1::FloatBits(1.5f64.to_bits()),
+            ),
+        ];
+        let mut declarations = Vec::new();
+        for (name, carrier, term, _) in &cases {
+            let sort = core::TheorySortV1 {
+                name: (*name).into(),
+                kind: core::TheorySortKindV1::Syntax { literal: Some(carrier.clone()) },
+            };
+            theory.sorts.push(sort.clone());
+            host.sorts.push(sort);
+            declarations.push(ProjectionDecl {
+                name: (*name).into(),
+                guest: (*name).into(),
+                host: (*name).into(),
+                direction: ProjectionDirection::GuestToHost,
+                body: ProjectionBody::Rules(vec![ProjectionRule {
+                    name: "Native".into(),
+                    bindings: Vec::new(),
+                    premises: Vec::new(),
+                    guest: term.clone(),
+                    host: term.clone(),
+                    direction: ProjectionDirection::GuestToHost,
+                    span,
+                }]),
+                span,
+            });
+        }
+        let compiled = compile_projections(&declarations, &theory, &host)
+            .expect("native literals use the shared typed rule compiler");
+        for (projection, (_, _, _, expected)) in compiled.iter().zip(&cases) {
+            let core::ProjectionBodyV1::Rules(rows) = &projection.body else {
+                panic!("expected compiled rules")
+            };
+            assert_eq!(rows.len(), 1);
+            for endpoint in [rows[0].rule.left, rows[0].rule.right] {
+                assert_eq!(
+                    rows[0].rule.arena.terms[endpoint.0 as usize].form,
+                    core::TheoryTermFormV1::Literal(expected.clone())
+                );
+            }
         }
     }
 }

@@ -178,6 +178,8 @@ macro_rules! rholang_source_profile_rows {
             DdlRuleAst::DdlRuleAstBoolean => [Arc<Bool> => D];
             DdlRuleAst::DdlRuleAstString => [String => Opaque];
             DdlRuleAst::DdlRuleAstInteger => [Arc<Int> => D];
+            DdlRuleAst::DdlRuleAstBytes => [Arc<Bytes> => D];
+            DdlRuleAst::DdlRuleAstFloat => [Arc<Float> => D];
             DdlRuleAst::DdlRuleAstAbs => [String => Opaque, Arc<DdlRuleAst> => D];
             DdlRuleAst::DdlRuleAstCollectionEmpty => [];
             DdlRuleAst::DdlRuleAstRemainderOnly => [String => Opaque];

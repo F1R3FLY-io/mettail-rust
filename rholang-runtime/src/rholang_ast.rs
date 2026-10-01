@@ -6137,7 +6137,7 @@ fn any_connective_used(parts: &[Par]) -> bool {
     parts.iter().any(|part| part.connective_used)
 }
 
-fn expr_par(expr: Expr) -> Par {
+pub(crate) fn expr_par(expr: Expr) -> Par {
     Par::default().with_exprs(vec![expr])
 }
 

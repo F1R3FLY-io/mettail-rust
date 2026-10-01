@@ -7,15 +7,18 @@
 
 use crate::rholang_ast::RholangAstLowerError;
 use mettail_languages::rholang::{
-    Bool, DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness, DdlFreshnesses,
-    DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem, DdlOptionSection, DdlParam, DdlPath,
-    DdlPremise, DdlPremises, DdlProjectionBinding, DdlProjectionDirection, DdlProjectionPremise,
-    DdlProjectionPremises, DdlProjectionRowHead, DdlProjectionRule, DdlRegClassPiece, DdlRegPiece,
-    DdlReplacement, DdlRewrite, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderTail, DdlSort,
-    DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr, Int, Proc,
+    Bool, Bytes, DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness,
+    DdlFreshnesses, DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem, DdlOptionSection,
+    DdlParam, DdlPath, DdlPremise, DdlPremises, DdlProjectionBinding, DdlProjectionDirection,
+    DdlProjectionPremise, DdlProjectionPremises, DdlProjectionRowHead, DdlProjectionRule,
+    DdlRegClassPiece, DdlRegPiece, DdlReplacement, DdlRewrite, DdlRuleAst, DdlRuleAstItems,
+    DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr,
+    Float, Int, Proc,
 };
 use models::rhoapi::Par;
-use models::rust::utils::{new_elist_par, new_gint_par, new_gstring_par};
+use models::rust::utils::{
+    new_elist_par, new_gbytearray_par, new_gdouble_expr, new_gint_par, new_gstring_par,
+};
 
 mod admission;
 type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), RholangAstLowerError> + 'a;
@@ -26,6 +29,8 @@ type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), RholangAstLowerErro
 pub(crate) trait DdlWireValue: Sized {
     fn text(value: String, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
     fn integer(value: i64, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
+    fn bytes(value: Vec<u8>, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
+    fn float_bits(bits: u64, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
     fn closed_list(
         children: Vec<Self>,
         reserve: &mut Reservation<'_>,
@@ -39,6 +44,14 @@ impl DdlWireValue for Par {
 
     fn integer(value: i64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
         Ok(new_gint_par(value, Vec::new(), false))
+    }
+
+    fn bytes(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(new_gbytearray_par(value, Vec::new(), false))
+    }
+
+    fn float_bits(bits: u64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(crate::rholang_ast::expr_par(new_gdouble_expr(f64::from_bits(bits))))
     }
 
     fn closed_list(
@@ -56,6 +69,14 @@ impl DdlWireValue for crate::rholang_ast::constructed_value::ConstructedValue {
 
     fn integer(value: i64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
         Self::integer(value)
+    }
+
+    fn bytes(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Self::bytes(value)
+    }
+
+    fn float_bits(bits: u64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Self::float_bits(bits)
     }
 
     fn closed_list(
@@ -91,6 +112,8 @@ enum WireOp<'a> {
     QuotedText(&'a str),
     Number(&'a Int),
     Integer(&'a Int),
+    Bytes(&'a Bytes),
+    Float(&'a Float),
     Process(usize),
     Node { tag: &'static str, child_count: usize },
 }
@@ -137,6 +160,8 @@ impl<'a> DdlLowerPlan<'a> {
                 | Task::QuotedText(_)
                 | Task::Number(_)
                 | Task::Integer(_)
+                | Task::Bytes(_)
+                | Task::Float(_)
                 | Task::FinishNode { .. } => (0, 1, 0),
                 Task::Process(_) => (0, 1, 1),
                 Task::Node { children, .. } => (
@@ -166,6 +191,8 @@ impl<'a> DdlLowerPlan<'a> {
                 Task::QuotedText(value) => operations.push(WireOp::QuotedText(value)),
                 Task::Number(value) => operations.push(WireOp::Number(value)),
                 Task::Integer(value) => operations.push(WireOp::Integer(value)),
+                Task::Bytes(value) => operations.push(WireOp::Bytes(value)),
+                Task::Float(value) => operations.push(WireOp::Float(value)),
                 Task::Process(process) => {
                     let index = processes.len();
                     processes.push(process);
@@ -680,6 +707,30 @@ impl<'a> DdlLowerPlan<'a> {
                     admission::parts(8, 2, 0, reserve)?;
                     values.push(V::integer(value, reserve)?);
                 },
+                WireOp::Bytes(value) => {
+                    let Bytes::BytesLit(bytes) = value else {
+                        let message = "DDL projection bytes must be a byte-array literal";
+                        admission::parts(1, 1, message.len(), reserve)?;
+                        return Err(RholangAstLowerError::DdlWire(message.into()));
+                    };
+                    admission::text(bytes.len(), false, reserve)?;
+                    values.push(V::bytes(bytes.clone(), reserve)?);
+                },
+                WireOp::Float(value) => {
+                    let Float::FloatLit(value) = value else {
+                        let message = "DDL projection float must be a float literal";
+                        admission::parts(1, 1, message.len(), reserve)?;
+                        return Err(RholangAstLowerError::DdlWire(message.into()));
+                    };
+                    let number = value.get();
+                    if !number.is_finite() {
+                        let message = "DDL projection float must be finite";
+                        admission::parts(1, 1, message.len(), reserve)?;
+                        return Err(RholangAstLowerError::DdlWire(message.into()));
+                    }
+                    admission::parts(8, 2, 0, reserve)?;
+                    values.push(V::float_bits(number.to_bits(), reserve)?);
+                },
                 WireOp::Process(index) => {
                     let value = process_values.get_mut(index).and_then(Option::take);
                     match value {
@@ -1021,6 +1072,14 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Result<Task<'a>, RholangAstLowerErr
             tag: "ast-integer",
             children: vec![Task::Integer(value.as_ref())],
         },
+        DdlRuleAst::DdlRuleAstBytes(value) => Task::Node {
+            tag: "ast-bytes",
+            children: vec![Task::Bytes(value.as_ref())],
+        },
+        DdlRuleAst::DdlRuleAstFloat(value) => Task::Node {
+            tag: "ast-float",
+            children: vec![Task::Float(value.as_ref())],
+        },
         DdlRuleAst::DdlRuleAstAbs(binder, body) => Task::Node {
             tag: "ast-abs",
             children: vec![Task::Text(binder), Task::RuleAst(body.as_ref())],
@@ -1076,6 +1135,8 @@ enum Task<'a> {
     QuotedText(&'a str),
     Number(&'a Int),
     Integer(&'a Int),
+    Bytes(&'a Bytes),
+    Float(&'a Float),
     Process(&'a Proc),
     Node {
         tag: &'static str,

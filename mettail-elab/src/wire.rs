@@ -1060,7 +1060,8 @@ pub(crate) fn validate_projection_term(value: &RhoValue, path: &str) -> Result<(
         };
         let fields = &items[1..];
         let arity = match tag.as_str() {
-            "ast-var" | "ast-remainder" | "ast-string" | "ast-integer" | "ast-collection" => 1,
+            "ast-var" | "ast-remainder" | "ast-string" | "ast-integer" | "ast-bytes"
+            | "ast-float" | "ast-collection" => 1,
             "ast-sexp" | "ast-host-sexp" | "ast-subst" | "ast-abs" => 2,
             "ast-boolean-true" | "ast-boolean-false" => 0,
             _ => return Err(wrong_tag(&path, tag, "a projection term")),
@@ -1086,6 +1087,31 @@ pub(crate) fn validate_projection_term(value: &RhoValue, path: &str) -> Result<(
                     return Err(DdlValueError::new(
                         path,
                         "projection integer requires integer content",
+                    ));
+                }
+            },
+            "ast-bytes" => {
+                if !matches!(fields[0], RhoValue::Bytes(_)) {
+                    return Err(DdlValueError::new(path, "projection bytes require byte content"));
+                }
+            },
+            "ast-float" => {
+                let RhoValue::FloatBits(bits) = fields[0] else {
+                    return Err(DdlValueError::new(
+                        path,
+                        "projection float requires float content",
+                    ));
+                };
+                let number = f64::from_bits(bits);
+                if !number.is_finite()
+                    || mettail_runtime::CanonicalFloat64::from(number)
+                        .get()
+                        .to_bits()
+                        != bits
+                {
+                    return Err(DdlValueError::new(
+                        path,
+                        "projection float requires finite canonical bits",
                     ));
                 }
             },
@@ -1647,6 +1673,24 @@ mod tests {
         };
         row[4] = node("guest-to-host", vec![]);
         assert!(decode_rewrite_entry(wrong, "$.rewrites[0]").is_err());
+    }
+
+    #[test]
+    fn projection_native_atoms_keep_typed_payloads_and_refuse_noncanonical_float_bits() {
+        let bytes = node("ast-bytes", vec![RhoValue::Bytes(vec![0, 0xab, 0xff])]);
+        let float = node("ast-float", vec![RhoValue::FloatBits(1.5f64.to_bits())]);
+        validate_projection_term(&bytes, "$.bytes").expect("native bytes");
+        validate_projection_term(&float, "$.float").expect("finite canonical float");
+
+        for invalid in [
+            node("ast-bytes", vec![RhoValue::String("00abff".into())]),
+            node("ast-float", vec![RhoValue::String("1.5".into())]),
+            node("ast-float", vec![RhoValue::FloatBits(f64::NAN.to_bits())]),
+            node("ast-float", vec![RhoValue::FloatBits(f64::INFINITY.to_bits())]),
+            node("ast-float", vec![RhoValue::FloatBits((-0.0f64).to_bits())]),
+        ] {
+            assert!(validate_projection_term(&invalid, "$.invalid").is_err());
+        }
     }
 
     #[test]

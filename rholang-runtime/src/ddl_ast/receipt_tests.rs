@@ -14,6 +14,14 @@ impl DdlWireValue for mettail_elab::canonical::RhoValue {
         Ok(Self::Integer(i128::from(value)))
     }
 
+    fn bytes(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(Self::Bytes(value))
+    }
+
+    fn float_bits(bits: u64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(Self::FloatBits(bits))
+    }
+
     fn closed_list(
         children: Vec<Self>,
         _: &mut Reservation<'_>,
@@ -39,6 +47,13 @@ fn generated_and_standalone_projection_frontends_agree_on_typed_native_rows() {
         }
         projection Import : Entry <~ host::Proc {
             Take : (Entry) <~ (host::Par);
+        }
+        projection Blob : Blob ~> host::Bytes {
+            Binary : (Blob) ~> b"00aB";
+        }
+        projection Real : Real ~> host::Float {
+            Half : (Real) ~> 0.5;
+            Zero : (Real) ~> -0.0;
         }
     }"#;
     let generated = DdlTheoryExpr::parse(body_source).expect("generated DDL syntax");
@@ -107,6 +122,31 @@ proptest! {
         };
         let expected = new_gint_par(value, Vec::new(), false);
         prop_assert_eq!(plan.finish(Vec::new()).expect("native integer wire"), expected);
+    }
+
+    #[test]
+    fn projection_bytes_wire_preserves_payload(value in proptest::collection::vec(any::<u8>(), 0..64)) {
+        let literal = Bytes::BytesLit(value.clone());
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::Bytes(&literal)],
+            processes: Vec::new(),
+        };
+        let expected = new_gbytearray_par(value, Vec::new(), false);
+        prop_assert_eq!(plan.finish(Vec::new()).expect("native byte wire"), expected);
+    }
+
+    #[test]
+    fn projection_float_wire_preserves_every_admitted_canonical_value(
+        bits in any::<u64>().prop_filter("finite", |bits| f64::from_bits(*bits).is_finite())
+    ) {
+        let canonical = mettail_runtime::CanonicalFloat64::from(f64::from_bits(bits));
+        let literal = Float::FloatLit(canonical);
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::Float(&literal)],
+            processes: Vec::new(),
+        };
+        let expected = crate::rholang_ast::expr_par(new_gdouble_expr(canonical.get()));
+        prop_assert_eq!(plan.finish(Vec::new()).expect("native float wire"), expected);
     }
 }
 

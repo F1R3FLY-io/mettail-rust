@@ -8,7 +8,7 @@ use super::construction_receipt::{NativeHead, NativeReceipt, ReceiptError};
 use super::{preparation_scope, RholangAstLowerError, StorageReservation, Target};
 use mettail_rholang_frontend::construction::CheckedBoundReference;
 use models::rhoapi::Par;
-use models::rust::utils::new_elist_par;
+use models::rust::utils::{new_elist_par, new_gbytearray_par, new_gdouble_expr};
 
 pub(crate) struct ConstructedValue {
     pub(crate) par: Par,
@@ -35,6 +35,23 @@ impl ConstructedValue {
     pub(crate) fn integer(value: i64) -> Result<Self, RholangAstLowerError> {
         let receipt = NativeReceipt::construct(NativeHead::Plain, 0, []).map_err(receipt_error)?;
         Ok(Self { par: Target::integer(value), receipt })
+    }
+
+    pub(crate) fn bytes(value: Vec<u8>) -> Result<Self, RholangAstLowerError> {
+        let receipt = NativeReceipt::construct(NativeHead::Payload { bytes: value.len() }, 0, [])
+            .map_err(receipt_error)?;
+        Ok(Self {
+            par: new_gbytearray_par(value, Vec::new(), false),
+            receipt,
+        })
+    }
+
+    pub(crate) fn float_bits(bits: u64) -> Result<Self, RholangAstLowerError> {
+        let receipt = NativeReceipt::construct(NativeHead::Plain, 0, []).map_err(receipt_error)?;
+        Ok(Self {
+            par: super::expr_par(new_gdouble_expr(f64::from_bits(bits))),
+            receipt,
+        })
     }
 
     pub(super) fn boolean(value: bool) -> Result<Self, RholangAstLowerError> {
@@ -124,6 +141,20 @@ mod tests {
                 Target::text("λ\\n".into()),
                 1,
                 4,
+                0,
+            ),
+            (
+                ConstructedValue::bytes(vec![0, 0xab]).expect("bytes"),
+                new_gbytearray_par(vec![0, 0xab], Vec::new(), false),
+                1,
+                2,
+                0,
+            ),
+            (
+                ConstructedValue::float_bits(1.5f64.to_bits()).expect("float"),
+                super::super::expr_par(new_gdouble_expr(1.5)),
+                1,
+                0,
                 0,
             ),
             (

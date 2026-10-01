@@ -2622,6 +2622,7 @@ pub(crate) fn decode_carrier(
             "BigRat" => core::Carrier::Builtin(core::BuiltinCarrier::Rational),
             "Fixed" => core::Carrier::Builtin(core::BuiltinCarrier::FixedPoint),
             "f32" | "f64" => core::Carrier::Builtin(core::BuiltinCarrier::Float),
+            "Bytes" => core::Carrier::Builtin(core::BuiltinCarrier::Bytes),
             "bool" => core::Carrier::Builtin(core::BuiltinCarrier::Boolean),
             "str" | "String" => core::Carrier::Builtin(core::BuiltinCarrier::String),
             _ => return error(path, format!("unknown carrier `{name}`")),

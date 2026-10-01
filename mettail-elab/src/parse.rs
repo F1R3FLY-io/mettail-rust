@@ -1179,6 +1179,32 @@ impl Parser {
                             "projection term",
                         )?);
                     },
+                    Tok::Bytes(value) => {
+                        self.bump();
+                        values.push(self.parsed(
+                            Self::projection_node("ast-bytes", vec![RhoValue::Bytes(value)]),
+                            1,
+                            "projection term",
+                        )?);
+                    },
+                    Tok::FloatBits(bits) => {
+                        self.bump();
+                        let number = f64::from_bits(bits);
+                        if !number.is_finite() {
+                            return self.err("projection float must be finite");
+                        }
+                        let canonical = mettail_runtime::CanonicalFloat64::from(number)
+                            .get()
+                            .to_bits();
+                        values.push(self.parsed(
+                            Self::projection_node(
+                                "ast-float",
+                                vec![RhoValue::FloatBits(canonical)],
+                            ),
+                            1,
+                            "projection term",
+                        )?);
+                    },
                     Tok::Caret => {
                         self.bump();
                         let binder = self.ident()?;

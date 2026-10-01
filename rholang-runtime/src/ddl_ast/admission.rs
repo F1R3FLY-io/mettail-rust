@@ -76,6 +76,8 @@ pub(super) fn expansion(
         | Task::QuotedText(_)
         | Task::Number(_)
         | Task::Integer(_)
+        | Task::Bytes(_)
+        | Task::Float(_)
         | Task::FinishNode { .. } => {
             return parts(3, 1, 0, reserve);
         },
@@ -206,7 +208,10 @@ pub(super) fn expansion(
             DdlRuleAst::DdlRuleAstSExp(_, arguments)
             | DdlRuleAst::DdlRuleAstHostSExp(_, arguments) => (2, add(arguments.len(), 2)?),
             DdlRuleAst::DdlRuleAstBoolean(_) => (1, 0),
-            DdlRuleAst::DdlRuleAstString(_) | DdlRuleAst::DdlRuleAstInteger(_) => (1, 1),
+            DdlRuleAst::DdlRuleAstString(_)
+            | DdlRuleAst::DdlRuleAstInteger(_)
+            | DdlRuleAst::DdlRuleAstBytes(_)
+            | DdlRuleAst::DdlRuleAstFloat(_) => (1, 1),
             DdlRuleAst::DdlRuleAstCollectionEmpty => (2, 1),
             DdlRuleAst::DdlRuleAstCollection(items) => {
                 let len = linked_len(

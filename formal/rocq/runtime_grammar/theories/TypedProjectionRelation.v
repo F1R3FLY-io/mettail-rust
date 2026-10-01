@@ -500,3 +500,64 @@ Proof.
 Qed.
 
 End ProjectionRemainderSurface.
+
+(** Native byte and floating-point projection atoms use distinct typed wire
+    constructors.  The generated lexer has already produced bytes and a
+    canonical Float value before this boundary; this model covers the
+    structural transport and admission of those values, not decimal parsing
+    or IEEE-754 canonicalization.  The Rust differential/property tests carry
+    those latter obligations.  [finite_float_bits] is the checked admission
+    predicate for a Float payload; it is deliberately not silently assumed of
+    every possible 64-bit pattern. *)
+From Stdlib Require Import NArith.NArith.
+
+Module ProjectionNativeScalarWire.
+
+Open Scope N_scope.
+
+Inductive Scalar := ByteSequence (value : list N) | FiniteFloat (bits : N).
+Inductive Wire := BytesNode (value : list N) | FloatNode (bits : N).
+
+Definition byte_in_range (byte : N) : bool := byte <? 256.
+
+Section Transport.
+Variable finite_float_bits : N -> bool.
+
+Definition encode (scalar : Scalar) : Wire :=
+  match scalar with
+  | ByteSequence bytes => BytesNode bytes
+  | FiniteFloat bits => FloatNode bits
+  end.
+
+Definition decode (wire : Wire) : option Scalar :=
+  match wire with
+  | BytesNode bytes =>
+      if forallb byte_in_range bytes then Some (ByteSequence bytes) else None
+  | FloatNode bits =>
+      if finite_float_bits bits then Some (FiniteFloat bits) else None
+  end.
+
+Theorem admitted_bytes_round_trip : forall bytes,
+  forallb byte_in_range bytes = true ->
+  decode (encode (ByteSequence bytes)) = Some (ByteSequence bytes).
+Proof. intros bytes Valid. cbn [encode decode]. now rewrite Valid. Qed.
+
+Theorem admitted_float_round_trip : forall bits,
+  finite_float_bits bits = true ->
+  decode (encode (FiniteFloat bits)) = Some (FiniteFloat bits).
+Proof. intros bits Valid. cbn [encode decode]. now rewrite Valid. Qed.
+
+Theorem accepted_wire_is_reconstructible : forall wire scalar,
+  decode wire = Some scalar -> encode scalar = wire.
+Proof.
+  intros [bytes|bits] scalar Accepted; cbn [decode] in Accepted.
+  - destruct (forallb byte_in_range bytes); inversion Accepted; reflexivity.
+  - destruct (finite_float_bits bits); inversion Accepted; reflexivity.
+Qed.
+
+Theorem byte_and_float_tags_are_disjoint : forall bytes bits,
+  encode (ByteSequence bytes) <> encode (FiniteFloat bits).
+Proof. intros bytes bits Wrong. discriminate Wrong. Qed.
+
+End Transport.
+End ProjectionNativeScalarWire.
