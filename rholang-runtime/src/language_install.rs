@@ -50,7 +50,7 @@ use models::rust::utils::{
 use rholang::rust::interpreter::contract_call::ContractCall;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::system_processes::Definition;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -485,6 +485,7 @@ impl LanguageInstallService {
         let reader = RegistryLanguageReader(self.registry.as_ref());
         let mut pending = Vec::with_capacity(records.len());
         let mut requests = Vec::with_capacity(records.len());
+        let mut export_names = BTreeSet::new();
         for (expected_name, record) in records {
             let host_binding = if canonical_value_schema(&record.spec) == Some("language/4") {
                 Some(self.builtin_host_profile_binding()?)
@@ -516,6 +517,9 @@ impl LanguageInstallService {
                     export: name,
                     language: prepared.language.grammar.name,
                 });
+            }
+            if !export_names.insert(name.clone()) {
+                return Err(InstallServiceError::DuplicateExportName(name));
             }
             if !prepared.language.theory.checker_requirements.is_empty() {
                 return Err(InstallServiceError::CheckerRequirementsUnavailable {
@@ -1012,6 +1016,7 @@ pub enum InstallServiceError {
         export: String,
         language: String,
     },
+    DuplicateExportName(String),
     EmptyExportSet,
     MultipleExports {
         count: usize,
@@ -1058,6 +1063,9 @@ impl fmt::Display for InstallServiceError {
                 formatter,
                 "module export name `{export}` differs from canonical language name `{language}`"
             ),
+            Self::DuplicateExportName(name) => {
+                write!(formatter, "module contains duplicate export `{name}`")
+            },
             Self::EmptyExportSet => {
                 formatter.write_str("module has no installable language exports")
             },
@@ -3797,16 +3805,22 @@ fn success_batch_response(mut batch: RholangInstalledBatch) -> Par {
             return success_response(export.handle);
         }
     }
-    let exports = batch
-        .exports
-        .into_iter()
-        .map(|export| {
-            map_par([
-                ("name".into(), new_gstring_par(export.name, Vec::new(), false)),
-                ("handle".into(), export.handle),
-            ])
-        })
-        .collect();
+    let mut exports = Vec::with_capacity(batch.exports.len());
+    let mut exports_by_name = BTreeMap::new();
+    for export in batch.exports {
+        // Keep the list for existing callers while making selection independent
+        // of export order. A duplicate must never silently replace a handle.
+        if exports_by_name
+            .insert(export.name.clone(), export.handle.clone())
+            .is_some()
+        {
+            return error_response("DuplicateExportName", "module contains duplicate export names");
+        }
+        exports.push(map_par([
+            ("name".into(), new_gstring_par(export.name, Vec::new(), false)),
+            ("handle".into(), export.handle),
+        ]));
+    }
     let programs = batch
         .programs
         .into_iter()
@@ -3830,6 +3844,7 @@ fn success_batch_response(mut batch: RholangInstalledBatch) -> Par {
                 .map_or_else(Par::default, |name| new_gstring_par(name, Vec::new(), false)),
         ),
         ("exports".into(), wire_list(exports)),
+        ("exports_by_name".into(), map_par(exports_by_name)),
         ("programs".into(), wire_list(programs)),
     ]);
     map_par([("ok".into(), module)])
@@ -3855,6 +3870,9 @@ fn runtime_error_code(error: &LanguageRuntimeError) -> &'static str {
         },
         LanguageRuntimeError::Install(InstallServiceError::ExportNameMismatch { .. }) => {
             "DeclarationNameMismatch"
+        },
+        LanguageRuntimeError::Install(InstallServiceError::DuplicateExportName(_)) => {
+            "DuplicateExportName"
         },
         LanguageRuntimeError::Install(InstallServiceError::EmptyExportSet)
         | LanguageRuntimeError::EmptyExportSet => "EmptyExportSet",
@@ -6191,6 +6209,73 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn module_response_selects_opaque_exports_by_name_across_order_changes() {
+        let left = private_name(vec![1]);
+        let right = private_name(vec![2]);
+        for reversed in [false, true] {
+            let mut exports = vec![
+                RholangInstalledExport {
+                    name: "Left".into(),
+                    handle: left.clone(),
+                },
+                RholangInstalledExport {
+                    name: "Right".into(),
+                    handle: right.clone(),
+                },
+            ];
+            if reversed {
+                exports.reverse();
+            }
+            let response = success_batch_response(RholangInstalledBatch {
+                module_name: Some("Pair".into()),
+                exports,
+                programs: Vec::new(),
+            });
+            let module = map_entry(&response, "ok").expect("module installs");
+            let list = map_entry(module, "exports")
+                .and_then(exact_list)
+                .expect("legacy export list remains available");
+            assert_eq!(list.len(), 2);
+            assert_eq!(
+                map_entry(&list[0], "name").and_then(exact_string),
+                Some(if reversed { "Right" } else { "Left" })
+            );
+            let by_name = map_entry(module, "exports_by_name").expect("named export map");
+            assert_eq!(exact_map(by_name).expect("proper map").len(), 2);
+            assert_eq!(
+                map_entry(by_name, "Left").and_then(single_private_name_id),
+                single_private_name_id(&left)
+            );
+            assert_eq!(
+                map_entry(by_name, "Right").and_then(single_private_name_id),
+                single_private_name_id(&right)
+            );
+            assert!(map_entry(by_name, "Missing").is_none());
+        }
+    }
+
+    #[test]
+    fn module_response_rejects_duplicate_export_names_without_overwrite() {
+        let response = success_batch_response(RholangInstalledBatch {
+            module_name: Some("Pair".into()),
+            exports: vec![
+                RholangInstalledExport {
+                    name: "Regex".into(),
+                    handle: private_name(vec![1]),
+                },
+                RholangInstalledExport {
+                    name: "Regex".into(),
+                    handle: private_name(vec![2]),
+                },
+            ],
+            programs: Vec::new(),
+        });
+        assert!(map_entry(&response, "ok").is_none());
+        let error = map_entry(&response, "error").expect("duplicate is rejected");
+        assert_eq!(map_entry(error, "code").and_then(exact_string), Some("DuplicateExportName"));
+    }
+
+    #[test]
     fn regex_gslt_module_compiles_and_installs_both_runtime_images_atomically() {
         let service = LanguageInstallService::new(
             Arc::new(MemoryRegistry::default()),
@@ -7597,6 +7682,14 @@ pub(crate) mod tests {
                 .and_then(|unforgeable| unforgeable.unf_instance.as_ref()),
             Some(GPrivateBody(_)),
         ));
+        let by_name =
+            map_entry(installed_module, "exports_by_name").expect("module provides named exports");
+        assert_eq!(exact_map(by_name).expect("proper named export map").len(), 1);
+        assert_eq!(
+            map_entry(by_name, "T").and_then(single_private_name_id),
+            map_entry(&exports[0], "handle").and_then(single_private_name_id),
+        );
+        assert!(map_entry(by_name, "Missing").is_none());
     }
 
     #[tokio::test]
