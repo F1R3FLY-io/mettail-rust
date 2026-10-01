@@ -561,3 +561,109 @@ Proof. intros bytes bits Wrong. discriminate Wrong. Qed.
 
 End Transport.
 End ProjectionNativeScalarWire.
+
+(** A where-query may use an endpoint pair only when it determines exactly
+    one installed, directed projection.  Results are consumed as a complete
+    occurrence roster; an unknown or conflicting candidate is sticky.  This
+    abstracts source-coordinate and host-profile checks, which are separately
+    modeled above and by HostProfileLifecycle. *)
+Module ProjectedWhereConsensus.
+
+(** [None] is a wildcard/non-constructor entry root: it remains a possible
+    candidate rather than being silently ignored.  The full automaton still
+    decides applicability after this conservative action dispatch. *)
+Definition entry_may_match (root : option nat) (input_head : nat) : bool :=
+  match root with
+  | None => true
+  | Some constructor => Nat.eqb constructor input_head
+  end.
+
+Definition entry_actually_matches (root : option nat) (input_head : nat) : Prop :=
+  match root with
+  | None => True
+  | Some constructor => constructor = input_head
+  end.
+
+Lemma actual_entry_match_is_never_pruned : forall root input_head,
+  entry_actually_matches root input_head -> entry_may_match root input_head = true.
+Proof.
+  intros [constructor|] input_head Match; cbn; [apply Nat.eqb_eq; exact Match|reflexivity].
+Qed.
+
+Theorem no_possible_entry_excludes_every_actual_entry :
+  forall roots input_head,
+  existsb (fun root => entry_may_match root input_head) roots = false ->
+  forall root, In root roots -> ~ entry_actually_matches root input_head.
+Proof.
+  intros roots input_head NonePossible root Member Actual.
+  apply actual_entry_match_is_never_pruned in Actual.
+  assert (Possible : existsb (fun candidate => entry_may_match candidate input_head) roots = true).
+  { apply existsb_exists. exists root. now split. }
+  now rewrite Possible in NonePossible.
+Qed.
+
+Record DirectedRelation := directed_relation {
+  relation_id : nat;
+  guest_sort : nat;
+  host_sort : nat
+}.
+
+Definition endpoint_candidates (guest host : nat) (relations : list DirectedRelation) :=
+  filter (fun relation =>
+    Nat.eqb (guest_sort relation) guest && Nat.eqb (host_sort relation) host)
+    relations.
+
+Definition unique_endpoint_relation (guest host : nat)
+    (relations : list DirectedRelation) : option DirectedRelation :=
+  match endpoint_candidates guest host relations with
+  | [relation] => Some relation
+  | _ => None
+  end.
+
+Theorem selected_where_relation_is_unique : forall guest host relations selected,
+  unique_endpoint_relation guest host relations = Some selected ->
+  endpoint_candidates guest host relations = [selected].
+Proof.
+  intros guest host relations selected Selection.
+  unfold unique_endpoint_relation in Selection.
+  destruct (endpoint_candidates guest host relations) as [|first [|second rest]];
+    inversion Selection; reflexivity.
+Qed.
+
+Inductive Verdict := Accept | Reject | Unknown.
+
+Definition meet_candidate (previous : option Verdict) (current : Verdict)
+    : option Verdict :=
+  match previous with
+  | None => Some current
+  | Some earlier =>
+      match earlier, current with
+      | Accept, Accept => Some Accept
+      | Reject, Reject => Some Reject
+      | _, _ => Some Unknown
+      end
+  end.
+
+Fixpoint consume_candidates (previous : option Verdict) (results : list Verdict)
+    : option Verdict :=
+  match results with
+  | [] => previous
+  | current :: rest => consume_candidates (meet_candidate previous current) rest
+  end.
+
+Theorem unknown_remains_unknown_for_every_later_candidate :
+  forall results, consume_candidates (Some Unknown) results = Some Unknown.
+Proof.
+  induction results as [|current rest IH]; simpl; [reflexivity|].
+  destruct current; exact IH.
+Qed.
+
+Theorem opposing_candidates_cannot_publish_a_boolean :
+  forall rest,
+  consume_candidates None (Accept :: Reject :: rest) = Some Unknown /\
+  consume_candidates None (Reject :: Accept :: rest) = Some Unknown.
+Proof.
+  intro rest; simpl; split; apply unknown_remains_unknown_for_every_later_candidate.
+Qed.
+
+End ProjectedWhereConsensus.

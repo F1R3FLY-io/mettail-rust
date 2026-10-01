@@ -16,13 +16,10 @@ Module RegexGSLT {
       noadmit Nat = BigInt;
       noadmit Grade = BigInt;
     }
-    Data({
-      "literals": [
-        {"category":"Scalar", "pattern":"[A-Za-z0-9\\u{80}-\\u{10FFFF}]", "eval":["carrier", "str", Map()]},
-        {"category":"Nat", "pattern":"[0-9]+", "eval":["carrier", "int", Map()]}
-      ]
-    })
     Terms {
+      token Scalar ::= [A-Za-z0-9\u{80}-\u{10FFFF}];
+      token Nat ::= [0-9]+;
+
       PFail . |- "(?!)" : Pattern;
       PEpsilon . |- "()" : Pattern;
       PAny . |- "." : Pattern;
@@ -328,6 +325,11 @@ Module RegexGSLT {
       RepeatAlternativeStep : if S ~> T then (RAlternative P U I O R S) ~> (RAlternative P U I O R T);
       RepeatFinishStep : if S ~> T then (RFinish S) ~> (RFinish T);
       RepeatFinishDone : (RFinish (SDone P)) ~> (RDone P);
+
+      projection CompletedBoolean : Computation ~> host::Bool {
+        True : (DoneBool (BTrue)) ~> true;
+        False : (DoneBool (BFalse)) ~> false;
+      }
     }
     Data({
       "rewrites": [
@@ -400,7 +402,7 @@ Module RegexGSLT {
            "execution":{"kind":"normalize", "relation_sort":"Computation", "terminal_constructors":["DonePattern"], "branching":"deterministic"}}
         ],
         "observations": [
-          {"name":"FullMatch","action":"full-match","result":"Computation","predicate_role":{"input_constructor":"CallFullMatch","accepting":["DoneBool",["BTrue"]],"rejecting":["DoneBool",["BFalse"]]}},
+          {"name":"FullMatch","action":"full-match","result":"Computation"},
           {"name":"Search","action":"search","result":"Computation"},
           {"name":"ReplaceFirst","action":"replace-first","result":"Computation"},
           {"name":"ReplaceAll","action":"replace-all","result":"Computation"},

@@ -216,6 +216,7 @@ fn service_diagnostic(error: InstalledSemanticError) -> ReplyBody {
                 LanguageAccessError::AmplifiedHandle => 5,
                 LanguageAccessError::EpochExhausted => 6,
                 LanguageAccessError::Poisoned => 7,
+                LanguageAccessError::HostProfileUnavailable => 8,
             };
             return ReplyBody::Error(DiagnosticDomain::Access, code);
         },
@@ -262,6 +263,20 @@ fn service_diagnostic(error: InstalledSemanticError) -> ReplyBody {
                 TheoryPatternRestoreError::IdentifierOverflow => 0,
                 TheoryPatternRestoreError::Automaton(_) => 1,
                 TheoryPatternRestoreError::Allocation => 2,
+            };
+            return ReplyBody::Error(DiagnosticDomain::Restore, code);
+        },
+        ProjectedRestore(error) => {
+            let code = match error {
+                mettail_dovetail_runtime::ProjectedMatcherRestoreError::InvalidImage => 3,
+                mettail_dovetail_runtime::ProjectedMatcherRestoreError::Fingerprint(_) => 4,
+                mettail_dovetail_runtime::ProjectedMatcherRestoreError::Pattern(error) => {
+                    match error {
+                        TheoryPatternRestoreError::IdentifierOverflow => 0,
+                        TheoryPatternRestoreError::Automaton(_) => 1,
+                        TheoryPatternRestoreError::Allocation => 2,
+                    }
+                },
             };
             return ReplyBody::Error(DiagnosticDomain::Restore, code);
         },

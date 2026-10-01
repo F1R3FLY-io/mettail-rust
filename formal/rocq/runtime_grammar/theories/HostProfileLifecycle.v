@@ -839,4 +839,39 @@ Theorem admitted_decode_is_injective :
 Proof. intros [] [] Equal; reflexivity || discriminate. Qed.
 
 End GroundBooleanCodec.
+
+(** The install policy has two independent ceilings. Changing the compiled
+    host-profile grant cannot enlarge the rights admitted for authored guest
+    declarations, even when both mention the same right identifier. *)
+Module IndependentPolicyCeilings.
+
+Record Policy := policy {
+  guest_ceiling : list nat;
+  host_profile_ceiling : list nat
+}.
+
+Definition grant_guest (p : Policy) (requested : list nat) : list nat :=
+  filter (fun right => existsb (Nat.eqb right) (guest_ceiling p)) requested.
+
+Definition with_host_profile (p : Policy) (host_rights : list nat) : Policy :=
+  policy (guest_ceiling p) host_rights.
+
+Theorem host_profile_opt_in_never_amplifies_guest_grants :
+  forall p host_rights requested,
+    grant_guest (with_host_profile p host_rights) requested =
+    grant_guest p requested.
+Proof. reflexivity. Qed.
+
+Theorem every_granted_guest_right_is_within_the_guest_ceiling :
+  forall p requested right,
+    In right (grant_guest p requested) -> In right (guest_ceiling p).
+Proof.
+  intros p requested right Granted.
+  unfold grant_guest in Granted.
+  apply filter_In in Granted as [_ InCeiling].
+  apply existsb_exists in InCeiling as [witness [Member Equal]].
+  apply Nat.eqb_eq in Equal. subst witness. exact Member.
+Qed.
+
+End IndependentPolicyCeilings.
 End HostProfileLifecycle.

@@ -1,6 +1,7 @@
 use super::*;
 use crate::guard_par_substrate::SubstrateGuardMatcher;
 use crate::semantic_service::{predicate::PredicateCommit, InstalledSemanticError};
+use mettail_elab::wire::ParsedDdl;
 use mettail_prattail::algebra_tower::Sat3;
 use models::rhoapi::{
     tagged_continuation::TaggedCont, BindPattern, ListParWithRandom, TaggedContinuation,
@@ -41,6 +42,137 @@ fn fixture_result(accepting: bool) -> (Arc<RholangLanguageRuntime>, Par, Par) {
         )
         .unwrap();
     (runtime, token, input)
+}
+
+#[test]
+fn where_uses_selected_gslt_projection_after_existing_observation_action() {
+    let source = r#"
+        Module ProjectedPredicate {
+          Theory Predicate() {
+            Types { noadmit Expr; }
+            Terms {
+              Call . |- "call" : Expr;
+              Yes . |- "yes" : Expr;
+              No . |- "no" : Expr;
+            }
+            Rewrites {
+              Match : (Call) ~> (Yes);
+              projection Boolean : Expr ~> host::Bool {
+                ToTrue : (Yes) ~> true;
+                ToFalse : (No) ~> false;
+              }
+            }
+            Data({
+              "oslf": {
+                "effects": [{"name":"pure"}],
+                "actions": [{
+                  "id":"match", "domain":["Expr"], "codomain":"Expr",
+                  "transition":["rewrite","Match"], "effect":"pure",
+                  "grade":"Expr", "execution":"one_step"
+                }],
+                "observations": [{
+                  "name":"Matches", "action":"match", "result":"Expr"
+                }]
+              }
+            })
+          }
+          theory Predicate()
+        }
+    "#;
+    for (result, overlapping, expected) in [
+        ("Yes", false, Sat3::Sat),
+        ("No", false, Sat3::Unsat),
+        ("Yes", true, Sat3::DontKnow),
+    ] {
+        let source =
+            source.replace("Match : (Call) ~> (Yes);", &format!("Match : (Call) ~> ({result});"));
+        let source = if overlapping {
+            source.replace(
+                r#""name":"Matches", "action":"match", "result":"Expr""#,
+                r#""name":"Matches", "action":"match", "result":"Expr"},
+                   {"name":"MatchesAgain", "action":"match", "result":"Expr""#,
+            )
+        } else {
+            source
+        };
+        let service = Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        ));
+        let runtime = RholangLanguageRuntime::new(service);
+        let module = mettail_elab::parse::parse_module(&source).unwrap();
+        let token = runtime
+            .install(InstallCandidate::Ddl(ParsedDdl::Module(module)))
+            .expect("projected GSLT is installed");
+        let input = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text("call".into())],
+                &[],
+                Some("Expr"),
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        let evidence = runtime.prepare_where_predicate(
+            &token,
+            &input,
+            "Expr",
+            0,
+            0,
+            SemanticServiceLimits::default(),
+            || false,
+        );
+        assert_eq!(evidence.verdict(), expected, "{:?}", evidence.error());
+    }
+}
+
+#[test]
+fn projected_guest_publication_is_refused_after_host_profile_revocation() {
+    let source = r#"
+        Module HostRevocation {
+          Theory Guest() {
+            Types { noadmit Expr; }
+            Terms { Yes . |- "yes" : Expr; }
+            Rewrites {
+              projection Boolean : Expr ~> host::Bool {
+                YesRule : (Yes) ~> true;
+              }
+            }
+          }
+          theory Guest()
+        }
+    "#;
+    let mut service = LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    );
+    let module = mettail_elab::parse::parse_module(source).unwrap();
+    let batch = service
+        .install_all(InstallCandidate::Ddl(ParsedDdl::Module(module)))
+        .expect("projected GSLT is installed");
+    let handle = &batch.exports[0].receipt.handle;
+    assert!(service
+        .table()
+        .with_authorized_batch([(handle, &[][..])], || ())
+        .is_ok());
+    let grant = std::mem::replace(
+        &mut service.builtin_host_profile,
+        Err(crate::host_profile::RholangHostProfileError::UnsupportedGeneratedFragment(
+            "test authority consumed",
+        )),
+    )
+    .expect("compiled host profile was installed");
+    service
+        .table()
+        .revoke_host_profile(grant.revocation)
+        .unwrap();
+    assert_eq!(
+        service
+            .table()
+            .with_authorized_batch([(handle, &[][..])], || ())
+            .unwrap_err(),
+        mettail_grammar_core::LanguageAccessError::HostProfileUnavailable,
+    );
 }
 
 /// An authored guest-to-native projection, with no action or observation role.

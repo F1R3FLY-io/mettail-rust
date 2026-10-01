@@ -1864,6 +1864,15 @@ impl InstalledLanguageTable {
         if !handle.rights.is_subset_of(&entry.maximum_rights) {
             return Err(LanguageAccessError::AmplifiedHandle);
         }
+        if let Some(projected) = &entry.language.projected {
+            let host = state
+                .host_profiles
+                .get(&projected.host_profile.fingerprint())
+                .ok_or(LanguageAccessError::HostProfileUnavailable)?;
+            if !host.authorizes(self.registry_id, &projected.host_profile, LanguageRight::Bridge) {
+                return Err(LanguageAccessError::HostProfileUnavailable);
+            }
+        }
         Ok(entry)
     }
 
@@ -2084,6 +2093,8 @@ pub enum LanguageAccessError {
     Revoked,
     MissingRight(LanguageRight),
     AmplifiedHandle,
+    /// A projected guest cannot outlive its separately revocable host codec.
+    HostProfileUnavailable,
     EpochExhausted,
     Poisoned,
 }

@@ -1,6 +1,7 @@
 use mettail_languages::rholang::{
-    lex, lex_dag, DdlEquation, DdlImport, DdlImports, DdlModuleItem, DdlParam, DdlPath, DdlRewrite,
-    DdlLimitEntry, DdlOptionSection, DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
+    lex, lex_dag, DdlEquation, DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem,
+    DdlOptionSection, DdlParam, DdlPath, DdlRegClassPiece, DdlRegPiece, DdlRewrite, DdlRuleAst,
+    DdlTermRule, DdlTheoryExpr, Proc,
 };
 use mettail_prattail::automata::TokenKind;
 use mettail_runtime::Language;
@@ -18,7 +19,10 @@ fn projection_host_categories_are_the_generated_rholang_categories() {
         );
     }
     assert_eq!(
-        categories.iter().filter(|category| category.name == "Bool").count(),
+        categories
+            .iter()
+            .filter(|category| category.name == "Bool")
+            .count(),
         1,
         "a projection must not introduce another host Bool category"
     );
@@ -258,6 +262,7 @@ fn judgement_term_and_builder_chain_parse_structurally() {
 #[test]
 fn authored_regex_token_declarations_are_structural_generated_terms() {
     for source in [
+        r"token Scalar ::= [A-Za-z0-9\u{80}-\u{10FFFF}];",
         r"token Nat ::= [0-9]+;",
         r"token Semi ::= [;];",
         r"token Unicode ::= [\u{0391}-\u{03C9}]+;",
@@ -269,6 +274,42 @@ fn authored_regex_token_declarations_are_structural_generated_terms() {
         assert!(matches!(rule, DdlTermRule::DdlToken(..)));
         // The generic generated Display inserts presentation spaces; the
         // structural wire uses captured lexemes, never Display/reparse.
+    }
+
+    for (source, expected) in [
+        (
+            r"token Scalar ::= [A-Za-z0-9\u{80}-\u{10FFFF}];",
+            r"[A-Za-z0-9\u{80}-\u{10FFFF}]",
+        ),
+        (r"token Nat ::= [0-9]+;", "[0-9]+"),
+    ] {
+        let parsed = DdlTermRule::parse_via_wpda(source)
+            .unwrap_or_else(|error| panic!("fixture token rejected `{source}`: {error:?}"));
+        let DdlTermRule::DdlToken(_, _, pieces, _) = &parsed else {
+            panic!("fixture token did not use the structural Reg AST")
+        };
+        let mut actual = String::new();
+        for piece in pieces {
+            match piece {
+                DdlRegPiece::DdlRegLiteral(text)
+                | DdlRegPiece::DdlRegEscape(text)
+                | DdlRegPiece::DdlRegOperator(text) => actual.push_str(&text),
+                DdlRegPiece::DdlRegClass(_, class_pieces, _) => {
+                    actual.push('[');
+                    for class_piece in class_pieces {
+                        let text = match class_piece {
+                            DdlRegClassPiece::DdlRegClassLiteral(text)
+                            | DdlRegClassPiece::DdlRegClassEscape(text)
+                            | DdlRegClassPiece::DdlRegClassHyphen(text)
+                            | DdlRegClassPiece::DdlRegClassCaret(text) => text,
+                        };
+                        actual.push_str(&text);
+                    }
+                    actual.push(']');
+                },
+            }
+        }
+        assert_eq!(actual, expected, "generated lexer changed a fixture regex");
     }
 
     let host_source = "new token in { token!(1) }";

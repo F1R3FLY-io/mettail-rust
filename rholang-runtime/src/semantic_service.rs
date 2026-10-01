@@ -7,21 +7,22 @@
 use crate::installed_flt::{InstalledFltAdapter, InstalledFltBindingError, InstalledFltError};
 use crate::language_install::{LanguageRuntimeError, RholangLanguageRuntime};
 use mettail_dovetail_runtime::{
-    theory_positional_native_view, RuntimeLiteralRef, SemanticActionExecutionRequest,
-    SemanticInputLimits, SemanticMatchRefutation, SemanticMatchUndetermined,
-    SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt, SemanticRelationExecutionRequest,
-    SemanticRelationNormalFormReceipt, SemanticResourceReceipt, SemanticTransition,
-    SemanticTransitionDecision, SemanticTransitionInput, SemanticTransitionLimits,
-    SemanticTransitionMatcher, SemanticTransitionReceipt, TheoryPatternRestoreError,
-    TheoryPositionalNativeView,
+    theory_positional_native_view, ProjectedMatcherRestoreError, RuntimeLiteralRef,
+    SemanticActionExecutionRequest, SemanticInputLimits, SemanticMatchRefutation,
+    SemanticMatchUndetermined, SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt,
+    SemanticProjectionDecision, SemanticProjectionExecutionRequest,
+    SemanticRelationExecutionRequest, SemanticRelationNormalFormReceipt, SemanticResourceReceipt,
+    SemanticTransition, SemanticTransitionDecision, SemanticTransitionInput,
+    SemanticTransitionLimits, SemanticTransitionMatcher, SemanticTransitionReceipt,
+    TheoryPatternRestoreError, TheoryPositionalNativeView,
 };
 use mettail_grammar_core::{
     BuiltinCarrier, Carrier, InstalledLanguage, InstalledLanguageHandle, InstalledLanguageTable,
-    LanguageAccessError, LanguageRight, TheoryActionExecutionImageV1, TheoryActionId,
-    TheoryActionImageV1, TheoryImageOperatorV1, TheoryLimitsV1, TheoryLiteralCarrierV1,
-    TheoryLiteralV1, TheoryPatternStateFormV1, TheoryPatternStateV1, TheoryResourceProfileV1,
-    TheoryRuleDispositionV1, TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1,
-    TheorySortKindV1, TheoryVariableId,
+    LanguageAccessError, LanguageRight, ProjectionDirectionV1, TheoryActionExecutionImageV1,
+    TheoryActionId, TheoryActionImageV1, TheoryImageOperatorV1, TheoryLimitsV1,
+    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternStateFormV1, TheoryPatternStateV1,
+    TheoryResourceProfileV1, TheoryRuleDispositionV1, TheorySemanticImageV1, TheorySortId,
+    TheorySortKindImageV1, TheorySortKindV1, TheoryVariableId,
 };
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
 use models::rhoapi::Par;
@@ -127,6 +128,7 @@ pub enum InstalledSemanticError {
     Undetermined(SemanticMatchUndetermined),
     Resource(DynamicReflectionError),
     Restore(TheoryPatternRestoreError),
+    ProjectedRestore(ProjectedMatcherRestoreError),
     PredicateRole(mettail_dovetail_runtime::TheoryImageCompileError),
 }
 
@@ -349,11 +351,6 @@ impl RholangLanguageRuntime {
                 &mut is_cancelled,
             );
             let prepared = (|| {
-                let selected_role = if predicate {
-                    predicate::select_role(&installed, request.input, &mut budget)?
-                } else {
-                    None
-                };
                 let predicate_category = if predicate {
                     match request.operation {
                         SemanticOperation::Predicate(category) => Some(category),
@@ -366,7 +363,24 @@ impl RholangLanguageRuntime {
                 } else {
                     None
                 };
-                let native_sort = if selected_role.is_none() {
+                let projected_observation = predicate_category
+                    .map(|category| {
+                        predicate::select_projected_observation(
+                            &installed,
+                            request.input,
+                            category,
+                            &mut budget,
+                        )
+                    })
+                    .transpose()?
+                    .flatten();
+                let selected_role = if predicate && projected_observation.is_none() {
+                    predicate::select_role(&installed, request.input, &mut budget)?
+                } else {
+                    None
+                };
+                let selected_observation = projected_observation.or(selected_role);
+                let native_sort = if selected_observation.is_none() {
                     predicate_category
                         .map(|category| {
                             predicate::native_boolean_sort(&installed, category, &mut budget)
@@ -376,7 +390,7 @@ impl RholangLanguageRuntime {
                     None
                 };
                 let mut selection = if native_sort.is_none() {
-                    let operation = selected_role.map_or(request.operation, |index| {
+                    let operation = selected_observation.map_or(request.operation, |index| {
                         SemanticOperation::Observe(
                             &installed.language_core().theory.observations[index].name,
                         )
@@ -385,6 +399,26 @@ impl RholangLanguageRuntime {
                 } else {
                     None
                 };
+                let selected_projection = if predicate && selected_observation.is_some() {
+                    selection
+                        .as_ref()
+                        .map(|selected| {
+                            predicate::select_boolean_projection(
+                                &installed,
+                                selected.action.codomain,
+                                &mut budget,
+                            )
+                        })
+                        .transpose()?
+                        .flatten()
+                } else {
+                    None
+                };
+                if projected_observation.is_some() && selected_projection.is_none() {
+                    return Err(InstalledSemanticError::InvalidEvidence(
+                        "selected projected observation lost its Boolean relation",
+                    ));
+                }
                 let mut required = if let Some(selected) = &mut selection {
                     if let Some(category) = predicate_category {
                         let actual = &installed.language_core().theory.sorts
@@ -412,6 +446,14 @@ impl RholangLanguageRuntime {
                     budget.charge(1, 1)?;
                     required.push(LanguageRight::Construct);
                 }
+                if let Some(projection) = &selected_projection {
+                    budget.charge(projection.required.len(), projection.required.len())?;
+                    for right in &projection.required {
+                        if !required.contains(right) {
+                            required.push(*right);
+                        }
+                    }
+                }
                 let authorized = table
                     .authorize_all(&handle, &required)
                     .map_err(InstalledSemanticError::Access)?;
@@ -428,7 +470,7 @@ impl RholangLanguageRuntime {
                     &retained.handle,
                     &mut budget,
                 )?;
-                let keys = match selected_role {
+                let keys = match selected_role.filter(|_| selected_projection.is_none()) {
                     Some(index) => {
                         Some(predicate::role_keys(&installed, index, limits, &mut budget)?)
                     },
@@ -449,6 +491,16 @@ impl RholangLanguageRuntime {
                     if let Some(keys) = keys {
                         predicate_verdict =
                             Some(predicate::classify_results(&results, &keys, &mut budget)?);
+                    }
+                    if let Some(projection) = selected_projection {
+                        predicate_verdict = Some(prepare_projected_predicate_results(
+                            &bundle,
+                            &results,
+                            &projection,
+                            limits,
+                            &mut budget,
+                            &mut kernel_work,
+                        )?);
                     }
                     Ok(PreparedSemanticOutput::Action(results))
                 } else {
@@ -570,6 +622,149 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
     let terms = adapter.reflect_transitions(&proven, selection.action.codomain, budget)?;
     let (_graph, transitions) = proven.into_parts();
     pair_semantic_results(terms, transitions, budget)
+}
+
+/// Compose each complete ordinary action result with one selected, installed
+/// guest-to-host Boolean relation. This uses the existing structural FLT
+/// adapter and the projected matcher; no source parser or second evaluator is
+/// involved. An absent, non-Boolean, or conflicting candidate is unknown, not
+/// an early rejection or a first-result selection.
+fn prepare_projected_predicate_results<C: FnMut() -> bool>(
+    prepared: &InstalledSemanticBundle<'_>,
+    results: &[SemanticServiceResult],
+    projection: &predicate::SelectedBooleanProjection,
+    limits: SemanticServiceLimits,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+    kernel_work: &mut Option<u64>,
+) -> Result<mettail_prattail::algebra_tower::Sat3, InstalledSemanticError> {
+    use mettail_prattail::algebra_tower::Sat3;
+    let installed = prepared.installed();
+    let image = installed
+        .projected_image()
+        .ok_or(InstalledSemanticError::InvalidEvidence("selected projection has no image"))?;
+    let adapter = InstalledFltAdapter::new(installed, budget)?;
+    let category = adapter.input_category(projection.input_sort, budget)?;
+    let mut verdict = None;
+    for result in results {
+        budget.charge(1, 0)?;
+        let input = adapter.to_kernel(
+            &result.term,
+            category,
+            SemanticInputLimits {
+                work: limits.execution.work,
+                nodes: limits.execution.term_nodes,
+                bytes: limits.execution.term_bytes,
+            },
+            budget,
+        )?;
+        let admission = input.admission_work();
+        budget.charge(1, 8)?;
+        let expected_input = input.exact_key().clone();
+        let decision = budget.run_accounted_stage(|remaining, cancel| {
+            let Some(ceiling) = admission.checked_add(remaining) else {
+                return (
+                    Err(InstalledSemanticError::InvalidEvidence("projection ceiling overflow")),
+                    0,
+                );
+            };
+            let (decision, aggregate) = prepared.matcher.execute_rule_projection_accounted(
+                SemanticProjectionExecutionRequest {
+                    image,
+                    projection: projection.projection,
+                    direction: ProjectionDirectionV1::GuestToHost,
+                    granted_rights: prepared.handle.rights(),
+                    input,
+                    limits: SemanticTransitionLimits { work: ceiling, ..limits.execution },
+                },
+                cancel,
+            );
+            let Some(increment) = aggregate.checked_sub(admission) else {
+                return (
+                    Err(InstalledSemanticError::InvalidEvidence(
+                        "projection underreported admission",
+                    )),
+                    0,
+                );
+            };
+            let Some(total) = kernel_work.unwrap_or(0).checked_add(aggregate) else {
+                return (
+                    Err(InstalledSemanticError::InvalidEvidence("projection work overflow")),
+                    increment,
+                );
+            };
+            *kernel_work = Some(total);
+            (Ok((decision, aggregate)), increment)
+        })??;
+        let (decision, aggregate) = decision;
+        let proven = match decision {
+            SemanticProjectionDecision::Proven(proven) => proven,
+            SemanticProjectionDecision::Refuted(_) => {
+                verdict = predicate::fold_uniform_candidate(verdict, Sat3::DontKnow);
+                continue;
+            },
+            SemanticProjectionDecision::Undetermined { reason, .. } => {
+                return Err(InstalledSemanticError::Undetermined(reason));
+            },
+        };
+        if proven.work != aggregate || proven.work < admission || proven.values.is_empty() {
+            return Err(InstalledSemanticError::InvalidEvidence("projection result aggregate"));
+        }
+        for value in &proven.values {
+            let receipt = &value.receipt;
+            budget.charge(
+                expected_input
+                    .len()
+                    .checked_add(1)
+                    .ok_or(DynamicReflectionError::WorkLimit)?,
+                0,
+            )?;
+            if receipt.projected_language_fingerprint != installed.commitment().language_fingerprint
+                || receipt.base_image_fingerprint != image.base_image_fingerprint
+                || Some(receipt.image_fingerprint)
+                    != installed.commitment().semantic_image_fingerprint
+                || receipt.host_signature_fingerprint != image.host_signature_fingerprint
+                || receipt.host_codec_profile_fingerprint != image.host_codec_profile_fingerprint
+                || receipt.projection != projection.projection
+                || receipt.direction != ProjectionDirectionV1::GuestToHost
+                || receipt.input_sort != projection.input_sort
+                || receipt.output_sort != projection.output_sort
+                || value.output_sort != projection.output_sort
+                || receipt.input != expected_input.as_bytes()
+                || receipt.work != aggregate
+            {
+                return Err(InstalledSemanticError::InvalidEvidence("projection receipt envelope"));
+            }
+            let viewed = budget
+                .run_accounted_stage(|limit, cancel| {
+                    let mut used = 0;
+                    let viewed = theory_positional_native_view(
+                        &image.execution,
+                        proven.egraph(),
+                        value.output,
+                        projection.output_sort,
+                        &mut used,
+                        limit,
+                        cancel,
+                    );
+                    (viewed, used)
+                })?
+                .map_err(InstalledSemanticError::Undetermined)?;
+            let current = match viewed {
+                Some(TheoryPositionalNativeView::Literal {
+                    sort: actual,
+                    value: RuntimeLiteralRef::Boolean(true),
+                }) if actual == projection.output_sort => Sat3::Sat,
+                Some(TheoryPositionalNativeView::Literal {
+                    sort: actual,
+                    value: RuntimeLiteralRef::Boolean(false),
+                }) if actual == projection.output_sort => Sat3::Unsat,
+                _ => Sat3::DontKnow,
+            };
+            verdict = predicate::fold_uniform_candidate(verdict, current);
+        }
+    }
+    budget.charge(0, 0)?;
+    Ok(verdict.unwrap_or(Sat3::DontKnow))
 }
 
 /// Classify only the complete roster returned by the installed theory's
@@ -1029,9 +1224,18 @@ impl<'a> InstalledSemanticBundle<'a> {
                 )
             })?
             .map_err(InstalledSemanticError::PredicateRole)?;
-        charge_matcher_setup(image, budget)?;
-        let matcher =
-            SemanticTransitionMatcher::restore(image).map_err(InstalledSemanticError::Restore)?;
+        // Restoring a projected matcher retains the appended host signature
+        // and projection rules, so its complete image must be charged here.
+        let setup_image = installed
+            .projected_image()
+            .map_or(image, |projected| &projected.execution);
+        charge_matcher_setup(setup_image, budget)?;
+        let matcher = match installed.projected_image() {
+            Some(projected) => SemanticTransitionMatcher::restore_projected(projected)
+                .map_err(InstalledSemanticError::ProjectedRestore)?,
+            None => SemanticTransitionMatcher::restore(image)
+                .map_err(InstalledSemanticError::Restore)?,
+        };
         // The existing restorer has no cancellation callback. Never expose its
         // completed preparation if cancellation arrived during restoration.
         budget.charge(0, 0)?;

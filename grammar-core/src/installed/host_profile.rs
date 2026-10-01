@@ -158,6 +158,14 @@ impl HostProfileEntry {
             && Arc::ptr_eq(&handle.seal, &self.seal)
             && handle.rights.is_subset_of(&self.ceiling)
             && handle.rights.contains(right)
+            && self
+                .record
+                .canonical_bytes()
+                .is_ok_and(|bytes| self.provider.compiled_record() == bytes)
+            && self
+                .provider
+                .admits_exact_descriptor(&self.record.payload.codec.descriptor)
+            && self.provider.capability_manifest(&self.manifest.key) == Some(self.manifest.clone())
     }
 
     fn grant(&self, registry_id: u64, fingerprint: [u8; 32]) -> InstalledHostProfileGrant {

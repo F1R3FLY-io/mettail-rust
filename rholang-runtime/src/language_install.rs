@@ -150,7 +150,11 @@ pub struct StagedModuleProgram {
 /// this value or its commitment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageInstallPolicy {
+    /// Maximum rights a guest declaration may request from this host.
     pub host_grants: LanguageRights,
+    /// Independent ceiling for the compiled Rholang host-profile handle.
+    /// Granting `Bridge` here never grants it to a guest language.
+    pub host_profile_grants: LanguageRights,
     pub runtime: RuntimePolicy,
     pub parser_image: ParserImageAdmissionLimits,
     pub semantic_image: TheoryImageAdmissionLimits,
@@ -211,8 +215,10 @@ impl LanguageInstallPolicy {
     ) -> Self {
         let capability_abi = capability_abi.into();
         let semantic_service = SemanticServiceLimits::default();
+        let host_profile_grants = LanguageRights::none();
         let fingerprint = fingerprint_policy(
             &host_grants,
+            &host_profile_grants,
             runtime,
             parser_image,
             semantic_image,
@@ -222,6 +228,7 @@ impl LanguageInstallPolicy {
         );
         Self {
             host_grants,
+            host_profile_grants,
             runtime,
             parser_image,
             semantic_image,
@@ -238,9 +245,18 @@ impl LanguageInstallPolicy {
         self
     }
 
+    /// Explicitly enable a separately sealed compiled host profile without
+    /// amplifying the rights available to authored guest declarations.
+    pub fn with_host_profile_grants(mut self, grants: LanguageRights) -> Self {
+        self.host_profile_grants = grants;
+        self.refresh_fingerprint();
+        self
+    }
+
     fn refresh_fingerprint(&mut self) {
         self.fingerprint = fingerprint_policy(
             &self.host_grants,
+            &self.host_profile_grants,
             self.runtime,
             self.parser_image,
             self.semantic_image,
@@ -254,11 +270,16 @@ impl LanguageInstallPolicy {
 impl Default for LanguageInstallPolicy {
     fn default() -> Self {
         Self::new(LanguageRights::all(), RuntimePolicy::default(), LANGUAGE_CAPABILITY_ABI_CURRENT)
+            .with_host_profile_grants(LanguageRights::from_rights([
+                LanguageRight::Bridge,
+                LanguageRight::ReflectAst,
+            ]))
     }
 }
 
 fn fingerprint_policy(
     grants: &LanguageRights,
+    host_profile_grants: &LanguageRights,
     runtime: RuntimePolicy,
     parser_image: ParserImageAdmissionLimits,
     semantic_image: TheoryImageAdmissionLimits,
@@ -267,10 +288,18 @@ fn fingerprint_policy(
     capability_abi: &str,
 ) -> [u8; 32] {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"mettail-install-policy/6\0");
-    for right in grants.iter() {
-        bytes.extend_from_slice(right.name().as_bytes());
-        bytes.push(0);
+    bytes.extend_from_slice(b"mettail-install-policy/7\0");
+    for (domain, rights) in [
+        (b"guest\0".as_slice(), grants),
+        (b"host-profile\0".as_slice(), host_profile_grants),
+    ] {
+        bytes.extend_from_slice(domain);
+        bytes.extend_from_slice(&(rights.iter().count() as u64).to_be_bytes());
+        for right in rights.iter() {
+            let name = right.name().as_bytes();
+            bytes.extend_from_slice(&(name.len() as u64).to_be_bytes());
+            bytes.extend_from_slice(name);
+        }
     }
     bytes.extend_from_slice(&runtime.max_input_bytes.to_be_bytes());
     bytes.extend_from_slice(&runtime.max_parse_items.to_be_bytes());
@@ -343,10 +372,15 @@ impl LanguageInstallService {
             Arc::new(mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory),
             Arc::new(crate::host_profile::SharedProjectedTheoryImageCompiler),
         ));
-        let host_rights = policy.host_grants.attenuate(&LanguageRights::from_rights([
-            LanguageRight::Bridge,
-            LanguageRight::ReflectAst,
-        ]));
+        // The policy ceiling is independent of guest rights, but this built-in
+        // provider only needs its bridge and reflection capabilities. Do not
+        // install unrelated rights merely because a host policy contains them.
+        let host_rights = policy
+            .host_profile_grants
+            .attenuate(&LanguageRights::from_rights([
+                LanguageRight::Bridge,
+                LanguageRight::ReflectAst,
+            ]));
         // A source value may describe a host endpoint, but only this checked
         // compiled provider can install its process-local authority. Keep a
         // refusal for the projection path without disabling legacy languages.
@@ -6321,7 +6355,25 @@ pub(crate) mod tests {
         for (source, result) in pattern_parses {
             let parses =
                 result.unwrap_or_else(|error| panic!("Regex `{source}` parses: {error:?}"));
-            assert_eq!(parses.len(), 1, "Regex `{source}` has one precedence-resolved parse");
+            if source == "(a|b)*" {
+                // The WPDA's universal parentheses boundary preserves the
+                // inner term, while this theory also authors a distinct
+                // PGroup constructor. Both complete derivations survive.
+                let alternative = term("PAlt", 1, 4, vec![literal("a", 1), literal("b", 3)]);
+                let grouped = term("PGroup", 0, 5, vec![alternative.clone()]);
+                let expected =
+                    [term("PStar", 0, 6, vec![alternative]), term("PStar", 0, 6, vec![grouped])];
+                assert_eq!(parses.len(), expected.len(), "{parses:#?}");
+                for value in expected {
+                    assert!(parses.iter().any(|parse| parse.syntax == value), "{parses:#?}");
+                }
+            } else {
+                assert_eq!(
+                    parses.len(),
+                    1,
+                    "Regex `{source}` has one precedence-resolved parse: {parses:#?}"
+                );
+            }
         }
     }
 
@@ -8166,6 +8218,7 @@ pub(crate) mod tests {
             assert!(fingerprints.insert(changed.fingerprint), "coordinate {coordinate}");
             assert_eq!(changed.semantic_service, limits);
             assert_eq!(changed.host_grants, base.host_grants);
+            assert_eq!(changed.host_profile_grants, base.host_profile_grants);
             assert_eq!(changed.runtime, base.runtime);
             assert_eq!(changed.parser_image, base.parser_image);
             assert_eq!(changed.semantic_image, base.semantic_image);
@@ -8185,6 +8238,60 @@ pub(crate) mod tests {
         let expected = base.with_semantic_service_limits(changed.semantic_service);
         let service = LanguageInstallService::new(Arc::new(EmptyRegistrySnapshot), changed);
         assert_eq!(service.policy, expected);
+    }
+
+    #[test]
+    fn compiled_host_profile_grants_are_independent_of_guest_grants_and_committed() {
+        let guest_rights = LanguageRights::native_flt_default();
+        assert!(!guest_rights.contains(LanguageRight::Bridge));
+        let unbound = LanguageInstallPolicy::new(
+            guest_rights.clone(),
+            RuntimePolicy::default(),
+            LANGUAGE_CAPABILITY_ABI_CURRENT,
+        );
+        let bound = unbound
+            .clone()
+            .with_host_profile_grants(LanguageRights::from_rights([LanguageRight::Bridge]));
+        assert_eq!(bound.host_grants, guest_rights);
+        assert!(!bound.host_grants.contains(LanguageRight::Bridge));
+        assert_eq!(
+            bound
+                .host_grants
+                .attenuate(&LanguageRights::from_rights([LanguageRight::Bridge,])),
+            LanguageRights::none(),
+        );
+        assert_ne!(bound.fingerprint, unbound.fingerprint);
+        assert!(LanguageInstallService::new(Arc::new(EmptyRegistrySnapshot), unbound)
+            .builtin_host_profile_binding()
+            .is_err());
+        assert!(LanguageInstallService::new(Arc::new(EmptyRegistrySnapshot), bound.clone())
+            .builtin_host_profile_binding()
+            .is_ok());
+
+        let overbroad = bound
+            .clone()
+            .with_host_profile_grants(LanguageRights::from_rights([
+                LanguageRight::Bridge,
+                LanguageRight::Observe,
+            ]));
+        let overbroad_service =
+            LanguageInstallService::new(Arc::new(EmptyRegistrySnapshot), overbroad);
+        let (profile_handle, _) = overbroad_service
+            .builtin_host_profile_binding()
+            .expect("bridge authority remains available");
+        assert!(profile_handle.rights().contains(LanguageRight::Bridge));
+        assert!(!profile_handle.rights().contains(LanguageRight::Observe));
+
+        // Public policy fields may be mutated by a host, so service creation
+        // recomputes the actual pair of grant ceilings before installation.
+        let mut stale = bound;
+        stale.host_profile_grants = LanguageRights::none();
+        let expected = stale
+            .clone()
+            .with_host_profile_grants(LanguageRights::none());
+        let service = LanguageInstallService::new(Arc::new(EmptyRegistrySnapshot), stale);
+        assert_eq!(service.policy, expected);
+        assert!(service.builtin_host_profile_binding().is_err());
     }
 
     #[test]

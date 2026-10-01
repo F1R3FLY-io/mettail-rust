@@ -101,9 +101,18 @@ impl<'a> InstalledFltBindings<'a> {
         // Installation already validated this exact immutable pair. These
         // inexpensive shape guards protect indexed assembly, not a second
         // whole-image validation or a reconstructed semantic signature.
-        if image.sorts.len() != language.theory.sorts.len()
-            || image.constructors.len() != language.theory.constructors.len()
-        {
+        // The shared projected compiler appends checked host signature entries
+        // after the untouched guest prefix. The FLT adapter still binds only
+        // that original guest prefix; host results use the kernel's typed
+        // native view, never a fabricated guest grammar category.
+        let roster_matches = if installed.projected_image().is_some() {
+            image.sorts.len() >= language.theory.sorts.len()
+                && image.constructors.len() >= language.theory.constructors.len()
+        } else {
+            image.sorts.len() == language.theory.sorts.len()
+                && image.constructors.len() == language.theory.constructors.len()
+        };
+        if !roster_matches {
             return Err(InstalledFltBindingError::InconsistentBinding("source roster length"));
         }
         let mut category_to_sort =

@@ -1570,6 +1570,103 @@ mod tests {
     }
 
     #[test]
+    fn regex_fixture_token_declarations_equal_the_data_literal_rows() {
+        let text = |value: &str| RhoValue::String(value.into());
+        let sequence = |values| node("sequence", values);
+        let scalar_reg = sequence(vec![node(
+            "regex-class",
+            vec![sequence(vec![
+                node("regex-class-literal", vec![text("A-Za-z0-9")]),
+                node("regex-class-escape", vec![text(r"\u")]),
+                node("regex-class-literal", vec![text("{80}")]),
+                node("regex-class-hyphen", vec![text("-")]),
+                node("regex-class-escape", vec![text(r"\u")]),
+                node("regex-class-literal", vec![text("{10FFFF}")]),
+            ])],
+        )]);
+        let nat_reg = sequence(vec![
+            node(
+                "regex-class",
+                vec![sequence(vec![
+                    node("regex-class-literal", vec![text("0")]),
+                    node("regex-class-hyphen", vec![text("-")]),
+                    node("regex-class-literal", vec![text("9")]),
+                ])],
+            ),
+            node("regex-operator", vec![text("+")]),
+        ]);
+        let tokens = decode_builder(
+            node(
+                "terms",
+                vec![sequence(vec![
+                    node("token", vec![text("Scalar"), scalar_reg]),
+                    node("token", vec![text("Nat"), nat_reg]),
+                ])],
+            ),
+            "$.terms",
+        )
+        .expect("fixture token declarations decode from typed regex pieces");
+        let literal = |category: &str, pattern: &str, kind: &str| {
+            RhoValue::Map(std::collections::BTreeMap::from([
+                ("category".into(), text(category)),
+                ("pattern".into(), text(pattern)),
+                (
+                    "eval".into(),
+                    RhoValue::List(vec![
+                        text("carrier"),
+                        text(kind),
+                        RhoValue::Map(Default::default()),
+                    ]),
+                ),
+            ]))
+        };
+        let expected = RhoValue::List(vec![
+            literal("Scalar", r"[A-Za-z0-9\u{80}-\u{10FFFF}]", "str"),
+            literal("Nat", "[0-9]+", "int"),
+        ]);
+        let types = decode_builder(
+            node(
+                "types",
+                vec![sequence(vec![
+                    node("category-noadmit-carrier", vec![text("Scalar"), text("String")]),
+                    node("category-noadmit-carrier", vec![text("Nat"), text("BigInt")]),
+                ])],
+            ),
+            "$.types",
+        )
+        .expect("fixture native carriers decode");
+        let theory = |builder| TheoryDecl {
+            name: "Regex".into(),
+            params: Vec::new(),
+            body: TheoryExpr::Build {
+                base: Box::new(TheoryExpr::Build {
+                    base: Box::new(TheoryExpr::Empty(SYNTHETIC_SPAN)),
+                    builder: types.clone(),
+                    span: SYNTHETIC_SPAN,
+                }),
+                builder,
+                span: SYNTHETIC_SPAN,
+            },
+            span: SYNTHETIC_SPAN,
+        };
+        let authored =
+            crate::elaborate_theory_ast(theory(tokens)).expect("authored token literals elaborate");
+        let data = crate::elaborate_theory_ast(theory(Builder::Data(RhoValue::Map(
+            std::collections::BTreeMap::from([("literals".into(), expected.clone())]),
+        ))))
+        .expect("existing data literal rows elaborate");
+        fn literal_rows(value: &RhoValue) -> &RhoValue {
+            match value {
+                RhoValue::Map(fields) => fields.get("literals").expect("literal rows are present"),
+                _ => panic!("canonical language value must be a map"),
+            }
+        }
+        assert_eq!(literal_rows(&authored.canonical_value), &expected);
+        assert_eq!(literal_rows(&authored.canonical_value), literal_rows(&data.canonical_value));
+        assert_eq!(authored.grammar_core, data.grammar_core);
+    }
+
+    #[test]
     fn attributed_term_wire_preserves_metadata_and_rejects_duplicate_or_unknown_fields() {
         let term = |attributes| {
             node(

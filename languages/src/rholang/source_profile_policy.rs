@@ -123,12 +123,18 @@ macro_rules! rholang_source_profile_rows {
             DdlTheoryExpr::DdlTheoryOptionsImplicit => [Vec<DdlOptionSection> => D];
             DdlTheoryExpr::DdlTheoryDataImplicit => [Arc<Proc> => T];
             DdlOptionSection::DdlOptionSemanticsLimits => [Vec<DdlLimitEntry> => D];
-            DdlLimitEntry::DdlLimitAssignment => [String => Opaque, Arc<Int> => Opaque];
+            DdlLimitEntry::DdlLimitAssignment => [String => Opaque, Arc<Int> => D];
             DdlCatDecl::DdlCategory => [String => Opaque];
+            DdlCatDecl::DdlCategoryNoAdmit => [String => Opaque];
+            DdlCatDecl::DdlCategoryCarrier => [String => Opaque, Arc<DdlCarrier> => D];
+            DdlCatDecl::DdlCategoryNoAdmitCarrier => [String => Opaque, Arc<DdlCarrier> => D];
+            DdlCarrier::DdlCarrierIdent => [String => Opaque];
+            DdlCarrier::DdlCarrierBool => [];
             DdlExport::DdlExportDirect => [String => Opaque];
             DdlExport::DdlExportRename => [String => Opaque, String => Opaque];
             DdlReplacement::DdlReplacementRule => [String => Opaque, Arc<DdlTermRule> => D];
             DdlTermRule::DdlTerm => [String => Opaque, Vec<DdlBinding> => D, Vec<DdlSyntaxItem> => D, String => Opaque];
+            DdlTermRule::DdlTermAttributed => [String => Opaque, Vec<DdlBinding> => D, Vec<DdlSyntaxItem> => D, String => Opaque, Arc<DdlTermAttr> => D, Vec<DdlTermAttr> => D];
             DdlTermRule::DdlToken => [String => Opaque, String => Opaque, Vec<DdlRegPiece> => D, String => Opaque];
             DdlRegPiece::DdlRegLiteral => [String => Opaque];
             DdlRegPiece::DdlRegEscape => [String => Opaque];
@@ -138,6 +144,8 @@ macro_rules! rholang_source_profile_rows {
             DdlRegClassPiece::DdlRegClassEscape => [String => Opaque];
             DdlRegClassPiece::DdlRegClassHyphen => [String => Opaque];
             DdlRegClassPiece::DdlRegClassCaret => [String => Opaque];
+            DdlTermAttr::DdlTermAttrWord => [String => Opaque];
+            DdlTermAttr::DdlTermAttrCall => [String => Opaque, Arc<Int> => D];
             DdlBinding::DdlBindingPlain => [String => Opaque, Arc<DdlSort> => D];
             DdlBinding::DdlBindingBinder => [String => Opaque, String => Opaque, String => Opaque, String => Opaque];
             DdlSort::DdlSortHashBag => [String => Opaque];

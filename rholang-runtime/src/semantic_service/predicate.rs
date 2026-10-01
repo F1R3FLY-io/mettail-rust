@@ -1,6 +1,10 @@
 //! Where predicates select canonical roles and reuse the ordinary semantic service.
 use super::*;
 use dovetail::key::ContentKey;
+use mettail_grammar_core::{
+    ProjectionDirectionV1, ProjectionRelationBodyImageV1, SemanticEffectClassV1,
+    TheoryImageOperatorV1, TheoryImageTermFormV1,
+};
 use mettail_prattail::algebra_tower::Sat3;
 use mettail_rholang_codegen::ReflectedPositionalContext;
 
@@ -35,6 +39,96 @@ pub(super) fn select_role<C: FnMut() -> bool>(
                     ));
                 }
             }
+        }
+    }
+    Ok(selected)
+}
+
+/// Conservative structural dispatch for a projected guard. A constructor
+/// mismatch proves an action entry cannot match this FLT head; a matching or
+/// wildcard entry is only a *possible* candidate and is still checked by the
+/// existing action matcher. Never choose the first candidate on overlap.
+pub(super) fn select_projected_observation<C: FnMut() -> bool>(
+    installed: &InstalledLanguage,
+    input: &Par,
+    category: &str,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Option<usize>, InstalledSemanticError> {
+    if installed.projected_image().is_none() {
+        return Ok(None);
+    }
+    let owner = crate::language_install::grammar_fingerprint_label(
+        installed.commitment().language_fingerprint,
+    );
+    let context = ReflectedPositionalContext::new(&owner, budget)?;
+    let head = context
+        .view(input, budget)?
+        .ok_or(InstalledSemanticError::InvalidSelection("projected guard input is not an FLT"))?;
+    let language = installed.language_core();
+    let image = installed
+        .semantic_image()
+        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+    let mut selected = None;
+    for (observation_index, observation) in language.theory.observations.iter().enumerate() {
+        budget.charge(1, 0)?;
+        let action_index = super::find_exact_name(
+            language
+                .theory
+                .actions
+                .iter()
+                .map(|action| action.id.as_str()),
+            &observation.action,
+            budget,
+        )?
+        .ok_or(InstalledSemanticError::InvalidEvidence("observation action coordinate"))?;
+        let source_action = &language.theory.actions[action_index];
+        if source_action.domain.len() != 1 || source_action.domain[0] != category {
+            continue;
+        }
+        let action = image
+            .actions
+            .get(action_index)
+            .filter(|action| action.id.0 as usize == action_index)
+            .ok_or(InstalledSemanticError::InvalidEvidence("action image coordinate"))?;
+        let mut possible = false;
+        for rule_id in &action.transitions {
+            budget.charge(1, 0)?;
+            let rule = image
+                .rules
+                .get(rule_id.0 as usize)
+                .ok_or(InstalledSemanticError::InvalidEvidence("action entry rule"))?;
+            let root = rule
+                .terms
+                .get(rule.left.0 as usize)
+                .ok_or(InstalledSemanticError::InvalidEvidence("action entry root"))?;
+            match &root.form {
+                TheoryImageTermFormV1::Apply {
+                    operator: TheoryImageOperatorV1::Constructor(id),
+                    ..
+                } => {
+                    let constructor = language
+                        .theory
+                        .constructors
+                        .get(id.0 as usize)
+                        .ok_or(InstalledSemanticError::InvalidEvidence("entry constructor"))?;
+                    budget.charge(constructor.name.len(), 0)?;
+                    possible |= constructor.name == head.label();
+                },
+                _ => possible = true,
+            }
+        }
+        if !possible || select_boolean_projection(installed, action.codomain, budget)?.is_none() {
+            continue;
+        }
+        if action.effect_class != SemanticEffectClassV1::Pure {
+            return Err(InstalledSemanticError::InvalidSelection(
+                "projected where action is not pure",
+            ));
+        }
+        if selected.replace(observation_index).is_some() {
+            return Err(InstalledSemanticError::InvalidSelection(
+                "multiple projected observations may match this FLT head",
+            ));
         }
     }
     Ok(selected)
@@ -142,6 +236,92 @@ pub(super) fn role_keys<C: FnMut() -> bool>(
         })?
         .map_err(InstalledSemanticError::PredicateRole)?
         .ok_or(InstalledSemanticError::InvalidSelection("missing selected predicate role"))
+}
+
+/// A qualified where FLT supplies the guest category; the host Boolean
+/// endpoint is fixed by the Rholang guard contract. Exactly one installed
+/// guest-to-host rule relation may connect those endpoints. No constructor
+/// spelling, source text, or first-match ordering selects a projection.
+pub(super) struct SelectedBooleanProjection {
+    pub projection: u32,
+    pub input_sort: TheorySortId,
+    pub output_sort: TheorySortId,
+    pub required: Vec<LanguageRight>,
+}
+
+pub(super) fn select_boolean_projection<C: FnMut() -> bool>(
+    installed: &InstalledLanguage,
+    action_output_sort: TheorySortId,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Option<SelectedBooleanProjection>, InstalledSemanticError> {
+    let Some(projected) = installed.projected_image() else {
+        return Ok(None);
+    };
+    let core = installed
+        .projected_core()
+        .ok_or(InstalledSemanticError::InvalidEvidence("projected image has no projected core"))?;
+    let guest_sort = installed
+        .language_core()
+        .theory
+        .sorts
+        .get(action_output_sort.0 as usize)
+        .ok_or(InstalledSemanticError::InvalidEvidence("action output sort coordinate"))?;
+    let mut selected = None;
+    for relation in &projected.relations {
+        budget.charge(1, 0)?;
+        if relation.direction != ProjectionDirectionV1::GuestToHost
+            || relation.input_sort != action_output_sort
+        {
+            continue;
+        }
+        let descriptor = core
+            .projections
+            .get(relation.projection as usize)
+            .ok_or(InstalledSemanticError::InvalidEvidence("projection source coordinate"))?;
+        budget.charge(descriptor.guest_category.len() + descriptor.host.category.len(), 0)?;
+        if descriptor.guest_category != guest_sort.name || descriptor.host.category != "Bool" {
+            continue;
+        }
+        if selected.is_some() {
+            return Err(InstalledSemanticError::InvalidSelection(
+                "more than one Boolean projection matches the guard endpoint",
+            ));
+        }
+        let output = projected
+            .execution
+            .sorts
+            .get(relation.output_sort.0 as usize)
+            .ok_or(InstalledSemanticError::InvalidEvidence("projection output sort coordinate"))?;
+        if (relation.output_sort.0 as usize) < installed.language_core().theory.sorts.len()
+            || !matches!(
+                &output.kind,
+                TheorySortKindImageV1::Syntax {
+                    literal: Some(TheoryLiteralCarrierV1::Boolean)
+                }
+            )
+        {
+            return Err(InstalledSemanticError::InvalidEvidence(
+                "selected host endpoint is not the checked Boolean carrier",
+            ));
+        }
+        if !matches!(relation.body, ProjectionRelationBodyImageV1::Rules(_)) {
+            return Err(InstalledSemanticError::InvalidSelection(
+                "where requires an executable Boolean projection rule",
+            ));
+        }
+        let action = relation
+            .dispatch_action
+            .and_then(|id| projected.execution.actions.get(id.0 as usize))
+            .ok_or(InstalledSemanticError::InvalidEvidence("projection dispatch action"))?;
+        let required = action.required_rights.iter().collect();
+        selected = Some(SelectedBooleanProjection {
+            projection: relation.projection,
+            input_sort: relation.input_sort,
+            output_sort: relation.output_sort,
+            required,
+        });
+    }
+    Ok(selected)
 }
 
 /// Every original result occurrence is inspected; no set conversion, first

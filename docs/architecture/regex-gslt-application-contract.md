@@ -3,16 +3,17 @@
 This is the implementation and acceptance contract for an ordinary Rholang
 application that defines a regular-expression language as a Generalised
 Structured Language Theory (GSLT), then uses foreign-language terms
-(FLTs) to match, search, replace, and guard receives. It is not a claim that the
-application or the public-node integration is already runnable.
+(FLTs) to match, search, replace, and guard receives. The isolated MeTTaIL-only
+F1r3node public-route acceptance test now runs this application; the remaining
+cases below define the broader completion contract.
 
-The existing [Regex fixture](../../rholang-runtime/tests/fixtures/regex_extension.rho)
+The earlier [Regex fixture](../../rholang-runtime/tests/fixtures/regex_extension.rho)
 installs a Module/Theory and executes three syntax-expansion rewrites. The
-[installed semantic service](installed-flt-judgments.md#installed-semantic-system-processes)
-already transports checked reductions and observations. Neither supplies the
-practical rule families or direct installed-FLT `where` integration specified
-here. The application must run through the isolated MeTTaIL-only F1r3node
-public entrypoint; a library test is an intermediate check, not that result.
+[practical application fixture](../../rholang-runtime/tests/fixtures/regex_gslt_application.rho)
+authors the larger rule families, observes their results, and uses a projected
+installed-FLT `where` guard. It must still pass through the isolated
+MeTTaIL-only F1r3node public entrypoint; a library test is an intermediate
+check, not that result.
 
 ## One source, one semantic implementation
 
@@ -24,7 +25,10 @@ once. Installing the resulting immutable language value produces an opaque
 handle. Each explicitly qualified FLT selects that handle and a declared
 category; its structural text-and-hole payload reaches the selected guest
 parser for its first parse. Neither declaration nor guest payload is printed
-and reparsed.
+and reparsed. The public node and MeTTaIL must use a compiler admitted by the
+checked native-comparison profile. Otherwise traversal of canonical `Data`
+maps fails closed during source preparation; disabling that check is not a
+demo setup step.
 
 Regex semantics belong to declared GSLT rules, compiled by the existing theory
 compiler and executed by the shared semantic transition kernel. The existing
@@ -136,8 +140,8 @@ refinements. `BTrue` and `BFalse` are explicit constructors; native Boolean
 intrinsic results require an explicit declared conversion, not tag coincidence.
 Their guest spellings are `yes` and `no`, respectively, so they do not collide
 with the shared lexer's native `true` and `false` terminals. For example,
-`doneBool(yes)` denotes `DoneBool(BTrue)`; constructor labels, not spelling,
-define the theorem's accepting and rejecting predicate roles.
+`doneBool(yes)` denotes `DoneBool(BTrue)`; the authored Boolean projection
+below, rather than the surface spelling, defines its host guard value.
 `admits_variables` controls guest-language native variable productions; it
 does not control FLT template metavariables. The Regex theory declares its
 categories closed to native variables so an unquoted character is parsed as
@@ -210,36 +214,47 @@ guest body is `fullMatch(a(b|c)+,${text:Text})`, in the existing receive's
 `where` position. The selector is the lexical installed handle `h`; the complete
 FLT spelling is ``h:Computation`fullMatch(a(b|c)+,${text:Text})` ``. A receive
 binds `text`, and its guarded continuation uses that received value only after
-the predicate succeeds. This is the target surface, not a claim that the
-current lowering already accepts an installed selector in that position.
+the predicate succeeds. The checked FLT and guard lowering already admit this
+surface form; the projected-Boolean execution path must pass the public-node
+acceptance test below.
 
-The host grammar already admits it. Its semantic meaning requires an explicit
-binding, since an FLT's selector/category does not name an observation. Extend
-the **existing observation declaration** with an optional checked predicate
-role: input constructor, closed accepting result term, and closed rejecting
-result term. Reuse the existing flat typed term representation. Do not add a
-second action registry, pattern language, or regex method to the host.
-The [canonical predicate-role contract](observation-predicate-roles.md) specifies
-the record, shared term-construction boundary, and versioned compatibility.
+The host grammar admits the FLT. Its selector and category identify the installed
+language and guest sort, but do not select an observation or make a guest term
+truthy. The Regex theory authors a one-way projection from completed
+`Computation` values to the host Boolean sort:
 
-For `FullMatch`, that role binds `CallFullMatch` to the observation's existing
-action, accepting `DoneBool(BTrue)` and rejecting `DoneBool(BFalse)`. `Nullable`
-may bind `CallNullable` in the same way. Derivative, search, and replacement
-results are not implicitly truthy. No category name, alias, fingerprint, or
-first-declared action grants a predicate role or execution authority.
+```rholang
+projection CompletedBoolean : Computation ~> host::Bool {
+  True : (DoneBool (BTrue)) ~> true;
+  False : (DoneBool (BFalse)) ~> false;
+}
+```
 
-Enrollment must check a unique binding per input constructor, its domain
-against the action, both closed result terms against the observation result
-sort, distinct accepting/rejecting terms under the actual structural comparison,
-and an effect-free, reject-safe execution path. The role belongs to canonical
-TheoryCore and its full-language commitment. Its versioned codec, module
-composition, admission, and cache compatibility must be checked explicitly;
-existing `language/2` and `language/3` artifacts must not silently change meaning.
+The existing Operational Semantics in Logical Form (OSLF) observation action
+performs the guest computation first. The guard then applies this installed
+projection to each complete result. `DoneBool(BTrue)` projects to host `true`;
+`DoneBool(BFalse)` projects to host `false`. Derivative, search, and replacement
+results acquire no implicit Boolean meaning. The projection's `~>` direction
+does not authorize a reverse conversion; bidirectional `<~>` behavior exists
+only where the language explicitly authors it.
 
-| Complete checked observation | Predicate verdict |
+Select the observation conservatively: its action must accept the FLT's exact
+guest category, its entry rules must remain possible for the input constructor,
+and its result sort must have exactly one executable guest-to-host Boolean
+projection. If multiple observations or projections remain possible, the guard
+is undetermined; it never chooses the first. The action must be pure, and the
+existing installed rights, resource bounds, and checked semantic service still
+govern execution. The compiled Rholang host profile needs its own host-owned
+`Bridge` grant; enabling that grant does not add `Bridge` to guest-language
+rights. An optional
+[`predicate_role`](observation-predicate-roles.md) can describe a separate
+closed-term predicate contract, but this projected Regex guard does not require
+one.
+
+| Complete checked observation and projection | Predicate verdict |
 |---|---|
-| Nonempty roster, every term equals the accepting term | Proven true |
-| Nonempty roster, every term equals the rejecting term | Proven false |
+| Nonempty roster, every projected value is host `true` | Proven true |
+| Nonempty roster, every projected value is host `false` | Proven false |
 | Mixed, unclassified, empty, or incomplete roster | Undetermined |
 | Exhaustion, cancellation, invalid result, missing authority, stale handle, or execution failure | Undetermined with a retained diagnostic; no successful commit |
 
@@ -334,8 +349,9 @@ Public-node acceptance additionally requires these distinct cases:
 2. Exhaustion/cancellation in the same guard and under `not`: no successful
    commit, a distinguishable refusal, no partial join consumption or output.
 3. Wrong handle/category, forged reflected data, stale/revoked authority,
-   missing observation/reduction rights, conflicting predicate bindings and
-   malformed hole fills: reject before effects; no alias or URI authority.
+   missing observation/reduction/projection rights, ambiguous observation or
+   Boolean projection selection, and malformed hole fills: reject before effects;
+   no alias or URI authority.
 4. Join-order, lexical shadowing, repeated-hole and nested-scope witnesses:
    exact received text reaches the intended declared slot without source
    interpolation, capture or message reordering.
@@ -368,7 +384,7 @@ specified reference model, not the emitted DDL, Rust code, wire decoder or node.
 
 Before each nontrivial implementation boundary, prove its precise refinement:
 rule/continuation execution to the reference functions; native carriers to
-scalars and byte cursors; predicate enrollment and complete-result
+scalars and byte cursors; unique observation/projection selection and complete-result
 classification; capture substitution; and atomic authority/funding commit.
 Then test the real source correspondence, including the negative cases above.
 Rocq compilation and a separate silent kernel check are both required, under

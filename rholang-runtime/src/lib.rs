@@ -68,7 +68,7 @@ pub mod fold_contract;
 pub mod guard_discharge;
 // Upper applications enter MeTTaIL through this bridge, not additional crate edges.
 #[cfg(feature = "rholang-runtime")]
-pub use mettail_grammar_core::{DefaultRuntimeHost, LanguageRights, RuntimePolicy};
+pub use mettail_grammar_core::{DefaultRuntimeHost, LanguageRight, LanguageRights, RuntimePolicy};
 #[cfg(feature = "rholang-runtime")]
 pub use mettail_rholang_codegen::EmptyFltResolver;
 /// ★ THE `where` → Dovetail/SFT WIRE, lowered half: the `rhoapi::Par` →
