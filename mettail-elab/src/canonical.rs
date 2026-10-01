@@ -794,11 +794,31 @@ pub fn value_to_installable_any_language_core(
     value: &RhoValue,
     host: Option<&core::ProjectionHostSignatureV1>,
 ) -> Result<InstallableAnyLanguageCore, ValueToCoreError> {
+    value_to_installable_any_language_core_resolving(value, None, host)
+}
+
+/// Resolve Registry references under the same checked host endpoint used by
+/// direct DDL elaboration. A Registry value cannot supply its own host roster
+/// or codec authority; callers must obtain `host` from a live installation.
+pub fn value_to_installable_any_language_core_with_resolver(
+    value: &RhoValue,
+    resolver: &dyn LanguageValueResolver,
+    host: Option<&core::ProjectionHostSignatureV1>,
+) -> Result<InstallableAnyLanguageCore, ValueToCoreError> {
+    value_to_installable_any_language_core_resolving(value, Some(resolver), host)
+}
+
+fn value_to_installable_any_language_core_resolving(
+    value: &RhoValue,
+    resolver: Option<&dyn LanguageValueResolver>,
+    host: Option<&core::ProjectionHostSignatureV1>,
+) -> Result<InstallableAnyLanguageCore, ValueToCoreError> {
     if crate::core_value::is_language_core_value(value) {
         return value_to_installable_language_core(value).map(InstallableAnyLanguageCore::Legacy);
     }
     admit_canonical_value(value).map_err(ValueToCoreError::Decode)?;
-    let schema = crate::schema::decode_composed(value, None).map_err(ValueToCoreError::Decode)?;
+    let schema =
+        crate::schema::decode_composed(value, resolver).map_err(ValueToCoreError::Decode)?;
     let requested_rights = schema.requested_rights();
     if schema.has_projections() {
         let host = host.ok_or_else(|| {

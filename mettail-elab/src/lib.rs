@@ -656,6 +656,28 @@ mod tests {
             .projected_language_core
             .as_ref()
             .expect("projection retained");
+        struct NoOtherLanguages;
+        impl canonical::LanguageValueResolver for NoOtherLanguages {
+            fn resolve_language(&self, _name: &str) -> Result<Option<canonical::RhoValue>, String> {
+                Ok(None)
+            }
+        }
+        let resolved = canonical::value_to_installable_any_language_core_with_resolver(
+            &projected.canonical_value,
+            &NoOtherLanguages,
+            Some(&host),
+        )
+        .expect("Registry decoding retains the same bound projection core");
+        let canonical::InstallableAnyLanguageCore::Projected(resolved) = resolved else {
+            panic!("Registry projection cannot fall back to a V1 core");
+        };
+        assert_eq!(resolved.language, versioned.clone());
+        assert!(canonical::value_to_installable_any_language_core_with_resolver(
+            &projected.canonical_value,
+            &NoOtherLanguages,
+            None,
+        )
+        .is_err());
         assert_eq!(versioned.projections.len(), 1);
         assert_eq!(versioned.base, projected.language_core);
         let mut equivalent_unprojected_value = projected.canonical_value.clone();
