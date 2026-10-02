@@ -206,6 +206,9 @@ fn service_diagnostic(error: InstalledSemanticError) -> ReplyBody {
         UnknownObservation => 4,
         InvalidSelection(_) => 5,
         InvalidEvidence(_) => 6,
+        AmbiguousTerminalQuery => {
+            return ReplyBody::Undetermined(DiagnosticDomain::Service, 8);
+        },
         Access(error) => {
             let code = match error {
                 LanguageAccessError::WrongRegistry => 0,

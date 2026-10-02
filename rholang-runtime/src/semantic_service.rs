@@ -10,7 +10,7 @@ use mettail_dovetail_runtime::{
     theory_positional_native_view, ProjectedMatcherRestoreError, RuntimeLiteralRef,
     SemanticActionExecutionRequest, SemanticInputLimits, SemanticMatchRefutation,
     SemanticMatchUndetermined, SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt,
-    SemanticProjectionDecision, SemanticProjectionExecutionRequest,
+    SemanticProjectionDecision, SemanticProjectionExecutionRequest, SemanticProjectionReceipt,
     SemanticRelationExecutionRequest, SemanticRelationNormalFormReceipt, SemanticResourceReceipt,
     SemanticTransition, SemanticTransitionDecision, SemanticTransitionInput,
     SemanticTransitionLimits, SemanticTransitionMatcher, SemanticTransitionReceipt,
@@ -30,7 +30,11 @@ use rspace_plus_plus::rspace::{errors::RSpaceError, rspace_interface::ProduceCom
 use std::sync::Arc;
 
 pub(crate) mod predicate;
+mod relation_observation;
 mod wire;
+pub use relation_observation::{
+    RelationObservationReport, RelationObservationRequest, RelationObservationResult,
+};
 pub use wire::{
     semantic_runtime_definitions, LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_OBSERVE_URN,
     LANGUAGE_SEMANTIC_REDUCE_URN,
@@ -124,6 +128,7 @@ pub enum InstalledSemanticError {
     UnknownObservation,
     InvalidSelection(&'static str),
     InvalidEvidence(&'static str),
+    AmbiguousTerminalQuery,
     Refuted(SemanticMatchRefutation),
     Undetermined(SemanticMatchUndetermined),
     Resource(DynamicReflectionError),
@@ -710,61 +715,86 @@ fn prepare_projected_predicate_results<C: FnMut() -> bool>(
             return Err(InstalledSemanticError::InvalidEvidence("projection result aggregate"));
         }
         for value in &proven.values {
-            let receipt = &value.receipt;
-            budget.charge(
-                expected_input
-                    .len()
-                    .checked_add(1)
-                    .ok_or(DynamicReflectionError::WorkLimit)?,
-                0,
+            let current = classify_fresh_projection_value(
+                installed,
+                image,
+                projection,
+                &proven,
+                value,
+                expected_input.as_bytes(),
+                aggregate,
+                budget,
             )?;
-            if receipt.projected_language_fingerprint != installed.commitment().language_fingerprint
-                || receipt.base_image_fingerprint != image.base_image_fingerprint
-                || Some(receipt.image_fingerprint)
-                    != installed.commitment().semantic_image_fingerprint
-                || receipt.host_signature_fingerprint != image.host_signature_fingerprint
-                || receipt.host_codec_profile_fingerprint != image.host_codec_profile_fingerprint
-                || receipt.projection != projection.projection
-                || receipt.direction != ProjectionDirectionV1::GuestToHost
-                || receipt.input_sort != projection.input_sort
-                || receipt.output_sort != projection.output_sort
-                || value.output_sort != projection.output_sort
-                || receipt.input != expected_input.as_bytes()
-                || receipt.work != aggregate
-            {
-                return Err(InstalledSemanticError::InvalidEvidence("projection receipt envelope"));
-            }
-            let viewed = budget
-                .run_accounted_stage(|limit, cancel| {
-                    let mut used = 0;
-                    let viewed = theory_positional_native_view(
-                        &image.execution,
-                        proven.egraph(),
-                        value.output,
-                        projection.output_sort,
-                        &mut used,
-                        limit,
-                        cancel,
-                    );
-                    (viewed, used)
-                })?
-                .map_err(InstalledSemanticError::Undetermined)?;
-            let current = match viewed {
-                Some(TheoryPositionalNativeView::Literal {
-                    sort: actual,
-                    value: RuntimeLiteralRef::Boolean(true),
-                }) if actual == projection.output_sort => Sat3::Sat,
-                Some(TheoryPositionalNativeView::Literal {
-                    sort: actual,
-                    value: RuntimeLiteralRef::Boolean(false),
-                }) if actual == projection.output_sort => Sat3::Unsat,
-                _ => Sat3::DontKnow,
-            };
             verdict = predicate::fold_uniform_candidate(verdict, current);
         }
     }
     budget.charge(0, 0)?;
     Ok(verdict.unwrap_or(Sat3::DontKnow))
+}
+
+/// The action predicate and authored terminal query inspect the same fresh
+/// projected-image receipt and Boolean carrier. Keeping this one check avoids
+/// divergent trust boundaries between the v1 and actionless routes.
+fn classify_fresh_projection_value<C: FnMut() -> bool>(
+    installed: &InstalledLanguage,
+    image: &mettail_grammar_core::ProjectedTheorySemanticImageV1,
+    projection: &predicate::SelectedBooleanProjection,
+    proven: &mettail_dovetail_runtime::ProvenSemanticProjections,
+    value: &mettail_dovetail_runtime::SemanticProjectionValue,
+    expected_input: &[u8],
+    aggregate: u64,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<mettail_prattail::algebra_tower::Sat3, InstalledSemanticError> {
+    use mettail_prattail::algebra_tower::Sat3;
+    let receipt = &value.receipt;
+    budget.charge(
+        expected_input
+            .len()
+            .checked_add(1)
+            .ok_or(DynamicReflectionError::WorkLimit)?,
+        0,
+    )?;
+    if receipt.projected_language_fingerprint != installed.commitment().language_fingerprint
+        || receipt.base_image_fingerprint != image.base_image_fingerprint
+        || Some(receipt.image_fingerprint) != installed.commitment().semantic_image_fingerprint
+        || receipt.host_signature_fingerprint != image.host_signature_fingerprint
+        || receipt.host_codec_profile_fingerprint != image.host_codec_profile_fingerprint
+        || receipt.projection != projection.projection
+        || receipt.direction != ProjectionDirectionV1::GuestToHost
+        || receipt.input_sort != projection.input_sort
+        || receipt.output_sort != projection.output_sort
+        || value.output_sort != projection.output_sort
+        || receipt.input != expected_input
+        || receipt.work != aggregate
+    {
+        return Err(InstalledSemanticError::InvalidEvidence("projection receipt envelope"));
+    }
+    let viewed = budget
+        .run_accounted_stage(|limit, cancel| {
+            let mut used = 0;
+            let viewed = theory_positional_native_view(
+                &image.execution,
+                proven.egraph(),
+                value.output,
+                projection.output_sort,
+                &mut used,
+                limit,
+                cancel,
+            );
+            (viewed, used)
+        })?
+        .map_err(InstalledSemanticError::Undetermined)?;
+    Ok(match viewed {
+        Some(TheoryPositionalNativeView::Literal {
+            sort: actual,
+            value: RuntimeLiteralRef::Boolean(true),
+        }) if actual == projection.output_sort => Sat3::Sat,
+        Some(TheoryPositionalNativeView::Literal {
+            sort: actual,
+            value: RuntimeLiteralRef::Boolean(false),
+        }) if actual == projection.output_sort => Sat3::Unsat,
+        _ => Sat3::DontKnow,
+    })
 }
 
 /// Classify only the complete roster returned by the installed theory's
@@ -1386,6 +1416,26 @@ fn charge_relation_receipt_transport<C: FnMut() -> bool>(
     charge_receipt_payload(&receipt.input, budget)?;
     charge_receipt_payload(&receipt.output, budget)?;
     charge_normalization_hops(&receipt.normalization_hops, budget)
+}
+
+/// Projection receipts use the same bounded proof-payload traversal as the
+/// existing action and relation receipts. Their fixed descriptor contains five
+/// full commitments, endpoint coordinates, source occurrence, rule, and work.
+fn charge_projection_receipt_transport<C: FnMut() -> bool>(
+    receipt: &SemanticProjectionReceipt,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), DynamicReflectionError> {
+    budget.charge(1, 189)?;
+    charge_receipt_payload(&receipt.input, budget)?;
+    charge_receipt_payload(&receipt.output, budget)?;
+    match &receipt.resource {
+        SemanticResourceReceipt::NoSemanticGrade => budget.charge(1, 1)?,
+        SemanticResourceReceipt::Checked { grade, .. } => {
+            budget.charge(1, 37)?;
+            charge_receipt_payload(grade, budget)?;
+        },
+    }
+    charge_receipt_premises(&receipt.premises, budget)
 }
 
 fn charge_normalization_hops<C: FnMut() -> bool>(

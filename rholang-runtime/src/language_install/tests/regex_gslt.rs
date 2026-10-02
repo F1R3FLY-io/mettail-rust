@@ -391,6 +391,78 @@ fn assert_regex_observation(
 }
 
 #[test]
+fn authored_regex_terminal_judgments_observe_all_result_categories_without_actions() {
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(SOURCE))
+        .expect("complete Regex theory installs");
+    let handle = &batch.exports[0].handle;
+    let observe = |label: &str, terminal_judgment: &str, input: &Par, expected: &Par| {
+        let report = runtime.execute_relation_observation(
+            RelationObservationRequest {
+                handle,
+                relation_category: "Computation",
+                terminal_judgment,
+                terminal_projection: "TerminalVerdict",
+                input,
+                limits: SemanticServiceLimits::default(),
+            },
+            || false,
+        );
+        let results = report.outcome.unwrap_or_else(|error| {
+            panic!("{label}: {error:?}; work={}; kernel={:?}", report.work, report.kernel_work)
+        });
+        assert_eq!(results.len(), 1, "{label}: one admitted complete normal form");
+        assert_eq!(results[0].term.cmp(expected), std::cmp::Ordering::Equal, "{label}");
+        assert!(!results[0].terminal_receipts.is_empty());
+        assert!(!results[0].projection_receipts.is_empty());
+    };
+    for (text, expected_text) in [("abcb", "doneBool(yes)"), ("ax", "doneBool(no)")] {
+        let input = text_computation(&runtime, handle, &["fullMatch(a(b|c)+,", ")"], &[text]);
+        let expected = computation(&runtime, handle, expected_text);
+        observe("full match", "CheckBooleanTerminal", &input, &expected);
+    }
+    observe(
+        "nullable",
+        "CheckBooleanTerminal",
+        &computation(&runtime, handle, "nullable(())"),
+        &computation(&runtime, handle, "doneBool(yes)"),
+    );
+    observe(
+        "derivative",
+        "CheckPatternTerminal",
+        &computation(&runtime, handle, "derivative(a,a+)"),
+        &computation(&runtime, handle, "donePattern(a*)"),
+    );
+    observe(
+        "search",
+        "CheckMatchTerminal",
+        &text_computation(&runtime, handle, &["search(a+,", ")"], &["xaaab"]),
+        &text_computation(&runtime, handle, &["doneMatch(found(1,4,", "))"], &["aaa"]),
+    );
+    for (operation, expected_text) in [("replaceFirst", "bxc"), ("replaceAll", "xbx")] {
+        let input = text_computation(
+            &runtime,
+            handle,
+            &[&format!("{operation}(a+,literal("), "),", ")"],
+            &[
+                "x",
+                if operation == "replaceFirst" {
+                    "baac"
+                } else {
+                    "aaba"
+                },
+            ],
+        );
+        let expected = text_computation(&runtime, handle, &["doneText(", ")"], &[expected_text]);
+        observe(operation, "CheckTextTerminal", &input, &expected);
+    }
+}
+
+#[test]
 fn practical_regex_gslt_full_match_search_and_replacement_application_matrix() {
     let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
         Arc::new(MemoryRegistry::default()),

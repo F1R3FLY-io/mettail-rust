@@ -254,6 +254,30 @@ pub(super) fn select_boolean_projection<C: FnMut() -> bool>(
     action_output_sort: TheorySortId,
     budget: &mut ReflectedCodecBudget<'_, C>,
 ) -> Result<Option<SelectedBooleanProjection>, InstalledSemanticError> {
+    select_boolean_projection_inner(installed, action_output_sort, None, budget)
+}
+
+/// An authored observation names its terminal projection exactly. Other
+/// Boolean projections from the same guest sort remain valid independent
+/// relations; they are not candidates for this request.
+pub(super) fn select_named_boolean_projection<C: FnMut() -> bool>(
+    installed: &InstalledLanguage,
+    input_sort: TheorySortId,
+    name: &str,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Option<SelectedBooleanProjection>, InstalledSemanticError> {
+    select_boolean_projection_inner(installed, input_sort, Some(name), budget)
+}
+
+fn select_boolean_projection_inner<C: FnMut() -> bool>(
+    installed: &InstalledLanguage,
+    action_output_sort: TheorySortId,
+    requested_name: Option<&str>,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Option<SelectedBooleanProjection>, InstalledSemanticError> {
+    if let Some(name) = requested_name {
+        budget.charge(name.len(), 0)?;
+    }
     let Some(projected) = installed.projected_image() else {
         return Ok(None);
     };
@@ -279,6 +303,12 @@ pub(super) fn select_boolean_projection<C: FnMut() -> bool>(
             .get(relation.projection as usize)
             .ok_or(InstalledSemanticError::InvalidEvidence("projection source coordinate"))?;
         budget.charge(descriptor.guest_category.len() + descriptor.host.category.len(), 0)?;
+        if let Some(name) = requested_name {
+            budget.charge(descriptor.name.len(), 0)?;
+            if descriptor.name != name {
+                continue;
+            }
+        }
         if descriptor.guest_category != guest_sort.name || descriptor.host.category != "Bool" {
             continue;
         }

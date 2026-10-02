@@ -57,9 +57,10 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
 pub use crate::semantic_service::{
-    semantic_runtime_definitions, InstalledSemanticError, SemanticOperation, SemanticServiceLimits,
-    SemanticServiceReport, SemanticServiceRequest, SemanticServiceResult, LANGUAGE_SEMANTIC_ABI_V1,
-    LANGUAGE_SEMANTIC_OBSERVE_URN, LANGUAGE_SEMANTIC_REDUCE_URN,
+    semantic_runtime_definitions, InstalledSemanticError, RelationObservationReport,
+    RelationObservationRequest, RelationObservationResult, SemanticOperation,
+    SemanticServiceLimits, SemanticServiceReport, SemanticServiceRequest, SemanticServiceResult,
+    LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_OBSERVE_URN, LANGUAGE_SEMANTIC_REDUCE_URN,
 };
 pub use mettail_elab::wire::DDL_AST_ENVELOPE_V2;
 

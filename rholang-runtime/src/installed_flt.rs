@@ -563,22 +563,34 @@ impl<'a> InstalledFltAdapter<'a> {
         )
     }
 
-    /// The actionless relation has the same admitted e-graph and root shape as
-    /// an action result. Share the exact iterative reconstruction and charges;
-    /// do not serialize and reparse the guest term or choose one normal form.
-    pub(crate) fn reflect_relation_normal_forms<C: FnMut() -> bool>(
+    /// Reflect only terminal-admitted relation occurrences, in their
+    /// original kernel order. The selection is checked before any result is
+    /// exposed; no first-result or top-k choice is made here.
+    pub(crate) fn reflect_relation_selected<C: FnMut() -> bool>(
         &self,
         bundle: &ProvenSemanticRelationNormalForms,
+        indices: &[usize],
         expected_sort: TheorySortId,
         budget: &mut ReflectedCodecBudget<'_, C>,
     ) -> Result<Vec<Par>, InstalledFltError> {
+        let forms = bundle.normal_forms();
+        let mut last = None;
+        for &index in indices {
+            budget.charge(1, 0)?;
+            if index >= forms.len() || last.is_some_and(|previous| previous >= index) {
+                return Err(InstalledFltError::UnsupportedOrMalformed(
+                    "relation selection is not an ordered subroster",
+                ));
+            }
+            last = Some(index);
+        }
         self.reflect_roots(
             bundle.egraph(),
-            bundle
-                .normal_forms()
-                .iter()
-                .map(|form| (form.output, form.output_sort)),
-            bundle.normal_forms().len(),
+            indices.iter().map(|&index| {
+                let form = &forms[index];
+                (form.output, form.output_sort)
+            }),
+            indices.len(),
             expected_sort,
             budget,
         )
