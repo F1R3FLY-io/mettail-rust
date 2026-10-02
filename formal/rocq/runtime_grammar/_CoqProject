@@ -103,6 +103,7 @@ theories/SemanticWorkTransport.v
 theories/InstalledSemanticService.v
 theories/SemanticReceiptTransport.v
 theories/SemanticReceiptWire.v
+theories/SemanticRelationWire.v
 theories/SemanticWireScalar.v
 theories/SemanticResultMerge.v
 theories/SemanticResultPermutation.v

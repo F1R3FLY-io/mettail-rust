@@ -54,6 +54,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.InstalledSemanticService \
 	RuntimeGrammar.SemanticReceiptTransport \
 	RuntimeGrammar.SemanticReceiptWire \
+	RuntimeGrammar.SemanticRelationWire \
 	RuntimeGrammar.SemanticWireScalar \
 	RuntimeGrammar.SemanticResultMerge \
 	RuntimeGrammar.SemanticResultPermutation \
