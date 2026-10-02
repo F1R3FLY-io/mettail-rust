@@ -129,6 +129,14 @@ The implementation resolves exact representations, range/refinement restrictions
 
 This shorthand is a declared use of an existing or registered structural codec, not automatic invention of a converter. For a pair lacking a suitable codec, installation reports the missing endpoint contract. The proposal does not require a custom evaluator for each guest language.
 
+### Derived structural display is a separate, one-way projection
+
+A guest category need not be a string literal to have a useful `host::Str` *display* projection. For a checked first-order constructor tree, the compiler can derive a canonical S-expression from the declared constructor labels, ordered fields, and exact native leaves. For example, a Regex `Pattern` may display as `(PStar (PLiteral "a"))`. The category name alone is not enough to derive that value; the complete constructor closure and the installed grammar fingerprint fix its meaning. This is a presentation of the term, not a claim that the guest term itself has String carrier or that the result parses back into a guest term. In particular, it is directed guest-to-host, never an automatically inferred `<~>`.
+
+The derivation is available only when every reachable field has a checked, public rendering. A private name, capability, unsupported carrier, or unresolved child sort makes the derivation unavailable; the implementation must neither stringify opaque bytes nor silently omit a field. Using the derived relation still requires explicit selection of the installed language and category, Bridge authority, the pinned `host::Str` codec, and the caller's work, output-byte, and cancellation limits. It must not alter ordinary FLT values, `stdout!`, or any GSLT rewrite relation. That isolation lets an application remove display calls without changing evaluation semantics.
+
+The intended implementation is a stack-safe catamorphism over the already admitted structural term: visit the checked constructor/native view with an explicit work stack, emit escaped S-expression tokens under the shared allowance, and materialize the result through the existing Rholang ground-String codec. It must preserve all semantic alternatives and their provenance; display is applied to each selected result, not to an arbitrary first result. The formal admission/refusal and budget model is in [DerivedSExprProjection.v](../../../formal/rocq/runtime_grammar/theories/DerivedSExprProjection.v); the exact native String carrier is modeled separately in [ExactStringCarrierProjection.v](../../../formal/rocq/runtime_grammar/theories/ExactStringCarrierProjection.v). A concrete-syntax printer based on `Terms` may be added as a distinct presentation when its ambiguity and round-trip policy are specified; it is not the default here.
+
 ## Worked examples
 
 ### Regex Boolean values and completed computations

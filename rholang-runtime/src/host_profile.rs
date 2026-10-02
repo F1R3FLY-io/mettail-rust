@@ -1,10 +1,10 @@
-//! Compiled Rholang's exact, ground-Boolean host-profile provider.
+//! Compiled Rholang's exact, ground-Boolean-and-String host-profile provider.
 //!
 //! The checked `language!` expansion supplies the roster and generated typed
 //! adapter commitment. This node-side provider pins the existing AST-first
-//! `BoolLit`/`GBool` transport as an additional implementation epoch. It does
-//! not parse source, stringify a value, or claim the rest of Rholang's `Bool`
-//! category (notably variables) is transportable.
+//! `BoolLit`/`GBool` and `StringLit`/`GString` transports as an additional
+//! implementation epoch. It does not parse source, stringify arbitrary values,
+//! or claim non-ground inhabitants of either category are transportable.
 
 use crate::{fold_contract::par_ground_to_proc, rholang_ast};
 use mettail_grammar_core::{
@@ -15,7 +15,7 @@ use mettail_grammar_core::{
     ProjectionImageCompiler, RuntimeCapabilityKey, RuntimeCapabilityManifest, RuntimeEffect,
     RuntimeLogicalCost, TheoryImageAdmissionLimits, TheoryLiteralCarrierV1, TheorySortKindV1,
 };
-use mettail_languages::rholang::{Bool, Proc, RholangMetadata};
+use mettail_languages::rholang::{Bool, Proc, RholangMetadata, Str};
 use mettail_runtime::{GeneratedSemanticKeyAbiV1, LanguageMetadata};
 use models::rhoapi::Par;
 use std::{collections::BTreeSet, sync::Arc};
@@ -47,8 +47,8 @@ pub enum RholangHostProfileError {
     Install(HostProfileInstallError),
 }
 
-/// An immutable, compiled provider. Its only supported value domain is the
-/// generated Rholang `Bool::BoolLit` ground fragment named by its descriptor.
+/// An immutable, compiled provider for the generated Rholang ground scalar
+/// fragments named by its exact checked descriptor.
 pub struct RholangHostProfileProvider {
     record: Vec<u8>,
     descriptor: Vec<u8>,
@@ -77,16 +77,25 @@ impl RholangHostProfileProvider {
             || payload.definition_fingerprint
                 != metadata.definition_fingerprint().unwrap_or_default()
             || payload.coverage != ProjectionHostCoverageV1::ExactFragment
-            || payload.sorts.len() != 1
-            || payload.sorts[0].name != "Bool"
-            || payload.sorts[0].kind
-                != (TheorySortKindV1::Syntax {
-                    literal: Some(TheoryLiteralCarrierV1::Boolean),
-                })
+            || payload.sorts.len() != 2
+            || !payload.sorts.iter().any(|sort| {
+                sort.name == "Bool"
+                    && sort.kind
+                        == TheorySortKindV1::Syntax {
+                            literal: Some(TheoryLiteralCarrierV1::Boolean),
+                        }
+            })
+            || !payload.sorts.iter().any(|sort| {
+                sort.name == "Str"
+                    && sort.kind
+                        == TheorySortKindV1::Syntax {
+                            literal: Some(TheoryLiteralCarrierV1::String),
+                        }
+            })
             || !payload.constructors.is_empty()
         {
             return Err(RholangHostProfileError::UnsupportedGeneratedFragment(
-                "generated profile is not the exact Rholang Boolean fragment",
+                "generated profile is not the exact Rholang Boolean and String fragment",
             ));
         }
         let descriptor: ProjectionHostScalarCodecDescriptorV1 =
@@ -94,18 +103,24 @@ impl RholangHostProfileProvider {
                 RholangHostProfileError::InvalidGeneratedRecord(error.to_string())
             })?;
         if descriptor.semantic_key_abi != Some(GeneratedSemanticKeyAbiV1::StructuralV2 as u16)
-            || descriptor.entries.len() != 1
-            || descriptor.entries[0].sort != "Bool"
-            || descriptor.entries[0].native_type != "bool"
-            || descriptor.entries[0].carrier != TheoryLiteralCarrierV1::Boolean
-            || descriptor.entries[0].domain != ProjectionHostScalarDomainV1::GroundLiteralOnly
-            || !matches!(
-                descriptor.entries[0].route,
-                ProjectionHostScalarRouteV1::SemanticTransit { .. }
-            )
+            || descriptor.entries.len() != 2
+            || !descriptor.entries.iter().any(|entry| {
+                entry.sort == "Bool"
+                    && entry.native_type == "bool"
+                    && entry.carrier == TheoryLiteralCarrierV1::Boolean
+                    && entry.domain == ProjectionHostScalarDomainV1::GroundLiteralOnly
+                    && matches!(entry.route, ProjectionHostScalarRouteV1::SemanticTransit { .. })
+            })
+            || !descriptor.entries.iter().any(|entry| {
+                entry.sort == "Str"
+                    && entry.native_type == "str"
+                    && entry.carrier == TheoryLiteralCarrierV1::String
+                    && entry.domain == ProjectionHostScalarDomainV1::GroundLiteralOnly
+                    && matches!(entry.route, ProjectionHostScalarRouteV1::SemanticTransit { .. })
+            })
         {
             return Err(RholangHostProfileError::UnsupportedGeneratedFragment(
-                "Boolean route, carrier, or value domain changed",
+                "Boolean or String route, carrier, or value domain changed",
             ));
         }
         // Boolean has exactly two ground inhabitants, so admission can check
@@ -115,6 +130,16 @@ impl RholangHostProfileProvider {
             if Self::bool_from_host(&host) != Some(value) {
                 return Err(RholangHostProfileError::UnsupportedGeneratedFragment(
                     "compiled Boolean host codec failed its complete ground round trip",
+                ));
+            }
+        }
+        // String is infinite, so the descriptor and generated type route seal
+        // the admitted domain; these witnesses exercise escaping and Unicode.
+        for value in ["", "plain", "a\0b", "line\nfeed", "\"quoted\"", "λ🦀"] {
+            let host = Self::string_to_host(value)?;
+            if Self::string_from_host(&host).as_deref() != Some(value) {
+                return Err(RholangHostProfileError::UnsupportedGeneratedFragment(
+                    "compiled String host codec failed a ground round trip witness",
                 ));
             }
         }
@@ -177,6 +202,25 @@ impl RholangHostProfileProvider {
         }
     }
 
+    /// The checked `Str::StringLit` to host-`GString` route. This is an exact
+    /// value transport, not a formatter for arbitrary guest terms.
+    pub fn string_to_host(value: &str) -> Result<Par, RholangHostProfileError> {
+        let term = Proc::CastStr(Arc::new(Str::StringLit(value.to_owned())));
+        rholang_ast::lower_rholang_proc(&term).map_err(RholangHostProfileError::HostLowering)
+    }
+
+    /// Inverse of `string_to_host` on the ground String fragment only.
+    pub fn string_from_host(value: &Par) -> Option<String> {
+        let decoded = par_ground_to_proc(value)?;
+        match &decoded {
+            Proc::CastStr(term) => match term.as_ref() {
+                Str::StringLit(value) => Some(value.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn record(&self) -> &[u8] {
         &self.record
     }
@@ -205,7 +249,7 @@ mod tests {
     use mettail_grammar_core::{HostProfileAccessError, LanguageRight};
 
     #[test]
-    fn generated_boolean_fragment_installs_and_round_trips_both_values() {
+    fn generated_scalar_fragment_installs_and_round_trips_ground_values() {
         let provider = RholangHostProfileProvider::from_generated().unwrap();
         let record = ProjectionHostProfileRecordV1::decode_canonical(provider.record()).unwrap();
         assert_eq!(record.payload.language_version, "1.4-preview.1");
@@ -223,6 +267,11 @@ mod tests {
         for value in [false, true] {
             let host = RholangHostProfileProvider::bool_to_host(value).unwrap();
             assert_eq!(RholangHostProfileProvider::bool_from_host(&host), Some(value));
+        }
+        for value in ["", "plain", "a\0b", "line\nfeed", "\"quoted\"", "λ🦀"] {
+            let host = RholangHostProfileProvider::string_to_host(value).unwrap();
+            assert_eq!(RholangHostProfileProvider::string_from_host(&host).as_deref(), Some(value));
+            assert_eq!(RholangHostProfileProvider::bool_from_host(&host), None);
         }
         table.revoke_host_profile(grant.revocation).unwrap();
         assert!(matches!(

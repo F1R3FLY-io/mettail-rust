@@ -920,7 +920,7 @@ pub(crate) fn derive_semantic_artifacts(
 /// Derive a data-only exact scalar host-profile fragment from the same checked
 /// grammar bridge and typed adapter census as the generated semantic backend.
 /// This does not install a codec. A category enters the fragment only when it
-/// has exactly one native Boolean literal variant with an exact carrier. Other
+/// has exactly one native Boolean or String literal variant with an exact carrier. Other
 /// variants make the entry's value domain ground-literal-only. Closed data uses
 /// its grammar category identity, never an invented semantic-transit operator;
 /// the provider must independently verify and seal the descriptor before use.
@@ -944,9 +944,15 @@ pub(crate) fn derive_scalar_host_profile_record(
     let mut sorts = Vec::new();
     let mut entries = Vec::new();
     for category in &grammar.categories {
-        if !matches!(&category.carrier, core::Carrier::Builtin(core::BuiltinCarrier::Boolean)) {
-            continue;
-        }
+        let (carrier, native_carrier) = match &category.carrier {
+            core::Carrier::Builtin(core::BuiltinCarrier::Boolean) => {
+                (core::TheoryLiteralCarrierV1::Boolean, "bool")
+            },
+            core::Carrier::Builtin(core::BuiltinCarrier::String) => {
+                (core::TheoryLiteralCarrierV1::String, "str")
+            },
+            _ => continue,
+        };
         let definition = language
             .types
             .iter()
@@ -961,7 +967,7 @@ pub(crate) fn derive_scalar_host_profile_record(
         };
         if literals.next().is_some() {
             return Err(format!(
-                "Boolean category `{}` has multiple native literal variants",
+                "scalar category `{}` has multiple native literal variants",
                 category.name
             ));
         }
@@ -969,15 +975,15 @@ pub(crate) fn derive_scalar_host_profile_record(
             .native_type
             .as_ref()
             .map(crate::gen::native::native_type_to_full_string)
-            .ok_or_else(|| format!("Boolean category `{}` has no native carrier", category.name))?;
+            .ok_or_else(|| format!("scalar category `{}` has no native carrier", category.name))?;
         if native_type
             .chars()
             .filter(|character| !character.is_whitespace())
             .collect::<String>()
-            != "bool"
+            != native_carrier
         {
             return Err(format!(
-                "Boolean category `{}` has incompatible native carrier `{native_type}`",
+                "scalar category `{}` has incompatible native carrier `{native_type}`",
                 category.name
             ));
         }
@@ -1002,11 +1008,11 @@ pub(crate) fn derive_scalar_host_profile_record(
                 .iter()
                 .find(|variant| variant.label() == literal.label())
                 .ok_or_else(|| {
-                    format!("checked adapter omits Boolean literal `{}`", literal.label())
+                    format!("checked adapter omits scalar literal `{}`", literal.label())
                 })?;
             let Some(operator_discriminant) = variant.operator_discriminant() else {
                 return Err(format!(
-                    "Boolean literal `{}` has no executable operator discriminant",
+                    "scalar literal `{}` has no executable operator discriminant",
                     literal.label()
                 ));
             };
@@ -1018,9 +1024,7 @@ pub(crate) fn derive_scalar_host_profile_record(
         };
         sorts.push(core::TheorySortV1 {
             name: category.name.clone(),
-            kind: core::TheorySortKindV1::Syntax {
-                literal: Some(core::TheoryLiteralCarrierV1::Boolean),
-            },
+            kind: core::TheorySortKindV1::Syntax { literal: Some(carrier.clone()) },
         });
         entries.push(core::ProjectionHostScalarCodecEntryV1 {
             sort: category.name.clone(),
@@ -1031,11 +1035,13 @@ pub(crate) fn derive_scalar_host_profile_record(
                 core::ProjectionHostScalarDomainV1::GroundLiteralOnly
             },
             native_type,
-            carrier: core::TheoryLiteralCarrierV1::Boolean,
+            carrier,
         });
     }
     if entries.is_empty() {
-        return Err("checked grammar has no exact native Boolean scalar category".to_string());
+        return Err(
+            "checked grammar has no exact native Boolean or String scalar category".to_string()
+        );
     }
     let complete_scalar_roster = sorts.len() == grammar.categories.len()
         && entries
@@ -2011,6 +2017,44 @@ mod tests {
             record.claimed_digests.signature_fingerprint,
             grammar_record.claimed_digests.signature_fingerprint
         );
+    }
+
+    #[test]
+    fn generated_string_fragment_uses_the_checked_native_string_route() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: StringHost,
+            version: "1.0-preview.1",
+            types { Proc ![str] as Str },
+            terms {
+                Zero . |- "0" : Proc;
+                Cast . value:Str |- value : Proc;
+            },
+            equations {},
+            rewrites {},
+        "#,
+        )
+        .unwrap();
+        let layout = SemanticAdapterLayout::derive(&language).unwrap();
+        let record = derive_scalar_host_profile_record(&language, &layout).unwrap();
+        assert_eq!(record.payload.sorts.len(), 1);
+        assert_eq!(record.payload.sorts[0].name, "Str");
+        assert_eq!(
+            record.payload.sorts[0].kind,
+            core::TheorySortKindV1::Syntax {
+                literal: Some(core::TheoryLiteralCarrierV1::String)
+            }
+        );
+        let descriptor: core::ProjectionHostScalarCodecDescriptorV1 =
+            postcard::from_bytes(&record.payload.codec.descriptor).unwrap();
+        let [entry] = descriptor.entries.as_slice() else {
+            panic!("expected one checked String scalar codec entry")
+        };
+        assert_eq!(entry.sort, "Str");
+        assert_eq!(entry.native_type, "str");
+        assert_eq!(entry.carrier, core::TheoryLiteralCarrierV1::String);
+        assert_eq!(entry.domain, core::ProjectionHostScalarDomainV1::GroundLiteralOnly);
+        assert!(matches!(entry.route, core::ProjectionHostScalarRouteV1::SemanticTransit { .. }));
     }
 
     fn fixture() -> LanguageDef {
