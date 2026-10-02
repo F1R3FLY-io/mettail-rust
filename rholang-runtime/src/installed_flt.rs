@@ -575,10 +575,10 @@ impl<'a> InstalledFltAdapter<'a> {
         self.reflect_roots(
             bundle.egraph(),
             bundle
-                .normal_forms
+                .normal_forms()
                 .iter()
                 .map(|form| (form.output, form.output_sort)),
-            bundle.normal_forms.len(),
+            bundle.normal_forms().len(),
             expected_sort,
             budget,
         )

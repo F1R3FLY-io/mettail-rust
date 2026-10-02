@@ -6,6 +6,7 @@ Module RegexGSLT {
     Types {
       noadmit Pattern;
       noadmit Computation;
+      noadmit TerminalQuery;
       noadmit NFrames;
       noadmit DFrames;
       noadmit EFrames;
@@ -33,6 +34,11 @@ Module RegexGSLT {
       CallDerivative . c:Scalar, p:Pattern |- "derivative(" c "," p ")" : Computation;
       DoneBool . b:Bool |- "doneBool(" b ")" : Computation;
       DonePattern . p:Pattern |- "donePattern(" p ")" : Computation;
+      CheckBooleanTerminal . x:Computation |- "terminalBool(" x ")" : TerminalQuery;
+      CheckPatternTerminal . x:Computation |- "terminalPattern(" x ")" : TerminalQuery;
+      CheckMatchTerminal . x:Computation |- "terminalMatch(" x ")" : TerminalQuery;
+      CheckTextTerminal . x:Computation |- "terminalText(" x ")" : TerminalQuery;
+      TerminalYes . |- "terminalYes" : TerminalQuery;
 
       CallFullMatch . p:Pattern, t:Text |- "fullMatch(" p "," t ")" : Computation;
       CallSearch . p:Pattern, t:Text |- "search(" p "," t ")" : Computation;
@@ -332,6 +338,14 @@ Module RegexGSLT {
       projection CompletedBoolean : Computation ~> host::Bool {
         True : (DoneBool (BTrue)) ~> true;
         False : (DoneBool (BFalse)) ~> false;
+      }
+
+      BooleanTerminal : (CheckBooleanTerminal (DoneBool B)) ~> (TerminalYes);
+      PatternTerminal : (CheckPatternTerminal (DonePattern P)) ~> (TerminalYes);
+      MatchTerminal : (CheckMatchTerminal (DoneMatch M)) ~> (TerminalYes);
+      TextTerminal : (CheckTextTerminal (DoneText T)) ~> (TerminalYes);
+      projection TerminalVerdict : TerminalQuery ~> host::Bool {
+        Yes : (TerminalYes) ~> true;
       }
 
       FullSurfaceDone: (FullSurface (EDone p) t) ~> (FullScan p t 0);

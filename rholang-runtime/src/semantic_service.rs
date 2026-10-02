@@ -842,12 +842,12 @@ fn prepare_native_predicate_results<C: FnMut() -> bool>(
     };
     if Some(proven.work) != *kernel_work
         || proven.work < admission
-        || proven.normal_forms.is_empty()
+        || proven.normal_forms().is_empty()
     {
         return Err(InstalledSemanticError::InvalidEvidence("relation result aggregate"));
     }
     let mut verdict = None;
-    for form in &proven.normal_forms {
+    for form in proven.normal_forms() {
         validate_fresh_relation_receipt(
             installed,
             sort,

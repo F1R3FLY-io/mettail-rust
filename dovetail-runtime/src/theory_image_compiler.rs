@@ -2821,9 +2821,12 @@ mod tests {
             panic!("all relation normal forms must be published together")
         };
         assert_eq!(proven.work, used);
-        assert_eq!(proven.normal_forms.len(), 2);
-        assert_ne!(proven.normal_forms[0].receipt.output, proven.normal_forms[1].receipt.output);
-        for form in &proven.normal_forms {
+        assert_eq!(proven.normal_forms().len(), 2);
+        assert_ne!(
+            proven.normal_forms()[0].receipt.output,
+            proven.normal_forms()[1].receipt.output
+        );
+        for form in proven.normal_forms() {
             assert_eq!(form.output_sort, TheorySortId(0));
             assert_eq!(form.receipt.work, used);
             assert_eq!(form.receipt.normalization_hops.len(), 1);
@@ -2858,8 +2861,8 @@ mod tests {
                 panic!("exhaustively irreducible Boolean literal must be a normal form")
             };
             assert_eq!(proven.work, used);
-            assert_eq!(proven.normal_forms.len(), 1);
-            let form = &proven.normal_forms[0];
+            assert_eq!(proven.normal_forms().len(), 1);
+            let form = &proven.normal_forms()[0];
             assert!(form.receipt.normalization_hops.is_empty());
             let mut view_work = 0;
             let view = crate::theory_positional_native_view(
@@ -2926,8 +2929,8 @@ mod tests {
         let SemanticTransitionDecision::ProvenRelation(proven) = decision else {
             panic!("explicit projector must normalize under the same relation")
         };
-        assert_eq!(proven.normal_forms.len(), 1);
-        let form = &proven.normal_forms[0];
+        assert_eq!(proven.normal_forms().len(), 1);
+        let form = &proven.normal_forms()[0];
         assert_eq!(form.receipt.normalization_hops.len(), 1);
         let mut view_work = 0;
         let view = crate::theory_positional_native_view(
@@ -3160,8 +3163,8 @@ mod tests {
                 panic!("direct relation returned a named-action result")
             },
         };
-        assert_eq!(proven.normal_forms.len(), 1);
-        let receipt = &proven.normal_forms[0].receipt;
+        assert_eq!(proven.normal_forms().len(), 1);
+        let receipt = &proven.normal_forms()[0].receipt;
         assert_eq!(receipt.input, receipt.output);
         assert!(receipt.normalization_hops.is_empty());
     }

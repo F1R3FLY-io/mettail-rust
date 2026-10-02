@@ -4682,7 +4682,7 @@ pub struct SemanticRelationNormalForm {
 
 pub struct ProvenSemanticRelationNormalForms {
     egraph: EGraph<FramedSemanticOperator>,
-    pub normal_forms: Vec<SemanticRelationNormalForm>,
+    normal_forms: Vec<SemanticRelationNormalForm>,
     pub work: u64,
     pub stats: SetAutomatonStats,
 }
@@ -4690,6 +4690,144 @@ pub struct ProvenSemanticRelationNormalForms {
 impl ProvenSemanticRelationNormalForms {
     pub fn egraph(&self) -> &EGraph<FramedSemanticOperator> {
         &self.egraph
+    }
+
+    /// Immutable roster from this kernel execution. Callers may inspect it,
+    /// but cannot substitute a different output before a subsequent checked
+    /// query is admitted from its exact e-graph.
+    pub fn normal_forms(&self) -> &[SemanticRelationNormalForm] {
+        &self.normal_forms
+    }
+
+    /// Admit one unary authored query around a proven normal form. The
+    /// existing reachable-graph projector copies only this result's closed
+    /// subgraph, then the existing exact-key admission machinery checks the
+    /// new root. No reflected term, source rendering, reparsing, or second
+    /// copy of the projected graph is involved.
+    pub fn admit_unary_query_at<C: FnMut() -> bool>(
+        &self,
+        index: usize,
+        image: &TheorySemanticImageV1,
+        constructor: TheoryConstructorId,
+        limits: SemanticInputLimits,
+        is_cancelled: C,
+    ) -> (SemanticInputDecision, u64) {
+        self.admit_at(index, Some((image, constructor)), limits, is_cancelled)
+    }
+
+    /// Re-admit a selected relation result as the input of a subsequent
+    /// installed projection. This shares the same closed, exact-keyed
+    /// reachable-graph projection as unary query admission.
+    pub fn admit_output_at<C: FnMut() -> bool>(
+        &self,
+        index: usize,
+        limits: SemanticInputLimits,
+        is_cancelled: C,
+    ) -> (SemanticInputDecision, u64) {
+        self.admit_at(index, None, limits, is_cancelled)
+    }
+
+    fn admit_at<C: FnMut() -> bool>(
+        &self,
+        index: usize,
+        query: Option<(&TheorySemanticImageV1, TheoryConstructorId)>,
+        limits: SemanticInputLimits,
+        mut is_cancelled: C,
+    ) -> (SemanticInputDecision, u64) {
+        let mut work = 0;
+        let admitted = (|| {
+            let form = self
+                .normal_forms
+                .get(index)
+                .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+            let operator =
+                query.map(|(_, constructor)| TheoryImageOperatorV1::Constructor(constructor));
+            let encoding = match (query, operator.as_ref()) {
+                (Some((image, constructor)), Some(operator)) => {
+                    let signature = image
+                        .constructors
+                        .get(constructor.0 as usize)
+                        .filter(|signature| signature.id == constructor)
+                        .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+                    if signature.domain.as_slice() != [form.output_sort] {
+                        return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+                    }
+                    Some(
+                        TheoryPositionalNativeEncoding::new(operator)?
+                            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?,
+                    )
+                },
+                (None, None) => None,
+                _ => return Err(SemanticMatchUndetermined::InvalidImageEvidence),
+            };
+            let query_bytes = match &encoding {
+                Some(encoding) => encoding
+                    .framed_bytes()
+                    .checked_add(12)
+                    .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?,
+                None => 0,
+            };
+            let source_nodes = limits
+                .nodes
+                .checked_sub(usize::from(encoding.is_some()))
+                .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?;
+            let source_bytes = limits
+                .bytes
+                .checked_sub(query_bytes)
+                .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?;
+            let (mut graph, remap) = project_reachable_egraph(
+                &self.egraph,
+                &[form.output],
+                &mut work,
+                ProjectionLimits {
+                    work: limits.work,
+                    nodes: source_nodes,
+                    bytes: source_bytes,
+                    limit_reason: SemanticMatchUndetermined::InputLimitExceeded,
+                },
+                &mut is_cancelled,
+            )?;
+            let child = remapped_eclass(&remap, self.egraph.find(form.output))?;
+            let root = if let Some(encoding) = encoding {
+                charge_work(&mut work, limits.work, &mut is_cancelled)?;
+                if !graph.set_additional_node_budget(1) {
+                    return Err(SemanticMatchUndetermined::InputLimitExceeded);
+                }
+                let mut children = Vec::new();
+                children
+                    .try_reserve_exact(1)
+                    .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+                children.push(child);
+                graph
+                    .try_add_with_budget(ENode::new(encoding.encode()?, children))
+                    .ok_or(SemanticMatchUndetermined::EGraphNodeBudgetExhausted)?
+            } else {
+                child
+            };
+            let root = graph.find(root);
+            let exact_key = exact_ground_key(
+                &graph,
+                root,
+                &mut work,
+                GroundKeyLimits {
+                    work: limits.work,
+                    nodes: limits.nodes,
+                    bytes: limits.bytes,
+                    limit_reason: SemanticMatchUndetermined::InputLimitExceeded,
+                },
+                &mut is_cancelled,
+            )?;
+            Ok(SemanticTransitionInput {
+                egraph: graph,
+                root,
+                exact_key,
+                admission_work: work,
+            })
+        })();
+        match admitted {
+            Ok(input) => (SemanticInputDecision::Proven(input), work),
+            Err(reason) => (SemanticInputDecision::Undetermined { reason, work }, work),
+        }
     }
 
     pub fn into_parts(self) -> (EGraph<FramedSemanticOperator>, Vec<SemanticRelationNormalForm>) {
@@ -10767,6 +10905,117 @@ mod tests {
             },
             actions: Vec::new(),
         }
+    }
+
+    #[test]
+    fn unary_query_admission_preserves_exact_child_and_excludes_unrelated_graph() {
+        let image = signature_image();
+        let mut graph = EGraph::new();
+        let output = add(
+            &mut graph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            Vec::new(),
+        );
+        add(
+            &mut graph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(1)),
+            Vec::new(),
+        );
+        let bundle = ProvenSemanticRelationNormalForms {
+            egraph: graph,
+            normal_forms: vec![SemanticRelationNormalForm {
+                output,
+                output_sort: TheorySortId(2),
+                receipt: SemanticRelationNormalFormReceipt {
+                    language_fingerprint: [0; 32],
+                    theory_fingerprint: [0; 32],
+                    image_fingerprint: [0; 32],
+                    relation_sort: TheorySortId(2),
+                    input: Vec::new(),
+                    output: Vec::new(),
+                    normalization_hops: Vec::new(),
+                    work: 0,
+                },
+            }],
+            work: 0,
+            stats: Default::default(),
+        };
+        let limits = SemanticInputLimits { work: 100, nodes: 2, bytes: 1024 };
+        let (decision, charged) =
+            bundle.admit_unary_query_at(0, &image, TheoryConstructorId(2), limits, || false);
+        let SemanticInputDecision::Proven(input) = decision else {
+            panic!("complete admitted result must admit its unary judgment")
+        };
+        assert_eq!(input.admission_work(), charged);
+        assert_eq!(input.egraph().node_count(), 2);
+
+        let mut reference = EGraph::new();
+        let child = add(
+            &mut reference,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            Vec::new(),
+        );
+        let root = add(
+            &mut reference,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(2)),
+            vec![child],
+        );
+        let SemanticInputDecision::Proven(reference) =
+            SemanticTransitionInput::admit(reference, root, limits, || false)
+        else {
+            panic!("reference term admission")
+        };
+        assert_eq!(input.exact_key(), reference.exact_key());
+
+        let (decision, output_work) = bundle.admit_output_at(0, limits, || false);
+        let SemanticInputDecision::Proven(output_input) = decision else {
+            panic!("the relation result must be admitted for its projection")
+        };
+        assert_eq!(output_input.admission_work(), output_work);
+        assert_eq!(output_input.egraph().node_count(), 1);
+        let mut leaf_graph = EGraph::new();
+        let leaf = add(
+            &mut leaf_graph,
+            TheoryImageOperatorV1::Constructor(TheoryConstructorId(0)),
+            Vec::new(),
+        );
+        let SemanticInputDecision::Proven(leaf_reference) =
+            SemanticTransitionInput::admit(leaf_graph, leaf, limits, || false)
+        else {
+            panic!("reference leaf admission")
+        };
+        assert_eq!(output_input.exact_key(), leaf_reference.exact_key());
+        assert!(matches!(
+            bundle
+                .admit_unary_query_at(0, &image, TheoryConstructorId(0), limits, || false)
+                .0,
+            SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                ..
+            }
+        ));
+
+        for limited in [
+            SemanticInputLimits { nodes: 1, ..limits },
+            SemanticInputLimits { bytes: 1, ..limits },
+            SemanticInputLimits { work: 0, ..limits },
+        ] {
+            assert!(matches!(
+                bundle
+                    .admit_unary_query_at(0, &image, TheoryConstructorId(2), limited, || false)
+                    .0,
+                SemanticInputDecision::Undetermined { .. }
+            ));
+        }
+        assert!(matches!(
+            bundle
+                .admit_unary_query_at(0, &image, TheoryConstructorId(2), limits, || true)
+                .0,
+            SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::Cancelled,
+                ..
+            }
+        ));
     }
 
     fn add_raw_theory_operator(
