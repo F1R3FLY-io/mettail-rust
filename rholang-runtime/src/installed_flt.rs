@@ -391,6 +391,33 @@ impl<'a> InstalledFltAdapter<'a> {
         }
     }
 
+    /// Select an installed guest syntax category by its declared name. The
+    /// returned sort is the checked semantic-image binding, not a numeric
+    /// assumption about grammar and theory coordinate equality.
+    pub(crate) fn select_category<C: FnMut() -> bool>(
+        &self,
+        name: &str,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<(CategoryId, TheorySortId), InstalledFltError> {
+        let mut selected = None;
+        for (index, category) in self.bindings.sort_to_category.iter().enumerate() {
+            budget.charge(1, 0)?;
+            if let Some(category) = category {
+                if category.name == name {
+                    let sort = TheorySortId(u32::try_from(index).map_err(|_| {
+                        InstalledFltError::UnsupportedOrMalformed("category sort coordinate")
+                    })?);
+                    if selected.replace((category.id, sort)).is_some() {
+                        return Err(InstalledFltError::UnsupportedOrMalformed(
+                            "ambiguous display category",
+                        ));
+                    }
+                }
+            }
+        }
+        selected.ok_or(InstalledFltError::UnsupportedOrMalformed("unknown display category"))
+    }
+
     pub(crate) fn to_kernel<C: FnMut() -> bool>(
         &self,
         par: &Par,
@@ -539,6 +566,164 @@ impl<'a> InstalledFltAdapter<'a> {
             SemanticInputDecision::Refuted(reason) => Err(InstalledFltError::Refuted(reason)),
             SemanticInputDecision::Undetermined { reason, .. } => Err(reason.into()),
         }
+    }
+
+    /// Select the exact native String carrier for an admitted ground String
+    /// leaf; otherwise use the derived one-way structural presentation. These
+    /// are disjoint checked cases, not a blanket conversion of a private name.
+    pub(crate) fn project_admitted_display<C: FnMut() -> bool>(
+        &self,
+        input: &SemanticTransitionInput,
+        expected_sort: TheorySortId,
+        output_limit: usize,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<String, InstalledFltError> {
+        if self.syntax_literal(expected_sort, budget)? == Some(&TheoryLiteralCarrierV1::String) {
+            let view = budget.run_accounted_stage(|remaining, cancel| {
+                let mut used = 0;
+                let result = theory_positional_native_view(
+                    self.bindings.image(),
+                    input.egraph(),
+                    input.root(),
+                    expected_sort,
+                    &mut used,
+                    remaining,
+                    cancel,
+                );
+                (result, used)
+            })??;
+            if let Some(TheoryPositionalNativeView::Literal {
+                value: RuntimeLiteralRef::String(text),
+                ..
+            }) = view
+            {
+                if text.len() > output_limit {
+                    return Err(InstalledFltError::Kernel(
+                        SemanticMatchUndetermined::OutputLimitExceeded,
+                    ));
+                }
+                budget.charge(text.len(), text.len())?;
+                let mut output = String::new();
+                output
+                    .try_reserve_exact(text.len())
+                    .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+                output.push_str(text);
+                return Ok(output);
+            }
+        }
+        self.render_admitted_sexpr(input, expected_sort, output_limit, budget)
+    }
+
+    /// Render one already admitted FLT occurrence as a canonical structural
+    /// S-expression. The root is owned by `SemanticTransitionInput`; callers
+    /// cannot pass an unadmitted e-graph or an arbitrary reflected private name.
+    /// This is a one-way display projection, never a guest String coercion.
+    pub(crate) fn render_admitted_sexpr<C: FnMut() -> bool>(
+        &self,
+        input: &SemanticTransitionInput,
+        expected_sort: TheorySortId,
+        output_limit: usize,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<String, InstalledFltError> {
+        let mut rendered = String::new();
+        let mut tasks = OccurrenceBuffer::new();
+        push_occurrence(
+            &mut tasks,
+            SExprTask::Visit(input.root(), expected_sort),
+            TASK_SLOT_BYTES,
+            budget,
+        )?;
+        while let Some(task) = tasks.pop() {
+            budget.charge(1, 0)?;
+            match task {
+                SExprTask::Static(text) => append_sexpr(&mut rendered, text, output_limit, budget)?,
+                SExprTask::Visit(class, sort) => {
+                    self.syntax_literal(sort, budget)?;
+                    let view = budget
+                        .run_accounted_stage(|remaining, cancel| {
+                            let mut used = 0;
+                            let result = theory_positional_native_view(
+                                self.bindings.image(),
+                                input.egraph(),
+                                class,
+                                sort,
+                                &mut used,
+                                remaining,
+                                cancel,
+                            );
+                            (result, used)
+                        })??
+                        .ok_or(InstalledFltError::UnsupportedOrMalformed(
+                            "checked display term has no positional/native view",
+                        ))?;
+                    match view {
+                        TheoryPositionalNativeView::Constructor { signature, children } => {
+                            if children.len() != signature.domain.len() {
+                                return Err(InstalledFltError::UnsupportedOrMalformed(
+                                    "checked display constructor arity",
+                                ));
+                            }
+                            let binding = self
+                                .bindings
+                                .constructor_by_id(signature.id, budget)?
+                                .ok_or(InstalledFltError::UnsupportedOrMalformed(
+                                    "checked display constructor has no label",
+                                ))?;
+                            append_sexpr(&mut rendered, "(", output_limit, budget)?;
+                            append_sexpr_symbol(
+                                &mut rendered,
+                                binding.label,
+                                output_limit,
+                                budget,
+                            )?;
+                            push_occurrence(
+                                &mut tasks,
+                                SExprTask::Static(")"),
+                                TASK_SLOT_BYTES,
+                                budget,
+                            )?;
+                            for (child, child_sort) in children.iter().zip(&signature.domain).rev()
+                            {
+                                push_occurrence(
+                                    &mut tasks,
+                                    SExprTask::Visit(*child, *child_sort),
+                                    TASK_SLOT_BYTES,
+                                    budget,
+                                )?;
+                                push_occurrence(
+                                    &mut tasks,
+                                    SExprTask::Static(" "),
+                                    TASK_SLOT_BYTES,
+                                    budget,
+                                )?;
+                            }
+                        },
+                        TheoryPositionalNativeView::Literal { value, .. } => match value {
+                            RuntimeLiteralRef::String(text) => {
+                                append_sexpr_quoted(&mut rendered, text, output_limit, budget)?;
+                            },
+                            RuntimeLiteralRef::Integer(value) => {
+                                append_sexpr(
+                                    &mut rendered,
+                                    &value.to_string(),
+                                    output_limit,
+                                    budget,
+                                )?;
+                            },
+                            RuntimeLiteralRef::Boolean(value) => {
+                                append_sexpr(
+                                    &mut rendered,
+                                    if value { "true" } else { "false" },
+                                    output_limit,
+                                    budget,
+                                )?;
+                            },
+                        },
+                    }
+                },
+            }
+        }
+        Ok(rendered)
     }
 
     /// Reconstruct all original kernel results under one allowance. No sorting,
@@ -767,6 +952,87 @@ struct OccurrenceBuffer<T> {
     logical_capacity: usize,
 }
 
+#[derive(Clone, Copy)]
+enum SExprTask {
+    Visit(EClassId, TheorySortId),
+    Static(&'static str),
+}
+
+fn append_sexpr<C: FnMut() -> bool>(
+    output: &mut String,
+    fragment: &str,
+    output_limit: usize,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), InstalledFltError> {
+    if output
+        .len()
+        .checked_add(fragment.len())
+        .is_none_or(|length| length > output_limit)
+    {
+        return Err(InstalledFltError::Kernel(SemanticMatchUndetermined::OutputLimitExceeded));
+    }
+    budget.charge(fragment.len(), fragment.len())?;
+    output
+        .try_reserve(fragment.len())
+        .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+    output.push_str(fragment);
+    Ok(())
+}
+
+fn append_sexpr_char<C: FnMut() -> bool>(
+    output: &mut String,
+    character: char,
+    output_limit: usize,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), InstalledFltError> {
+    let mut bytes = [0; 4];
+    append_sexpr(output, character.encode_utf8(&mut bytes), output_limit, budget)
+}
+
+fn append_sexpr_quoted<C: FnMut() -> bool>(
+    output: &mut String,
+    literal: &str,
+    output_limit: usize,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), InstalledFltError> {
+    append_sexpr(output, "\"", output_limit, budget)?;
+    for character in literal.chars() {
+        for escaped in character.escape_debug() {
+            append_sexpr_char(output, escaped, output_limit, budget)?;
+        }
+    }
+    append_sexpr(output, "\"", output_limit, budget)
+}
+
+fn append_sexpr_symbol<C: FnMut() -> bool>(
+    output: &mut String,
+    label: &str,
+    output_limit: usize,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), InstalledFltError> {
+    let mut characters = label.chars();
+    let simple = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_');
+    if simple {
+        return append_sexpr(output, label, output_limit, budget);
+    }
+    append_sexpr(output, "|", output_limit, budget)?;
+    for character in label.chars() {
+        match character {
+            '|' => append_sexpr(output, "\\|", output_limit, budget)?,
+            '\\' => append_sexpr(output, "\\\\", output_limit, budget)?,
+            _ => {
+                for escaped in character.escape_debug() {
+                    append_sexpr_char(output, escaped, output_limit, budget)?;
+                }
+            },
+        }
+    }
+    append_sexpr(output, "|", output_limit, budget)
+}
+
 impl<T> OccurrenceBuffer<T> {
     fn new() -> Self {
         Self { values: Vec::new(), logical_capacity: 0 }
@@ -886,6 +1152,55 @@ fn reserve_map<K: Eq + Hash, V, C: FnMut() -> bool>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structural_display_escapes_literals_and_constructor_symbols() {
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000, 1_000, &mut cancel);
+        let mut output = String::new();
+        append_sexpr(&mut output, "(", 1_000, &mut budget).unwrap();
+        append_sexpr_symbol(&mut output, "PStar", 1_000, &mut budget).unwrap();
+        append_sexpr(&mut output, " (", 1_000, &mut budget).unwrap();
+        append_sexpr_symbol(&mut output, "odd|name\\part", 1_000, &mut budget).unwrap();
+        append_sexpr(&mut output, " ", 1_000, &mut budget).unwrap();
+        append_sexpr_quoted(&mut output, "a\nλ\"", 1_000, &mut budget).unwrap();
+        append_sexpr(&mut output, "))", 1_000, &mut budget).unwrap();
+        assert_eq!(output, "(PStar (|odd\\|name\\\\part| \"a\\nλ\\\"\"))");
+    }
+
+    #[test]
+    fn structural_display_refuses_output_over_budget_and_cancellation() {
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000, 3, &mut cancel);
+        let mut output = String::new();
+        assert!(matches!(
+            append_sexpr_quoted(&mut output, "abcdef", 1_000, &mut budget),
+            Err(InstalledFltError::Resource(DynamicReflectionError::PayloadByteLimit))
+        ));
+        assert!(output.len() <= 3);
+
+        let mut work = 0;
+        let mut cancel = || true;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000, 1_000, &mut cancel);
+        let mut output = String::new();
+        assert!(matches!(
+            append_sexpr(&mut output, "secret", 1_000, &mut budget),
+            Err(InstalledFltError::Resource(DynamicReflectionError::Cancelled))
+        ));
+        assert!(output.is_empty());
+
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000, 1_000, &mut cancel);
+        let mut output = String::new();
+        assert!(matches!(
+            append_sexpr(&mut output, "too long", 3, &mut budget),
+            Err(InstalledFltError::Kernel(SemanticMatchUndetermined::OutputLimitExceeded))
+        ));
+        assert!(output.is_empty());
+    }
 
     #[test]
     fn installed_flt_occurrence_reservations_ignore_physical_spare_capacity() {

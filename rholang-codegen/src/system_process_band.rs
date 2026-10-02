@@ -232,7 +232,8 @@ pub const THEOREM_CHANNEL_BAND: SystemProcessBand = SystemProcessBand {
     channel_tag: MTL_THEOREM_CHANNEL_TAG,
 };
 
-/// Installed semantic action and observation endpoints, indices zero and one.
+/// Installed semantic action, observation, relation, and display endpoints,
+/// indices zero through three.
 pub const LANGUAGE_SEMANTIC_BAND: SystemProcessBand = SystemProcessBand {
     name: "language-semantic",
     band_id: 10,

@@ -4,8 +4,8 @@
 use super::*;
 use crate::semantic_wire::{
     encode_relation_results_v2, encode_results_v1, reserve_reply_payload, CompletionPermit,
-    DiagnosticDomain, OwnedRelationRequest, OwnedSemanticRequest, ReplyBody, SemanticWireError,
-    SemanticWireUsage, StickyCancellation,
+    DiagnosticDomain, OwnedDisplayRequest, OwnedRelationRequest, OwnedSemanticRequest, ReplyBody,
+    SemanticWireError, SemanticWireUsage, StickyCancellation,
 };
 use mettail_rholang_codegen::LANGUAGE_SEMANTIC_BAND;
 use models::rhoapi::ListParWithRandom;
@@ -19,6 +19,7 @@ pub const LANGUAGE_SEMANTIC_REDUCE_URN: &str = "rho:mettail:flt:reduce";
 pub const LANGUAGE_SEMANTIC_OBSERVE_URN: &str = "rho:mettail:flt:observe";
 pub const LANGUAGE_SEMANTIC_ABI_V2: &str = "mettail-language-semantic/2";
 pub const LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN: &str = "rho:mettail:flt:observe-relation";
+pub const LANGUAGE_SEMANTIC_DISPLAY_URN: &str = "rho:mettail:flt:display";
 
 #[derive(Clone, Copy)]
 enum Endpoint {
@@ -226,6 +227,89 @@ fn prepare_relation_reply<C: FnMut() -> bool>(
         SemanticWireUsage {
             work,
             kernel_work: usage.kernel_work,
+            effective_limits: Some(effective),
+            remaining_boundary_payload_bytes: remaining,
+        },
+        &mut cancellation,
+    )?;
+    output.push(response);
+    Ok(PreparedWireReply {
+        payload: output,
+        channel: request.into_reply(),
+        publication: Arc::new(publication),
+    })
+}
+
+fn prepare_display_reply<C: FnMut() -> bool>(
+    runtime: &RholangLanguageRuntime,
+    payload: Vec<Par>,
+    cancel: C,
+) -> Result<PreparedWireReply, SemanticWireError> {
+    let host = runtime.service().policy().semantic_service;
+    let mut cancellation = StickyCancellation::new(cancel);
+    let mut work = 0;
+    let mut poll = || cancellation.poll();
+    let mut header = ReflectedCodecBudget::new(
+        &mut work,
+        host.execution.work,
+        host.boundary_payload_bytes,
+        &mut poll,
+    );
+    let request = OwnedDisplayRequest::decode(payload, &mut header)?;
+    let header_spent = host.boundary_payload_bytes - header.finish();
+    let limits = SemanticServiceLimits {
+        execution: meet_execution(host.execution, request.limits.execution),
+        boundary_payload_bytes: host
+            .boundary_payload_bytes
+            .min(request.limits.boundary_payload_bytes),
+    };
+    let remaining = limits
+        .boundary_payload_bytes
+        .checked_sub(header_spent)
+        .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+    let mut budget =
+        ReflectedCodecBudget::new(&mut work, limits.execution.work, remaining, &mut poll);
+    let permit = CompletionPermit::reserve(limits, &mut budget)?;
+    let mut output = reserve_reply_payload(&mut budget)?;
+    budget.charge(1, 16)?;
+    let remaining = budget.finish();
+    let prepared = runtime.prepare_display(
+        DisplayServiceRequest {
+            handle: request.handle(),
+            category: request.category(),
+            input: request.input(),
+            limits,
+        },
+        SemanticServicePrefix {
+            work,
+            payload_bytes: limits.boundary_payload_bytes - remaining,
+        },
+        &mut poll,
+    );
+    let PreparedDisplayReport { outcome, publication, usage } = prepared;
+    let publication = publication.ok_or(SemanticWireError::Shape(
+        "display call has no fully authorized publication context",
+    ))?;
+    let effective = usage
+        .effective_limits
+        .ok_or(SemanticWireError::Shape("authorized display has no effective limits"))?;
+    work = usage.work;
+    let budget = ReflectedCodecBudget::new(
+        &mut work,
+        effective.execution.work,
+        usage.remaining_boundary_payload_bytes,
+        &mut poll,
+    );
+    let body = match outcome {
+        Ok(value) => ReplyBody::Proven(value),
+        Err(error) => service_diagnostic(error),
+    };
+    let remaining = budget.finish();
+    let response = permit.finish_v2(
+        body,
+        SemanticWireUsage {
+            work,
+            kernel_work: None,
             effective_limits: Some(effective),
             remaining_boundary_payload_bytes: remaining,
         },
@@ -471,12 +555,58 @@ fn relation_definition(runtime: Arc<RholangLanguageRuntime>) -> Definition {
     }
 }
 
+fn display_definition(runtime: Arc<RholangLanguageRuntime>) -> Definition {
+    Definition {
+        urn: LANGUAGE_SEMANTIC_DISPLAY_URN.into(),
+        fixed_channel: LANGUAGE_SEMANTIC_BAND.channel(3, LANGUAGE_SEMANTIC_ABI_V2),
+        arity: 1,
+        body_ref: LANGUAGE_SEMANTIC_BAND.body_ref(3, LANGUAGE_SEMANTIC_ABI_V2),
+        remainder: None,
+        handler: Box::new(move |context| {
+            let space = context.space.clone();
+            let dispatcher = context.dispatcher.clone();
+            let runtime = Arc::clone(&runtime);
+            Box::new(move |args: (Vec<ListParWithRandom>, bool, Vec<Par>)| {
+                let call = ContractCall {
+                    space: space.clone(),
+                    dispatcher: dispatcher.clone(),
+                };
+                let runtime = Arc::clone(&runtime);
+                Box::pin(async move {
+                    let (produce, _, _, payload) = call.unapply_owned(args).ok_or_else(|| {
+                        InterpreterError::IllegalArgumentError(
+                            "display call requires exactly one message".into(),
+                        )
+                    })?;
+                    let prepared = tokio::task::spawn_blocking(move || {
+                        prepare_display_reply(&runtime, payload, || false)
+                    })
+                    .await
+                    .map_err(|_| {
+                        InterpreterError::IllegalArgumentError(
+                            "display preparation worker failed".into(),
+                        )
+                    })?
+                    .map_err(|_| {
+                        InterpreterError::IllegalArgumentError(
+                            "display request could not prepare an authorized bounded reply".into(),
+                        )
+                    })?;
+                    produce(prepared.payload, prepared.channel, Some(prepared.publication)).await
+                })
+                    as Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
+            })
+        }),
+    }
+}
+
 /// Both operations share the supplied runtime and its capability directory.
 pub fn semantic_runtime_definitions(runtime: Arc<RholangLanguageRuntime>) -> Vec<Definition> {
     vec![
         definition(Arc::clone(&runtime), Endpoint::Reduce),
         definition(Arc::clone(&runtime), Endpoint::Observe),
-        relation_definition(runtime),
+        relation_definition(Arc::clone(&runtime)),
+        display_definition(runtime),
     ]
 }
 

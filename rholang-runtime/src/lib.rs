@@ -257,6 +257,10 @@ pub use run::{
     run_rholang_source_sequence_for_oracle_and_read_ints,
     run_rholang_source_sequence_for_oracle_and_read_strings,
 };
+#[cfg(feature = "rholang-runtime")]
+pub use semantic_service::{
+    DisplayServiceReport, DisplayServiceRequest, LANGUAGE_SEMANTIC_DISPLAY_URN,
+};
 pub use shift_contract::{native_shift_definition, native_shift_definitions_for};
 #[cfg(feature = "runtime-report")]
 pub use step::{StepSession, TauChannelClassifier};

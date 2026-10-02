@@ -26,7 +26,7 @@ pub(crate) use receipt::reserve_reply_payload;
 pub use receipt::{decode_receipt_v1, encode_receipt_v1};
 pub(crate) use relation::encode_relation_results_v2;
 pub use relation::{decode_relation_results_v2, DecodedRelationResult};
-pub(crate) use request::{OwnedRelationRequest, OwnedSemanticRequest};
+pub(crate) use request::{OwnedDisplayRequest, OwnedRelationRequest, OwnedSemanticRequest};
 
 const VALUE_DESCRIPTOR_BYTES: usize = 16;
 

@@ -29,17 +29,20 @@ use models::rhoapi::Par;
 use rspace_plus_plus::rspace::{errors::RSpaceError, rspace_interface::ProduceCommitGuard};
 use std::sync::Arc;
 
+mod display;
 pub(crate) mod predicate;
 mod relation_observation;
 mod wire;
+use display::PreparedDisplayReport;
+pub use display::{DisplayServiceReport, DisplayServiceRequest};
 use relation_observation::PreparedRelationObservationReport;
 pub use relation_observation::{
     RelationObservationReport, RelationObservationRequest, RelationObservationResult,
 };
 pub use wire::{
     semantic_runtime_definitions, LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_ABI_V2,
-    LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN, LANGUAGE_SEMANTIC_OBSERVE_URN,
-    LANGUAGE_SEMANTIC_REDUCE_URN,
+    LANGUAGE_SEMANTIC_DISPLAY_URN, LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN,
+    LANGUAGE_SEMANTIC_OBSERVE_URN, LANGUAGE_SEMANTIC_REDUCE_URN,
 };
 
 const SEMANTIC_SETUP_SCHEDULE_V1: u128 = 1;

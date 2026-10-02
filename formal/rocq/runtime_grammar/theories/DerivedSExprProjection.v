@@ -159,4 +159,22 @@ Proof.
     [apply Nat.eqb_eq in Equal; contradiction|reflexivity].
 Qed.
 
+(** The two liveness observations are taken under one registry guard at
+    publication. A result prepared earlier does not confer an authorization
+    lease; either revocation suppresses the entire publication. *)
+Definition publish_atomically (guest_live host_live : bool)
+           (prepared : option DisplayValue) : option DisplayValue :=
+  if guest_live && host_live then prepared else None.
+
+Theorem publication_requires_both_live :
+  forall guest_live host_live prepared output,
+    publish_atomically guest_live host_live prepared = Some output ->
+    guest_live = true /\ host_live = true /\ prepared = Some output.
+Proof.
+  intros guest_live host_live prepared output Published.
+  unfold publish_atomically in Published.
+  destruct guest_live, host_live; cbn in Published; try discriminate.
+  repeat split; assumption || reflexivity.
+Qed.
+
 End DerivedSExprProjection.

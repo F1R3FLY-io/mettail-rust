@@ -50,7 +50,7 @@ fn predicate_roles_keep_kernel_diagnostics_and_never_become_false_results() {
     ));
     assert!(matches!(allocation, ReplyBody::Undetermined(DiagnosticDomain::Kernel, 8)));
 }
-use crate::language_install::{exact_list, wire_list};
+use crate::language_install::{exact_list, exact_string, wire_list};
 use crate::semantic_wire::{
     decode_receipt_v1, decode_relation_results_v2, decode_u64, decode_usage_v1, encode_limits_v1,
 };
@@ -97,6 +97,131 @@ fn envelope(reply: &PreparedWireReply) -> (u64, &Par, SemanticWireUsage) {
         &fields[2],
         decode_usage_v1(&fields[3], &mut budget).unwrap(),
     )
+}
+
+#[test]
+fn explicit_display_projects_checked_regex_pattern_to_host_string() {
+    let (runtime, token, installed) =
+        crate::language_install::tests::installed_flt_adapter_fixture();
+    let pattern = input(&runtime, &token, "a*");
+    let direct = runtime.execute_display(
+        DisplayServiceRequest {
+            handle: &token,
+            category: "Pattern",
+            input: &pattern,
+            limits: SemanticServiceLimits::default(),
+        },
+        || false,
+    );
+    let value = direct.outcome.expect("checked one-way display projection");
+    assert_eq!(
+        crate::host_profile::RholangHostProfileProvider::string_from_host(&value).as_deref(),
+        Some("(PStar (PLiteral \"a\"))")
+    );
+
+    let handle = runtime.resolve(&token, LanguageRight::Construct).unwrap();
+    let owner = crate::language_install::grammar_fingerprint_label(handle.fingerprint());
+    let ground = mettail_rholang_codegen::dynamic_syntax_to_ground_term(
+        &mettail_grammar_core::DynamicValue::Text("éλλx".into()),
+        installed.core(),
+        &BTreeMap::new(),
+    )
+    .expect("checked native Text reflection");
+    let text = mettail_rholang_codegen::reflect_ground_term_par(&ground, &owner);
+    let exact = runtime.execute_display(
+        DisplayServiceRequest {
+            handle: &token,
+            category: "Text",
+            input: &text,
+            limits: SemanticServiceLimits::default(),
+        },
+        || false,
+    );
+    assert_eq!(
+        crate::host_profile::RholangHostProfileProvider::string_from_host(
+            &exact.outcome.expect("exact Text carrier")
+        )
+        .as_deref(),
+        Some("éλλx")
+    );
+
+    let wrong = runtime.execute_display(
+        DisplayServiceRequest {
+            handle: &token,
+            category: "Text",
+            input: &pattern,
+            limits: SemanticServiceLimits::default(),
+        },
+        || false,
+    );
+    assert!(wrong.outcome.is_err(), "a Pattern cannot masquerade as Text");
+
+    let private = runtime.execute_display(
+        DisplayServiceRequest {
+            handle: &token,
+            category: "Pattern",
+            input: &token,
+            limits: SemanticServiceLimits::default(),
+        },
+        || false,
+    );
+    assert!(private.outcome.is_err(), "a private capability is never rendered");
+
+    let mut tight = SemanticServiceLimits::default();
+    tight.execution.output_bytes = 3;
+    let bounded = runtime.execute_display(
+        DisplayServiceRequest {
+            handle: &token,
+            category: "Pattern",
+            input: &pattern,
+            limits: tight,
+        },
+        || false,
+    );
+    assert!(matches!(
+        bounded.outcome,
+        Err(InstalledSemanticError::Undetermined(
+            SemanticMatchUndetermined::OutputLimitExceeded
+        ))
+    ));
+
+    let cancelled = runtime.execute_display(
+        DisplayServiceRequest {
+            handle: &token,
+            category: "Pattern",
+            input: &pattern,
+            limits: SemanticServiceLimits::default(),
+        },
+        || true,
+    );
+    assert!(matches!(
+        cancelled.outcome,
+        Err(InstalledSemanticError::Resource(DynamicReflectionError::Cancelled))
+    ));
+
+    let request = vec![wire_list(vec![
+        new_gint_par(2, Vec::new(), false),
+        token.clone(),
+        new_gstring_par("Pattern".into(), Vec::new(), false),
+        pattern,
+        wire_list(Vec::new()),
+        new_gstring_par("OUT".into(), Vec::new(), false),
+    ])];
+    let reply = prepare_display_reply(&runtime, request, || false).unwrap();
+    let fields = exact_list(&reply.payload[0]).expect("v2 display completion tuple");
+    let mut work = 0;
+    let mut cancel = || false;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 0, &mut cancel);
+    assert_eq!(decode_u64(&fields[0], &mut budget), Ok(2));
+    assert_eq!(decode_u64(&fields[1], &mut budget), Ok(0));
+    assert_eq!(exact_string(&fields[2]), Some("(PStar (PLiteral \"a\"))"));
+    runtime.revoke(&token).unwrap();
+    let mut committed = false;
+    assert!(reply
+        .publication
+        .with_commit(Box::new(|| committed = true))
+        .is_err());
+    assert!(!committed);
 }
 
 #[tokio::test]

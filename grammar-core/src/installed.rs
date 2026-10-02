@@ -2129,7 +2129,7 @@ mod tests {
 
     /// Registry/authority fixtures explicitly inject a recording backend.
     /// They do not exercise or stand in for shared WPDA recognition tests.
-    fn runtime_test_table() -> InstalledLanguageTable {
+    pub(super) fn runtime_test_table() -> InstalledLanguageTable {
         InstalledLanguageTable::with_runtime_factory(Arc::new(
             runtime_backend::RecordingFactory::default(),
         ))
@@ -2173,7 +2173,10 @@ mod tests {
         }
     }
 
-    fn install(table: &InstalledLanguageTable, rights: LanguageRights) -> InstalledLanguageGrant {
+    pub(super) fn install(
+        table: &InstalledLanguageTable,
+        rights: LanguageRights,
+    ) -> InstalledLanguageGrant {
         let core = core("T");
         let image = image(&core);
         table

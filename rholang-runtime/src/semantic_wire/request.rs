@@ -14,6 +14,71 @@ pub(crate) struct OwnedSemanticRequest {
     pub(crate) limits: SemanticServiceLimits,
 }
 
+/// V2 explicit structural display: [2, handle, guest category, FLT, limits,
+/// reply]. It is not a request to interpret the FLT as guest source text.
+pub(crate) struct OwnedDisplayRequest {
+    fields: [Par; 6],
+    pub(crate) limits: SemanticServiceLimits,
+}
+
+impl OwnedDisplayRequest {
+    pub(crate) fn decode<C: FnMut() -> bool>(
+        mut payload: Vec<Par>,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Self, SemanticWireError> {
+        budget.charge(1, 0)?;
+        if payload.len() != 1 {
+            return Err(SemanticWireError::Shape("display call requires one datum"));
+        }
+        let mut datum = payload.pop().expect("singleton checked");
+        let mut decoder = Decoder { budget };
+        let [version, _handle, category, _input, limits, _reply] = decoder.tuple(&datum)?;
+        if decoder.uint(version)? != 2 {
+            return Err(SemanticWireError::Shape("display request version"));
+        }
+        decoder.budget.charge(1, 0)?;
+        if !category.locally_free.is_empty() || category.connective_used {
+            return Err(SemanticWireError::Shape("display category has nonliteral metadata"));
+        }
+        let name = exact_string(category)
+            .ok_or(SemanticWireError::Shape("display category must be a string"))?;
+        if name.is_empty() {
+            return Err(SemanticWireError::Shape("empty display category"));
+        }
+        decoder.budget.charge(name.len(), 0)?;
+        let limits = if decoder.list(limits)?.is_empty() {
+            SemanticServiceLimits::default()
+        } else {
+            decode_limits_v1(limits, decoder.budget)?
+        };
+        decoder.budget.charge(6, 0)?;
+        let Some(ExprInstance::EListBody(list)) = datum.exprs[0].expr_instance.as_mut() else {
+            unreachable!("exact tuple view established the unique list expression")
+        };
+        let fields = std::mem::take(&mut list.ps)
+            .try_into()
+            .map_err(|_| SemanticWireError::Shape("display request arity"))?;
+        Ok(Self { fields, limits })
+    }
+
+    pub(crate) fn handle(&self) -> &Par {
+        &self.fields[1]
+    }
+
+    pub(crate) fn category(&self) -> &str {
+        exact_string(&self.fields[2]).expect("validated display category")
+    }
+
+    pub(crate) fn input(&self) -> &Par {
+        &self.fields[3]
+    }
+
+    pub(crate) fn into_reply(self) -> Par {
+        let [_, _, _, _, _, reply] = self.fields;
+        reply
+    }
+}
+
 /// The v2 relation request is a distinct eight-field envelope. It retains
 /// the structural FLT and reply channel by move; names and limits are checked
 /// before service authorization, without reading or reparsing guest syntax.

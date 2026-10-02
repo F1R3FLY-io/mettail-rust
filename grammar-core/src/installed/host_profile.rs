@@ -133,6 +133,15 @@ pub enum HostProfileAccessError {
     Poisoned,
 }
 
+/// A display publication depends on both an installed guest and the selected
+/// host codec. These are checked under the same registry read guard, so either
+/// revocation prevents publication without a time-of-check/time-of-use gap.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LanguageAndHostAccessError {
+    Language(LanguageAccessError),
+    Host(HostProfileAccessError),
+}
+
 pub(super) struct HostProfileEntry {
     pub(super) record: Arc<ProjectionHostProfileRecordV1>,
     manifest: RuntimeCapabilityManifest,
@@ -314,6 +323,47 @@ impl InstalledLanguageTable {
             .state
             .read()
             .map_err(|_| HostProfileAccessError::Poisoned)?;
+        let entry = self.valid_host_profile_entry(&state, handle, required)?;
+        Ok(InstalledHostProfileSnapshot {
+            record: Arc::clone(&entry.record),
+            manifest: entry.manifest.clone(),
+        })
+    }
+
+    /// Recheck both independently revocable capabilities around publication.
+    /// The callback moves prepared data only; it must not evaluate user code.
+    pub fn with_authorized_language_and_host<R>(
+        &self,
+        language: &InstalledLanguageHandle,
+        language_rights: &[LanguageRight],
+        host: &InstalledHostProfileHandle,
+        host_rights: &[LanguageRight],
+        publish: impl FnOnce() -> R,
+    ) -> Result<R, LanguageAndHostAccessError> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| LanguageAndHostAccessError::Host(HostProfileAccessError::Poisoned))?;
+        self.valid_entry(&state, language)
+            .map_err(LanguageAndHostAccessError::Language)?;
+        for right in language_rights {
+            if !language.rights.contains(*right) {
+                return Err(LanguageAndHostAccessError::Language(
+                    LanguageAccessError::MissingRight(*right),
+                ));
+            }
+        }
+        self.valid_host_profile_entry(&state, host, host_rights)
+            .map_err(LanguageAndHostAccessError::Host)?;
+        Ok(publish())
+    }
+
+    fn valid_host_profile_entry<'a>(
+        &self,
+        state: &'a InstalledState,
+        handle: &InstalledHostProfileHandle,
+        required: &[LanguageRight],
+    ) -> Result<&'a HostProfileEntry, HostProfileAccessError> {
         let entry = state
             .host_profiles
             .get(&handle.fingerprint)
@@ -346,10 +396,7 @@ impl InstalledLanguageTable {
         {
             return Err(HostProfileAccessError::ProviderChanged);
         }
-        Ok(InstalledHostProfileSnapshot {
-            record: Arc::clone(&entry.record),
-            manifest: entry.manifest.clone(),
-        })
+        Ok(entry)
     }
 
     pub fn revoke_host_profile(
@@ -458,6 +505,68 @@ mod tests {
 
     fn bridge_rights() -> LanguageRights {
         LanguageRights::from_rights([LanguageRight::Bridge, LanguageRight::ReflectAst])
+    }
+
+    #[test]
+    fn combined_display_guard_rechecks_both_revocable_handles() {
+        let table = super::super::tests::runtime_test_table();
+        let guest = super::super::tests::install(
+            &table,
+            LanguageRights::from_rights([LanguageRight::ReflectAst]),
+        );
+        let (bytes, provider) = fixture();
+        let host = table
+            .install_host_profile(&bytes, provider, bridge_rights())
+            .unwrap();
+        let mut commits = 0;
+        table
+            .with_authorized_language_and_host(
+                &guest.handle,
+                &[LanguageRight::ReflectAst],
+                &host.handle,
+                &[LanguageRight::Bridge],
+                || commits += 1,
+            )
+            .unwrap();
+        assert_eq!(commits, 1);
+        assert_eq!(
+            table.with_authorized_language_and_host(
+                &guest.handle,
+                &[LanguageRight::Bridge],
+                &host.handle,
+                &[LanguageRight::Bridge],
+                || commits += 1,
+            ),
+            Err(LanguageAndHostAccessError::Language(LanguageAccessError::MissingRight(
+                LanguageRight::Bridge
+            )))
+        );
+        assert_eq!(commits, 1);
+
+        table.revoke_host_profile(host.revocation).unwrap();
+        assert_eq!(
+            table.with_authorized_language_and_host(
+                &guest.handle,
+                &[LanguageRight::ReflectAst],
+                &host.handle,
+                &[LanguageRight::Bridge],
+                || commits += 1,
+            ),
+            Err(LanguageAndHostAccessError::Host(HostProfileAccessError::Revoked))
+        );
+        assert_eq!(commits, 1);
+        table.revoke(guest.revocation).unwrap();
+        assert_eq!(
+            table.with_authorized_language_and_host(
+                &guest.handle,
+                &[LanguageRight::ReflectAst],
+                &host.handle,
+                &[LanguageRight::Bridge],
+                || commits += 1,
+            ),
+            Err(LanguageAndHostAccessError::Language(LanguageAccessError::StaleHandle))
+        );
+        assert_eq!(commits, 1);
     }
 
     #[test]

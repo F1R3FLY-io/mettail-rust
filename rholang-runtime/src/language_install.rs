@@ -8400,7 +8400,7 @@ pub(crate) mod tests {
             LanguageInstallPolicy::default(),
         ))));
         let definitions = language_runtime_definitions(runtime);
-        assert_eq!(definitions.len(), 11);
+        assert_eq!(definitions.len(), 12);
         assert_eq!(definitions[0].urn, LANGUAGE_INSTALL_URN);
         assert_eq!(definitions[1].urn, LANGUAGE_PARSE_URN);
         assert_eq!(definitions[2].urn, LANGUAGE_FLT_CONSTRUCT_URN);
@@ -8415,6 +8415,7 @@ pub(crate) mod tests {
             definitions[10].urn,
             crate::semantic_service::LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN
         );
+        assert_eq!(definitions[11].urn, crate::semantic_service::LANGUAGE_SEMANTIC_DISPLAY_URN);
         for definition in &definitions[8..] {
             assert_eq!(definition.arity, 1);
             assert!(!rholang::rust::interpreter::system_processes::non_deterministic_ops()
