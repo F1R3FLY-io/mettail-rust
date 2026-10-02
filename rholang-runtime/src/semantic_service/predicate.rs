@@ -134,13 +134,14 @@ pub(super) fn select_projected_observation<C: FnMut() -> bool>(
     Ok(selected)
 }
 
-/// The category is an exact source/image coordinate, never an inferred name
-/// such as `Bool` or a constructor whose spelling happens to be `yes`.
-pub(super) fn native_boolean_sort<C: FnMut() -> bool>(
+/// Resolve the exact structural FLT category, then classify whether its
+/// checked grammar and semantic-image carriers are both native Boolean.
+/// Non-Boolean categories may still have an authored Boolean projection.
+pub(super) fn predicate_category_sort<C: FnMut() -> bool>(
     installed: &InstalledLanguage,
     category: &str,
     budget: &mut ReflectedCodecBudget<'_, C>,
-) -> Result<TheorySortId, InstalledSemanticError> {
+) -> Result<(TheorySortId, bool), InstalledSemanticError> {
     let language = installed.language_core();
     let image = installed
         .semantic_image()
@@ -156,17 +157,13 @@ pub(super) fn native_boolean_sort<C: FnMut() -> bool>(
             0,
         )?;
         if entry.name == category {
-            if grammar_coordinate.replace(entry.id).is_some() {
+            let boolean = matches!(&entry.carrier, Carrier::Builtin(BuiltinCarrier::Boolean));
+            if grammar_coordinate.replace((entry.id, boolean)).is_some() {
                 return Err(InstalledSemanticError::InvalidEvidence("duplicate grammar category"));
-            }
-            if !matches!(&entry.carrier, Carrier::Builtin(BuiltinCarrier::Boolean)) {
-                return Err(InstalledSemanticError::InvalidSelection(
-                    "predicate category is not a native Boolean carrier",
-                ));
             }
         }
     }
-    grammar_coordinate
+    let (_, grammar_boolean) = grammar_coordinate
         .ok_or(InstalledSemanticError::InvalidSelection("unknown predicate category"))?;
     let mut selected = None;
     for (index, source) in language.theory.sorts.iter().enumerate() {
@@ -190,22 +187,24 @@ pub(super) fn native_boolean_sort<C: FnMut() -> bool>(
         let compiled = image.sorts.get(index).filter(|sort| sort.id == id).ok_or(
             InstalledSemanticError::InvalidEvidence("predicate sort source/image coordinate"),
         )?;
-        if !matches!(
+        let source_boolean = matches!(
             &source.kind,
             TheorySortKindV1::Syntax {
                 literal: Some(TheoryLiteralCarrierV1::Boolean)
             }
-        ) || !matches!(
+        );
+        let compiled_boolean = matches!(
             &compiled.kind,
             TheorySortKindImageV1::Syntax {
                 literal: Some(TheoryLiteralCarrierV1::Boolean)
             }
-        ) {
-            return Err(InstalledSemanticError::InvalidSelection(
-                "predicate sort is not native Boolean",
+        );
+        if source_boolean != compiled_boolean || grammar_boolean != source_boolean {
+            return Err(InstalledSemanticError::InvalidEvidence(
+                "predicate category carrier differs across installed artifacts",
             ));
         }
-        selected = Some(id);
+        selected = Some((id, grammar_boolean));
     }
     selected.ok_or(InstalledSemanticError::InvalidSelection("unbound predicate theory sort"))
 }

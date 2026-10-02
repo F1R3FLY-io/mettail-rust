@@ -387,16 +387,31 @@ impl RholangLanguageRuntime {
                     None
                 };
                 let selected_observation = projected_observation.or(selected_role);
-                let native_sort = if selected_observation.is_none() {
+                let category_sort = if selected_observation.is_none() {
                     predicate_category
                         .map(|category| {
-                            predicate::native_boolean_sort(&installed, category, &mut budget)
+                            predicate::predicate_category_sort(&installed, category, &mut budget)
                         })
                         .transpose()?
                 } else {
                     None
                 };
-                let mut selection = if native_sort.is_none() {
+                let authored_projection = match category_sort.as_ref() {
+                    Some((sort, false)) => {
+                        predicate::select_boolean_projection(&installed, *sort, &mut budget)?
+                    },
+                    _ => None,
+                };
+                let native_sort = match category_sort {
+                    Some((sort, true)) => Some(sort),
+                    Some((_, false)) if authored_projection.is_none() => {
+                        return Err(InstalledSemanticError::InvalidSelection(
+                            "predicate category has no installed Boolean projection",
+                        ));
+                    },
+                    _ => None,
+                };
+                let mut selection = if native_sort.is_none() && authored_projection.is_none() {
                     let operation = selected_observation.map_or(request.operation, |index| {
                         SemanticOperation::Observe(
                             &installed.language_core().theory.observations[index].name,
@@ -419,7 +434,7 @@ impl RholangLanguageRuntime {
                         .transpose()?
                         .flatten()
                 } else {
-                    None
+                    authored_projection
                 };
                 if projected_observation.is_some() && selected_projection.is_none() {
                     return Err(InstalledSemanticError::InvalidEvidence(
@@ -510,6 +525,23 @@ impl RholangLanguageRuntime {
                         )?);
                     }
                     Ok(PreparedSemanticOutput::Action(results))
+                } else if let Some(projection) = selected_projection {
+                    let (sort, _) =
+                        category_sort.ok_or(InstalledSemanticError::InvalidEvidence(
+                            "authored predicate lost its category",
+                        ))?;
+                    let (receipts, verdict) =
+                        relation_observation::prepare_authored_predicate_results(
+                            &bundle,
+                            sort,
+                            request.input,
+                            &projection,
+                            limits,
+                            &mut budget,
+                            &mut kernel_work,
+                        )?;
+                    predicate_verdict = Some(verdict);
+                    Ok(PreparedSemanticOutput::PredicateRelation(receipts))
                 } else {
                     let sort = native_sort.ok_or(InstalledSemanticError::InvalidEvidence(
                         "missing native predicate sort",

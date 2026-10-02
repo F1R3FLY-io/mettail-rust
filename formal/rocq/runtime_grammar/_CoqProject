@@ -119,6 +119,7 @@ theories/SemanticIntrinsicSchema.v
 theories/AuthoredRegexRewrites.v
 theories/SemanticNormalization.v
 theories/DataFreeObservationPolicy.v
+theories/DataFreeWhereConsensus.v
 theories/InstalledLookaheadEveryTrace.v
 theories/RegexGsltSyntax.v
 theories/RegexGsltMatch.v

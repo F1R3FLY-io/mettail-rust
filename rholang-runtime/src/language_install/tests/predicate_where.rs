@@ -127,6 +127,70 @@ fn where_uses_selected_gslt_projection_after_existing_observation_action() {
 }
 
 #[test]
+fn where_uses_authored_boolean_projection_without_an_action_descriptor() {
+    let source = r#"
+        Module ActionlessPredicate {
+          Theory Predicate() {
+            Types { noadmit Expr; }
+            Terms {
+              Call . |- "call" : Expr;
+              Yes . |- "yes" : Expr;
+              No . |- "no" : Expr;
+            }
+            Rewrites {
+              Match : (Call) ~> (Yes);
+              projection Boolean : Expr ~> host::Bool {
+                ToTrue : (Yes) ~> true;
+                ToFalse : (No) ~> false;
+              }
+            }
+          }
+          theory Predicate()
+        }
+    "#;
+    for (result, include_false_rule, expected) in [
+        ("Yes", true, Sat3::Sat),
+        ("No", true, Sat3::Unsat),
+        ("No", false, Sat3::DontKnow),
+    ] {
+        let source =
+            source.replace("Match : (Call) ~> (Yes);", &format!("Match : (Call) ~> ({result});"));
+        let source = if include_false_rule {
+            source
+        } else {
+            source.replace("ToFalse : (No) ~> false;", "")
+        };
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let module = mettail_elab::parse::parse_module(&source).unwrap();
+        let token = runtime
+            .install(InstallCandidate::Ddl(ParsedDdl::Module(module)))
+            .expect("actionless projected GSLT installs");
+        let input = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text("call".into())],
+                &[],
+                Some("Expr"),
+                &BTreeMap::new(),
+            )
+            .expect("exact guest call");
+        let evidence = runtime.prepare_where_predicate(
+            &token,
+            &input,
+            "Expr",
+            0,
+            0,
+            SemanticServiceLimits::default(),
+            || false,
+        );
+        assert_eq!(evidence.verdict(), expected, "{:?}", evidence.error());
+    }
+}
+
+#[test]
 fn projected_guest_publication_is_refused_after_host_profile_revocation() {
     let source = r#"
         Module HostRevocation {

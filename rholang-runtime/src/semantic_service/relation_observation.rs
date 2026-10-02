@@ -355,6 +355,83 @@ fn normalize_relation<C: FnMut() -> bool>(
     Ok(proven)
 }
 
+/// A Data-free where guard normalizes the same installed directed rewrite
+/// relation and projects *every* normal form through one exact Boolean
+/// relation. An exhaustive projection no-match is not Boolean false: it says
+/// that normal form has no Boolean evidence, so the whole guard is unknown.
+/// No source parsing, alternate evaluator, first-result selection, or
+/// synthetic action descriptor is involved.
+pub(super) fn prepare_authored_predicate_results<C: FnMut() -> bool>(
+    prepared: &InstalledSemanticBundle<'_>,
+    sort: TheorySortId,
+    source: &Par,
+    projection: &predicate::SelectedBooleanProjection,
+    limits: SemanticServiceLimits,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+    kernel_work: &mut Option<u64>,
+) -> Result<
+    (Vec<SemanticRelationNormalFormReceipt>, mettail_prattail::algebra_tower::Sat3),
+    InstalledSemanticError,
+> {
+    use mettail_prattail::algebra_tower::Sat3;
+    if projection.input_sort != sort {
+        return Err(InstalledSemanticError::InvalidEvidence(
+            "authored predicate category/projection sort mismatch",
+        ));
+    }
+    let adapter = InstalledFltAdapter::new(prepared.installed(), budget)?;
+    let category = adapter.input_category(sort, budget)?;
+    let input = adapter.to_kernel(
+        source,
+        category,
+        SemanticInputLimits {
+            work: limits.execution.work,
+            nodes: limits.execution.term_nodes,
+            bytes: limits.execution.term_bytes,
+        },
+        budget,
+    )?;
+    let proven = normalize_relation(prepared, sort, input, limits, budget, kernel_work)?;
+    let mut verdict = None;
+    for index in 0..proven.normal_forms().len() {
+        budget.charge(1, 0)?;
+        let decision = budget.run_accounted_stage(|remaining, cancel| {
+            proven.admit_output_at(
+                index,
+                SemanticInputLimits {
+                    work: remaining,
+                    nodes: limits.execution.term_nodes,
+                    bytes: limits.execution.term_bytes,
+                },
+                cancel,
+            )
+        })?;
+        let input = admitted_input(decision, budget)?;
+        let (current, proofs) =
+            execute_terminal_projection(prepared, projection, input, limits, budget, kernel_work)?;
+        verdict = predicate::fold_uniform_candidate(
+            verdict,
+            if proofs.is_empty() {
+                Sat3::DontKnow
+            } else {
+                current
+            },
+        );
+    }
+    let count = proven.normal_forms().len();
+    let bytes = count
+        .checked_mul(8)
+        .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+    budget.charge(count, bytes)?;
+    let mut receipts = Vec::new();
+    receipts
+        .try_reserve_exact(count)
+        .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+    let (_graph, forms) = proven.into_parts();
+    receipts.extend(forms.into_iter().map(|form| form.receipt));
+    Ok((receipts, verdict.unwrap_or(Sat3::DontKnow)))
+}
+
 struct AcceptedRelationCandidate {
     index: usize,
     terminal_receipts: Vec<SemanticRelationNormalFormReceipt>,
