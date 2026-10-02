@@ -7,9 +7,10 @@ use dovetail::egraph::{EClassId, EGraph, EGraphConfig, ENode};
 use dovetail::key::FramedSemanticOperator;
 use mettail_ast::validation::is_reserved_reflect_label;
 use mettail_dovetail_runtime::{
-    theory_positional_native_view, ProvenSemanticTransitions, RuntimeLiteralRef,
-    SemanticInputDecision, SemanticInputLimits, SemanticMatchRefutation, SemanticMatchUndetermined,
-    SemanticTransitionInput, TheoryPositionalNativeEncoding, TheoryPositionalNativeView,
+    theory_positional_native_view, ProvenSemanticRelationNormalForms, ProvenSemanticTransitions,
+    RuntimeLiteralRef, SemanticInputDecision, SemanticInputLimits, SemanticMatchRefutation,
+    SemanticMatchUndetermined, SemanticTransitionInput, TheoryPositionalNativeEncoding,
+    TheoryPositionalNativeView,
 };
 use mettail_grammar_core::{
     Category, CategoryId, ConstructorId, DynamicValue, InstalledLanguage, Production,
@@ -550,18 +551,59 @@ impl<'a> InstalledFltAdapter<'a> {
         expected_sort: TheorySortId,
         budget: &mut ReflectedCodecBudget<'_, C>,
     ) -> Result<Vec<Par>, InstalledFltError> {
+        self.reflect_roots(
+            bundle.egraph(),
+            bundle
+                .transitions
+                .iter()
+                .map(|transition| (transition.output, transition.output_sort)),
+            bundle.transitions.len(),
+            expected_sort,
+            budget,
+        )
+    }
+
+    /// The actionless relation has the same admitted e-graph and root shape as
+    /// an action result. Share the exact iterative reconstruction and charges;
+    /// do not serialize and reparse the guest term or choose one normal form.
+    pub(crate) fn reflect_relation_normal_forms<C: FnMut() -> bool>(
+        &self,
+        bundle: &ProvenSemanticRelationNormalForms,
+        expected_sort: TheorySortId,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Vec<Par>, InstalledFltError> {
+        self.reflect_roots(
+            bundle.egraph(),
+            bundle
+                .normal_forms
+                .iter()
+                .map(|form| (form.output, form.output_sort)),
+            bundle.normal_forms.len(),
+            expected_sort,
+            budget,
+        )
+    }
+
+    fn reflect_roots<C: FnMut() -> bool>(
+        &self,
+        graph: &EGraph<FramedSemanticOperator>,
+        roots: impl Iterator<Item = (EClassId, TheorySortId)>,
+        root_count: usize,
+        expected_sort: TheorySortId,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Vec<Par>, InstalledFltError> {
         let context = ReflectedPositionalContext::new(&self.fingerprint, budget)?;
-        let mut outputs = reserve_occurrences(bundle.transitions.len(), 8, budget)?;
-        for transition in &bundle.transitions {
+        let mut outputs = reserve_occurrences(root_count, 8, budget)?;
+        for (root, output_sort) in roots {
             budget.charge(1, 0)?;
-            if transition.output_sort != expected_sort {
+            if output_sort != expected_sort {
                 return Err(InstalledFltError::UnsupportedOrMalformed("transition output sort"));
             }
             let mut tasks = OccurrenceBuffer::new();
             let mut values = OccurrenceBuffer::new();
             push_occurrence(
                 &mut tasks,
-                OccurrenceTask::Visit(&transition.output, expected_sort),
+                OccurrenceTask::Visit(&root, expected_sort),
                 TASK_SLOT_BYTES,
                 budget,
             )?;
@@ -575,7 +617,7 @@ impl<'a> InstalledFltAdapter<'a> {
                                 let mut used = 0;
                                 let result = theory_positional_native_view(
                                     self.bindings.image(),
-                                    bundle.egraph(),
+                                    graph,
                                     *class,
                                     sort,
                                     &mut used,

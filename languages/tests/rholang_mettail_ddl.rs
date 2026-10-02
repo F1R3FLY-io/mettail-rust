@@ -1197,6 +1197,39 @@ fn authored_ddl_source_profile_admits_the_complete_typed_rewrite_closure() {
 }
 
 #[test]
+fn data_free_terminal_judgment_uses_existing_gslt_surface() {
+    let source = r#"
+        Types {
+          noadmit Computation;
+          noadmit TerminalQuery;
+          noadmit Flag = bool;
+        }
+        Terms {
+          DoneBool . b:Flag |- "doneBool(" b ")" : Computation;
+          CheckBooleanTerminal . x:Computation
+            |- "terminalBool(" x ")" : TerminalQuery;
+          TerminalYes . |- "terminalYes" : TerminalQuery;
+          TerminalNo . |- "terminalNo" : TerminalQuery;
+        }
+        Rewrites {
+          BooleanTerminal(b:Flag):
+            (CheckBooleanTerminal (DoneBool b)) ~> (TerminalYes);
+          projection TerminalVerdict : TerminalQuery ~> host::Bool {
+            Yes : (TerminalYes) ~> true;
+            No : (TerminalNo) ~> false;
+          }
+        }
+    "#;
+    let theory = DdlTheoryExpr::parse_via_wpda(source)
+        .expect("terminal judgment must use only existing Types, Terms and Rewrites syntax");
+    let rendered = theory.to_string();
+    assert_eq!(
+        DdlTheoryExpr::parse_via_wpda(&rendered).expect("terminal judgment round-trip"),
+        theory
+    );
+}
+
+#[test]
 fn authored_regex_full_at_end_preserves_four_arguments() {
     use mettail_languages::rholang::parse_DdlRuleAst_via_wpda_all_with_source;
     use mettail_prattail::wpda_runtime::LatticeTokenSource;

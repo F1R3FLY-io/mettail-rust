@@ -74,6 +74,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.AuthoredRegexRewrites \
 	RuntimeGrammar.ReservedIdentifierShadow \
 	RuntimeGrammar.SemanticNormalization \
+	RuntimeGrammar.DataFreeObservationPolicy \
 	RuntimeGrammar.InstalledLookaheadEveryTrace \
 	RuntimeGrammar.RegexGsltSyntax \
 	RuntimeGrammar.RegexGsltMatch \

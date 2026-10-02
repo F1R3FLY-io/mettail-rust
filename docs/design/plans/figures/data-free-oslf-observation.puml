@@ -1,0 +1,35 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam sequence {
+  ArrowColor #245A81
+  LifeLineBorderColor #245A81
+  ParticipantBorderColor #245A81
+  ParticipantBackgroundColor #EAF4FB
+}
+actor "Rholang process" as Caller #D9ECFA
+participant "Versioned semantic\nservice" as Service #EAF4FB
+participant "Installed capability\ntable" as Table #FFF3D6
+participant "Shared rewrite\nkernel" as Kernel #E3F5E7
+participant "GSLT terminal\njudgment" as Judgment #E3F5E7
+participant "GSLT terminal\nprojection" as Projection #F2E7FA
+participant "RSpace commit" as Space #EAF4FB
+Caller -> Service: v2 structural relation query
+Service -> Table: authorize handle + all rights
+Table --> Service: one sealed image
+Service -> Kernel: normalize all exact alternatives
+Kernel --> Service: complete normal forms + receipts
+loop each normal form
+  Service -> Judgment: construct typed query term
+  Judgment -> Kernel: normalize query relation
+  Kernel --> Judgment: complete query forms + receipts
+  Judgment -> Projection: enumerate Boolean proofs
+  Projection --> Service: true / false / undetermined
+end
+alt every candidate decision complete
+  Service -> Table: recheck rights at publication
+  Service -> Space: publish all accepted terms + receipts
+  Space --> Caller: versioned result and usage
+else any stage incomplete or conflicting
+  Service --> Caller: no successful prefix; undetermined
+end
+@enduml
