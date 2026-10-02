@@ -1115,9 +1115,46 @@ mod tests {
     use crate::resolve::ModuleRef;
     use mettail_grammar_core::{
         normalize_runtime_engine, Carrier, Category, CategoryId, IndexWidth, LanguageAccessError,
-        LanguageRight, LexerImage, LexerState, ParserImageKind, TheoryProfileV1, TheorySortKindV1,
-        TheorySortV1, PARSER_IMAGE_ABI_V1, PARSER_IMAGE_MAGIC,
+        LanguageRight, LexerImage, LexerState, ParserImageKind, RuntimeError,
+        RuntimeLexicalSession, RuntimeParserAdmission, RuntimeParserBackend, RuntimeParserFactory,
+        RuntimePolicy, TheoryProfileV1, TheorySortKindV1, TheorySortV1, WeightedParse,
+        PARSER_IMAGE_ABI_V1, PARSER_IMAGE_MAGIC,
     };
+
+    struct GrantBoundaryFactory;
+
+    impl RuntimeParserFactory for GrantBoundaryFactory {
+        fn semantic_commitment(&self) -> [u8; 32] {
+            [0x67; 32]
+        }
+
+        fn prepare(
+            &self,
+            admission: RuntimeParserAdmission<'_>,
+        ) -> Result<Arc<dyn RuntimeParserBackend>, RuntimeError> {
+            assert_eq!(
+                admission
+                    .grammar()
+                    .fingerprint()
+                    .expect("fixture grammar fingerprint"),
+                admission.image().core_fingerprint
+            );
+            Ok(Arc::new(GrantBoundaryBackend))
+        }
+    }
+
+    struct GrantBoundaryBackend;
+
+    impl RuntimeParserBackend for GrantBoundaryBackend {
+        fn parse(
+            &self,
+            _session: &RuntimeLexicalSession<'_, '_, '_>,
+            _category: Option<CategoryId>,
+            _policy: RuntimePolicy,
+        ) -> Result<Vec<WeightedParse>, RuntimeError> {
+            panic!("grant-boundary fixture must not parse")
+        }
+    }
 
     fn core(name: &str) -> GrammarCoreV1 {
         let mut core = GrammarCoreV1::new(name);
@@ -1540,7 +1577,7 @@ mod tests {
                 |core| Ok::<_, ()>(executable(core, "compiler/1", "15.1")),
             )
             .expect("prepare and compile");
-        let table = InstalledLanguageTable::new();
+        let table = InstalledLanguageTable::with_runtime_factory(Arc::new(GrantBoundaryFactory));
         let grant = installed
             .commit(
                 &table,
