@@ -3,6 +3,29 @@ use super::*;
 const ACTION_SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt_with_actions.rho");
 const DATA_FREE_SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt.rho");
 
+fn embedded_regex_declaration(application: &str) -> String {
+    let marker = "            Module RegexGSLT {";
+    assert_eq!(application.matches(marker).count(), 1, "one embedded Regex module");
+    let start = application.find(marker).expect("embedded module start");
+    let close = application[start..]
+        .find("\n            }, *published) |")
+        .expect("embedded module closes before install publication");
+    let mut declaration = application[start..start + close]
+        .lines()
+        .map(|line| {
+            if line.is_empty() {
+                ""
+            } else {
+                line.strip_prefix("            ")
+                    .expect("module line indentation")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    declaration.push_str("\n}");
+    declaration
+}
+
 #[test]
 fn practical_regex_default_mode_tokens_have_original_wpda_observations() {
     let service = LanguageInstallService::new(
@@ -218,18 +241,7 @@ fn practical_regex_search_alt_concat_template_parses() {
 #[test]
 fn practical_regex_gslt_application_contains_the_checked_declaration_and_parses_once() {
     let application = include_str!("../../../tests/fixtures/regex_gslt_application.rho");
-    let marker = "            Module RegexGSLT {";
-    assert_eq!(application.matches(marker).count(), 1, "one embedded Regex module");
-    let start = application.find(marker).expect("embedded module start");
-    let close = application[start..]
-        .find("\n            }, *published) |")
-        .expect("embedded module closes before install publication");
-    let mut declaration = application[start..start + close]
-        .lines()
-        .map(|line| line.strip_prefix("            ").unwrap_or(line))
-        .collect::<Vec<_>>()
-        .join("\n");
-    declaration.push_str("\n}");
+    let declaration = embedded_regex_declaration(application);
     assert_eq!(
         declaration,
         DATA_FREE_SOURCE.trim(),
@@ -246,10 +258,11 @@ fn practical_regex_gslt_application_contains_the_checked_declaration_and_parses_
 #[test]
 fn practical_regex_declarations_group_tokens_first_and_projections_last() {
     let application = include_str!("../../../tests/fixtures/regex_gslt_application.rho");
+    let embedded = embedded_regex_declaration(application);
     for (name, source) in [
         ("data-free module", DATA_FREE_SOURCE),
         ("action compatibility module", ACTION_SOURCE),
-        ("embedded application module", application),
+        ("embedded application module", embedded.as_str()),
     ] {
         let terms = source
             .split_once("    Terms {")
@@ -314,7 +327,7 @@ fn authored_regex_limits_preserve_the_data_faithful_canonical_module() {
       }
     }"#;
     const DATA_TRAILER: &str = r#"        ],
-        "limits":{"max_term_nodes":16384,"max_proof_nodes":16384,"max_frontier":256,"max_steps":10000000,"max_grade_bits":128}
+        "limits":{"max_term_nodes":16384,"max_proof_nodes":16384,"max_frontier":256,"max_grade_bits":128}
       }
     })"#;
     assert_eq!(ACTION_SOURCE.matches(AUTHORED_TRAILER).count(), 1);
@@ -334,13 +347,23 @@ fn authored_regex_limits_preserve_the_data_faithful_canonical_module() {
         let InstallCandidate::Ddl(ParsedDdl::Module(module)) = rholang_ddl_candidate(source) else {
             panic!("Regex fixture must lower to a module declaration")
         };
-        mettail_elab::elaborate_module_ast_with_host(
+        let elaborated = mettail_elab::elaborate_module_ast_with_host(
             module,
             &mettail_elab::resolve::MemResolver::new(),
             &host_signature,
         )
-        .expect("Regex module elaborates")
-        .canonical_value
+        .expect("Regex module elaborates");
+        assert_eq!(
+            elaborated.exports[0]
+                .language
+                .language_core
+                .theory
+                .limits
+                .max_steps,
+            mettail_grammar_core::TheoryLimitsV1::default().max_steps,
+            "omitted max_steps receives the checked theory default"
+        );
+        elaborated.canonical_value
     };
     assert_eq!(canonical(ACTION_SOURCE), canonical(&data_faithful));
 }
