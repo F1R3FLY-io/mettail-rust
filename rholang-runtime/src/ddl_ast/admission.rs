@@ -97,7 +97,15 @@ pub(super) fn expansion(
             )
         },
         Task::Theory { parameters, .. } => (2, add(parameters.len(), 3)?),
-        Task::Param(_) | Task::Replacement(_) | Task::Freshness(_) | Task::Premise(_) => (1, 2),
+        Task::Param(_) | Task::Replacement(_) | Task::Freshness(_) => (1, 2),
+        Task::Premise(premise) => match premise {
+            DdlPremise::DdlPremise(..) => (1, 2),
+            DdlPremise::DdlIntrinsicPremise(_, inputs, outputs) => {
+                (3, add(add(inputs.len(), outputs.len())?, 5)?)
+            },
+        },
+        Task::PremiseInput(_) => (1, 1),
+        Task::RewriteBinding(_) => (1, 2),
         Task::Path(path) => (
             1,
             match path {
@@ -170,20 +178,35 @@ pub(super) fn expansion(
             (2, add(len, 3)?)
         },
         Task::Rewrite(rewrite) => {
-            let len = match rewrite {
-                DdlRewrite::DdlRewriteDirect(..) => 0,
-                DdlRewrite::DdlRewriteConditional(_, premises, ..) => linked_len(
-                    premises.as_ref(),
-                    |value| match value {
-                        DdlPremises::DdlPremiseMore(_, tail) => Some(tail.as_ref()),
-                        _ => None,
-                    },
-                    reserve,
-                )?,
-                DdlRewrite::DdlRewriteProjection(_, _, _, _, rules) => rules.len(),
-                DdlRewrite::DdlRewriteCarrierProjection(..) => 0,
+            let (len, context_len) = match rewrite {
+                DdlRewrite::DdlRewriteDirect(..) => (0, 0),
+                DdlRewrite::DdlRewriteConditional(_, premises, ..) => (
+                    linked_len(
+                        premises.as_ref(),
+                        |value| match value {
+                            DdlPremises::DdlPremiseMore(_, tail) => Some(tail.as_ref()),
+                            _ => None,
+                        },
+                        reserve,
+                    )?,
+                    0,
+                ),
+                DdlRewrite::DdlRewriteTypedDirect(_, context, ..) => (0, context.len()),
+                DdlRewrite::DdlRewriteTypedConditional(_, context, premises, ..) => (
+                    linked_len(
+                        premises.as_ref(),
+                        |value| match value {
+                            DdlPremises::DdlPremiseMore(_, tail) => Some(tail.as_ref()),
+                            _ => None,
+                        },
+                        reserve,
+                    )?,
+                    context.len(),
+                ),
+                DdlRewrite::DdlRewriteProjection(_, _, _, _, rules) => (rules.len(), 0),
+                DdlRewrite::DdlRewriteCarrierProjection(..) => (0, 0),
             };
-            (2, add(len, 5)?)
+            (3, add(add(len, context_len)?, 7)?)
         },
         Task::ProjectionRule(..) => (2, 5),
         Task::ProjectionHead(head) => match head {
@@ -213,6 +236,8 @@ pub(super) fn expansion(
             | DdlRuleAst::DdlRuleAstBytes(_)
             | DdlRuleAst::DdlRuleAstFloat(_) => (1, 1),
             DdlRuleAst::DdlRuleAstCollectionEmpty => (2, 1),
+            DdlRuleAst::DdlRuleAstTypedCollectionEmpty(_) => (3, 5),
+            DdlRuleAst::DdlRuleAstTypedRemainderOnly(..) => (3, 6),
             DdlRuleAst::DdlRuleAstCollection(items) => {
                 let len = linked_len(
                     items.as_ref(),
@@ -223,6 +248,17 @@ pub(super) fn expansion(
                     reserve,
                 )?;
                 (2, add(len, 1)?)
+            },
+            DdlRuleAst::DdlRuleAstTypedCollection(items, _) => {
+                let len = linked_len(
+                    items.as_ref(),
+                    |value| match value {
+                        DdlRuleAstItems::DdlRuleAstItemMore(_, tail) => Some(tail.as_ref()),
+                        _ => None,
+                    },
+                    reserve,
+                )?;
+                (3, add(len, 5)?)
             },
             DdlRuleAst::DdlRuleAstCollectionRemainder(_, tail) => {
                 let len = linked_len(
@@ -236,6 +272,17 @@ pub(super) fn expansion(
                 // Original rest roster, combined first/rest/remainder roster,
                 // remainder's one child, and collection's sequence child.
                 (4, add(mul(len, 2)?, 4)?)
+            },
+            DdlRuleAst::DdlRuleAstTypedCollectionRemainder(_, tail, _) => {
+                let len = linked_len(
+                    tail.as_ref(),
+                    |value| match value {
+                        DdlRuleAstRemainderTail::DdlRuleAstTailMore(_, rest) => Some(rest.as_ref()),
+                        _ => None,
+                    },
+                    reserve,
+                )? - 1;
+                (5, add(mul(len, 2)?, 8)?)
             },
             DdlRuleAst::DdlRuleAstRemainderOnly(_) | DdlRuleAst::DdlRuleAstVar(_) => (1, 1),
         },

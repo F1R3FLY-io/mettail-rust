@@ -162,6 +162,8 @@ macro_rules! rholang_source_profile_rows {
             DdlFreshness::DdlFreshness => [String => Opaque, String => Opaque];
             DdlRewrite::DdlRewriteDirect => [String => Opaque, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
             DdlRewrite::DdlRewriteConditional => [String => Opaque, Arc<DdlPremises> => D, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
+            DdlRewrite::DdlRewriteTypedDirect => [String => Opaque, Vec<DdlRewriteBinding> => D, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
+            DdlRewrite::DdlRewriteTypedConditional => [String => Opaque, Vec<DdlRewriteBinding> => D, Arc<DdlPremises> => D, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
             DdlRewrite::DdlRewriteProjection => [String => Opaque, String => Opaque, Arc<DdlProjectionDirection> => D, String => Opaque, Vec<DdlProjectionRule> => D];
             DdlRewrite::DdlRewriteCarrierProjection => [String => Opaque, String => Opaque, Arc<DdlProjectionDirection> => D, String => Opaque, Arc<DdlProjectionCarrierMode> => D];
             DdlProjectionCarrierMode::DdlProjectionCarrierOnly => [];
@@ -180,6 +182,9 @@ macro_rules! rholang_source_profile_rows {
             DdlPremises::DdlPremiseOne => [Arc<DdlPremise> => D];
             DdlPremises::DdlPremiseMore => [Arc<DdlPremise> => D, Arc<DdlPremises> => D];
             DdlPremise::DdlPremise => [String => Opaque, String => Opaque];
+            DdlPremise::DdlIntrinsicPremise => [String => Opaque, Vec<DdlPremiseInput> => D, Vec<DdlRewriteBinding> => D];
+            DdlPremiseInput::DdlPremiseInput => [String => Opaque];
+            DdlRewriteBinding::DdlRewriteBinding => [String => Opaque, Arc<DdlSort> => D];
             DdlRuleAst::DdlRuleAstSubst => [Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
             DdlRuleAst::DdlRuleAstSExp => [String => Opaque, Vec<DdlRuleAst> => D];
             DdlRuleAst::DdlRuleAstHostSExp => [String => Opaque, Vec<DdlRuleAst> => D];
@@ -190,14 +195,19 @@ macro_rules! rholang_source_profile_rows {
             DdlRuleAst::DdlRuleAstFloat => [Arc<Float> => D];
             DdlRuleAst::DdlRuleAstAbs => [String => Opaque, Arc<DdlRuleAst> => D];
             DdlRuleAst::DdlRuleAstCollectionEmpty => [];
-            DdlRuleAst::DdlRuleAstRemainderOnly => [String => Opaque];
+            DdlRuleAst::DdlRuleAstRemainderOnly => [Arc<DdlRuleAstRemainderName> => D];
             DdlRuleAst::DdlRuleAstVar => [String => Opaque];
             DdlRuleAst::DdlRuleAstCollection => [Arc<DdlRuleAstItems> => D];
             DdlRuleAst::DdlRuleAstCollectionRemainder => [Arc<DdlRuleAst> => D, Arc<DdlRuleAstRemainderTail> => D];
+            DdlRuleAst::DdlRuleAstTypedCollectionEmpty => [Arc<DdlSort> => D];
+            DdlRuleAst::DdlRuleAstTypedCollection => [Arc<DdlRuleAstItems> => D, Arc<DdlSort> => D];
+            DdlRuleAst::DdlRuleAstTypedRemainderOnly => [Arc<DdlRuleAstRemainderName> => D, Arc<DdlSort> => D];
+            DdlRuleAst::DdlRuleAstTypedCollectionRemainder => [Arc<DdlRuleAst> => D, Arc<DdlRuleAstRemainderTail> => D, Arc<DdlSort> => D];
             DdlRuleAstItems::DdlRuleAstItemOne => [Arc<DdlRuleAst> => D];
             DdlRuleAstItems::DdlRuleAstItemMore => [Arc<DdlRuleAst> => D, Arc<DdlRuleAstItems> => D];
             DdlRuleAstRemainderTail::DdlRuleAstTailRemainder => [String => Opaque];
             DdlRuleAstRemainderTail::DdlRuleAstTailMore => [Arc<DdlRuleAst> => D, Arc<DdlRuleAstRemainderTail> => D];
+            DdlRuleAstRemainderName::DdlRuleAstRemainderName => [String => Opaque];
         }
     };
 }

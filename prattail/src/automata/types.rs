@@ -420,6 +420,10 @@ pub struct DfaState {
     ///
     /// Empty for unambiguous states (zero overhead).
     pub alt_accepts: Vec<(TokenKind, TropicalWeight)>,
+    /// Reservation removed an equal-span `Ident` co-accept from this state.
+    /// Kept through minimization so lattice expansion can reject only the
+    /// identifier/keyword prefix cuts that reservation made visible.
+    pub reserved_ident_shadow: bool,
 }
 
 impl DfaState {
@@ -430,6 +434,7 @@ impl DfaState {
             accept: None,
             weight: TropicalWeight::zero(),
             alt_accepts: Vec::new(),
+            reserved_ident_shadow: false,
         }
     }
 

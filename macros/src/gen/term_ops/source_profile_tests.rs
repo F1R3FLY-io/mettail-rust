@@ -156,10 +156,10 @@ fn child_role(annotation: &str, incoming: Role) -> Role {
 fn actual_rholang_source_profile_covers_exact_constructors_and_original_slots() {
     let language = actual_rholang();
     let table = profile();
-    assert_eq!(table.len(), 144, "approved constructor inventory changed");
+    assert_eq!(table.len(), 196, "approved constructor inventory changed");
     assert_eq!(
         table.values().map(Vec::len).sum::<usize>(),
-        231,
+        329,
         "approved original field-slot inventory changed"
     );
     let declarations =
@@ -245,7 +245,7 @@ fn actual_rholang_source_profile_covers_exact_constructors_and_original_slots() 
             }
         }
     }
-    assert_eq!(constructors, 1990, "actual generated constructor snapshot changed");
+    assert_eq!(constructors, 2042, "actual generated constructor snapshot changed");
     assert_eq!(visited.len(), table.len(), "no invented or stale approved constructor");
     for category in [
         "DdlModuleItem",
@@ -258,18 +258,34 @@ fn actual_rholang_source_profile_covers_exact_constructors_and_original_slots() 
         "DdlExport",
         "DdlReplacement",
         "DdlTermRule",
+        "DdlRegPiece",
+        "DdlRegClassPiece",
+        "DdlTermAttr",
         "DdlBinding",
         "DdlSort",
         "DdlSyntaxItem",
+        "DdlOptionSection",
+        "DdlLimitEntry",
+        "DdlCarrier",
         "DdlEquation",
         "DdlFreshnesses",
         "DdlFreshness",
         "DdlRewrite",
+        "DdlRewriteBinding",
         "DdlPremises",
         "DdlPremise",
+        "DdlPremiseInput",
+        "DdlProjectionCarrierMode",
+        "DdlProjectionDirection",
+        "DdlProjectionRowHead",
+        "DdlProjectionBinding",
+        "DdlProjectionPremises",
+        "DdlProjectionPremise",
+        "DdlProjectionRule",
         "DdlRuleAst",
         "DdlRuleAstItems",
         "DdlRuleAstRemainderTail",
+        "DdlRuleAstRemainderName",
     ] {
         for variant in &enums[category].variants {
             assert!(

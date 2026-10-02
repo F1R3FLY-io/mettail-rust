@@ -31,6 +31,38 @@ impl DdlWireValue for mettail_elab::canonical::RhoValue {
 }
 
 #[test]
+fn remainder_only_collections_keep_their_neutral_wire_meaning() {
+    use mettail_elab::ast::{Ast, Builder, RewriteEntry, TheoryExpr};
+    use mettail_elab::wire::{decode_ddl_value, ParsedDdl};
+    use mettail_languages::rholang::DdlTheoryExpr;
+
+    let body = DdlTheoryExpr::parse_via_wpda(
+        "Rewrites { Untyped: {...tail} ~> x; Typed: {...tail}:Text ~> x; }",
+    )
+    .expect("both remainder-only surfaces parse through the generated WPDA");
+    let wire = DdlLowerPlan::build(DdlRoot::Theory { name: "T", parameters: &[], body: &body })
+        .try_finish_with::<mettail_elab::canonical::RhoValue>(Vec::new(), &mut |_, _| Ok(()))
+        .expect("structural DDL wire");
+    let ParsedDdl::Theory(decoded) = decode_ddl_value(wire).expect("closed DDL wire") else {
+        panic!("theory wire must remain a theory");
+    };
+    let TheoryExpr::Build { builder: Builder::Rewrites(entries), .. } = decoded.body else {
+        panic!("theory must contain a Rewrites builder");
+    };
+    assert_eq!(entries.len(), 2);
+    assert!(matches!(
+        &entries[0],
+        RewriteEntry::Ordinary(rule) if matches!(&rule.lhs, Ast::Remainder(name, _) if name == "tail")
+    ));
+    assert!(matches!(
+        &entries[1],
+        RewriteEntry::Ordinary(rule) if matches!(&rule.lhs,
+            Ast::TypedColl { element, elements, remainder, .. }
+                if element == "Text" && elements.is_empty() && remainder.as_deref() == Some("tail"))
+    ));
+}
+
+#[test]
 fn generated_and_standalone_projection_frontends_agree_on_typed_native_rows() {
     use mettail_elab::ast::{Builder, ProjectionBody, RewriteEntry, TheoryExpr};
     use mettail_elab::wire::{decode_ddl_value, ParsedDdl};

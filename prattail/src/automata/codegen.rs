@@ -1288,6 +1288,26 @@ fn write_is_accepting_check(buf: &mut String, dfa: &Dfa) {
          (IS_ACCEPTING[(state >> 6) as usize] >> (state & 63)) & 1 != 0 \
          }",
     );
+
+    let mut shadow_words = vec![0u64; num_words];
+    for (index, state) in dfa.states.iter().enumerate() {
+        if state.reserved_ident_shadow {
+            shadow_words[index >> 6] |= 1u64 << (index & 63);
+        }
+    }
+    w!(buf, "static RESERVED_IDENT_SHADOW: [u64; {}] = [", num_words);
+    for (index, word) in shadow_words.iter().enumerate() {
+        if index > 0 {
+            buf.push(',');
+        }
+        w!(buf, "0x{:016x}", word);
+    }
+    buf.push_str("];");
+    buf.push_str(
+        "#[inline(always)] fn reserved_ident_shadow_state(state: u32) -> bool { \
+         (RESERVED_IDENT_SHADOW[(state >> 6) as usize] >> (state & 63)) & 1 != 0 \
+         }",
+    );
 }
 
 /// Write the accept_token match arms to a string buffer.
@@ -1927,8 +1947,8 @@ fn write_lex_stream_via_core(buf: &mut String) {
          Ok(stream) }\n\
          pub fn lex_dag<'a>(input: &'a str) \
          -> Result<mettail_prattail::lexer_types::LexDag, String> { \
-         mettail_prattail::runtime_types::lex_dag_core( \
-         input, None, &CHAR_CLASS, dfa_next, is_accepting_state, accept_alternatives, token_to_kind) \
+         mettail_prattail::runtime_types::lex_dag_core_with_shadow( \
+         input, None, &CHAR_CLASS, dfa_next, is_accepting_state, accept_alternatives, token_to_kind, reserved_ident_shadow_state) \
          }\n\
          // M2L (2026-06-17): build a LAZY lattice token source over `input` — \n\
          // mirrors `lex_dag` but materializes DAG nodes ON DEMAND (memoized) as \n\
@@ -1944,9 +1964,9 @@ fn write_lex_stream_via_core(buf: &mut String) {
          let expander: Box<dyn Fn(usize, bool) \
          -> Result<mettail_prattail::runtime_types::ExpandedLexNode, String>> = \
          Box::new(move |start: usize, start_is_primary: bool| { \
-         mettail_prattail::runtime_types::expand_lex_node( \
+         mettail_prattail::runtime_types::expand_lex_node_with_shadow( \
          expander_input.as_str(), start, &CHAR_CLASS, &dfa_next, &is_accepting_state, \
-         &accept_alternatives, &token_to_kind, start_is_primary) }); \
+         &accept_alternatives, &token_to_kind, &reserved_ident_shadow_state, start_is_primary) }); \
          mettail_prattail::wpda_runtime::LazyLatticeTokenSource::from_expander( \
          input.to_string(), expander) \
          }",
@@ -3196,6 +3216,34 @@ fn write_is_accepting_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
     );
 }
 
+/// Emit the reservation witness retained on each minimized DFA state. The
+/// generated lattice lexer uses this only to rule out identifier/keyword
+/// prefix cuts; ordinary token alternatives remain untouched.
+fn write_reserved_ident_shadow_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
+    let mut words = vec![0u64; (dfa.states.len() + 63) / 64];
+    for (index, state) in dfa.states.iter().enumerate() {
+        if state.reserved_ident_shadow {
+            words[index >> 6] |= 1u64 << (index & 63);
+        }
+    }
+    w!(buf, "static RESERVED_IDENT_SHADOW_{}: [u64; {}] = [", suffix, words.len());
+    for (index, word) in words.iter().enumerate() {
+        if index > 0 {
+            buf.push(',');
+        }
+        w!(buf, "0x{:016x}", word);
+    }
+    buf.push_str("];");
+    w!(
+        buf,
+        "#[inline(always)] fn reserved_ident_shadow_{}(state: u32) -> bool {{ \
+         (RESERVED_IDENT_SHADOW_{}[(state >> 6) as usize] >> (state & 63)) & 1 != 0 \
+         }}",
+        suffix.to_lowercase(),
+        suffix
+    );
+}
+
 /// Write a suffixed `dfa_next_{suffix}` transition function.
 ///
 /// Uses match-arm dispatch (direct-coded) for the given DFA's transitions.
@@ -3403,6 +3451,20 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("_ => false } }");
 
     buf.push_str(
+        "#[allow(dead_code)] fn m_reserved_ident_shadow(mode: u8, state: u32) -> bool { match mode {",
+    );
+    buf.push_str("0u8 => reserved_ident_shadow_default(state),");
+    for mode in mode_results {
+        w!(
+            buf,
+            "{}u8 => reserved_ident_shadow_{}(state),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        );
+    }
+    buf.push_str("_ => false } }");
+
+    buf.push_str(
         "#[allow(dead_code)] fn m_accept_alternatives<'a>(mode: u8, state: u32, text: &'a str) \
          -> Vec<(Token<'a>, f64)> { match mode {",
     );
@@ -3527,8 +3589,8 @@ fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::Mo
          pub fn lex_dag<'a>(input: &'a str) \
          -> Result<mettail_prattail::lexer_types::LexDag, String> { \
          let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
-         mettail_prattail::runtime_types::lex_dag_core_modal( \
-         input, None, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw, m_stream_id) \
+         mettail_prattail::runtime_types::lex_dag_core_modal_with_shadow( \
+         input, None, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw, m_stream_id, m_reserved_ident_shadow) \
          }\n\
          // L9-1: LAZY modal lattice token source. The byte→mode map is computed \n\
          // ONCE up front (deterministic per position under the DUI) and captured \n\
@@ -3544,9 +3606,9 @@ fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::Mo
          -> Result<mettail_prattail::runtime_types::ExpandedLexNode, String>> = \
          Box::new(move |start: usize, start_is_primary: bool| { \
          match &mode_at_result { \
-         Ok(mode_at) => mettail_prattail::runtime_types::expand_lex_node_modal( \
+         Ok(mode_at) => mettail_prattail::runtime_types::expand_lex_node_modal_with_shadow( \
          expander_input.as_str(), start, mode_at, &m_char_class, &m_dfa_next, &m_is_accepting, \
-         &m_accept_alternatives, &token_to_kind, &m_is_raw, &m_stream_id, start_is_primary), \
+         &m_accept_alternatives, &token_to_kind, &m_is_raw, &m_stream_id, &m_reserved_ident_shadow, start_is_primary), \
          Err(e) => Err(e.clone()), \
          } }); \
          mettail_prattail::wpda_runtime::LazyLatticeTokenSource::from_expander( \
@@ -4062,6 +4124,7 @@ pub fn generate_modal_lexer_string(
     // 4. Default mode DFA tables
     write_class_table_suffixed(&mut buf, default_partition, "DEFAULT");
     write_is_accepting_suffixed(&mut buf, default_dfa, "DEFAULT");
+    write_reserved_ident_shadow_suffixed(&mut buf, default_dfa, "DEFAULT");
     write_dfa_next_suffixed(&mut buf, default_dfa, "DEFAULT");
     write_accept_token_suffixed(&mut buf, default_dfa, default_custom_tokens, "DEFAULT");
     // accept_alternatives_default — the (Token, weight) alternatives per accept
@@ -4074,6 +4137,7 @@ pub fn generate_modal_lexer_string(
         let suffix = mode.name.to_uppercase();
         write_class_table_suffixed(&mut buf, &mode.partition, &suffix);
         write_is_accepting_suffixed(&mut buf, &mode.min_dfa, &suffix);
+        write_reserved_ident_shadow_suffixed(&mut buf, &mode.min_dfa, &suffix);
         write_dfa_next_suffixed(&mut buf, &mode.min_dfa, &suffix);
         write_accept_token_suffixed(&mut buf, &mode.min_dfa, &mode.custom_tokens, &suffix);
         write_accept_alternatives_suffixed(&mut buf, &mode.min_dfa, &mode.custom_tokens, &suffix);
@@ -4777,6 +4841,21 @@ mod tests {
             dfa.states[idx].accept = Some(TokenKind::Ident);
         }
         dfa
+    }
+
+    #[test]
+    fn nonmodal_codegen_wires_shadow_to_eager_and_lazy_lattices() {
+        let mut dfa = make_dfa_with_accepts(4, &[1, 3]);
+        dfa.states[3].reserved_ident_shadow = true;
+        let mut buf = String::new();
+        write_is_accepting_check(&mut buf, &dfa);
+        write_lex_stream_via_core(&mut buf);
+        assert!(buf.contains("static RESERVED_IDENT_SHADOW: [u64; 1] = [0x0000000000000008]"));
+        assert!(buf.contains("fn reserved_ident_shadow_state(state: u32) -> bool"));
+        assert!(buf.contains("lex_dag_core_with_shadow("));
+        assert!(buf.contains("token_to_kind, reserved_ident_shadow_state)"));
+        assert!(buf.contains("expand_lex_node_with_shadow("));
+        assert!(buf.contains("&token_to_kind, &reserved_ident_shadow_state, start_is_primary)"));
     }
 
     #[test]

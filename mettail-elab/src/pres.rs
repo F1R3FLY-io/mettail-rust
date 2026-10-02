@@ -571,9 +571,33 @@ impl Presentation {
         }
         s.push_str("  }\n  Rewrites {\n");
         for r in &self.rewrites {
-            let mut line = format!("{} : ", r.rw.name);
-            for (a, b) in &r.rw.premises {
-                line.push_str(&format!("if {a} ~> {b} then "));
+            let mut line = r.rw.name.clone();
+            if !r.rw.context.is_empty() {
+                let bindings =
+                    r.rw.context
+                        .iter()
+                        .map(|binding| format!("{}:{}", binding.name, binding.sort.render()))
+                        .collect::<Vec<_>>();
+                line.push_str(&format!("({})", bindings.join(", ")));
+            }
+            line.push_str(" : ");
+            for premise in &r.rw.premises {
+                match premise {
+                    RewritePremise::Transition { source, target } => {
+                        line.push_str(&format!("if {source} ~> {target} then "))
+                    },
+                    RewritePremise::Intrinsic { op, inputs, outputs } => {
+                        let names = outputs
+                            .iter()
+                            .map(|output| format!("{}:{}", output.name, output.sort.render()))
+                            .collect::<Vec<_>>();
+                        line.push_str(&format!(
+                            "if intrinsic {op}({}) => ({}) then ",
+                            inputs.join(", "),
+                            names.join(", ")
+                        ));
+                    },
+                }
             }
             line.push_str(&format!("{} ~> {};", render_ast(&r.rw.lhs), render_ast(&r.rw.rhs)));
             s.push_str(&format!("    {line}\n"));
@@ -633,6 +657,13 @@ pub fn render_ast(a: &Ast) -> String {
         match task {
             Task::Text(text) => output.push_str(text),
             Task::Ast(Ast::Var(name, _)) => output.push_str(name),
+            Task::Ast(Ast::Literal(literal, _)) => match literal {
+                NativeLiteral::Boolean(value) => {
+                    output.push_str(if *value { "true" } else { "false" })
+                },
+                NativeLiteral::String(value) => output.push_str(&format!("{value:?}")),
+                NativeLiteral::Integer(value) => output.push_str(&value.to_string()),
+            },
             Task::Ast(Ast::Remainder(name, _)) => {
                 output.push_str("...");
                 output.push_str(name);
@@ -655,6 +686,25 @@ pub fn render_ast(a: &Ast) -> String {
                 tasks.push(Task::Text("}"));
                 for (index, element) in elements.iter().enumerate().rev() {
                     tasks.push(Task::Ast(element));
+                    if index > 0 {
+                        tasks.push(Task::Text(", "));
+                    }
+                }
+            },
+            Task::Ast(Ast::TypedColl { element, elements, remainder, .. }) => {
+                output.push('{');
+                tasks.push(Task::Text(element));
+                tasks.push(Task::Text(":"));
+                tasks.push(Task::Text("}"));
+                if let Some(name) = remainder {
+                    tasks.push(Task::Text(name));
+                    tasks.push(Task::Text("..."));
+                    if !elements.is_empty() {
+                        tasks.push(Task::Text(", "));
+                    }
+                }
+                for (index, item) in elements.iter().enumerate().rev() {
+                    tasks.push(Task::Ast(item));
                     if index > 0 {
                         tasks.push(Task::Text(", "));
                     }

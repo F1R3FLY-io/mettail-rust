@@ -1045,7 +1045,8 @@ fn relabel_ast(a: &mut Ast, from: &str, to: &str) {
             },
             Ast::Abs(_, body, _) => work.push(body),
             Ast::Coll(elements, _) => work.extend(elements.iter_mut().rev()),
-            Ast::Var(..) | Ast::Remainder(..) => {},
+            Ast::TypedColl { elements, .. } => work.extend(elements.iter_mut().rev()),
+            Ast::Var(..) | Ast::Literal(..) | Ast::Remainder(..) => {},
         }
     }
 }

@@ -333,60 +333,120 @@ Module RegexGSLT {
         True : (DoneBool (BTrue)) ~> true;
         False : (DoneBool (BFalse)) ~> false;
       }
+
+      FullSurfaceDone: (FullSurface (EDone p) t) ~> (FullScan p t 0);
+      FullReadEnd(p:Pattern, t:Text, i:Nat):
+        if intrinsic utf8_at_end(t, i) => (b:Flag) then
+        (FullScan p t i) ~> (FullAtEnd b p t i);
+      FullFinished: (FullAtEnd true p t i) ~> (FullNullable (NEval p (NNil)));
+      FullAdvance(p:Pattern, t:Text, i:Nat):
+        if intrinsic utf8_scalar_at(t, i) => (c:Scalar, j:Nat) then
+        (FullAtEnd false p t i) ~> (FullDerivative (DEval c p (DNil)) t j);
+
+      SearchSurfaceDone: (SearchSurface (EDone p) t) ~> (SearchEmit (SearchScan p t 0));
+      PrefixReadEnd(p:Pattern, t:Text, i:Nat):
+        if intrinsic utf8_at_end(t, i) => (b:Flag) then
+        (PrefixScan p t i) ~> (PrefixAtEnd b p t i);
+      PrefixFinished: (PrefixAtEnd true p t i) ~> (PrefixNullable (NEval p (NNil)) i i);
+      PrefixAdvance(p:Pattern, t:Text, i:Nat):
+        if intrinsic utf8_scalar_at(t, i) => (c:Scalar, j:Nat) then
+        (PrefixAtEnd false p t i) ~> (PrefixDerivative (DEval c p (DNil)) p t i j);
+      SearchFound(p:Pattern, t:Text, i:Nat, e:Nat, l:Nat):
+        if intrinsic utf8_slice(t, i, e) => (m:Text) then
+        (SearchPrefix (PrefixDone (PrefixSome e) l) p t i) ~> (SearchDone (MatchFound i e m) l);
+      SearchPrefixMiss(p:Pattern, t:Text, i:Nat, l:Nat):
+        if intrinsic utf8_at_end(t, i) => (b:Flag) then
+        (SearchPrefix (PrefixDone (PrefixNone) l) p t i) ~> (SearchAtEnd b p t i l);
+      SearchFinished: (SearchAtEnd true p t i l) ~> (SearchDone (NoMatch) l);
+      SearchAdvance(p:Pattern, t:Text, i:Nat, l:Nat):
+        if intrinsic utf8_scalar_at(t, i) => (c:Scalar, j:Nat) then
+        (SearchAtEnd false p t i l) ~> (SearchScan p t j);
+
+      ReplaceInitialize: (ReplaceCompute p r t a) ~> (ReplaceSearch (SearchScan p t 0) p r t a);
+
+      RenderEmpty: (RenderEval (ReplacementEmpty) m) ~> (RenderDone "");
+      RenderRightDone: (RenderRight l (RenderDone r)) ~> (RenderJoining (JoinPieces { l, r }:Text));
+      JoinTextPieces(pieces:List(Text)):
+        if intrinsic utf8_concat_many(pieces) => (t:Text) then
+        (JoinPieces pieces) ~> (DoneText t);
+
+      ReplaceRenderDone: (ReplaceRender (RenderDone x) p r t a i j l) ~> (ReplaceSplice p r t a i j l x 0);
+      ReplaceFirstSplice(p:Pattern, r:ReplacementTemplate, t:Text, i:Nat, j:Nat, l:Nat, x:Text, z:Nat):
+        if intrinsic utf8_slice(t, z, i) => (prefix:Text) then
+        if intrinsic utf8_slice(t, j, l) => (suffix:Text) then
+        (ReplaceSplice p r t (BFalse) i j l x z) ~> (JoinPieces { prefix, x, suffix }:Text);
+      ReplaceAllSplice(p:Pattern, r:ReplacementTemplate, t:Text, i:Nat, j:Nat, l:Nat, x:Text, z:Nat):
+        if intrinsic utf8_slice(t, z, i) => (prefix:Text) then
+        if intrinsic exact_term_eq(i, j) => (empty:Flag) then
+        (ReplaceSplice p r t (BTrue) i j l x z) ~> (ReplaceProgress empty p r t j l prefix x);
+      ReplaceAllPositive(p:Pattern, r:ReplacementTemplate, t:Text, j:Nat, l:Nat, prefix:Text, x:Text):
+        if intrinsic utf8_slice(t, j, l) => (rest:Text) then
+        (ReplaceProgress false p r t j l prefix x) ~> (ReplaceJoin prefix x (ReplaceCompute p r rest (BTrue)));
+      ReplaceAllEmpty(p:Pattern, r:ReplacementTemplate, t:Text, j:Nat, l:Nat, prefix:Text, x:Text):
+        if intrinsic utf8_at_end(t, j) => (end:Flag) then
+        (ReplaceProgress true p r t j l prefix x) ~> (ReplaceEmptyEnd end p r t j l prefix x);
+      ReplaceAllFinalEmpty: (ReplaceEmptyEnd true p r t j l prefix x) ~> (JoinPieces { prefix, x }:Text);
+      ReplaceAllAdvanceEmpty(p:Pattern, r:ReplacementTemplate, t:Text, j:Nat, l:Nat, prefix:Text, x:Text):
+        if intrinsic utf8_scalar_at(t, j) => (copied:Text, next:Nat) then
+        if intrinsic utf8_slice(t, next, l) => (rest:Text) then
+        (ReplaceEmptyEnd false p r t j l prefix x) ~> (ReplaceJoinEmpty prefix x copied (ReplaceCompute p r rest (BTrue)));
+      ReplaceJoinDone: (ReplaceJoin prefix x (DoneText rest)) ~> (JoinPieces { prefix, x, rest }:Text);
+      ReplaceJoinEmptyDone: (ReplaceJoinEmpty prefix x copied (DoneText rest)) ~> (JoinPieces { prefix, x, copied, rest }:Text);
+
+      SmartAltCompare(p:Pattern, q:Pattern):
+        if intrinsic exact_term_eq(p, q) => (b:Flag) then
+        (SAltEqual p q) ~> (SAltDecide b p q);
+      SmartAltSame: (SAltDecide true p q) ~> (SDone p);
+      SmartAltDifferent: (SAltDecide false p q) ~> (SDone (PAlt p q));
+
+      DerivativeCompare(c:Scalar, d:Scalar, k:DFrames):
+        if intrinsic exact_term_eq(c, d) => (b:Flag) then
+        (DCompare c d k) ~> (DDecide b k);
+      DerivativeSame: (DDecide true k) ~> (DReturn (PEpsilon) k);
+      DerivativeDifferent: (DDecide false k) ~> (DReturn (PFail) k);
+
+      ElaborateScalarStart: (EScalar c k) ~> (EReadScalar c 0 k);
+      ElaborateScalarRead(c:Scalar, zero:Nat, k:EFrames):
+        if intrinsic utf8_scalar_at(c, zero) => (scalar:Scalar, next:Nat) then
+        if intrinsic exact_term_eq(c, scalar) => (b:Flag) then
+        (EReadScalar c zero k) ~> (EScalarDecide b c k);
+      ElaborateScalarAdmitted: (EScalarDecide true c k) ~> (EReturn (PLiteral c) k);
+
+      DerivativeScalarStart: (DerivativeScalar c p) ~> (DerivativeReadScalar c p 0);
+      DerivativeScalarRead(c:Scalar, p:Pattern, zero:Nat):
+        if intrinsic utf8_scalar_at(c, zero) => (scalar:Scalar, next:Nat) then
+        if intrinsic exact_term_eq(c, scalar) => (b:Flag) then
+        (DerivativeReadScalar c p zero) ~> (DerivativeScalarDecide b c p);
+      DerivativeScalarAdmitted: (DerivativeScalarDecide true c p) ~> (DerivativeSurface c (EEval p (ENil)));
+
+      RepeatInitialize: (RInit p lo hi) ~> (RBounds p lo hi 0 1);
+      RepeatAdmitBounds(p:Pattern, lo:Nat, hi:Nat, zero:Nat, one:Nat):
+        if intrinsic checked_nat_add(lo, zero) => (lower:Nat) then
+        if intrinsic checked_nat_add(hi, zero) => (upper:Nat) then
+        (RBounds p lo hi zero one) ~> (RRequired p lower upper zero one (PEpsilon));
+      RepeatCheckLower(p:Pattern, lo:Nat, hi:Nat, i:Nat, one:Nat, acc:Pattern):
+        if intrinsic exact_term_eq(i, lo) => (b:Flag) then
+        (RRequired p lo hi i one acc) ~> (RAtLower b p lo hi i one acc);
+      RepeatReachedLower: (RAtLower true p lo hi i one acc) ~> (ROptional p hi i one acc (PEpsilon));
+      RepeatBelowLower: (RAtLower false p lo hi i one acc) ~> (RCheckUpper p lo hi i one acc);
+      RepeatCheckRequiredUpper(p:Pattern, lo:Nat, hi:Nat, i:Nat, one:Nat, acc:Pattern):
+        if intrinsic exact_term_eq(i, hi) => (b:Flag) then
+        (RCheckUpper p lo hi i one acc) ~> (RAtUpper b p lo hi i one acc);
+      RepeatReversedBounds: (RAtUpper true p lo hi i one acc) ~> (RDone (PFail));
+      RepeatAppendRequired: (RAtUpper false p lo hi i one acc) ~> (RAppend p lo hi i one (SConcat p acc));
+      RepeatIncrementRequired(p:Pattern, lo:Nat, hi:Nat, i:Nat, one:Nat, acc:Pattern):
+        if intrinsic checked_nat_add(i, one) => (next:Nat) then
+        (RAppend p lo hi i one (SDone acc)) ~> (RRequired p lo hi next one acc);
+      RepeatCheckOptionalUpper(p:Pattern, hi:Nat, i:Nat, one:Nat, req:Pattern, acc:Pattern):
+        if intrinsic exact_term_eq(i, hi) => (b:Flag) then
+        (ROptional p hi i one req acc) ~> (ROptionalAtUpper b p hi i one req acc);
+      RepeatReachedUpper: (ROptionalAtUpper true p hi i one req acc) ~> (RFinish (SConcat req acc));
+      RepeatBelowUpper: (ROptionalAtUpper false p hi i one req acc) ~> (RProduct p hi i one req (SConcat p acc));
+      RepeatIncrementOptional(p:Pattern, hi:Nat, i:Nat, one:Nat, req:Pattern, acc:Pattern):
+        if intrinsic checked_nat_add(i, one) => (next:Nat) then
+        (RAlternative p hi i one req (SDone acc)) ~> (ROptional p hi next one req acc);
     }
     Data({
-      "rewrites": [
-        {"name":"FullSurfaceDone","left":["FullSurface",["EDone","p"],"t"],"right":["FullScan","p","t",["lit","i128",0]]},
-        {"name":"FullReadEnd","context":[["typed","p","Pattern"],["typed","t","Text"],["typed","i","Nat"]],"left":["FullScan","p","t","i"],"premises":[["intrinsic",{"op":"utf8_at_end","inputs":["t","i"],"outputs":[["typed","b","Flag"]]}]],"right":["FullAtEnd","b","p","t","i"]},
-        {"name":"FullFinished","left":["FullAtEnd",["lit","bool",true],"p","t","i"],"right":["FullNullable",["NEval","p",["NNil"]]]},
-        {"name":"FullAdvance","context":[["typed","p","Pattern"],["typed","t","Text"],["typed","i","Nat"]],"left":["FullAtEnd",["lit","bool",false],"p","t","i"],"premises":[["intrinsic",{"op":"utf8_scalar_at","inputs":["t","i"],"outputs":[["typed","c","Scalar"],["typed","j","Nat"]]}]],"right":["FullDerivative",["DEval","c","p",["DNil"]],"t","j"]},
-        {"name":"SearchSurfaceDone","left":["SearchSurface",["EDone","p"],"t"],"right":["SearchEmit",["SearchScan","p","t",["lit","i128",0]]]},
-        {"name":"PrefixReadEnd","context":[["typed","p","Pattern"],["typed","t","Text"],["typed","i","Nat"]],"left":["PrefixScan","p","t","i"],"premises":[["intrinsic",{"op":"utf8_at_end","inputs":["t","i"],"outputs":[["typed","b","Flag"]]}]],"right":["PrefixAtEnd","b","p","t","i"]},
-        {"name":"PrefixFinished","left":["PrefixAtEnd",["lit","bool",true],"p","t","i"],"right":["PrefixNullable",["NEval","p",["NNil"]],"i","i"]},
-        {"name":"PrefixAdvance","context":[["typed","p","Pattern"],["typed","t","Text"],["typed","i","Nat"]],"left":["PrefixAtEnd",["lit","bool",false],"p","t","i"],"premises":[["intrinsic",{"op":"utf8_scalar_at","inputs":["t","i"],"outputs":[["typed","c","Scalar"],["typed","j","Nat"]]}]],"right":["PrefixDerivative",["DEval","c","p",["DNil"]],"p","t","i","j"]},
-        {"name":"SearchFound","context":[["typed","p","Pattern"],["typed","t","Text"],["typed","i","Nat"],["typed","e","Nat"],["typed","l","Nat"]],"left":["SearchPrefix",["PrefixDone",["PrefixSome","e"],"l"],"p","t","i"],"premises":[["intrinsic",{"op":"utf8_slice","inputs":["t","i","e"],"outputs":[["typed","m","Text"]]}]],"right":["SearchDone",["MatchFound","i","e","m"],"l"]},
-        {"name":"SearchPrefixMiss","context":[["typed","p","Pattern"],["typed","t","Text"],["typed","i","Nat"],["typed","l","Nat"]],"left":["SearchPrefix",["PrefixDone",["PrefixNone"],"l"],"p","t","i"],"premises":[["intrinsic",{"op":"utf8_at_end","inputs":["t","i"],"outputs":[["typed","b","Flag"]]}]],"right":["SearchAtEnd","b","p","t","i","l"]},
-        {"name":"SearchFinished","left":["SearchAtEnd",["lit","bool",true],"p","t","i","l"],"right":["SearchDone",["NoMatch"],"l"]},
-        {"name":"SearchAdvance","context":[["typed","p","Pattern"],["typed","t","Text"],["typed","i","Nat"],["typed","l","Nat"]],"left":["SearchAtEnd",["lit","bool",false],"p","t","i","l"],"premises":[["intrinsic",{"op":"utf8_scalar_at","inputs":["t","i"],"outputs":[["typed","c","Scalar"],["typed","j","Nat"]]}]],"right":["SearchScan","p","t","j"]},
-        {"name":"ReplaceInitialize","left":["ReplaceCompute","p","r","t","a"],"right":["ReplaceSearch",["SearchScan","p","t",["lit","i128",0]],"p","r","t","a"]},
-        {"name":"RenderEmpty","left":["RenderEval",["ReplacementEmpty"],"m"],"right":["RenderDone",["lit","str",""]]},
-        {"name":"RenderRightDone","left":["RenderRight","l",["RenderDone","r"]],"right":["RenderJoining",["JoinPieces",["coll_typed","Text",["l","r"],Nil]]]},
-        {"name":"JoinTextPieces","context":[["typed","pieces",["vec","Text"]]],"left":["JoinPieces","pieces"],"premises":[["intrinsic",{"op":"utf8_concat_many","inputs":["pieces"],"outputs":[["typed","t","Text"]]}]],"right":["DoneText","t"]},
-        {"name":"ReplaceRenderDone","left":["ReplaceRender",["RenderDone","x"],"p","r","t","a","i","j","l"],"right":["ReplaceSplice","p","r","t","a","i","j","l","x",["lit","i128",0]]},
-        {"name":"ReplaceFirstSplice","context":[["typed","p","Pattern"],["typed","r","ReplacementTemplate"],["typed","t","Text"],["typed","i","Nat"],["typed","j","Nat"],["typed","l","Nat"],["typed","x","Text"],["typed","z","Nat"]],"left":["ReplaceSplice","p","r","t",["BFalse"],"i","j","l","x","z"],"premises":[["intrinsic",{"op":"utf8_slice","inputs":["t","z","i"],"outputs":[["typed","prefix","Text"]]}],["intrinsic",{"op":"utf8_slice","inputs":["t","j","l"],"outputs":[["typed","suffix","Text"]]}]],"right":["JoinPieces",["coll_typed","Text",["prefix","x","suffix"],Nil]]},
-        {"name":"ReplaceAllSplice","context":[["typed","p","Pattern"],["typed","r","ReplacementTemplate"],["typed","t","Text"],["typed","i","Nat"],["typed","j","Nat"],["typed","l","Nat"],["typed","x","Text"],["typed","z","Nat"]],"left":["ReplaceSplice","p","r","t",["BTrue"],"i","j","l","x","z"],"premises":[["intrinsic",{"op":"utf8_slice","inputs":["t","z","i"],"outputs":[["typed","prefix","Text"]]}],["intrinsic",{"op":"exact_term_eq","inputs":["i","j"],"outputs":[["typed","empty","Flag"]]}]],"right":["ReplaceProgress","empty","p","r","t","j","l","prefix","x"]},
-        {"name":"ReplaceAllPositive","context":[["typed","p","Pattern"],["typed","r","ReplacementTemplate"],["typed","t","Text"],["typed","j","Nat"],["typed","l","Nat"],["typed","prefix","Text"],["typed","x","Text"]],"left":["ReplaceProgress",["lit","bool",false],"p","r","t","j","l","prefix","x"],"premises":[["intrinsic",{"op":"utf8_slice","inputs":["t","j","l"],"outputs":[["typed","rest","Text"]]}]],"right":["ReplaceJoin","prefix","x",["ReplaceCompute","p","r","rest",["BTrue"]]]},
-        {"name":"ReplaceAllEmpty","context":[["typed","p","Pattern"],["typed","r","ReplacementTemplate"],["typed","t","Text"],["typed","j","Nat"],["typed","l","Nat"],["typed","prefix","Text"],["typed","x","Text"]],"left":["ReplaceProgress",["lit","bool",true],"p","r","t","j","l","prefix","x"],"premises":[["intrinsic",{"op":"utf8_at_end","inputs":["t","j"],"outputs":[["typed","end","Flag"]]}]],"right":["ReplaceEmptyEnd","end","p","r","t","j","l","prefix","x"]},
-        {"name":"ReplaceAllFinalEmpty","left":["ReplaceEmptyEnd",["lit","bool",true],"p","r","t","j","l","prefix","x"],"right":["JoinPieces",["coll_typed","Text",["prefix","x"],Nil]]},
-        {"name":"ReplaceAllAdvanceEmpty","context":[["typed","p","Pattern"],["typed","r","ReplacementTemplate"],["typed","t","Text"],["typed","j","Nat"],["typed","l","Nat"],["typed","prefix","Text"],["typed","x","Text"]],"left":["ReplaceEmptyEnd",["lit","bool",false],"p","r","t","j","l","prefix","x"],"premises":[["intrinsic",{"op":"utf8_scalar_at","inputs":["t","j"],"outputs":[["typed","copied","Text"],["typed","next","Nat"]]}],["intrinsic",{"op":"utf8_slice","inputs":["t","next","l"],"outputs":[["typed","rest","Text"]]}]],"right":["ReplaceJoinEmpty","prefix","x","copied",["ReplaceCompute","p","r","rest",["BTrue"]]]},
-        {"name":"ReplaceJoinDone","left":["ReplaceJoin","prefix","x",["DoneText","rest"]],"right":["JoinPieces",["coll_typed","Text",["prefix","x","rest"],Nil]]},
-        {"name":"ReplaceJoinEmptyDone","left":["ReplaceJoinEmpty","prefix","x","copied",["DoneText","rest"]],"right":["JoinPieces",["coll_typed","Text",["prefix","x","copied","rest"],Nil]]},
-        {"name":"SmartAltCompare","context":[["typed","p","Pattern"],["typed","q","Pattern"]],"left":["SAltEqual","p","q"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["p","q"],"outputs":[["typed","b","Flag"]]}]],"right":["SAltDecide","b","p","q"]},
-        {"name":"SmartAltSame","left":["SAltDecide",["lit","bool",true],"p","q"],"right":["SDone","p"]},
-        {"name":"SmartAltDifferent","left":["SAltDecide",["lit","bool",false],"p","q"],"right":["SDone",["PAlt","p","q"]]},
-        {"name":"DerivativeCompare","context":[["typed","c","Scalar"],["typed","d","Scalar"],["typed","k","DFrames"]],"left":["DCompare","c","d","k"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["c","d"],"outputs":[["typed","b","Flag"]]}]],"right":["DDecide","b","k"]},
-        {"name":"DerivativeSame","left":["DDecide",["lit","bool",true],"k"],"right":["DReturn",["PEpsilon"],"k"]},
-        {"name":"DerivativeDifferent","left":["DDecide",["lit","bool",false],"k"],"right":["DReturn",["PFail"],"k"]},
-        {"name":"ElaborateScalarStart","left":["EScalar","c","k"],"right":["EReadScalar","c",["lit","i128",0],"k"]},
-        {"name":"ElaborateScalarRead","context":[["typed","c","Scalar"],["typed","zero","Nat"],["typed","k","EFrames"]],"left":["EReadScalar","c","zero","k"],"premises":[["intrinsic",{"op":"utf8_scalar_at","inputs":["c","zero"],"outputs":[["typed","scalar","Scalar"],["typed","next","Nat"]]}],["intrinsic",{"op":"exact_term_eq","inputs":["c","scalar"],"outputs":[["typed","b","Flag"]]}]],"right":["EScalarDecide","b","c","k"]},
-        {"name":"ElaborateScalarAdmitted","left":["EScalarDecide",["lit","bool",true],"c","k"],"right":["EReturn",["PLiteral","c"],"k"]},
-        {"name":"DerivativeScalarStart","left":["DerivativeScalar","c","p"],"right":["DerivativeReadScalar","c","p",["lit","i128",0]]},
-        {"name":"DerivativeScalarRead","context":[["typed","c","Scalar"],["typed","p","Pattern"],["typed","zero","Nat"]],"left":["DerivativeReadScalar","c","p","zero"],"premises":[["intrinsic",{"op":"utf8_scalar_at","inputs":["c","zero"],"outputs":[["typed","scalar","Scalar"],["typed","next","Nat"]]}],["intrinsic",{"op":"exact_term_eq","inputs":["c","scalar"],"outputs":[["typed","b","Flag"]]}]],"right":["DerivativeScalarDecide","b","c","p"]},
-        {"name":"DerivativeScalarAdmitted","left":["DerivativeScalarDecide",["lit","bool",true],"c","p"],"right":["DerivativeSurface","c",["EEval","p",["ENil"]]]},
-        {"name":"RepeatInitialize","left":["RInit","p","lo","hi"],"right":["RBounds","p","lo","hi",["lit","i128",0],["lit","i128",1]]},
-        {"name":"RepeatAdmitBounds","context":[["typed","p","Pattern"],["typed","lo","Nat"],["typed","hi","Nat"],["typed","zero","Nat"],["typed","one","Nat"]],"left":["RBounds","p","lo","hi","zero","one"],"premises":[["intrinsic",{"op":"checked_nat_add","inputs":["lo","zero"],"outputs":[["typed","lower","Nat"]]}],["intrinsic",{"op":"checked_nat_add","inputs":["hi","zero"],"outputs":[["typed","upper","Nat"]]}]],"right":["RRequired","p","lower","upper","zero","one",["PEpsilon"]]},
-        {"name":"RepeatCheckLower","context":[["typed","p","Pattern"],["typed","lo","Nat"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","acc","Pattern"]],"left":["RRequired","p","lo","hi","i","one","acc"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["i","lo"],"outputs":[["typed","b","Flag"]]}]],"right":["RAtLower","b","p","lo","hi","i","one","acc"]},
-        {"name":"RepeatReachedLower","left":["RAtLower",["lit","bool",true],"p","lo","hi","i","one","acc"],"right":["ROptional","p","hi","i","one","acc",["PEpsilon"]]},
-        {"name":"RepeatBelowLower","left":["RAtLower",["lit","bool",false],"p","lo","hi","i","one","acc"],"right":["RCheckUpper","p","lo","hi","i","one","acc"]},
-        {"name":"RepeatCheckRequiredUpper","context":[["typed","p","Pattern"],["typed","lo","Nat"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","acc","Pattern"]],"left":["RCheckUpper","p","lo","hi","i","one","acc"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["i","hi"],"outputs":[["typed","b","Flag"]]}]],"right":["RAtUpper","b","p","lo","hi","i","one","acc"]},
-        {"name":"RepeatReversedBounds","left":["RAtUpper",["lit","bool",true],"p","lo","hi","i","one","acc"],"right":["RDone",["PFail"]]},
-        {"name":"RepeatAppendRequired","left":["RAtUpper",["lit","bool",false],"p","lo","hi","i","one","acc"],"right":["RAppend","p","lo","hi","i","one",["SConcat","p","acc"]]},
-        {"name":"RepeatIncrementRequired","context":[["typed","p","Pattern"],["typed","lo","Nat"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","acc","Pattern"]],"left":["RAppend","p","lo","hi","i","one",["SDone","acc"]],"premises":[["intrinsic",{"op":"checked_nat_add","inputs":["i","one"],"outputs":[["typed","next","Nat"]]}]],"right":["RRequired","p","lo","hi","next","one","acc"]},
-        {"name":"RepeatCheckOptionalUpper","context":[["typed","p","Pattern"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","req","Pattern"],["typed","acc","Pattern"]],"left":["ROptional","p","hi","i","one","req","acc"],"premises":[["intrinsic",{"op":"exact_term_eq","inputs":["i","hi"],"outputs":[["typed","b","Flag"]]}]],"right":["ROptionalAtUpper","b","p","hi","i","one","req","acc"]},
-        {"name":"RepeatReachedUpper","left":["ROptionalAtUpper",["lit","bool",true],"p","hi","i","one","req","acc"],"right":["RFinish",["SConcat","req","acc"]]},
-        {"name":"RepeatBelowUpper","left":["ROptionalAtUpper",["lit","bool",false],"p","hi","i","one","req","acc"],"right":["RProduct","p","hi","i","one","req",["SConcat","p","acc"]]},
-        {"name":"RepeatIncrementOptional","context":[["typed","p","Pattern"],["typed","hi","Nat"],["typed","i","Nat"],["typed","one","Nat"],["typed","req","Pattern"],["typed","acc","Pattern"]],"left":["RAlternative","p","hi","i","one","req",["SDone","acc"]],"premises":[["intrinsic",{"op":"checked_nat_add","inputs":["i","one"],"outputs":[["typed","next","Nat"]]}]],"right":["ROptional","p","hi","next","one","req","acc"]}
-      ],
       "oslf": {
         "effects": [{"name":"Pure", "class":"pure", "requires":[], "emits":[]}],
         "actions": [
@@ -419,7 +479,6 @@ Module RegexGSLT {
           max_term_nodes = 16384;
           max_proof_nodes = 16384;
           max_frontier = 256;
-          max_steps = 10000000;
           max_grade_bits = 128;
         }
       }
@@ -430,39 +489,34 @@ Module RegexGSLT {
 }
       , *loaded) |
     for(@installed <- loaded) {
-      handlePipe!(installed.get("ok").get("exports").nth(0).get("handle"))
+      handlePipe!(installed.get("ok").get("exports_by_name").get("Regex"))
     } |
-    for(language <- handlePipe) {
-      new values, nullable, derived, matched, searched, firstReplaced, replaced in {
-        observe!([1, *language, "Nullable", language:Computation`nullable(a?)`,
-          [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
-          *nullable]) |
-        observe!([1, *language, "Derivative", language:Computation`derivative(a,a+)`,
-          [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
-          *derived]) |
+    for(regex <- handlePipe) {
+      new observeRegex, values, nullable, derived, matched, searched, firstReplaced, replaced in {
+        for(@[name, term, reply] <= observeRegex) {
+          observe!([1, *regex, name, term,
+            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+            reply])
+        } |
+        observeRegex!(["Nullable", regex:Computation`nullable(a?)`, *nullable]) |
+        observeRegex!(["Derivative", regex:Computation`derivative(a,a+)`, *derived]) |
         values!(["abcb", "éλλx", "aaba", "x"]) |
         for(@[matchText, searchText, replaceText, replacement] <- values) {
-          observe!([1, *language, "FullMatch",
-            language:Computation`fullMatch(a(b|c)+,${matchText:Text})`,
-            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
-            *matched]) |
-          observe!([1, *language, "Search",
-            language:Computation`search(λ+,${searchText:Text})`,
-            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
-            *searched]) |
-          observe!([1, *language, "ReplaceFirst",
-            language:Computation`replaceFirst(a+,literal(${replacement:Text}),${replaceText:Text})`,
-            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+          observeRegex!(["FullMatch",
+            regex:Computation`fullMatch(a(b|c)+,${matchText:Text})`, *matched]) |
+          observeRegex!(["Search",
+            regex:Computation`search(λ+,${searchText:Text})`, *searched]) |
+          observeRegex!(["ReplaceFirst",
+            regex:Computation`replaceFirst(a+,literal(${replacement:Text}),${replaceText:Text})`,
             *firstReplaced]) |
-          observe!([1, *language, "ReplaceAll",
-            language:Computation`replaceAll(a+,literal(${replacement:Text}),${replaceText:Text})`,
-            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
+          observeRegex!(["ReplaceAll",
+            regex:Computation`replaceAll(a+,literal(${replacement:Text}),${replaceText:Text})`,
             *replaced])
         } |
         for(@[1, 0, [[term, receipt]], usage] <- nullable) {
           new result in {
             result!(term) |
-            for(@language:Computation`doneBool(yes)` <- result) {
+            for(@regex:Computation`doneBool(yes)` <- result) {
               stdout!(["nullable", true]) |
               @"regex.nullable"!([true, receipt, usage])
             }
@@ -471,7 +525,7 @@ Module RegexGSLT {
         for(@[1, 0, [[term, receipt]], usage] <- derived) {
           new result in {
             result!(term) |
-            for(@language:Computation`donePattern(a*)` <- result) {
+            for(@regex:Computation`donePattern(a*)` <- result) {
               stdout!(["derivative", "a*"]) |
               @"regex.derivative"!([term, receipt, usage])
             }
@@ -480,7 +534,7 @@ Module RegexGSLT {
         for(@[1, 0, [[term, receipt]], usage] <- matched) {
           new result in {
             result!(term) |
-            for(@language:Computation`doneBool(yes)` <- result) {
+            for(@regex:Computation`doneBool(yes)` <- result) {
               stdout!(["full-match", true]) |
               @"regex.match"!([true, receipt, usage]) |
               @"regex.guard.input"!("abcb")
@@ -490,7 +544,7 @@ Module RegexGSLT {
         for(@[1, 0, [[term, receipt]], usage] <- searched) {
           new result in {
             result!(term) |
-            for(@language:Computation`doneMatch(found(2,6,${found:Text}))` <- result) {
+            for(@regex:Computation`doneMatch(found(2,6,${found:Text}))` <- result) {
               stdout!(["search", 2, 6, found]) |
               @"regex.search"!([2, 6, found, receipt, usage])
             }
@@ -499,7 +553,7 @@ Module RegexGSLT {
         for(@[1, 0, [[term, receipt]], usage] <- firstReplaced) {
           new result in {
             result!(term) |
-            for(@language:Computation`doneText(${output:Text})` <- result) {
+            for(@regex:Computation`doneText(${output:Text})` <- result) {
               stdout!(["replace-first", output]) |
               @"regex.replace-first"!([output, receipt, usage])
             }
@@ -508,14 +562,14 @@ Module RegexGSLT {
         for(@[1, 0, [[term, receipt]], usage] <- replaced) {
           new result in {
             result!(term) |
-            for(@language:Computation`doneText(${output:Text})` <- result) {
+            for(@regex:Computation`doneText(${output:Text})` <- result) {
               stdout!(["replace-all", output]) |
               @"regex.replace"!([output, receipt, usage])
             }
           }
         } |
         for(@text <- @"regex.guard.input"
-            where language:Computation`fullMatch(a(b|c)+,${text:Text})`) {
+            where regex:Computation`fullMatch(a(b|c)+,${text:Text})`) {
           stdout!(["guard", text]) |
           @"regex.guard"!(text)
         } |

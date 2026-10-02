@@ -9,9 +9,10 @@ use crate::rholang_ast::RholangAstLowerError;
 use mettail_languages::rholang::{
     Bool, Bytes, DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness,
     DdlFreshnesses, DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem, DdlOptionSection,
-    DdlParam, DdlPath, DdlPremise, DdlPremises, DdlProjectionBinding, DdlProjectionDirection,
-    DdlProjectionPremise, DdlProjectionPremises, DdlProjectionRowHead, DdlProjectionRule,
-    DdlRegClassPiece, DdlRegPiece, DdlReplacement, DdlRewrite, DdlRuleAst, DdlRuleAstItems,
+    DdlParam, DdlPath, DdlPremise, DdlPremiseInput, DdlPremises, DdlProjectionBinding,
+    DdlProjectionDirection, DdlProjectionPremise, DdlProjectionPremises, DdlProjectionRowHead,
+    DdlProjectionRule, DdlRegClassPiece, DdlRegPiece, DdlReplacement, DdlRewrite,
+    DdlRewriteBinding, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderName,
     DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr,
     Float, Int, Proc,
 };
@@ -497,6 +498,36 @@ impl<'a> DdlLowerPlan<'a> {
                             ],
                         });
                     },
+                    DdlRewrite::DdlRewriteTypedDirect(name, context, left, right) => {
+                        tasks.push(Task::Node {
+                            tag: "rewrite-typed",
+                            children: vec![
+                                Task::Text(name),
+                                sequence(context.iter().map(Task::RewriteBinding).collect()),
+                                sequence(Vec::new()),
+                                Task::RuleAst(left.as_ref()),
+                                Task::RuleAst(right.as_ref()),
+                            ],
+                        });
+                    },
+                    DdlRewrite::DdlRewriteTypedConditional(
+                        name,
+                        context,
+                        premises,
+                        left,
+                        right,
+                    ) => {
+                        tasks.push(Task::Node {
+                            tag: "rewrite-typed",
+                            children: vec![
+                                Task::Text(name),
+                                sequence(context.iter().map(Task::RewriteBinding).collect()),
+                                sequence(premise_tasks(premises.as_ref())),
+                                Task::RuleAst(left.as_ref()),
+                                Task::RuleAst(right.as_ref()),
+                            ],
+                        });
+                    },
                     DdlRewrite::DdlRewriteProjection(name, guest, direction, host, rules) => {
                         tasks.push(Task::Node {
                             tag: "projection-group",
@@ -610,6 +641,25 @@ impl<'a> DdlLowerPlan<'a> {
                     DdlPremise::DdlPremise(left, right) => tasks.push(Task::Node {
                         tag: "premise",
                         children: vec![Task::Text(left), Task::Text(right)],
+                    }),
+                    DdlPremise::DdlIntrinsicPremise(op, inputs, outputs) => {
+                        tasks.push(Task::Node {
+                            tag: "premise-intrinsic",
+                            children: vec![
+                                Task::Text(op),
+                                sequence(inputs.iter().map(Task::PremiseInput).collect()),
+                                sequence(outputs.iter().map(Task::RewriteBinding).collect()),
+                            ],
+                        })
+                    },
+                },
+                Task::PremiseInput(input) => match input {
+                    DdlPremiseInput::DdlPremiseInput(name) => tasks.push(Task::Text(name)),
+                },
+                Task::RewriteBinding(binding) => match binding {
+                    DdlRewriteBinding::DdlRewriteBinding(name, sort) => tasks.push(Task::Node {
+                        tag: "rewrite-binding",
+                        children: vec![Task::Text(name), Task::Sort(sort.as_ref())],
                     }),
                 },
                 Task::RuleAst(ast) => {
@@ -1092,9 +1142,9 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Result<Task<'a>, RholangAstLowerErr
             tag: "ast-collection",
             children: vec![sequence(rule_ast_items(items.as_ref()))],
         },
-        DdlRuleAst::DdlRuleAstRemainderOnly(name) => Task::Node {
+        DdlRuleAst::DdlRuleAstRemainderOnly(remainder) => Task::Node {
             tag: "ast-remainder",
-            children: vec![Task::Text(name)],
+            children: vec![Task::Text(remainder_name(remainder.as_ref()))],
         },
         DdlRuleAst::DdlRuleAstCollectionRemainder(first, tail) => {
             let (rest, name) = rule_ast_remainder_tail(tail.as_ref());
@@ -1114,11 +1164,71 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Result<Task<'a>, RholangAstLowerErr
                 children: vec![sequence(children)],
             }
         },
+        DdlRuleAst::DdlRuleAstTypedCollectionEmpty(sort) => Task::Node {
+            tag: "ast-typed-collection",
+            children: vec![
+                Task::Sort(sort.as_ref()),
+                sequence(Vec::new()),
+                Task::Node {
+                    tag: "ast-no-remainder",
+                    children: Vec::new(),
+                },
+            ],
+        },
+        DdlRuleAst::DdlRuleAstTypedCollection(items, sort) => Task::Node {
+            tag: "ast-typed-collection",
+            children: vec![
+                Task::Sort(sort.as_ref()),
+                sequence(rule_ast_items(items.as_ref())),
+                Task::Node {
+                    tag: "ast-no-remainder",
+                    children: Vec::new(),
+                },
+            ],
+        },
+        DdlRuleAst::DdlRuleAstTypedRemainderOnly(remainder, sort) => Task::Node {
+            tag: "ast-typed-collection",
+            children: vec![
+                Task::Sort(sort.as_ref()),
+                sequence(Vec::new()),
+                Task::Node {
+                    tag: "ast-remainder",
+                    children: vec![Task::Text(remainder_name(remainder.as_ref()))],
+                },
+            ],
+        },
+        DdlRuleAst::DdlRuleAstTypedCollectionRemainder(first, tail, sort) => {
+            let (rest, name) = rule_ast_remainder_tail(tail.as_ref());
+            let mut items = Vec::with_capacity(
+                rest.len()
+                    .checked_add(1)
+                    .expect("DDL roster width was checked before helper construction"),
+            );
+            items.push(Task::RuleAst(first.as_ref()));
+            items.extend(rest);
+            Task::Node {
+                tag: "ast-typed-collection",
+                children: vec![
+                    Task::Sort(sort.as_ref()),
+                    sequence(items),
+                    Task::Node {
+                        tag: "ast-remainder",
+                        children: vec![Task::Text(name)],
+                    },
+                ],
+            }
+        },
         DdlRuleAst::DdlRuleAstVar(name) => Task::Node {
             tag: "ast-var",
             children: vec![Task::Text(name)],
         },
     })
+}
+
+fn remainder_name(remainder: &DdlRuleAstRemainderName) -> &str {
+    match remainder {
+        DdlRuleAstRemainderName::DdlRuleAstRemainderName(name) => name,
+    }
 }
 
 fn direction_task(direction: &DdlProjectionDirection) -> Task<'_> {
@@ -1180,6 +1290,8 @@ enum Task<'a> {
     ProjectionPremises(&'a DdlProjectionPremises),
     ProjectionPremise(&'a DdlProjectionPremise),
     Premise(&'a DdlPremise),
+    PremiseInput(&'a DdlPremiseInput),
+    RewriteBinding(&'a DdlRewriteBinding),
     RuleAst(&'a DdlRuleAst),
 }
 

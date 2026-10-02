@@ -16,6 +16,7 @@ theories/PackedForest.v
 theories/RegistryIsolation.v
 theories/LexerMaximalMunch.v
 theories/LexicalSurvivorAdapter.v
+theories/ReservedIdentifierShadow.v
 theories/ReductionSemantics.v
 theories/TokenCategoryNormalization.v
 theories/DynamicCategoryAdmission.v

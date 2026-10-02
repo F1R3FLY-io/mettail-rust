@@ -364,12 +364,14 @@ mod tests {
             accept: Some(TokenKind::Fixed("x".into())),
             weight: TropicalWeight::from_priority(10),
             alt_accepts: Vec::new(),
+            reserved_ident_shadow: false,
         });
         let s2 = dfa.add_state(DfaState {
             transitions: vec![DEAD_STATE; num_classes],
             accept: Some(TokenKind::Fixed("x".into())),
             weight: TropicalWeight::from_priority(10),
             alt_accepts: Vec::new(),
+            reserved_ident_shadow: false,
         });
         dfa.set_transition(0, 0, s1);
         dfa.set_transition(0, 1, s2);

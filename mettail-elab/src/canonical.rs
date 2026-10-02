@@ -1,8 +1,9 @@
 //! Canonical Rholang-value projection and `GrammarCore` lowering.
 
 use crate::ast::{
-    Ast, Binding, CollKind, Equation, Item, ProjectionBinding, ProjectionBody, ProjectionDecl,
-    ProjectionDirection, ProjectionPremise, RewriteDecl, Sort, TermAssociativity, TermRule,
+    Ast, Binding, CollKind, Equation, Item, NativeLiteral, ProjectionBinding, ProjectionBody,
+    ProjectionDecl, ProjectionDirection, ProjectionPremise, RewriteBinding, RewriteDecl,
+    RewritePremise, Sort, TermAssociativity, TermRule,
 };
 use crate::lex::Span;
 use crate::pres::{CatEntry, ElemId, EqEntry, Presentation, RwEntry, TermEntry};
@@ -516,23 +517,24 @@ pub fn presentation_to_value(
     }
     for entry in &presentation.rewrites {
         if !presentation.data_derived.contains(&entry.id) {
-            events.push((
-                entry.id,
-                map([(
-                    "rewrites",
-                    list([map([
-                        ("name", string(entry.rw.name.clone())),
-                        (
-                            "premises",
-                            list(entry.rw.premises.iter().map(|(left, right)| {
-                                list([string("~>"), string(left.clone()), string(right.clone())])
-                            })),
-                        ),
-                        ("left", ast_to_value(&entry.rw.lhs)),
-                        ("right", ast_to_value(&entry.rw.rhs)),
-                    ])]),
-                )]),
-            ));
+            let mut fields = BTreeMap::from([
+                ("name".into(), string(entry.rw.name.clone())),
+                ("left".into(), ast_to_value(&entry.rw.lhs)),
+                ("right".into(), ast_to_value(&entry.rw.rhs)),
+            ]);
+            if !entry.rw.context.is_empty() {
+                fields.insert(
+                    "context".into(),
+                    list(entry.rw.context.iter().map(rewrite_binding_to_value)),
+                );
+            }
+            if !entry.rw.premises.is_empty() {
+                fields.insert(
+                    "premises".into(),
+                    list(entry.rw.premises.iter().map(rewrite_premise_to_value)),
+                );
+            }
+            events.push((entry.id, map([("rewrites", list([RhoValue::Map(fields)]))])));
         }
     }
     for entry in &presentation.projections {
@@ -565,6 +567,26 @@ pub fn presentation_to_value(
         spec.insert("mettail".into(), string("language/3"));
     }
     Ok(RhoValue::Map(spec))
+}
+
+fn rewrite_binding_to_value(binding: &RewriteBinding) -> RhoValue {
+    list([string("typed"), string(binding.name.clone()), sort_to_value(&binding.sort)])
+}
+
+fn rewrite_premise_to_value(premise: &RewritePremise) -> RhoValue {
+    match premise {
+        RewritePremise::Transition { source, target } => {
+            list([string("~>"), string(source.clone()), string(target.clone())])
+        },
+        RewritePremise::Intrinsic { op, inputs, outputs } => list([
+            string("intrinsic"),
+            map([
+                ("op", string(op.clone())),
+                ("inputs", list(inputs.iter().cloned().map(string))),
+                ("outputs", list(outputs.iter().map(rewrite_binding_to_value))),
+            ]),
+        ]),
+    }
 }
 
 fn projection_direction_value(direction: ProjectionDirection) -> RhoValue {
@@ -1010,7 +1032,7 @@ fn legacy_value_to_presentation(
         .map(|(index, value)| {
             let path = format!("$.rewrites[{index}]");
             let item = expect_map(value, path.clone())?;
-            reject_unknown_keys(item, &["name", "premises", "left", "right"], &path)?;
+            reject_unknown_keys(item, &["name", "premises", "context", "left", "right"], &path)?;
             Ok(RwEntry {
                 id: ElemId(
                     types.len() as u64
@@ -1022,11 +1044,16 @@ fn legacy_value_to_presentation(
                 rw: RewriteDecl {
                     name: expect_string(field(item, "name", &path)?, format!("{path}.name"))?
                         .to_string(),
-                    premises: decode_pairs(
-                        field(item, "premises", &path)?,
-                        "~>",
-                        &format!("{path}.premises"),
-                    )?,
+                    context: item
+                        .get("context")
+                        .map(|value| decode_rewrite_bindings(value, &format!("{path}.context")))
+                        .transpose()?
+                        .unwrap_or_default(),
+                    premises: item
+                        .get("premises")
+                        .map(|value| decode_rewrite_premises(value, &format!("{path}.premises")))
+                        .transpose()?
+                        .unwrap_or_default(),
                     lhs: decode_ast(field(item, "left", &path)?, &format!("{path}.left"))?,
                     rhs: decode_ast(field(item, "right", &path)?, &format!("{path}.right"))?,
                     span,
@@ -1045,6 +1072,93 @@ fn legacy_value_to_presentation(
             ..Presentation::default()
         },
     ))
+}
+
+fn decode_rewrite_binding(
+    value: &RhoValue,
+    path: &str,
+) -> Result<RewriteBinding, ValueDecodeError> {
+    let fields = expect_list(value, path.into())?;
+    require_len(fields, 3, path)?;
+    if expect_string(&fields[0], format!("{path}[0]"))? != "typed" {
+        return Err(ValueDecodeError::new(path, "expected `typed` binding"));
+    }
+    Ok(RewriteBinding {
+        name: expect_string(&fields[1], format!("{path}[1]"))?.to_string(),
+        sort: decode_sort(&fields[2], &format!("{path}[2]"))?,
+    })
+}
+
+fn decode_rewrite_bindings(
+    value: &RhoValue,
+    path: &str,
+) -> Result<Vec<RewriteBinding>, ValueDecodeError> {
+    expect_list(value, path.into())?
+        .iter()
+        .enumerate()
+        .map(|(index, value)| decode_rewrite_binding(value, &format!("{path}[{index}]")))
+        .collect()
+}
+
+fn decode_rewrite_premises(
+    value: &RhoValue,
+    path: &str,
+) -> Result<Vec<RewritePremise>, ValueDecodeError> {
+    expect_list(value, path.into())?
+        .iter()
+        .enumerate()
+        .map(|(index, premise)| {
+            let premise_path = format!("{path}[{index}]");
+            let values = expect_list(premise, premise_path.clone())?;
+            let tag = expect_string(
+                values
+                    .first()
+                    .ok_or_else(|| ValueDecodeError::new(&premise_path, "empty premise"))?,
+                format!("{premise_path}[0]"),
+            )?;
+            match tag {
+                "~>" => {
+                    require_len(values, 3, &premise_path)?;
+                    Ok(RewritePremise::Transition {
+                        source: expect_string(&values[1], format!("{premise_path}[1]"))?
+                            .to_string(),
+                        target: expect_string(&values[2], format!("{premise_path}[2]"))?
+                            .to_string(),
+                    })
+                },
+                "intrinsic" => {
+                    require_len(values, 2, &premise_path)?;
+                    let fields = expect_map(&values[1], format!("{premise_path}[1]"))?;
+                    reject_unknown_keys(fields, &["op", "inputs", "outputs"], &premise_path)?;
+                    let op = expect_string(
+                        field(fields, "op", &premise_path)?,
+                        format!("{premise_path}.op"),
+                    )?
+                    .to_string();
+                    let inputs = expect_list(
+                        field(fields, "inputs", &premise_path)?,
+                        format!("{premise_path}.inputs"),
+                    )?
+                    .iter()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        expect_string(value, format!("{premise_path}.inputs[{i}]"))
+                            .map(str::to_string)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                    let outputs = decode_rewrite_bindings(
+                        field(fields, "outputs", &premise_path)?,
+                        &format!("{premise_path}.outputs"),
+                    )?;
+                    Ok(RewritePremise::Intrinsic { op, inputs, outputs })
+                },
+                _ => Err(ValueDecodeError::new(
+                    premise_path,
+                    format!("unsupported rewrite premise `{tag}`"),
+                )),
+            }
+        })
+        .collect()
 }
 
 pub fn value_to_core(value: &RhoValue) -> Result<core::GrammarCoreV1, ValueToCoreError> {
@@ -1323,11 +1437,25 @@ fn decode_pairs(
 
 fn decode_ast(value: &RhoValue, path: &str) -> Result<Ast, ValueDecodeError> {
     enum Task<'a> {
-        Visit { value: &'a RhoValue, path: String },
+        Visit {
+            value: &'a RhoValue,
+            path: String,
+        },
         FinishSubst,
         FinishAbs(String),
-        FinishColl { count: usize, remainder: Option<String> },
-        FinishSExp { label: String, count: usize },
+        FinishColl {
+            count: usize,
+            remainder: Option<String>,
+        },
+        FinishTypedColl {
+            element: String,
+            count: usize,
+            remainder: Option<String>,
+        },
+        FinishSExp {
+            label: String,
+            count: usize,
+        },
     }
 
     let span = Span { line: 0, col: 0 };
@@ -1347,6 +1475,39 @@ fn decode_ast(value: &RhoValue, path: &str) -> Result<Ast, ValueDecodeError> {
                     format!("{path}[0]"),
                 )?;
                 match tag {
+                    "lit" => {
+                        require_len(values, 3, &path)?;
+                        let literal = match expect_string(&values[1], format!("{path}[1]"))? {
+                            "bool" => match &values[2] {
+                                RhoValue::Boolean(value) => NativeLiteral::Boolean(*value),
+                                _ => {
+                                    return Err(ValueDecodeError::new(
+                                        format!("{path}[2]"),
+                                        "expected native boolean",
+                                    ))
+                                },
+                            },
+                            "str" => NativeLiteral::String(
+                                expect_string(&values[2], format!("{path}[2]"))?.to_string(),
+                            ),
+                            "i128" => match &values[2] {
+                                RhoValue::Integer(value) => NativeLiteral::Integer(*value),
+                                _ => {
+                                    return Err(ValueDecodeError::new(
+                                        format!("{path}[2]"),
+                                        "expected native signed i128 integer",
+                                    ))
+                                },
+                            },
+                            carrier => {
+                                return Err(ValueDecodeError::new(
+                                    format!("{path}[1]"),
+                                    format!("unsupported native literal carrier `{carrier}`"),
+                                ))
+                            },
+                        };
+                        output.push(Ast::Literal(literal, span));
+                    },
                     "eval" => {
                         require_len(values, 3, &path)?;
                         tasks.push(Task::FinishSubst);
@@ -1389,6 +1550,32 @@ fn decode_ast(value: &RhoValue, path: &str) -> Result<Ast, ValueDecodeError> {
                             });
                         }
                     },
+                    "coll_typed" => {
+                        require_len(values, 4, &path)?;
+                        let element = expect_string(&values[1], format!("{path}[1]"))?.to_string();
+                        let elements = expect_list(&values[2], format!("{path}[2]"))?;
+                        let remainder = match &values[3] {
+                            RhoValue::Nil => None,
+                            RhoValue::String(name) => Some(name.clone()),
+                            _ => {
+                                return Err(ValueDecodeError::new(
+                                    format!("{path}[3]"),
+                                    "expected remainder name or Nil",
+                                ))
+                            },
+                        };
+                        tasks.push(Task::FinishTypedColl {
+                            element,
+                            count: elements.len(),
+                            remainder,
+                        });
+                        for (index, item) in elements.iter().enumerate().rev() {
+                            tasks.push(Task::Visit {
+                                value: item,
+                                path: format!("{path}[2][{index}]"),
+                            });
+                        }
+                    },
                     label => {
                         tasks.push(Task::FinishSExp {
                             label: label.to_string(),
@@ -1419,6 +1606,11 @@ fn decode_ast(value: &RhoValue, path: &str) -> Result<Ast, ValueDecodeError> {
                     elements.push(Ast::Remainder(name, span));
                 }
                 output.push(Ast::Coll(elements, span));
+            },
+            Task::FinishTypedColl { element, count, remainder } => {
+                let start = output.len() - count;
+                let elements = output.drain(start..).collect();
+                output.push(Ast::TypedColl { element, elements, remainder, span });
             },
             Task::FinishSExp { label, count } => {
                 let start = output.len() - count;
@@ -1546,10 +1738,21 @@ fn item_to_value(item: &Item) -> RhoValue {
 fn ast_to_value(ast: &Ast) -> RhoValue {
     enum Task<'a> {
         Visit(&'a Ast),
-        FinishSExp { label: &'a str, count: usize },
+        FinishSExp {
+            label: &'a str,
+            count: usize,
+        },
         FinishSubst,
         FinishAbs(&'a str),
-        FinishColl { count: usize, remainder: Option<&'a str> },
+        FinishColl {
+            count: usize,
+            remainder: Option<&'a str>,
+        },
+        FinishTypedColl {
+            element: &'a str,
+            count: usize,
+            remainder: Option<&'a str>,
+        },
     }
 
     let mut tasks = vec![Task::Visit(ast)];
@@ -1557,6 +1760,14 @@ fn ast_to_value(ast: &Ast) -> RhoValue {
     while let Some(task) = tasks.pop() {
         match task {
             Task::Visit(Ast::Var(name, _)) => output.push(string(name.clone())),
+            Task::Visit(Ast::Literal(literal, _)) => {
+                let (carrier, value) = match literal {
+                    NativeLiteral::Boolean(value) => ("bool", RhoValue::Boolean(*value)),
+                    NativeLiteral::String(value) => ("str", string(value.clone())),
+                    NativeLiteral::Integer(value) => ("i128", RhoValue::Integer(*value)),
+                };
+                output.push(list([string("lit"), string(carrier), value]));
+            },
             Task::Visit(Ast::Remainder(name, _)) => {
                 output.push(list([string("coll"), list(std::iter::empty()), string(name.clone())]))
             },
@@ -1582,6 +1793,14 @@ fn ast_to_value(ast: &Ast) -> RhoValue {
                 tasks.push(Task::FinishColl { count, remainder });
                 tasks.extend(elements[..count].iter().rev().map(Task::Visit));
             },
+            Task::Visit(Ast::TypedColl { element, elements, remainder, .. }) => {
+                tasks.push(Task::FinishTypedColl {
+                    element,
+                    count: elements.len(),
+                    remainder: remainder.as_deref(),
+                });
+                tasks.extend(elements.iter().rev().map(Task::Visit));
+            },
             Task::FinishSExp { label, count } => {
                 let start = output.len() - count;
                 let mut node = Vec::with_capacity(count + 1);
@@ -1603,6 +1822,12 @@ fn ast_to_value(ast: &Ast) -> RhoValue {
                 let elements = list(output.drain(start..));
                 let remainder = remainder.map(string).unwrap_or(RhoValue::Nil);
                 output.push(list([string("coll"), elements, remainder]));
+            },
+            Task::FinishTypedColl { element, count, remainder } => {
+                let start = output.len() - count;
+                let elements = list(output.drain(start..));
+                let remainder = remainder.map(string).unwrap_or(RhoValue::Nil);
+                output.push(list([string("coll_typed"), string(element), elements, remainder]));
             },
         }
     }
@@ -1894,7 +2119,160 @@ fn argument_table<'a>(
 mod tests {
     use super::*;
     use crate::lex::Span;
-    use crate::pres::{CatEntry, ElemId, TermEntry};
+    use crate::pres::{CatEntry, ElemId, RwEntry, TermEntry};
+
+    #[test]
+    fn authored_rewrites_preserve_legacy_records_and_optional_fields() {
+        let span = Span { line: 1, col: 1 };
+        let typed = |name: &str, sort: Sort| RewriteBinding { name: name.into(), sort };
+        let immediate = RewriteDecl {
+            name: "Immediate".into(),
+            context: Vec::new(),
+            premises: Vec::new(),
+            lhs: Ast::Var("x".into(), span),
+            rhs: Ast::Literal(NativeLiteral::Integer(-7), span),
+            span,
+        };
+        let ordered = RewriteDecl {
+            name: "Ordered".into(),
+            context: vec![
+                typed("pieces", Sort::Coll { kind: CollKind::List, of: "Text".into() }),
+                typed("i", Sort::Cat("Nat".into())),
+            ],
+            premises: vec![
+                RewritePremise::Intrinsic {
+                    op: "utf8_concat_many".into(),
+                    inputs: vec!["pieces".into()],
+                    outputs: vec![typed("t", Sort::Cat("Text".into()))],
+                },
+                RewritePremise::Intrinsic {
+                    op: "utf8_at_end".into(),
+                    inputs: vec!["t".into(), "i".into()],
+                    outputs: vec![typed("b", Sort::Cat("Flag".into()))],
+                },
+            ],
+            lhs: Ast::SExp(
+                "Start".into(),
+                vec![Ast::Literal(NativeLiteral::Boolean(false), span)],
+                span,
+            ),
+            rhs: Ast::TypedColl {
+                element: "Text".into(),
+                elements: vec![
+                    Ast::Var("t".into(), span),
+                    Ast::Literal(NativeLiteral::String("".into()), span),
+                ],
+                remainder: None,
+                span,
+            },
+            span,
+        };
+        let presentation = Presentation {
+            rewrites: vec![
+                RwEntry { id: ElemId(1), rw: immediate },
+                RwEntry { id: ElemId(2), rw: ordered },
+            ],
+            ..Presentation::default()
+        };
+        let actual = presentation_to_value("Regex", &presentation).expect("canonical value");
+        let expected = map([
+            ("mettail", string("language/2")),
+            ("name", string("Regex")),
+            (
+                "rewrites",
+                list([
+                    map([
+                        ("name", string("Immediate")),
+                        ("left", string("x")),
+                        ("right", list([string("lit"), string("i128"), RhoValue::Integer(-7)])),
+                    ]),
+                    map([
+                        ("name", string("Ordered")),
+                        (
+                            "context",
+                            list([
+                                list([
+                                    string("typed"),
+                                    string("pieces"),
+                                    list([string("vec"), string("Text")]),
+                                ]),
+                                list([string("typed"), string("i"), string("Nat")]),
+                            ]),
+                        ),
+                        (
+                            "premises",
+                            list([
+                                list([
+                                    string("intrinsic"),
+                                    map([
+                                        ("op", string("utf8_concat_many")),
+                                        ("inputs", list([string("pieces")])),
+                                        (
+                                            "outputs",
+                                            list([list([
+                                                string("typed"),
+                                                string("t"),
+                                                string("Text"),
+                                            ])]),
+                                        ),
+                                    ]),
+                                ]),
+                                list([
+                                    string("intrinsic"),
+                                    map([
+                                        ("op", string("utf8_at_end")),
+                                        ("inputs", list([string("t"), string("i")])),
+                                        (
+                                            "outputs",
+                                            list([list([
+                                                string("typed"),
+                                                string("b"),
+                                                string("Flag"),
+                                            ])]),
+                                        ),
+                                    ]),
+                                ]),
+                            ]),
+                        ),
+                        (
+                            "left",
+                            list([
+                                string("Start"),
+                                list([string("lit"), string("bool"), RhoValue::Boolean(false)]),
+                            ]),
+                        ),
+                        (
+                            "right",
+                            list([
+                                string("coll_typed"),
+                                string("Text"),
+                                list([
+                                    string("t"),
+                                    list([string("lit"), string("str"), string("")]),
+                                ]),
+                                RhoValue::Nil,
+                            ]),
+                        ),
+                    ]),
+                ]),
+            ),
+        ]);
+        assert_eq!(actual, expected);
+        let RhoValue::Map(ref expected_fields) = expected else {
+            unreachable!()
+        };
+        let (_, decoded) = legacy_value_to_presentation(&map([
+            ("mettail", string("language/2")),
+            ("name", string("Regex")),
+            ("types", list([])),
+            ("exports", list([])),
+            ("terms", list([])),
+            ("equations", list([])),
+            ("rewrites", expected_fields.get("rewrites").unwrap().clone()),
+        ]))
+        .expect("legacy presentation round trip");
+        assert_eq!(presentation_to_value("Regex", &decoded).unwrap(), actual);
+    }
 
     #[test]
     fn module_result_has_language_2_value_and_valid_core() {

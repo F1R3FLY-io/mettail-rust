@@ -237,8 +237,11 @@ language! {
         data DdlProjectionPremise
         data DdlPremises
         data DdlPremise
+        data DdlPremiseInput
+        data DdlRewriteBinding
         data DdlRuleAstItems
         data DdlRuleAstRemainderTail
+        data DdlRuleAstRemainderName
         data DdlRuleAst
 
         ![std::sync::Arc<mettail_runtime::ReadZipperLit<Proc, Proc>>] as ReadZipper
@@ -2768,12 +2771,26 @@ language! {
 
         DdlPremise .
             |- "if" left@Ident "~>" right@Ident "then" : DdlPremise;
+        // Ordered, closed intrinsic premise. Output bindings become available
+        // only after the inputs and retain their declared sorts in the wire.
+        DdlIntrinsicPremise . inputs:Vec(DdlPremiseInput), outputs:Vec(DdlRewriteBinding)
+            |- "if" "intrinsic" op@Ident "(" inputs.*sep(",") ")" "=>"
+                "(" outputs.*sep(",") ")" "then" : DdlPremise;
+        DdlPremiseInput . |- name@Ident : DdlPremiseInput;
+        DdlRewriteBinding . sort:DdlSort
+            |- name@Ident ":" sort : DdlRewriteBinding;
         DdlPremiseOne . premise:DdlPremise |- premise : DdlPremises;
         DdlPremiseMore . premise:DdlPremise, rest:DdlPremises |- premise rest : DdlPremises;
         DdlRewriteDirect . left:DdlRuleAst, right:DdlRuleAst
             |- name@Ident ":" left "~>" right ";" : DdlRewrite;
         DdlRewriteConditional . premises:DdlPremises, left:DdlRuleAst, right:DdlRuleAst
             |- name@Ident ":" premises left "~>" right ";" : DdlRewrite;
+        DdlRewriteTypedDirect . context:Vec(DdlRewriteBinding), left:DdlRuleAst, right:DdlRuleAst
+            |- name@Ident "(" context.*sep(",") ")" ":" left "~>" right ";" : DdlRewrite;
+        DdlRewriteTypedConditional . context:Vec(DdlRewriteBinding), premises:DdlPremises,
+            left:DdlRuleAst, right:DdlRuleAst
+            |- name@Ident "(" context.*sep(",") ")" ":" premises left "~>" right ";"
+                : DdlRewrite;
         DdlRewriteProjection . direction:DdlProjectionDirection, rules:Vec(DdlProjectionRule)
             |- "projection" name@Ident ":" guest@Ident direction "host" "::" host@Ident
                 "{" rules.*sep("") "}" : DdlRewrite;
@@ -2825,9 +2842,23 @@ language! {
         DdlRuleAstAbs . body:DdlRuleAst |- "^" binder@Ident "." body : DdlRuleAst;
         DdlRuleAstCollectionEmpty . |- "{" "}" : DdlRuleAst;
         DdlRuleAstCollection . items:DdlRuleAstItems |- "{" items "}" : DdlRuleAst;
-        DdlRuleAstRemainderOnly . |- "{" "..." remainder@Ident "}" : DdlRuleAst;
+        // Keep the remainder-only payload as a category operand so every
+        // brace-led collection frame participates in the same parser election.
+        DdlRuleAstRemainderOnly . remainder:DdlRuleAstRemainderName
+            |- "{" remainder "}" : DdlRuleAst;
         DdlRuleAstCollectionRemainder . first:DdlRuleAst, tail:DdlRuleAstRemainderTail
             |- "{" first "," tail "}" : DdlRuleAst;
+        // A typed collection is a distinct AST constructor. Its collection
+        // kind is checked from the declared sort during elaboration.
+        DdlRuleAstTypedCollectionEmpty . sort:DdlSort
+            |- "{" "}" ":" sort : DdlRuleAst;
+        DdlRuleAstTypedCollection . items:DdlRuleAstItems, sort:DdlSort
+            |- "{" items "}" ":" sort : DdlRuleAst;
+        DdlRuleAstTypedRemainderOnly . remainder:DdlRuleAstRemainderName, sort:DdlSort
+            |- "{" remainder "}" ":" sort : DdlRuleAst;
+        DdlRuleAstTypedCollectionRemainder . first:DdlRuleAst,
+            tail:DdlRuleAstRemainderTail, sort:DdlSort
+            |- "{" first "," tail "}" ":" sort : DdlRuleAst;
         DdlRuleAstVar . |- name@Ident : DdlRuleAst;
         DdlRuleAstItemOne . item:DdlRuleAst |- item : DdlRuleAstItems;
         DdlRuleAstItemMore . item:DdlRuleAst, rest:DdlRuleAstItems
@@ -2835,6 +2866,7 @@ language! {
         DdlRuleAstTailRemainder . |- "..." remainder@Ident : DdlRuleAstRemainderTail;
         DdlRuleAstTailMore . item:DdlRuleAst, rest:DdlRuleAstRemainderTail
             |- item "," rest : DdlRuleAstRemainderTail;
+        DdlRuleAstRemainderName . |- "..." name@Ident : DdlRuleAstRemainderName;
 
         // ★ THE LOOKAHEAD SUFFIX — `P[n]` and `P[*]` (FIPS `2026-01-08-Lookahead`).
         //

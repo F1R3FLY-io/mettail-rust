@@ -237,7 +237,6 @@ fn authored_regex_limits_preserve_the_data_faithful_canonical_module() {
           max_term_nodes = 16384;
           max_proof_nodes = 16384;
           max_frontier = 256;
-          max_steps = 10000000;
           max_grade_bits = 128;
         }
       }

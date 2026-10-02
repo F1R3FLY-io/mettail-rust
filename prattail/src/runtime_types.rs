@@ -965,6 +965,33 @@ pub fn expand_lex_node<'a, T: Clone>(
     token_to_kind: &impl Fn(&T) -> crate::automata::TokenKind,
     start_is_primary: bool,
 ) -> Result<ExpandedLexNode, String> {
+    expand_lex_node_with_shadow(
+        input,
+        start,
+        char_class,
+        dfa_next,
+        is_accepting,
+        accept_alternatives,
+        token_to_kind,
+        &|_| false,
+        start_is_primary,
+    )
+}
+
+/// Single-DFA expansion with the exact reservation witness retained by subset
+/// construction. Generated eager and lazy lexers share this implementation.
+#[allow(clippy::too_many_arguments)]
+pub fn expand_lex_node_with_shadow<'a, T: Clone>(
+    input: &'a str,
+    start: usize,
+    char_class: &[u8; 256],
+    dfa_next: &impl Fn(u32, u8) -> u32,
+    is_accepting: &impl Fn(u32) -> bool,
+    accept_alternatives: &impl Fn(u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: &impl Fn(&T) -> crate::automata::TokenKind,
+    reserved_ident_shadow: &impl Fn(u32) -> bool,
+    start_is_primary: bool,
+) -> Result<ExpandedLexNode, String> {
     // Non-modal path: ONE DFA governs every byte (mode is the constant 0) and
     // whitespace is ALWAYS skipped (no mode is `raw`). Drive the shared
     // `expand_lex_node_impl` with constant mode-0 / never-raw closures — the
@@ -987,6 +1014,7 @@ pub fn expand_lex_node<'a, T: Clone>(
         // `has_streams` gate), so every accept here is on `DEFAULT` (id 0) and
         // the trivia branch is statically dead.
         |_mode, _state| 0u8,
+        |_mode, state| reserved_ident_shadow(state),
         start_is_primary,
     )
 }
@@ -1053,6 +1081,7 @@ fn expand_lex_node_impl<'a, T: Clone>(
     accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
     token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
     stream_id: impl Fn(u8, u32) -> u8,
+    reserved_ident_shadow: impl Fn(u8, u32) -> bool,
     start_is_primary: bool,
 ) -> Result<ExpandedLexNode, String> {
     use crate::automata::semiring::TropicalWeight;
@@ -1174,18 +1203,34 @@ fn expand_lex_node_impl<'a, T: Clone>(
     // pure removal — it can only shrink the alternative set, never add to it.
     accepts.retain(|(accept_state, _)| stream_id(mode, *accept_state) == 0);
 
+    // A reserved keyword shadows an equal-span Ident in subset construction.
+    // Preserve that witness through lattice selection: an earlier Ident prefix
+    // must not split the reserved word. Other kinds, including shorter custom
+    // literal tokens under a full-span identifier, remain alternatives.
+    let (primary_state, primary_end) = accepts[0];
+    let primary_shadow = reserved_ident_shadow(mode, primary_state);
+
     // M6c.4-bugfix (2026-05-14): apply longest-match-per-kind filtering HERE
     // (during edge collection) so node ids stay dense and aligned with token
     // positions. Without this, the DAG gets ORPHAN intermediate nodes for
     // same-kind prefix accepts (e.g. `merge` accepting Ident at end=1..5).
     let mut edges: Vec<RawLexEdge> = Vec::new();
     let mut successors: Vec<LexSuccessor> = Vec::new();
+    let kind_of = &token_to_kind;
     mettail_grammar_core::visit_lexical_survivors(
         accepts,
         |accept_state, end_byte| {
             accept_alternatives(mode, accept_state, &input[pos..end_byte])
                 .into_iter()
-                .map(|(token, weight)| (token_to_kind(&token), weight))
+                .filter_map(move |(token, weight)| {
+                    let kind = kind_of(&token);
+                    let shorter = end_byte < primary_end;
+                    if !reservation_collision_keeps(&kind, shorter, primary_shadow) {
+                        None
+                    } else {
+                        Some((kind, weight))
+                    }
+                })
         },
         |kind, weight, end_byte, ordinal| {
             let alt_idx = u16::try_from(ordinal)
@@ -1219,6 +1264,18 @@ fn expand_lex_node_impl<'a, T: Clone>(
     })
 }
 
+/// The only removed alternative is a shorter identifier under a witnessed
+/// reserved-word accept. Other custom literals remain available even when
+/// adjacent without space.
+#[inline]
+fn reservation_collision_keeps(
+    kind: &crate::automata::TokenKind,
+    shorter: bool,
+    primary_shadow: bool,
+) -> bool {
+    !shorter || !primary_shadow || !matches!(kind, crate::automata::TokenKind::Ident)
+}
+
 /// Multi-mode (L9) analogue of [`expand_lex_node`]: expands ONE byte position
 /// into a lex-DAG node using the DFA of the mode active at that position.
 ///
@@ -1246,6 +1303,39 @@ pub fn expand_lex_node_modal<'a, T: Clone>(
     stream_id: &impl Fn(u8, u32) -> u8,
     start_is_primary: bool,
 ) -> Result<ExpandedLexNode, String> {
+    expand_lex_node_modal_with_shadow(
+        input,
+        start,
+        mode_at,
+        char_class,
+        dfa_next,
+        is_accepting,
+        accept_alternatives,
+        token_to_kind,
+        is_raw,
+        stream_id,
+        &|_, _| false,
+        start_is_primary,
+    )
+}
+
+/// Modal expansion that retains the DFA's reserved-keyword/Ident collision
+/// witness. Both eager and lazy generated lexers call this shared body.
+#[allow(clippy::too_many_arguments)]
+pub fn expand_lex_node_modal_with_shadow<'a, T: Clone>(
+    input: &'a str,
+    start: usize,
+    mode_at: &[u8],
+    char_class: &impl Fn(u8, u8) -> u8,
+    dfa_next: &impl Fn(u8, u32, u8) -> u32,
+    is_accepting: &impl Fn(u8, u32) -> bool,
+    accept_alternatives: &impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: &impl Fn(&T) -> crate::automata::TokenKind,
+    is_raw: &impl Fn(u8) -> bool,
+    stream_id: &impl Fn(u8, u32) -> u8,
+    reserved_ident_shadow: &impl Fn(u8, u32) -> bool,
+    start_is_primary: bool,
+) -> Result<ExpandedLexNode, String> {
     expand_lex_node_impl(
         input,
         start,
@@ -1257,6 +1347,7 @@ pub fn expand_lex_node_modal<'a, T: Clone>(
         |mode, s, text| accept_alternatives(mode, s, text),
         |t| token_to_kind(t),
         |mode, s| stream_id(mode, s),
+        |mode, s| reserved_ident_shadow(mode, s),
         start_is_primary,
     )
 }
@@ -1270,12 +1361,37 @@ pub fn lex_dag_core<'a, T: Clone>(
     accept_alternatives: impl Fn(u32, &'a str) -> Vec<(T, f64)>,
     token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
 ) -> Result<crate::lexer_types::LexDag, String> {
+    lex_dag_core_with_shadow(
+        input,
+        file_id,
+        char_class,
+        dfa_next,
+        is_accepting,
+        accept_alternatives,
+        token_to_kind,
+        |_| false,
+    )
+}
+
+/// Single-DFA eager DAG builder with the same reservation witness used by
+/// lazy expansion. The legacy facade above keeps its no-shadow behavior.
+#[allow(clippy::too_many_arguments)]
+pub fn lex_dag_core_with_shadow<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    char_class: &[u8; 256],
+    dfa_next: impl Fn(u32, u8) -> u32,
+    is_accepting: impl Fn(u32) -> bool,
+    accept_alternatives: impl Fn(u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
+    reserved_ident_shadow: impl Fn(u32) -> bool,
+) -> Result<crate::lexer_types::LexDag, String> {
     let _ = file_id;
     // The eager worklist discipline is shared with `lex_dag_core_modal` via
     // `lex_dag_build`; the only per-path difference is which expander produces
     // each node (single-DFA `expand_lex_node` here).
     lex_dag_build(|start, start_is_primary| {
-        expand_lex_node(
+        expand_lex_node_with_shadow(
             input,
             start,
             char_class,
@@ -1283,6 +1399,7 @@ pub fn lex_dag_core<'a, T: Clone>(
             &is_accepting,
             &accept_alternatives,
             &token_to_kind,
+            &reserved_ident_shadow,
             start_is_primary,
         )
     })
@@ -1308,9 +1425,39 @@ pub fn lex_dag_core_modal<'a, T: Clone>(
     is_raw: impl Fn(u8) -> bool,
     stream_id: impl Fn(u8, u32) -> u8,
 ) -> Result<crate::lexer_types::LexDag, String> {
+    lex_dag_core_modal_with_shadow(
+        input,
+        file_id,
+        mode_at,
+        char_class,
+        dfa_next,
+        is_accepting,
+        accept_alternatives,
+        token_to_kind,
+        is_raw,
+        stream_id,
+        |_, _| false,
+    )
+}
+
+/// Eager modal DAG using the same reservation witness as lazy expansion.
+#[allow(clippy::too_many_arguments)]
+pub fn lex_dag_core_modal_with_shadow<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    mode_at: &[u8],
+    char_class: impl Fn(u8, u8) -> u8,
+    dfa_next: impl Fn(u8, u32, u8) -> u32,
+    is_accepting: impl Fn(u8, u32) -> bool,
+    accept_alternatives: impl Fn(u8, u32, &'a str) -> Vec<(T, f64)>,
+    token_to_kind: impl Fn(&T) -> crate::automata::TokenKind,
+    is_raw: impl Fn(u8) -> bool,
+    stream_id: impl Fn(u8, u32) -> u8,
+    reserved_ident_shadow: impl Fn(u8, u32) -> bool,
+) -> Result<crate::lexer_types::LexDag, String> {
     let _ = file_id;
     lex_dag_build(|start, start_is_primary| {
-        expand_lex_node_modal(
+        expand_lex_node_modal_with_shadow(
             input,
             start,
             mode_at,
@@ -1321,6 +1468,7 @@ pub fn lex_dag_core_modal<'a, T: Clone>(
             &token_to_kind,
             &is_raw,
             &stream_id,
+            &reserved_ident_shadow,
             start_is_primary,
         )
     })
@@ -2195,6 +2343,141 @@ pub fn skip_whitespace_scalar(
 mod tests {
     use super::*;
     use std::borrow::Cow;
+
+    #[test]
+    fn reserved_identifier_shadow_only_removes_shorter_identifiers() {
+        use crate::automata::TokenKind;
+
+        assert!(!reservation_collision_keeps(&TokenKind::Ident, true, true));
+        assert!(reservation_collision_keeps(&TokenKind::Ident, false, true));
+        assert!(reservation_collision_keeps(&TokenKind::Ident, true, false));
+        // Even a reserved custom literal `a` may be followed immediately by
+        // another custom literal `b`; this filter cannot erase that reading.
+        assert!(reservation_collision_keeps(&TokenKind::Fixed("a".into()), true, true));
+        assert!(reservation_collision_keeps(&TokenKind::True, true, true));
+    }
+
+    #[test]
+    fn nonmodal_reserved_identifier_shadow_preserves_keyword_and_custom_adjacency() {
+        use crate::automata::TokenKind;
+
+        let mut classes = [u8::MAX; 256];
+        for (class, byte) in b"true".iter().enumerate() {
+            classes[*byte as usize] = class as u8;
+        }
+        let next = |state, class| match (state, class) {
+            (0, 0) => 1,
+            (1, 1) => 2,
+            (2, 2) => 3,
+            (3, 3) => 4,
+            _ => u32::MAX,
+        };
+        let accepting = |state| state == 3 || state == 4;
+        let alternatives = |state, _: &str| match state {
+            3 => vec![(TokenKind::Ident, 9.0)],
+            4 => vec![(TokenKind::True, 0.0)],
+            _ => Vec::new(),
+        };
+        let kind = |token: &TokenKind| token.clone();
+        let shadow = |state| state == 4;
+
+        let eager = lex_dag_core_with_shadow(
+            "true",
+            None,
+            &classes,
+            next,
+            accepting,
+            alternatives,
+            kind,
+            shadow,
+        )
+        .expect("reserved keyword DAG");
+        let lazy = expand_lex_node_with_shadow(
+            "true",
+            0,
+            &classes,
+            &next,
+            &accepting,
+            &alternatives,
+            &kind,
+            &shadow,
+            true,
+        )
+        .expect("reserved keyword lazy node");
+        assert_eq!(eager.nodes[0].edges.len(), 1);
+        assert_eq!(lazy.edges.len(), 1);
+        assert!(matches!(eager.nodes[0].edges[0].kind, TokenKind::True));
+        assert!(matches!(lazy.edges[0].kind, TokenKind::True));
+
+        // The same witness may occur at a shorter reserved custom literal.
+        // It must not remove `a` before `b` under a full-span Ident(`ab`).
+        let mut classes = [u8::MAX; 256];
+        classes[b'a' as usize] = 0;
+        classes[b'b' as usize] = 1;
+        let next = |state, class| match (state, class) {
+            (0, 0) => 1,
+            (1, 1) => 2,
+            (0, 1) => 3,
+            _ => u32::MAX,
+        };
+        let accepting = |state| (1..=3).contains(&state);
+        let alternatives = |state, _: &str| match state {
+            1 => vec![(TokenKind::Fixed("a".into()), 0.0)],
+            2 => vec![(TokenKind::Ident, 0.0)],
+            3 => vec![(TokenKind::Fixed("b".into()), 0.0)],
+            _ => Vec::new(),
+        };
+        let shadow = |state| state == 1;
+        let eager = lex_dag_core_with_shadow(
+            "ab",
+            None,
+            &classes,
+            next,
+            accepting,
+            alternatives,
+            kind,
+            shadow,
+        )
+        .expect("adjacent custom literal DAG");
+        let lazy = expand_lex_node_with_shadow(
+            "ab",
+            0,
+            &classes,
+            &next,
+            &accepting,
+            &alternatives,
+            &kind,
+            &shadow,
+            true,
+        )
+        .expect("adjacent custom literal lazy node");
+        let eager_edges: Vec<_> = eager.nodes[0]
+            .edges
+            .iter()
+            .map(|edge| (&edge.kind, edge.end_byte))
+            .collect();
+        let lazy_edges: Vec<_> = lazy
+            .edges
+            .iter()
+            .map(|edge| (&edge.kind, edge.end_byte))
+            .collect();
+        for edges in [&eager_edges, &lazy_edges] {
+            assert!(edges
+                .iter()
+                .any(|(kind, end)| matches!(kind, TokenKind::Ident) && *end == 2));
+            assert!(edges
+                .iter()
+                .any(|(kind, end)| matches!(kind, TokenKind::Fixed(text) if text == "a")
+                    && *end == 1));
+        }
+        assert!(eager.nodes.iter().any(|node| {
+            node.byte_start == 1
+                && node.edges.iter().any(|edge| {
+                    matches!(edge.kind, TokenKind::Fixed(ref text) if text == "b")
+                        && edge.end_byte == 2
+                })
+        }));
+    }
 
     #[test]
     fn test_position_zero() {

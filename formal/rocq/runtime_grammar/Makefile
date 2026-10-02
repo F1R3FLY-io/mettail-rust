@@ -72,6 +72,7 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.SemanticIntrinsics \
 	RuntimeGrammar.SemanticIntrinsicSchema \
 	RuntimeGrammar.AuthoredRegexRewrites \
+	RuntimeGrammar.ReservedIdentifierShadow \
 	RuntimeGrammar.SemanticNormalization \
 	RuntimeGrammar.InstalledLookaheadEveryTrace \
 	RuntimeGrammar.RegexGsltSyntax \

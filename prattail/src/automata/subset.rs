@@ -102,6 +102,7 @@ pub fn subset_construction_with_reserved(
     dfa.states[0].accept = resolved.kind;
     dfa.states[0].weight = resolved.weight;
     dfa.states[0].alt_accepts = resolved.alt_accepts;
+    dfa.states[0].reserved_ident_shadow = resolved.reserved_ident_shadow;
     state_map.insert(start_set.clone(), 0);
     worklist.push(start_set);
 
@@ -142,6 +143,7 @@ pub fn subset_construction_with_reserved(
                     accept: resolved.kind,
                     weight: resolved.weight,
                     alt_accepts: resolved.alt_accepts,
+                    reserved_ident_shadow: resolved.reserved_ident_shadow,
                 });
                 state_map.insert(ec_closure.clone(), new_state);
                 worklist.push(ec_closure.clone());
@@ -174,6 +176,7 @@ pub(crate) struct ResolvedAccept {
     /// All alternative accepts (including the primary), sorted by weight ascending.
     /// Empty if 0 or 1 accepting NFA states (unambiguous).
     pub alt_accepts: Vec<(TokenKind, TropicalWeight)>,
+    pub reserved_ident_shadow: bool,
 }
 
 /// Resolve the accept token, weight, and ALL alternatives for a set of NFA states.
@@ -208,6 +211,7 @@ fn resolve_accept(nfa: &Nfa, states: &[StateId], reserved: &ReservedKeywords) ->
             kind: None,
             weight: TropicalWeight::zero(),
             alt_accepts: Vec::new(),
+            reserved_ident_shadow: false,
         };
     }
 
@@ -226,7 +230,12 @@ fn resolve_accept(nfa: &Nfa, states: &[StateId], reserved: &ReservedKeywords) ->
     // Only the generic `Ident` reading is removed: any other genuine
     // co-accepts (e.g. an overlapping literal pattern) are preserved, so this
     // strictly refines an over-generation, not a real ambiguity.
-    if !reserved.is_empty() && reserved.contains(&alts[0].0) {
+    let reserved_ident_shadow = !reserved.is_empty()
+        && reserved.contains(&alts[0].0)
+        && alts
+            .iter()
+            .any(|(kind, _)| matches!(kind, TokenKind::Ident));
+    if reserved_ident_shadow {
         alts.retain(|(k, _)| !matches!(k, TokenKind::Ident));
     }
 
@@ -236,7 +245,12 @@ fn resolve_accept(nfa: &Nfa, states: &[StateId], reserved: &ReservedKeywords) ->
     // Only populate alt_accepts when 2+ distinct token kinds
     let alt_accepts = if alts.len() >= 2 { alts } else { Vec::new() };
 
-    ResolvedAccept { kind: Some(kind), weight, alt_accepts }
+    ResolvedAccept {
+        kind: Some(kind),
+        weight,
+        alt_accepts,
+        reserved_ident_shadow,
+    }
 }
 
 #[cfg(test)]
@@ -434,6 +448,8 @@ mod tests {
         };
         let s_off = walk(&dfa_off);
         let s_on = walk(&dfa_on);
+        assert!(!dfa_off.states[s_off as usize].reserved_ident_shadow);
+        assert!(dfa_on.states[s_on as usize].reserved_ident_shadow);
 
         // OFF: ambiguous (keyword + ident). ON: unambiguous (keyword only).
         assert!(

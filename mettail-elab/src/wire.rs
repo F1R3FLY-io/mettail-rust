@@ -7,10 +7,10 @@
 
 use crate::ast::{
     Ast, Binding, Builder, CatDecl, CollKind, DottedPath, Equation, Export, Import, Item,
-    LimitAssignment, ModuleFile, ModuleItem, OptionSection, Param, ProjectionBinding,
-    ProjectionBody, ProjectionDecl, ProjectionDirection, ProjectionPremise, ProjectionRule,
-    Replacement, RewriteDecl, RewriteEntry, Sort, TermAssociativity, TermDecl, TermRule,
-    TheoryDecl, TheoryExpr, TokenDecl,
+    LimitAssignment, ModuleFile, ModuleItem, NativeLiteral, OptionSection, Param,
+    ProjectionBinding, ProjectionBody, ProjectionDecl, ProjectionDirection, ProjectionPremise,
+    ProjectionRule, Replacement, RewriteBinding, RewriteDecl, RewriteEntry, RewritePremise, Sort,
+    TermAssociativity, TermDecl, TermRule, TheoryDecl, TheoryExpr, TokenDecl,
 };
 use crate::canonical::{
     admit_canonical_value, admit_canonical_value_resources, RhoValue, ValueDecodeError,
@@ -848,20 +848,45 @@ fn decode_equation(value: RhoValue, path: &str) -> Result<Equation, DdlValueErro
 }
 
 fn decode_rewrite(value: RhoValue, path: &str) -> Result<RewriteDecl, DdlValueError> {
-    let mut fields = expect_node(value, "rewrite", Some(4), path.into())?.into_iter();
+    let typed = node_tag(&value) == Some("rewrite-typed");
+    let mut fields = expect_node(
+        value,
+        if typed { "rewrite-typed" } else { "rewrite" },
+        Some(if typed { 5 } else { 4 }),
+        path.into(),
+    )?
+    .into_iter();
     let name = expect_string(fields.next().expect("arity checked"), format!("{path}.name"))?;
+    let context = if typed {
+        expect_sequence(fields.next().expect("arity checked"), &format!("{path}.context"))?
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                decode_rewrite_binding(value, &format!("{path}.context[{index}]"))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     let premises =
         expect_sequence(fields.next().expect("arity checked"), &format!("{path}.premises"))?
             .into_iter()
             .enumerate()
             .map(|(index, value)| {
-                decode_pair(value, "premise", &format!("{path}.premises[{index}]"))
+                let premise_path = format!("{path}.premises[{index}]");
+                if typed {
+                    decode_rewrite_premise(value, &premise_path)
+                } else {
+                    decode_pair(value, "premise", &premise_path)
+                        .map(|(source, target)| RewritePremise::Transition { source, target })
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
     let lhs = decode_ast(fields.next().expect("arity checked"), &format!("{path}.left"))?;
     let rhs = decode_ast(fields.next().expect("arity checked"), &format!("{path}.right"))?;
     Ok(RewriteDecl {
         name,
+        context,
         premises,
         lhs,
         rhs,
@@ -869,9 +894,47 @@ fn decode_rewrite(value: RhoValue, path: &str) -> Result<RewriteDecl, DdlValueEr
     })
 }
 
+fn decode_rewrite_binding(value: RhoValue, path: &str) -> Result<RewriteBinding, DdlValueError> {
+    let mut fields = expect_node(value, "rewrite-binding", Some(2), path.into())?.into_iter();
+    let name = expect_string(fields.next().expect("arity checked"), format!("{path}.name"))?;
+    let sort = decode_sort(fields.next().expect("arity checked"), &format!("{path}.sort"))?;
+    Ok(RewriteBinding { name, sort })
+}
+
+fn decode_rewrite_premise(value: RhoValue, path: &str) -> Result<RewritePremise, DdlValueError> {
+    match node_tag(&value) {
+        Some("premise") => decode_pair(value, "premise", path)
+            .map(|(source, target)| RewritePremise::Transition { source, target }),
+        Some("premise-intrinsic") => {
+            let mut fields =
+                expect_node(value, "premise-intrinsic", Some(3), path.into())?.into_iter();
+            let op = expect_string(fields.next().expect("arity checked"), format!("{path}.op"))?;
+            let inputs =
+                expect_sequence(fields.next().expect("arity checked"), &format!("{path}.inputs"))?
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| expect_string(value, format!("{path}.inputs[{index}]")))
+                    .collect::<Result<Vec<_>, _>>()?;
+            let outputs =
+                expect_sequence(fields.next().expect("arity checked"), &format!("{path}.outputs"))?
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        decode_rewrite_binding(value, &format!("{path}.outputs[{index}]"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+            Ok(RewritePremise::Intrinsic { op, inputs, outputs })
+        },
+        Some(tag) => Err(wrong_tag(path, tag, "a rewrite premise")),
+        None => Err(not_node(path, "a rewrite premise")),
+    }
+}
+
 fn decode_rewrite_entry(value: RhoValue, path: &str) -> Result<RewriteEntry, DdlValueError> {
     match node_tag(&value) {
-        Some("rewrite") => decode_rewrite(value, path).map(RewriteEntry::Ordinary),
+        Some("rewrite" | "rewrite-typed") => {
+            decode_rewrite(value, path).map(RewriteEntry::Ordinary)
+        },
         Some("projection-group") | Some("projection-carrier") => {
             decode_projection(value, path).map(RewriteEntry::Projection)
         },
@@ -1196,6 +1259,11 @@ fn decode_ast(value: RhoValue, path: &str) -> Result<Ast, DdlValueError> {
         FinishCollection {
             element_count: usize,
         },
+        FinishTypedCollection {
+            element: String,
+            element_count: usize,
+            remainder: Option<String>,
+        },
     }
 
     let mut jobs = vec![Job::Decode { value, path: path.into(), depth: 1 }];
@@ -1217,6 +1285,35 @@ fn decode_ast(value: RhoValue, path: &str) -> Result<Ast, DdlValueError> {
                         } else {
                             Ast::Remainder(name, SYNTHETIC_SPAN)
                         });
+                    },
+                    Some("ast-boolean-true") | Some("ast-boolean-false") => {
+                        let tag = node_tag(&value).expect("matched a node tag").to_string();
+                        expect_node(value, &tag, Some(0), path.clone())?;
+                        values.push(Ast::Literal(
+                            NativeLiteral::Boolean(tag == "ast-boolean-true"),
+                            SYNTHETIC_SPAN,
+                        ));
+                    },
+                    Some("ast-string") => {
+                        let mut fields = expect_node(value, "ast-string", Some(1), path.clone())?;
+                        let text = expect_string(
+                            fields.pop().expect("arity checked"),
+                            format!("{path}.value"),
+                        )?;
+                        values.push(Ast::Literal(NativeLiteral::String(text), SYNTHETIC_SPAN));
+                    },
+                    Some("ast-integer") => {
+                        let mut fields = expect_node(value, "ast-integer", Some(1), path.clone())?;
+                        let integer = match fields.pop().expect("arity checked") {
+                            RhoValue::Integer(integer) => integer,
+                            _ => {
+                                return Err(DdlValueError::new(
+                                    format!("{path}.value"),
+                                    "expected native signed i128 integer",
+                                ))
+                            },
+                        };
+                        values.push(Ast::Literal(NativeLiteral::Integer(integer), SYNTHETIC_SPAN));
                     },
                     Some("ast-sexp") => {
                         let mut fields =
@@ -1291,6 +1388,74 @@ fn decode_ast(value: RhoValue, path: &str) -> Result<Ast, DdlValueError> {
                             },
                         ));
                     },
+                    Some("ast-typed-collection") => {
+                        let mut fields =
+                            expect_node(value, "ast-typed-collection", Some(3), path.clone())?
+                                .into_iter();
+                        let element = match decode_sort(
+                            fields.next().expect("arity checked"),
+                            &format!("{path}.element"),
+                        )? {
+                            Sort::Cat(category) => category,
+                            _ => {
+                                return Err(DdlValueError::new(
+                                    format!("{path}.element"),
+                                    "typed collection element must be a category",
+                                ))
+                            },
+                        };
+                        let elements = expect_sequence(
+                            fields.next().expect("arity checked"),
+                            &format!("{path}.elements"),
+                        )?;
+                        let remainder_value = fields.next().expect("arity checked");
+                        let remainder = match node_tag(&remainder_value) {
+                            Some("ast-no-remainder") => {
+                                expect_node(
+                                    remainder_value,
+                                    "ast-no-remainder",
+                                    Some(0),
+                                    format!("{path}.remainder"),
+                                )?;
+                                None
+                            },
+                            Some("ast-remainder") => {
+                                let mut fields = expect_node(
+                                    remainder_value,
+                                    "ast-remainder",
+                                    Some(1),
+                                    format!("{path}.remainder"),
+                                )?;
+                                Some(expect_string(
+                                    fields.pop().expect("arity checked"),
+                                    format!("{path}.remainder.name"),
+                                )?)
+                            },
+                            Some(tag) => {
+                                return Err(wrong_tag(
+                                    &format!("{path}.remainder"),
+                                    tag,
+                                    "a collection remainder",
+                                ))
+                            },
+                            None => {
+                                return Err(not_node(
+                                    &format!("{path}.remainder"),
+                                    "a collection remainder",
+                                ))
+                            },
+                        };
+                        let element_count = elements.len();
+                        jobs.push(Job::FinishTypedCollection { element, element_count, remainder });
+                        let child_depth = structural_child_depth(depth, &path)?;
+                        jobs.extend(elements.into_iter().enumerate().rev().map(
+                            |(index, element)| Job::Decode {
+                                value: element,
+                                path: format!("{path}.elements[{index}]"),
+                                depth: child_depth,
+                            },
+                        ));
+                    },
                     Some(tag) => return Err(wrong_tag(&path, tag, "a rule AST")),
                     None => return Err(not_node(&path, "a rule AST")),
                 }
@@ -1319,6 +1484,19 @@ fn decode_ast(value: RhoValue, path: &str) -> Result<Ast, DdlValueError> {
                     .expect("rule AST collection continuation underflow");
                 let elements = values.split_off(start);
                 values.push(Ast::Coll(elements, SYNTHETIC_SPAN));
+            },
+            Job::FinishTypedCollection { element, element_count, remainder } => {
+                let start = values
+                    .len()
+                    .checked_sub(element_count)
+                    .expect("rule AST typed collection continuation underflow");
+                let elements = values.split_off(start);
+                values.push(Ast::TypedColl {
+                    element,
+                    elements,
+                    remainder,
+                    span: SYNTHETIC_SPAN,
+                });
             },
         }
     }

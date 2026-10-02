@@ -408,11 +408,40 @@ pub struct Equation {
 #[derive(Clone, Debug)]
 pub struct RewriteDecl {
     pub name: Ident,
-    /// Conditional premises: `if S ~> T then ...` (D2 spelling).
-    pub premises: Vec<(Ident, Ident)>,
+    /// Ordered typed variables available before the first premise.
+    pub context: Vec<RewriteBinding>,
+    /// Premises are evaluated in source order; intrinsic outputs extend the
+    /// environment for following premises and the right-hand side.
+    pub premises: Vec<RewritePremise>,
     pub lhs: Ast,
     pub rhs: Ast,
     pub span: Span,
+}
+
+#[derive(Clone, Debug)]
+pub struct RewriteBinding {
+    pub name: Ident,
+    pub sort: Sort,
+}
+
+#[derive(Clone, Debug)]
+pub enum RewritePremise {
+    Transition {
+        source: Ident,
+        target: Ident,
+    },
+    Intrinsic {
+        op: Ident,
+        inputs: Vec<Ident>,
+        outputs: Vec<RewriteBinding>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum NativeLiteral {
+    Boolean(bool),
+    String(String),
+    Integer(i128),
 }
 
 /// Entries of one authored `Rewrites` builder remain in source order. A
@@ -476,6 +505,7 @@ pub enum ProjectionPremise {
 #[derive(Clone, Debug)]
 pub enum Ast {
     Var(Ident, Span),
+    Literal(NativeLiteral, Span),
     /// `(Label arg ...)`
     SExp(Label, Vec<Ast>, Span),
     /// G4. Two-argument substitution: `(subst ^x.p arg)`.
@@ -484,6 +514,13 @@ pub enum Ast {
     Abs(Ident, Box<Ast>, Span),
     /// `{a, b, ...rest}`
     Coll(Vec<Ast>, Span),
+    /// An element-typed collection has its own canonical `coll_typed` tag.
+    TypedColl {
+        element: Cat,
+        elements: Vec<Ast>,
+        remainder: Option<Ident>,
+        span: Span,
+    },
     /// G3. `...rest`
     Remainder(Ident, Span),
 }
@@ -492,11 +529,13 @@ impl Ast {
     pub fn span(&self) -> Span {
         match self {
             Ast::Var(_, s)
+            | Ast::Literal(_, s)
             | Ast::SExp(_, _, s)
             | Ast::Subst(_, _, s)
             | Ast::Abs(_, _, s)
             | Ast::Coll(_, s)
             | Ast::Remainder(_, s) => *s,
+            Ast::TypedColl { span, .. } => *span,
         }
     }
 
@@ -515,7 +554,8 @@ impl Ast {
                 },
                 Ast::Abs(_, body, _) => work.push(body),
                 Ast::Coll(elements, _) => work.extend(elements.iter().rev()),
-                Ast::Var(..) | Ast::Remainder(..) => {},
+                Ast::TypedColl { elements, .. } => work.extend(elements.iter().rev()),
+                Ast::Var(..) | Ast::Literal(..) | Ast::Remainder(..) => {},
             }
         }
     }

@@ -955,13 +955,20 @@ impl Parser {
             self.expect(Tok::Squiggle)?;
             let b = self.ident()?;
             self.expect(Tok::KwThen)?;
-            premises.push((a, b));
+            premises.push(RewritePremise::Transition { source: a, target: b });
         }
         let lhs = self.ast()?;
         self.expect(Tok::Squiggle)?;
         let rhs = self.ast()?;
         self.expect(Tok::Semi)?;
-        Ok(RewriteDecl { name, premises, lhs, rhs, span })
+        Ok(RewriteDecl {
+            name,
+            context: Vec::new(),
+            premises,
+            lhs,
+            rhs,
+            span,
+        })
     }
 
     fn at_projection_declaration(&self) -> bool {

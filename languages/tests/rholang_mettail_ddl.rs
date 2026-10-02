@@ -1,7 +1,8 @@
 use mettail_languages::rholang::{
     lex, lex_dag, DdlEquation, DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem,
-    DdlOptionSection, DdlParam, DdlPath, DdlRegClassPiece, DdlRegPiece, DdlRewrite, DdlRuleAst,
-    DdlTermRule, DdlTheoryExpr, Proc,
+    DdlOptionSection, DdlParam, DdlPath, DdlPremise, DdlPremiseInput, DdlPremises,
+    DdlRegClassPiece, DdlRegPiece, DdlRewrite, DdlRewriteBinding, DdlRuleAst, DdlTermRule,
+    DdlTheoryExpr, Proc,
 };
 use mettail_prattail::automata::TokenKind;
 use mettail_runtime::Language;
@@ -1083,6 +1084,176 @@ fn normative_judgement_and_rule_ast_surface_is_exhaustive() {
     let reparsed = DdlTheoryExpr::parse_via_wpda(&rendered)
         .unwrap_or_else(|error| panic!("combined theory rendered as `{rendered}`: {error:?}"));
     assert_eq!(reparsed, theory, "combined theory round-trip changed structure");
+}
+
+#[test]
+fn authored_regex_rewrite_shapes_parse_structurally() {
+    let source = "Read(p:Pattern, t:Text, i:Nat): \
+        if intrinsic utf8_scalar_at(t, i) => (c:Scalar, j:Nat) then \
+        if intrinsic exact_term_eq(c, c) => (same:Flag) then \
+        (Scan p t i) ~> (Decide same c j);";
+    let rewrite = DdlRewrite::parse_via_wpda(source).expect("typed intrinsic rewrite");
+    let DdlRewrite::DdlRewriteTypedConditional(name, context, premises, _, _) = &rewrite else {
+        panic!("typed rule must retain its context and premises");
+    };
+    assert_eq!(name, "Read");
+    assert_eq!(context.len(), 3);
+    assert!(matches!(&context[0], DdlRewriteBinding::DdlRewriteBinding(name, _) if name == "p"));
+    let DdlPremises::DdlPremiseMore(first, rest) = premises.as_ref() else {
+        panic!("both intrinsic premises must be retained in source order");
+    };
+    let DdlPremise::DdlIntrinsicPremise(first_op, first_inputs, first_outputs) = first.as_ref()
+    else {
+        panic!("first premise must be intrinsic");
+    };
+    assert_eq!(first_op, "utf8_scalar_at");
+    assert_eq!(first_inputs.len(), 2);
+    assert!(matches!(&first_inputs[0], DdlPremiseInput::DdlPremiseInput(name) if name == "t"));
+    assert!(matches!(&first_inputs[1], DdlPremiseInput::DdlPremiseInput(name) if name == "i"));
+    assert!(
+        matches!(&first_outputs[0], DdlRewriteBinding::DdlRewriteBinding(name, _) if name == "c")
+    );
+    assert!(
+        matches!(&first_outputs[1], DdlRewriteBinding::DdlRewriteBinding(name, _) if name == "j")
+    );
+    let DdlPremises::DdlPremiseOne(second) = rest.as_ref() else {
+        panic!("second premise must remain last");
+    };
+    assert!(
+        matches!(second.as_ref(), DdlPremise::DdlIntrinsicPremise(op, _, _) if op == "exact_term_eq")
+    );
+    assert_eq!(DdlRewrite::parse_via_wpda(&rewrite.to_string()).unwrap(), rewrite);
+
+    for source in [
+        "true",
+        "false",
+        "\"\"",
+        "0",
+        "{ l, r }:Text",
+        "{}:Text",
+        "{...tail}",
+        "{...tail}:Text",
+        "{l, ...tail}:Text",
+    ] {
+        let ast = DdlRuleAst::parse_via_wpda(source)
+            .unwrap_or_else(|error| panic!("native rule AST `{source}`: {error:?}"));
+        assert_eq!(DdlRuleAst::parse_via_wpda(&ast.to_string()).unwrap(), ast);
+    }
+    assert!(matches!(
+        DdlRuleAst::parse_via_wpda("{ l, r }:Text").unwrap(),
+        DdlRuleAst::DdlRuleAstTypedCollection(..)
+    ));
+    assert!(matches!(
+        DdlRuleAst::parse_via_wpda("{...tail}").unwrap(),
+        DdlRuleAst::DdlRuleAstRemainderOnly(..)
+    ));
+    assert!(matches!(
+        DdlRuleAst::parse_via_wpda("{...tail}:Text").unwrap(),
+        DdlRuleAst::DdlRuleAstTypedRemainderOnly(..)
+    ));
+    assert!(matches!(
+        DdlRuleAst::parse_via_wpda("true").unwrap(),
+        DdlRuleAst::DdlRuleAstBoolean(..)
+    ));
+
+    let old = DdlRewrite::parse_via_wpda("Legacy : (Before X) ~> (After X);").unwrap();
+    assert!(matches!(old, DdlRewrite::DdlRewriteDirect(..)));
+    let typed_direct =
+        DdlRewrite::parse_via_wpda("Render(p:List(Text)): (Join p) ~> (Done \"\");").unwrap();
+    assert!(matches!(typed_direct, DdlRewrite::DdlRewriteTypedDirect(..)));
+}
+
+#[test]
+fn authored_ddl_source_profile_admits_the_complete_typed_rewrite_closure() {
+    use mettail_languages::rholang::source_profile::{RholangSourceProfile, SourceRole};
+    use std::sync::Arc;
+
+    let conditional = DdlRewrite::parse_via_wpda(
+        "Read(p:Pattern, t:Text, i:Nat): \
+         if intrinsic utf8_scalar_at(t, i) => (c:Scalar, j:Nat) then \
+         (Scan p t i) ~> (Decide true c j);",
+    )
+    .expect("authored conditional rewrite");
+    let direct = DdlRewrite::parse_via_wpda(
+        "Collect(p:Pattern): ({...tail}:List(Text)) ~> ({p, ...tail}:List(Text));",
+    )
+    .expect("authored typed collection rewrite");
+    let source = Proc::DdlTheory(
+        "Profile".into(),
+        Vec::new(),
+        Arc::new(DdlTheoryExpr::DdlTheoryRewritesImplicit(vec![conditional, direct])),
+    );
+    let mut charged_work = 0usize;
+    let mut charged_bytes = 0usize;
+    source
+        .try_check_source_profile(SourceRole::Term, &RholangSourceProfile, &mut |work, bytes| {
+            charged_work += work;
+            charged_bytes += bytes;
+            Ok::<(), ()>(())
+        })
+        .expect("every authored DDL child remains in the resource-checked declaration closure");
+    assert!(charged_work > 0);
+    assert!(charged_bytes > 0);
+}
+
+#[test]
+fn authored_regex_full_at_end_preserves_four_arguments() {
+    use mettail_languages::rholang::parse_DdlRuleAst_via_wpda_all_with_source;
+    use mettail_prattail::wpda_runtime::LatticeTokenSource;
+
+    for (word, prefix) in [("true", "tru"), ("false", "fals")] {
+        let input = format!("(FullAtEnd {word} p t i)");
+        let dag = lex_dag(&input).expect("authored Boolean constructor lexes");
+        let node = dag
+            .nodes
+            .iter()
+            .find(|node| node.byte_start == 11)
+            .expect("Boolean token node");
+        assert!(node.edges.iter().any(|edge| edge.text == word));
+        assert!(
+            !node.edges.iter().any(|edge| edge.text == prefix),
+            "reserved Boolean must not expose a shorter Ident prefix: {node:?}"
+        );
+    }
+    let truep = DdlRuleAst::parse_via_wpda("(FullAtEnd truep p t i)")
+        .expect("full-span identifier remains parseable");
+    assert!(matches!(
+        truep,
+        DdlRuleAst::DdlRuleAstSExp(_, ref arguments)
+            if matches!(&arguments[0], DdlRuleAst::DdlRuleAstVar(name) if name == "truep")
+    ));
+    let source = LatticeTokenSource::new(lex_dag("(FullAtEnd true p t i)").unwrap());
+    let (terms, _) = parse_DdlRuleAst_via_wpda_all_with_source(&source, &mut 0, 0)
+        .expect("all generated WPDA readings");
+    assert!(terms.iter().any(|term| matches!(
+        term,
+        DdlRuleAst::DdlRuleAstSExp(_, arguments)
+            if arguments.len() == 4
+                && matches!(&arguments[0], DdlRuleAst::DdlRuleAstBoolean(_))
+    )));
+    assert!(
+        terms.iter().all(|term| matches!(
+            term,
+            DdlRuleAst::DdlRuleAstSExp(_, arguments) if arguments.len() == 4
+        )),
+        "invalid split survived: {terms:#?}"
+    );
+    let pattern = DdlRuleAst::parse_via_wpda("(FullAtEnd true p t i)")
+        .expect("standalone authored Regex pattern");
+    let DdlRuleAst::DdlRuleAstSExp(label, arguments) = &pattern else {
+        panic!("expected constructor, found {pattern:#?}");
+    };
+    assert_eq!(label, "FullAtEnd");
+    assert_eq!(arguments.len(), 4, "standalone pattern {pattern:#?}");
+
+    let rewrite = DdlRewrite::parse_via_wpda(
+        "FullFinished: (FullAtEnd true p t i) ~> (FullNullable (NEval p (NNil)));",
+    )
+    .expect("authored Regex rewrite");
+    let DdlRewrite::DdlRewriteDirect(_, left, _) = &rewrite else {
+        panic!("expected direct authored rewrite, found {rewrite:#?}");
+    };
+    assert_eq!(left.as_ref(), &pattern, "nested rewrite pattern {left:#?}");
 }
 
 #[test]

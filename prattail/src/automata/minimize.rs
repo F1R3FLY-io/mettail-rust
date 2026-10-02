@@ -282,7 +282,8 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     // triples `(accept, weight, alt_accepts)` coincide. A BTreeMap with
     // a composite key runs once, outside the refinement loop, so the
     // `alt_accepts` Vec clone into the key is amortized over n, not n².
-    type PartitionKey<'a> = (Option<&'a super::TokenKind>, u64, Vec<(&'a super::TokenKind, u64)>);
+    type PartitionKey<'a> =
+        (Option<&'a super::TokenKind>, u64, Vec<(&'a super::TokenKind, u64)>, bool);
     let mut accept_groups: BTreeMap<PartitionKey<'_>, Vec<u32>> = BTreeMap::new();
     for (i, state) in dfa.states.iter().enumerate() {
         let weight_bits = state.weight.value().to_bits();
@@ -292,7 +293,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
             .map(|(k, w)| (k, w.value().to_bits()))
             .collect();
         accept_groups
-            .entry((state.accept.as_ref(), weight_bits, alt_key))
+            .entry((state.accept.as_ref(), weight_bits, alt_key, state.reserved_ident_shadow))
             .or_default()
             .push(i as u32);
     }
@@ -394,6 +395,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
         new_dfa.states[0].accept = dfa.states[rep].accept.clone();
         new_dfa.states[0].weight = dfa.states[rep].weight;
         new_dfa.states[0].alt_accepts = dfa.states[rep].alt_accepts.clone();
+        new_dfa.states[0].reserved_ident_shadow = dfa.states[rep].reserved_ident_shadow;
     }
 
     for b in 0..final_block_count {
@@ -406,6 +408,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
             accept: dfa.states[rep].accept.clone(),
             weight: dfa.states[rep].weight,
             alt_accepts: dfa.states[rep].alt_accepts.clone(),
+            reserved_ident_shadow: dfa.states[rep].reserved_ident_shadow,
         });
         block_to_new[b as usize] = new_id;
     }
@@ -498,6 +501,7 @@ pub fn canonicalize_state_order(dfa: &mut Dfa) {
             accept: old_state.accept.clone(),
             weight: old_state.weight,
             alt_accepts: old_state.alt_accepts.clone(),
+            reserved_ident_shadow: old_state.reserved_ident_shadow,
         });
     }
 
