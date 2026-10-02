@@ -71,6 +71,7 @@ macro_rules! rholang_source_profile_rows {
             List::ListLit => [Vec<Proc> => I];
             Map::MapLit => [HashMapLit<Proc,Proc> => I];
             Proc::MethodCall => [Arc<Proc> => T, String => Opaque, Vec<Proc> => T];
+            Proc::Concat => [Arc<Proc> => T, Arc<Proc> => T];
             Proc::Eq => [Arc<Proc> => T, Arc<Proc> => T];
             Proc::Ne => [Arc<Proc> => T, Arc<Proc> => T];
             Proc::Lt => [Arc<Proc> => T, Arc<Proc> => T];

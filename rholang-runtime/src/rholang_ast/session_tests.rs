@@ -125,6 +125,26 @@ fn source_gate_and_body_driver_share_both_existing_budget_dimensions() {
 }
 
 #[test]
+fn checked_public_source_accepts_concat_and_preserves_eplusplus() {
+    use mettail_rholang_codegen::ReflectedCodecBudget;
+
+    let source = Proc::Concat(
+        Arc::new(Proc::CastStr(Arc::new(Str::StringLit("rho:lib:".into())))),
+        Arc::new(Proc::CastStr(Arc::new(Str::StringLit("owner".into())))),
+    );
+    let mut work = 0;
+    let mut cancel = || false;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancel);
+    let prepared = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget)
+        .expect("the public source profile admits ++ in a term");
+    assert!(matches!(
+        prepared.par.exprs.first().and_then(|expr| expr.expr_instance.as_ref()),
+        Some(ExprInstance::EPlusPlusBody(_))
+    ));
+    assert!(work > 0);
+}
+
+#[test]
 fn source_admission_cancellation_retains_the_typed_failure_and_cleans_session() {
     use mettail_languages::rholang::SourceProfileError;
     use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
