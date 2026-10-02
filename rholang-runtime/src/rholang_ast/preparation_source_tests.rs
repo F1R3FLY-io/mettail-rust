@@ -249,28 +249,31 @@ fn integer(value: i64) -> Proc {
     Proc::CastInt(Arc::new(Int::NumLit(value)))
 }
 
-fn receive_cases() -> Vec<(InputBind, Proc)> {
+fn receive_cases() -> Vec<(InputBind, Vec<Proc>)> {
     let channel = Arc::new(Name::NQuoteNil);
     let quoted = Arc::new(Name::NQuote(Arc::new(integer(42))));
     let first = Arc::new(Name::NQuote(Arc::new(integer(1))));
     let rest = vec![Name::NQuote(Arc::new(integer(2)))];
     vec![
-        (InputBind::InputBind(quoted.clone(), channel.clone()), integer(42)),
-        (InputBind::InputBindPersistent(quoted, channel.clone()), integer(42)),
-        (InputBind::InputBindQuoted(Arc::new(integer(42)), channel.clone()), integer(42)),
+        (InputBind::InputBind(quoted.clone(), channel.clone()), vec![integer(42)]),
+        (InputBind::InputBindPersistent(quoted, channel.clone()), vec![integer(42)]),
+        (
+            InputBind::InputBindQuoted(Arc::new(integer(42)), channel.clone()),
+            vec![integer(42)],
+        ),
         (
             InputBind::InputBindQuotedPersistent(Arc::new(integer(42)), channel.clone()),
-            integer(42),
+            vec![integer(42)],
         ),
-        (InputBind::InputBindEmpty(channel.clone()), mk_proc_list(Vec::new())),
-        (InputBind::InputBindEmptyPersistent(channel.clone()), mk_proc_list(Vec::new())),
+        (InputBind::InputBindEmpty(channel.clone()), Vec::new()),
+        (InputBind::InputBindEmptyPersistent(channel.clone()), Vec::new()),
         (
             InputBind::InputBindPolyadic(first.clone(), rest.clone(), channel.clone()),
-            mk_proc_list(vec![integer(1), integer(2)]),
+            vec![integer(1), integer(2)],
         ),
         (
             InputBind::InputBindPersistentPolyadic(first, rest, channel),
-            mk_proc_list(vec![integer(1), integer(2)]),
+            vec![integer(1), integer(2)],
         ),
     ]
 }
@@ -285,14 +288,14 @@ fn paid_receive_patterns_preserve_arity_and_every_refusal_prefix() {
             charges.push((w, u));
             Ok(())
         })
-        .bind_pattern(&source)
+        .bind_patterns(&source)
         .expect("checked receive pattern");
         assert_eq!(actual, Some(expected.clone()));
         assert_eq!(
             SourceBuilder::new(SourcePreparation::Original, &mut |_, _| {
                 panic!("original adapter must not reserve")
             })
-            .bind_pattern(&source)
+            .bind_patterns(&source)
             .expect("original pattern"),
             Some(expected)
         );
@@ -307,7 +310,7 @@ fn paid_receive_patterns_preserve_arity_and_every_refusal_prefix() {
                 accepted.push((w, u));
                 Ok(())
             })
-            .bind_pattern(&source);
+            .bind_patterns(&source);
             assert_eq!(
                 result,
                 Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
@@ -317,12 +320,12 @@ fn paid_receive_patterns_preserve_arity_and_every_refusal_prefix() {
         }
         let work = charges.iter().map(|(w, _)| *w as u64).sum::<u64>();
         let units = charges.iter().map(|(_, u)| *u).sum::<usize>();
-        for (work_limit, unit_limit, succeeds) in [
-            (work, units, true),
-            (work - 1, units, false),
-            (work, units - 1, false),
-            (0, 0, false),
-        ] {
+        let mut limits = vec![(work, units, true), (work - 1, units, false)];
+        if let Some(one_less_unit) = units.checked_sub(1) {
+            limits.push((work, one_less_unit, false));
+        }
+        limits.push((0, 0, false));
+        for (work_limit, unit_limit, succeeds) in limits {
             let mut used = 0;
             let mut cancel = || false;
             let mut budget =
@@ -332,7 +335,7 @@ fn paid_receive_patterns_preserve_arity_and_every_refusal_prefix() {
                     .charge(w, u)
                     .map_err(RholangAstLowerError::Preparation)
             })
-            .bind_pattern(&source);
+            .bind_patterns(&source);
             assert_eq!(result.is_ok(), succeeds);
         }
     }

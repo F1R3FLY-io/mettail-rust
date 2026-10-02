@@ -374,18 +374,26 @@ impl<'a, 'r> SourceBuilder<'a, 'r> {
         })
     }
 
-    pub(super) fn bind_pattern(
+    pub(super) fn bind_patterns(
         &mut self,
         bind: &InputBind,
-    ) -> Result<Option<Proc>, RholangAstLowerError> {
+    ) -> Result<Option<Vec<Proc>>, RholangAstLowerError> {
         self.reserve(2, 0)?;
         Ok(match bind {
             InputBind::InputBind(lhs, _)
             | InputBind::InputBindPersistent(lhs, _)
-            | InputBind::InputBindQuery(lhs, _, _) => Some(self.name_pattern(lhs)?),
+            | InputBind::InputBindQuery(lhs, _, _) => {
+                let pattern = self.name_pattern(lhs)?;
+                self.reserve(1, 1)?;
+                Some(vec![pattern])
+            },
             InputBind::InputBindQuoted(pattern, _)
             | InputBind::InputBindQuotedPersistent(pattern, _)
-            | InputBind::InputBindQuotedQuery(pattern, _, _) => Some(self.copy_proc(pattern)?),
+            | InputBind::InputBindQuotedQuery(pattern, _, _) => {
+                let pattern = self.copy_proc(pattern)?;
+                self.reserve(1, 1)?;
+                Some(vec![pattern])
+            },
             InputBind::InputBindPolyadic(first, rest, _)
             | InputBind::InputBindPersistentPolyadic(first, rest, _) => {
                 let count = polyadic_count(rest.len())?;
@@ -402,18 +410,11 @@ impl<'a, 'r> SourceBuilder<'a, 'r> {
                     self.reserve(1, 0)?;
                     items.push(pattern);
                 }
-                let list = self.allocate(|| List::ListLit(items))?;
-                self.reserve(1, 1)?;
-                Some(Proc::CastList(list))
+                Some(items)
             },
             InputBind::InputBindEmpty(_)
             | InputBind::InputBindEmptyPersistent(_)
-            | InputBind::InputBindEmptyQuery(_, _) => {
-                self.reserve(1, 1)?;
-                let list = self.allocate(|| List::ListLit(Vec::new()))?;
-                self.reserve(1, 1)?;
-                Some(Proc::CastList(list))
-            },
+            | InputBind::InputBindEmptyQuery(_, _) => Some(Vec::new()),
             _ => None,
         })
     }

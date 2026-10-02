@@ -49,10 +49,9 @@ fn native_carrier_declarations_use_the_generated_rholang_entrypoint() {
 #[test]
 fn semantic_limits_use_the_generated_rholang_structural_wire() {
     let source = "Theory Limited() { Types { Work; } Options { Semantics { Limits { max_steps = 64; max_frontier = 8; } } } }";
-    let parsed = Proc::parse_via_wpda(source)
-        .expect("generated host grammar parses the Options builder");
-    lower_rholang_proc(&parsed)
-        .expect("Options lowers structurally without reparsing the source");
+    let parsed =
+        Proc::parse_via_wpda(source).expect("generated host grammar parses the Options builder");
+    lower_rholang_proc(&parsed).expect("Options lowers structurally without reparsing the source");
 }
 
 #[test]

@@ -1341,15 +1341,18 @@ fn lower_pfor_user(
         }
 
         let (patterns, bind_binders) = if is_empty_bind(bind) {
-            // `for(_ <- c)` — match (and discard) any single message; no bound variables.
-            (vec![new_wildcard_par(Vec::new(), false)], Vec::new())
+            // A zero-argument receive binds no values and expects zero data terms.
+            (Vec::new(), Vec::new())
         } else {
-            let pat_proc = bind_pattern_proc(bind)
+            let pat_procs = bind_pattern_proc(bind)
                 .ok_or(RholangAstLowerError::UnsupportedProc("for-row pattern"))?;
             let mut counter = 0i32;
             let mut bind_binders = Vec::new();
-            let pat_par = lower_pattern_proc(&pat_proc, &mut counter, &mut bind_binders)?;
-            (vec![pat_par], bind_binders)
+            let mut patterns = Vec::with_capacity(pat_procs.len());
+            for pat_proc in &pat_procs {
+                patterns.push(lower_pattern_proc(pat_proc, &mut counter, &mut bind_binders)?);
+            }
+            (patterns, bind_binders)
         };
 
         let free_count = bind_binders.len() as i32;

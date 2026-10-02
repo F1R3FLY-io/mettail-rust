@@ -41,6 +41,48 @@ fn parse_lower(source: &str) -> Par {
         .unwrap_or_else(|err| panic!("rholang AST lowering failed for {source:?}: {err:?}"))
 }
 
+#[test]
+fn send_and_receive_lowering_preserve_surface_arity() {
+    for (source, expected) in [
+        (r#"x!()"#, 0),
+        (r#"x!(1)"#, 1),
+        (r#"x!(1,2)"#, 2),
+        (r#"x!(1,2,3,4,5)"#, 5),
+        (r#"x!([1,2])"#, 1),
+        (r#"@"x"!!(1,2)"#, 2),
+    ] {
+        let lowered = parse_lower(source);
+        assert_eq!(lowered.sends.len(), 1, "{source}");
+        assert_eq!(lowered.sends[0].data.len(), expected, "{source}");
+    }
+    for (source, expected) in [
+        (r#"for(<- x){Nil}"#, 0),
+        (r#"for(@a <- x){Nil}"#, 1),
+        (r#"for(@a,@b <- x){Nil}"#, 2),
+        (r#"for(@a,@b,@c,@d,@e <- x){Nil}"#, 5),
+        (r#"for(@[a,b] <- x){Nil}"#, 1),
+    ] {
+        let lowered = parse_lower(source);
+        assert_eq!(lowered.receives.len(), 1, "{source}");
+        assert_eq!(lowered.receives[0].binds.len(), 1, "{source}");
+        assert_eq!(lowered.receives[0].binds[0].patterns.len(), expected, "{source}");
+    }
+}
+
+#[tokio::test]
+async fn polyadic_communication_does_not_unpack_an_explicit_list() {
+    assert_eq!(
+        read_strings(r#"@"c"!(1,2) | for(@a,@b <- @"c"){ @"OUT"!("matched") }"#).await,
+        vec!["matched"],
+    );
+    assert!(
+        read_strings(r#"@"c"!([1,2]) | for(@a,@b <- @"c"){ @"OUT"!("wrong") }"#)
+            .await
+            .is_empty(),
+        "a single list datum must not satisfy a two-pattern receive"
+    );
+}
+
 /// Coverage requirements derived from the language-aware rejected-rule classifier.
 /// Structural constructors are covered by generated Rho AST contracts; native/eval and unsupported
 /// scalar operators are covered by Rho-native system-process rules. Labels are de-duplicated

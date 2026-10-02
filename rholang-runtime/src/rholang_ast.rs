@@ -1440,8 +1440,9 @@ enum Kont<'a> {
     /// `left.append(right)` — `PParInfix`. Distinct from [`Kont::ParFold`] with `n = 2` on
     /// purpose: it is a different expression, and the differential compares expressions.
     ParPair,
-    /// `send_par` / `send_par_persistent` over `(channel, payload)`.
-    Send { persistent: bool },
+    /// `send_par` / `send_par_persistent` over a channel and exactly `data_len`
+    /// independently lowered payloads. A list payload remains one datum.
+    Send { persistent: bool, data_len: usize },
     /// `binary_expr_par(lhs, rhs, op)`.
     BinExpr(BinOp),
     /// `unary_expr_par(operand, op)`.
@@ -1515,7 +1516,7 @@ enum Kont<'a> {
     /// Stage A of `lower_pfor_user`: the SOURCE of `binds[next_bind]` is on the value stack.
     ForSource(Box<ForState<'a>>),
     /// Stage B: the PATTERN of `binds[next_bind]` is on the value stack.
-    ForPattern(Box<ForState<'a>>, u32),
+    ForPattern(Box<ForState<'a>>, u32, usize),
     /// Stage C: the lowered CONTINUATION is on the value stack.
     ForBody(Box<ForState<'a>>),
     /// Stage D: the lowered GUARD is on the value stack.
@@ -1543,6 +1544,7 @@ impl Kont<'_> {
     fn checked_arity(&self) -> Result<usize, RholangAstLowerError> {
         let checked = match self {
             Kont::Method { argc, .. } => argc.checked_add(1),
+            Kont::Send { data_len, .. } => data_len.checked_add(1),
             Kont::MapLit(n) | Kont::PatMapLit(n) => n.checked_mul(2),
             Kont::PathmapLit { map: true, len } => len.checked_mul(2),
             _ => Some(self.arity()),
@@ -1561,7 +1563,7 @@ impl Kont<'_> {
         match self {
             Kont::ParFold(n) => *n,
             Kont::ParPair => 2,
-            Kont::Send { .. } => 2,
+            Kont::Send { data_len, .. } => 1 + *data_len,
             Kont::BinExpr(_) => 2,
             Kont::UnExpr(_) => 1,
             Kont::AddParity => 2,
@@ -1588,7 +1590,7 @@ impl Kont<'_> {
             Kont::InstalledFlt { .. } => 1,
             // The four receive stages are STAGED: each awaits exactly one value.
             Kont::ForSource(_) => 1,
-            Kont::ForPattern(..) => 1,
+            Kont::ForPattern(_, _, count) => *count,
             Kont::ForBody(_) => 1,
             Kont::ForGuard(_) => 1,
             Kont::PatListLit(n) => *n,
@@ -1971,6 +1973,39 @@ impl<'a> Drive<'a> {
         Ok(source)
     }
 
+    fn quoted_name_process(&mut self, name: &Name) -> Result<&'a Proc, RholangAstLowerError> {
+        let process = preparation_source::SourceBuilder::new(
+            self.source_preparation,
+            self.stacks.reservation,
+        )
+        .name_pattern(name)?;
+        self.stacks.charge_storage(1, 1)?;
+        Ok(self.keep(Arc::new(process)))
+    }
+
+    fn enter_send(
+        &mut self,
+        channel: Job<'a>,
+        first: Option<&'a Proc>,
+        rest: &'a [Proc],
+        env: EnvId,
+        persistent: bool,
+    ) -> Result<(), RholangAstLowerError> {
+        let data_len = rest
+            .len()
+            .checked_add(usize::from(first.is_some()))
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        self.push_children(
+            Kont::Send { persistent, data_len },
+            std::iter::once(channel).chain(
+                first
+                    .into_iter()
+                    .chain(rest.iter())
+                    .map(|payload| Job::Proc(payload, env)),
+            ),
+        )
+    }
+
     fn env(&self, id: EnvId) -> &BoundEnv {
         self.envs.get(id)
     }
@@ -2108,7 +2143,14 @@ impl<'a> Drive<'a> {
         // itself desugarable (its outputs are `POutput`/`PPersistOutput`/`PPar`/`PNew`, none of
         // which it matches), so the recursion was one deep — but writing it as a loop means the
         // machine does not have to KNOW that, and a new sugar rule cannot reintroduce a frame.
-        let proc = self.desugar_head(proc)?;
+        // Send arity belongs to the Rho communication protocol, not to a list
+        // encoding. Keep the parsed zero/polyadic constructor until its children
+        // have been lowered into distinct Send.data entries.
+        let proc = if is_nonunary_surface_send(proc) {
+            proc
+        } else {
+            self.desugar_head(proc)?
+        };
 
         match proc {
             Proc::PZero => self.stacks.value(lower_arm_p_zero()?)?,
@@ -2150,8 +2192,44 @@ impl<'a> Drive<'a> {
                 [Job::Proc(left.as_ref(), env), Job::Proc(right.as_ref(), env)],
             )?,
             Proc::POutput(channel, payload) => self.push_children(
-                Kont::Send { persistent: false },
+                Kont::Send { persistent: false, data_len: 1 },
                 [Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)],
+            )?,
+            Proc::POutputEmpty(channel) => {
+                self.enter_send(Job::Name(channel.as_ref(), env), None, &[], env, false)?
+            },
+            Proc::POutput2Plus(channel, first, rest) => self.enter_send(
+                Job::Name(channel.as_ref(), env),
+                Some(first.as_ref()),
+                rest,
+                env,
+                false,
+            )?,
+            Proc::POutputNilEmpty => {
+                let channel = self.keep(Arc::new(Proc::PZero));
+                self.enter_send(Job::Proc(channel, env), None, &[], env, false)?
+            },
+            Proc::POutputNil2Plus(first, rest) => {
+                let channel = self.keep(Arc::new(Proc::PZero));
+                self.enter_send(Job::Proc(channel, env), Some(first.as_ref()), rest, env, false)?
+            },
+            Proc::POutputQuotedEmpty(name) => {
+                let channel = self.quoted_name_process(name.as_ref())?;
+                self.enter_send(Job::Proc(channel, env), None, &[], env, false)?
+            },
+            Proc::POutputQuoted2Plus(name, first, rest) => {
+                let channel = self.quoted_name_process(name.as_ref())?;
+                self.enter_send(Job::Proc(channel, env), Some(first.as_ref()), rest, env, false)?
+            },
+            Proc::POutputShortEmpty(channel) => {
+                self.enter_send(Job::Proc(channel.as_ref(), env), None, &[], env, false)?
+            },
+            Proc::POutputShort2Plus(channel, first, rest) => self.enter_send(
+                Job::Proc(channel.as_ref(), env),
+                Some(first.as_ref()),
+                rest,
+                env,
+                false,
             )?,
             // ★ THE LOOKAHEAD ARMS — `x!(P)[*]` and `x!(P)[n]`. These do NOT lower to a send:
             // the lowering emits a speculation REQUEST and no send at all.
@@ -2171,18 +2249,46 @@ impl<'a> Drive<'a> {
                     .push(Job::ForRows(rows.as_slice(), body.as_ref(), env))?
             },
             Proc::PPersistOutput(channel, payload) => self.push_children(
-                Kont::Send { persistent: true },
+                Kont::Send { persistent: true, data_len: 1 },
                 [Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)],
             )?,
+            Proc::PPersistOutputEmpty(channel) => {
+                self.enter_send(Job::Name(channel.as_ref(), env), None, &[], env, true)?
+            },
+            Proc::PPersistOutput2Plus(channel, first, rest) => self.enter_send(
+                Job::Name(channel.as_ref(), env),
+                Some(first.as_ref()),
+                rest,
+                env,
+                true,
+            )?,
+            Proc::PPersistOutputNilEmpty => {
+                let channel = self.keep(Arc::new(Proc::PZero));
+                self.enter_send(Job::Proc(channel, env), None, &[], env, true)?
+            },
+            Proc::PPersistOutputNil2Plus(first, rest) => {
+                let channel = self.keep(Arc::new(Proc::PZero));
+                self.enter_send(Job::Proc(channel, env), Some(first.as_ref()), rest, env, true)?
+            },
             // Rholang-style short sends `@P!(q)` / `@P!!(q)`: the channel is the quote of `P`,
             // i.e. `lower_name(NQuote(P)) == lower_proc(P)`.
             Proc::POutputShort(channel_proc, payload) => self.push_children(
-                Kont::Send { persistent: false },
+                Kont::Send { persistent: false, data_len: 1 },
                 [Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)],
             )?,
             Proc::PPersistOutputShort(channel_proc, payload) => self.push_children(
-                Kont::Send { persistent: true },
+                Kont::Send { persistent: true, data_len: 1 },
                 [Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)],
+            )?,
+            Proc::PPersistOutputShortEmpty(channel) => {
+                self.enter_send(Job::Proc(channel.as_ref(), env), None, &[], env, true)?
+            },
+            Proc::PPersistOutputShort2Plus(channel, first, rest) => self.enter_send(
+                Job::Proc(channel.as_ref(), env),
+                Some(first.as_ref()),
+                rest,
+                env,
+                true,
             )?,
             Proc::PNew(scope) => {
                 let (binders, body) = match self.source_preparation {
@@ -2866,12 +2972,12 @@ impl<'a> Drive<'a> {
                         .map_err(RholangAstLowerError::ValueConstruction)
                 })?;
             },
-            Kont::Send { persistent } => {
-                let payload = self.stacks.pop_value()?;
+            Kont::Send { persistent, data_len } => {
+                let payloads = self.stacks.pop_values(data_len)?;
                 let channel = self.stacks.pop_value()?;
                 let par = match persistent {
-                    true => send_par_persistent(channel, vec![payload]),
-                    false => send_par(channel, vec![payload]),
+                    true => send_par_persistent(channel, payloads),
+                    false => send_par(channel, payloads),
                 };
                 self.stacks.value(par)?;
             },
@@ -3144,7 +3250,7 @@ impl<'a> Drive<'a> {
                     .value(installed_flt_trampoline(*channel, *request, for_body))?;
             },
             Kont::ForSource(state) => return self.for_source(state),
-            Kont::ForPattern(state, slot) => return self.for_pattern(state, slot),
+            Kont::ForPattern(state, slot, count) => return self.for_pattern(state, slot, count),
             Kont::ForBody(mut state) => {
                 state.lowered_body = Some(self.stacks.pop_value()?);
                 match state.cond {
@@ -3503,7 +3609,7 @@ impl<'a> Drive<'a> {
         // `for(<- n)` — an empty bind consumes without binding.
         if is_empty_bind(bind) {
             state.binds_rho.push(ReceiveBind {
-                patterns: vec![new_wildcard_par(Vec::new(), false)],
+                patterns: Vec::new(),
                 source: Some(source),
                 remainder: None,
                 free_count: 0,
@@ -3512,19 +3618,29 @@ impl<'a> Drive<'a> {
             return self.schedule_bind_source(state);
         }
 
-        let pat_proc = preparation_source::SourceBuilder::new(
+        let pat_procs = preparation_source::SourceBuilder::new(
             self.source_preparation,
             self.stacks.reservation,
         )
-        .bind_pattern(bind)?
+        .bind_patterns(bind)?
         .ok_or(RholangAstLowerError::UnsupportedProc("for-row pattern"))?;
-        self.stacks.charge_storage(3, 2)?;
-        let pat_proc = self.keep(Arc::new(pat_proc));
+        let pattern_count = pat_procs.len();
+        self.stacks
+            .charge_storage(3 + pattern_count, 2 + pattern_count)?;
+        let pat_procs = pat_procs
+            .into_iter()
+            .map(|pat_proc| self.keep(Arc::new(pat_proc)))
+            .collect::<Vec<_>>();
         let slot = u32::try_from(self.pattern_states.len())
             .map_err(|_| RholangAstLowerError::PreparationSizeOverflow)?;
         self.pattern_states.push(PatternState::default());
         state.pending_source = Some(source);
-        self.push_children(Kont::ForPattern(state, slot), [Job::Pattern(pat_proc, slot)])?;
+        self.push_children(
+            Kont::ForPattern(state, slot, pattern_count),
+            pat_procs
+                .into_iter()
+                .map(|pat_proc| Job::Pattern(pat_proc, slot)),
+        )?;
         Ok(())
     }
 
@@ -3532,21 +3648,23 @@ impl<'a> Drive<'a> {
         &mut self,
         mut state: Box<ForState<'a>>,
         slot: u32,
+        pattern_count: usize,
     ) -> Result<(), RholangAstLowerError> {
-        let pat_par = self.stacks.pop_value()?;
+        let pat_pars = self.stacks.pop_values(pattern_count)?;
         let source = state
             .pending_source
             .take()
             .expect("rholang lowering: a receive pattern ran without its source");
         let bind_binders = std::mem::take(&mut self.pattern_states[slot as usize].binders);
-        let free_count = bind_binders.len() as i32;
+        let free_count = i32::try_from(bind_binders.len())
+            .map_err(|_| RholangAstLowerError::PreparationSizeOverflow)?;
         preparation_source::SourceBuilder::new(self.source_preparation, self.stacks.reservation)
             .extend_receive_slots(
                 &mut state.slots,
                 bind_binders.into_iter().map(ReceiveSlot::Moniker),
             )?;
         state.binds_rho.push(ReceiveBind {
-            patterns: vec![pat_par],
+            patterns: pat_pars,
             source: Some(source),
             remainder: None,
             free_count,
@@ -5639,6 +5757,26 @@ fn lookahead_bound(bound: &Proc) -> Result<i64, RholangAstLowerError> {
 /// surface sugar already goes through, is what puts the expansion on the path into execution
 /// rather than beside it. There is no second implementation: this arm calls the very function
 /// the comparison path calls.
+fn is_nonunary_surface_send(proc: &Proc) -> bool {
+    matches!(
+        proc,
+        Proc::POutputEmpty(_)
+            | Proc::PPersistOutputEmpty(_)
+            | Proc::POutput2Plus(_, _, _)
+            | Proc::PPersistOutput2Plus(_, _, _)
+            | Proc::POutputNilEmpty
+            | Proc::PPersistOutputNilEmpty
+            | Proc::POutputNil2Plus(_, _)
+            | Proc::PPersistOutputNil2Plus(_, _)
+            | Proc::POutputQuotedEmpty(_)
+            | Proc::POutputQuoted2Plus(_, _, _)
+            | Proc::POutputShortEmpty(_)
+            | Proc::PPersistOutputShortEmpty(_)
+            | Proc::POutputShort2Plus(_, _, _)
+            | Proc::PPersistOutputShort2Plus(_, _, _)
+    )
+}
+
 fn desugar_surface_sugar_node(proc: &Proc) -> Option<Proc> {
     desugar_surface_sugar_node_preparing(proc, SourcePreparation::Original, &mut |_, _| Ok(()))
         .expect("original sugar construction has no reservation refusal")
@@ -5713,25 +5851,13 @@ fn name_pattern_to_proc(name_pat: &Name) -> Proc {
     }
 }
 
-/// Normalize a MONADIC bind's quoted pattern to the canonical arity shape.
+/// Keep a monadic receive pattern as one datum, without synthesizing a list.
 ///
-/// The arity convention is fixed by the SEND side and this function's only job is to mirror it.
-/// `lower_proc`'s `POutput` arm emits `send_par(chan, vec![payload])` — a send always carries
-/// EXACTLY ONE datum `Par` — and [`desugar_surface_sugar_node`] encodes the non-scalar arities INTO that one
-/// datum as a list:
-///
-/// | send form   | datum                | matching bind form   | pattern              |
-/// |-------------|----------------------|----------------------|----------------------|
-/// | `c!(p)`     | `⟦p⟧`                | `for(@p <- c)`       | `⟦p⟧`  (**verbatim**)|
-/// | `c!()`      | `⟦[]⟧`               | `for(<- c)`          | `⟦[]⟧`               |
-/// | `c!(a,b,…)` | `⟦[a,b,…]⟧`          | `for(@a, @b… <- c)`  | `⟦[a,b,…]⟧`          |
-///
-/// So a MONADIC pattern is the payload pattern VERBATIM: the arity list is the encoding for the
-/// EMPTY and POLYADIC forms only, and those are produced by [`bind_pattern_proc`]'s own
-/// `InputBindEmpty*` / `InputBind*Polyadic` arms. There is no monadic shape that needs a wrap —
-/// which is why this is the identity. It is kept as a named function so the convention lives in
-/// ONE place next to the table that justifies it, rather than being an unexplained `.clone()` at
-/// the call site.
+/// The production worklist maps surface arguments positionally: `c!()` has zero
+/// `Send.data` entries, `c!(p)` has one, and `c!(a,b)` has two. An explicit
+/// `c!([a,b])` has one list-valued entry. The receive-side pattern vector has
+/// exactly the same arity, so wrapping a scalar pattern would break COMM.
+/// This identity helper is retained for the independent oracle comparison.
 ///
 /// ⚠ ARITY FIX (2026-07-26). The previous body wrapped every pattern EXCEPT `CastList`/`PVar`:
 ///
@@ -5761,11 +5887,8 @@ fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
 /// (`NQuote`/`NQuoteShort`); a `PFlt*` written directly as a quoted pattern rides
 /// the `InputBindQuoted` family. It is intercepted here, ahead of
 /// [`bind_pattern_proc`], because an FLT pattern is REFLECTED (its holes become
-/// match `FreeVar`s) rather than lowered as an ordinary term — the reflected FLT
-/// pattern is then the receive's SOLE pattern, matching the single reflected datum a
-/// `@c!(⟦…⟧)` send carries. (Before the 2026-07-26 arity fix this interception was
-/// ALSO what kept the FLT pattern clear of `bind_pattern_proc`'s spurious
-/// one-element-list wrap; that wrap is gone, so only the reflection reason remains.)
+/// match `FreeVar`s) rather than lowered as an ordinary term. It occupies one
+/// receive-pattern position, matching one reflected FLT datum.
 fn bind_flt_node(bind: &InputBind) -> Option<Arc<FltNode>> {
     bind_flt_node_borrowed(bind).cloned()
 }
@@ -5794,7 +5917,7 @@ fn bind_flt_node_borrowed(bind: &InputBind) -> Option<&Arc<FltNode>> {
     }
 }
 
-fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
+fn bind_pattern_proc(bind: &InputBind) -> Option<Vec<Proc>> {
     match bind {
         // Monadic binds, name-shaped LHS (`for(x <- c)`, `for(@P <- c)`). ONE datum, so the
         // pattern is the payload pattern verbatim — see [`canonicalize_arity_pattern`] for the
@@ -5804,22 +5927,22 @@ fn bind_pattern_proc(bind: &InputBind) -> Option<Proc> {
         InputBind::InputBind(lhs, _)
         | InputBind::InputBindPersistent(lhs, _)
         | InputBind::InputBindQuery(lhs, _, _) => {
-            Some(canonicalize_arity_pattern(&name_pattern_to_proc(lhs.as_ref())))
+            Some(vec![canonicalize_arity_pattern(&name_pattern_to_proc(lhs.as_ref()))])
         },
         InputBind::InputBindPolyadic(lhs, lhss, _)
         | InputBind::InputBindPersistentPolyadic(lhs, lhss, _) => {
             let mut items = Vec::with_capacity(1 + lhss.len());
             items.push(name_pattern_to_proc(lhs.as_ref()));
             items.extend(lhss.iter().map(name_pattern_to_proc));
-            Some(mk_proc_list(items))
+            Some(items)
         },
         InputBind::InputBindEmpty(_)
         | InputBind::InputBindEmptyPersistent(_)
-        | InputBind::InputBindEmptyQuery(_, _) => Some(mk_proc_list(vec![])),
+        | InputBind::InputBindEmptyQuery(_, _) => Some(Vec::new()),
         InputBind::InputBindQuoted(pat, _)
         | InputBind::InputBindQuotedPersistent(pat, _)
         | InputBind::InputBindQuotedQuery(pat, _, _) => {
-            Some(canonicalize_arity_pattern(pat.as_ref()))
+            Some(vec![canonicalize_arity_pattern(pat.as_ref())])
         },
         _ => None,
     }

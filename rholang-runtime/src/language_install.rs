@@ -2750,15 +2750,16 @@ impl std::error::Error for LanguageRuntimeError {}
 
 /// The deploy-reachable, non-local installation boundary. Provenance and host
 /// grants are captured by `runtime`; they are intentionally absent from the
-/// two-argument Rholang protocol `[specification, reply]`.
+/// two-argument Rholang protocol `(specification, reply)`. The receive arity
+/// is exact, so a one-datum list is not silently unpacked into two arguments.
 pub fn language_install_definition(runtime: Arc<RholangLanguageRuntime>) -> Definition {
     Definition {
         urn: LANGUAGE_INSTALL_URN.into(),
         fixed_channel: LANGUAGE_INSTALL_BAND.channel(0, LANGUAGE_CAPABILITY_ABI_CURRENT),
-        // Nouveau Rholang has one datum per send.  Its surface
-        // `install!(specification, *reply)` is lowered to the canonical arity
-        // list `[specification, reply]` inside that datum.
-        arity: 1,
+        // The RSpace system receiver must bind each surface argument to one
+        // pattern. A remainder would not deliver its extra datum through
+        // ContractCall::unapply and would lose the reply channel.
+        arity: 2,
         body_ref: LANGUAGE_INSTALL_BAND.body_ref(0, LANGUAGE_CAPABILITY_ABI_CURRENT),
         remainder: None,
         handler: Box::new(move |context| {
@@ -2777,19 +2778,9 @@ pub fn language_install_definition(runtime: Arc<RholangLanguageRuntime>) -> Defi
                             "{LANGUAGE_INSTALL_URN}: not a single-message contract call"
                         )));
                     };
-                    if payload.len() != 1 {
+                    let Some((specification, reply)) = decode_install_payload(payload) else {
                         return Err(InterpreterError::IllegalArgumentError(format!(
-                            "{LANGUAGE_INSTALL_URN}: expected one canonical call datum, got Rho arity {}",
-                            payload.len()
-                        )));
-                    }
-                    let call = payload
-                        .into_iter()
-                        .next()
-                        .expect("one install call datum was checked");
-                    let Some((specification, reply)) = decode_install_call(call) else {
-                        return Err(InterpreterError::IllegalArgumentError(format!(
-                            "{LANGUAGE_INSTALL_URN}: expected the two-argument call [specification, reply]"
+                            "{LANGUAGE_INSTALL_URN}: expected exactly (specification, reply)"
                         )));
                     };
                     let candidate = decode_install_candidate(specification);
@@ -3550,35 +3541,12 @@ pub(crate) fn exact_expr(value: &Par) -> Option<&ExprInstance> {
     expr.expr_instance.as_ref()
 }
 
-fn decode_install_call(mut call: Par) -> Option<(Par, Par)> {
-    if !call.sends.is_empty()
-        || !call.receives.is_empty()
-        || !call.news.is_empty()
-        || !call.matches.is_empty()
-        || !call.unforgeables.is_empty()
-        || !call.bundles.is_empty()
-        || !call.connectives.is_empty()
-        || !call.conditionals.is_empty()
-        || !call.locally_free.is_empty()
-        || call.connective_used
-    {
+fn decode_install_payload(mut payload: Vec<Par>) -> Option<(Par, Par)> {
+    if payload.len() != 2 {
         return None;
     }
-    if call.exprs.len() != 1 {
-        return None;
-    }
-    let mut expression = call.exprs.pop()?;
-    let Some(ExprInstance::EListBody(mut list)) = expression.expr_instance.take() else {
-        return None;
-    };
-    if !list.locally_free.is_empty() || list.connective_used || list.remainder.is_some() {
-        return None;
-    }
-    if list.ps.len() != 2 {
-        return None;
-    }
-    let reply = list.ps.pop()?;
-    let specification = list.ps.pop()?;
+    let reply = payload.pop()?;
+    let specification = payload.pop()?;
     Some((specification, reply))
 }
 
@@ -7652,6 +7620,12 @@ pub(crate) mod tests {
         let proc = Proc::parse_via_wpda(source).expect("complete installer program parses");
         let par = crate::rholang_ast::lower_rholang_proc(&proc)
             .expect("complete installer program lowers");
+        let mut arities = Vec::new();
+        visit_canonical_par_tree(&par, |node| {
+            arities.extend(node.sends.iter().map(|send| send.data.len()));
+        })
+        .expect("lowered installer tree is canonical");
+        assert!(arities.contains(&2), "surface installer send retains two data: {arities:?}");
         let outputs = crate::run::run_normalized_par_with_definitions_and_read_par_channels(
             &par,
             vec![language_install_definition(language_runtime)],
@@ -8141,7 +8115,7 @@ pub(crate) mod tests {
         ))));
         let definition = language_install_definition(runtime);
         assert_eq!(definition.urn, LANGUAGE_INSTALL_URN);
-        assert_eq!(definition.arity, 1, "nouveau Rholang carries one canonical arity list");
+        assert_eq!(definition.arity, 2, "both surface arguments bind exactly");
         assert_eq!(definition.remainder, None);
         assert_eq!(
             definition.fixed_channel,

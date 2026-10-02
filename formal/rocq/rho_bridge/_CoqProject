@@ -45,6 +45,7 @@ theories/RholangAstLowering.v
 theories/RholangWorklistStorage.v
 theories/RholangFrontendAdmission.v
 theories/RholangTargetConstruction.v
+theories/RholangSurfaceArity.v
 theories/RholangConstructionProtocol.v
 theories/RholangFreshDescriptor.v
 theories/RholangSourceScope.v

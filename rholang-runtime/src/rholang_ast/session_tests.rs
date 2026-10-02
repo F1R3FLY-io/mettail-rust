@@ -138,7 +138,11 @@ fn checked_public_source_accepts_concat_and_preserves_eplusplus() {
     let prepared = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget)
         .expect("the public source profile admits ++ in a term");
     assert!(matches!(
-        prepared.par.exprs.first().and_then(|expr| expr.expr_instance.as_ref()),
+        prepared
+            .par
+            .exprs
+            .first()
+            .and_then(|expr| expr.expr_instance.as_ref()),
         Some(ExprInstance::EPlusPlusBody(_))
     ));
     assert!(work > 0);
