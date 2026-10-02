@@ -1,6 +1,7 @@
 use super::*;
 
-const SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt.rho");
+const ACTION_SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt_with_actions.rho");
+const DATA_FREE_SOURCE: &str = include_str!("../../../tests/fixtures/regex_gslt.rho");
 
 #[test]
 fn practical_regex_default_mode_tokens_have_original_wpda_observations() {
@@ -9,7 +10,7 @@ fn practical_regex_default_mode_tokens_have_original_wpda_observations() {
         LanguageInstallPolicy::default(),
     );
     let batch = service
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("declared Regex theory installs");
     assert_eq!(
         batch.exports[0].receipt.requested_rights,
@@ -48,7 +49,7 @@ fn practical_regex_full_match_input_has_canonical_closed_heads() {
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("complete practical regex declaration installs");
     let token = &batch.exports[0].handle;
     let handle = runtime
@@ -135,7 +136,7 @@ fn practical_regex_search_alt_concat_template_parses() {
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("complete practical regex declaration installs");
     let token = &batch.exports[0].handle;
     let handle = runtime
@@ -218,9 +219,13 @@ fn practical_regex_search_alt_concat_template_parses() {
 fn practical_regex_gslt_application_contains_the_checked_declaration_and_parses_once() {
     let application = include_str!("../../../tests/fixtures/regex_gslt_application.rho");
     assert_eq!(
-        application.matches(SOURCE.trim()).count(),
+        application.matches(DATA_FREE_SOURCE.trim()).count(),
         1,
-        "the standalone application embeds exactly the service-tested declaration"
+        "the application embeds the data-free service-tested declaration exactly"
+    );
+    assert!(
+        !application.contains("    Data({"),
+        "the application uses authored GSLT rules only"
     );
     let _program = Proc::parse_via_wpda(application)
         .expect("one generated host parse includes the complete DDL and qualified FLT uses");
@@ -245,8 +250,8 @@ fn authored_regex_limits_preserve_the_data_faithful_canonical_module() {
         "limits":{"max_term_nodes":16384,"max_proof_nodes":16384,"max_frontier":256,"max_steps":10000000,"max_grade_bits":128}
       }
     })"#;
-    assert_eq!(SOURCE.matches(AUTHORED_TRAILER).count(), 1);
-    let data_faithful = SOURCE.replacen(AUTHORED_TRAILER, DATA_TRAILER, 1);
+    assert_eq!(ACTION_SOURCE.matches(AUTHORED_TRAILER).count(), 1);
+    let data_faithful = ACTION_SOURCE.replacen(AUTHORED_TRAILER, DATA_TRAILER, 1);
     let service = LanguageInstallService::new(
         Arc::new(MemoryRegistry::default()),
         LanguageInstallPolicy::default(),
@@ -270,7 +275,7 @@ fn authored_regex_limits_preserve_the_data_faithful_canonical_module() {
         .expect("Regex module elaborates")
         .canonical_value
     };
-    assert_eq!(canonical(SOURCE), canonical(&data_faithful));
+    assert_eq!(canonical(ACTION_SOURCE), canonical(&data_faithful));
 }
 
 fn text_computation(
@@ -323,7 +328,7 @@ fn practical_regex_guest_text_is_exact_and_native_text_holes_preserve_whitespace
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("the application's unchanged inline grammar installs");
     let token = &batch.exports[0].handle;
     let holes = [NamedRuntimeTemplateHole {
@@ -397,7 +402,7 @@ fn authored_regex_terminal_judgments_observe_all_result_categories_without_actio
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(DATA_FREE_SOURCE))
         .expect("complete Regex theory installs");
     let handle = &batch.exports[0].handle;
     let observe = |label: &str, terminal_judgment: &str, input: &Par, expected: &Par| {
@@ -469,7 +474,7 @@ fn practical_regex_gslt_full_match_search_and_replacement_application_matrix() {
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("complete practical regex declaration installs");
     let token = &batch.exports[0].handle;
     for (pattern, text, matches) in [
@@ -550,14 +555,14 @@ fn practical_regex_gslt_full_match_search_and_replacement_application_matrix() {
 fn practical_regex_gslt_full_match_result_is_controlled_by_the_declared_driver() {
     let original = "FullNullableDone : (FullNullable (NDone B)) ~> (DoneBool B);";
     let replacement = "FullNullableDone : (FullNullable (NDone B)) ~> (DoneBool (BFalse));";
-    assert_eq!(SOURCE.matches(original).count(), 1);
-    let changed = SOURCE.replace(original, replacement);
+    assert_eq!(ACTION_SOURCE.matches(original).count(), 1);
+    let changed = ACTION_SOURCE.replace(original, replacement);
     let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
         Arc::new(MemoryRegistry::default()),
         LanguageInstallPolicy::default(),
     )));
     let mut commitments = Vec::with_capacity(2);
-    for (source, result) in [(SOURCE, "doneBool(yes)"), (changed.as_str(), "doneBool(no)")] {
+    for (source, result) in [(ACTION_SOURCE, "doneBool(yes)"), (changed.as_str(), "doneBool(no)")] {
         let batch = runtime
             .install_all(rholang_ddl_candidate(source))
             .expect("independent inline application declaration");
@@ -585,7 +590,7 @@ fn practical_regex_gslt_application_limits_refuse_without_partial_results() {
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("inline declaration");
     let token = &batch.exports[0].handle;
     for (name, fragments, texts, expected_fragments, expected_texts) in [
@@ -667,7 +672,7 @@ fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_en
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("practical regex declaration installs through the actual inline DDL path");
     assert_eq!(batch.exports.len(), 1);
     assert_eq!(batch.exports[0].name, "Regex");
@@ -743,16 +748,17 @@ fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_en
 fn practical_regex_gslt_declared_rule_controls_observation() {
     let original = "NullableAny : (NEval (PAny) K) ~> (NReturn (BFalse) K);";
     let replacement = "NullableAny : (NEval (PAny) K) ~> (NReturn (BTrue) K);";
-    assert_eq!(SOURCE.matches(original).count(), 1);
+    assert_eq!(ACTION_SOURCE.matches(original).count(), 1);
     // Separate application specifications, each parsed once through the host
     // entrypoint. This test mutation is not runtime source rewriting.
-    let changed = SOURCE.replace(original, replacement);
+    let changed = ACTION_SOURCE.replace(original, replacement);
     let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
         Arc::new(MemoryRegistry::default()),
         LanguageInstallPolicy::default(),
     )));
     let mut commitments = Vec::with_capacity(2);
-    for (source, expected) in [(SOURCE, "doneBool(no)"), (changed.as_str(), "doneBool(yes)")] {
+    for (source, expected) in [(ACTION_SOURCE, "doneBool(no)"), (changed.as_str(), "doneBool(yes)")]
+    {
         let batch = runtime
             .install_all(rholang_ddl_candidate(source))
             .expect("inline declaration");
@@ -792,7 +798,7 @@ fn practical_regex_gslt_scalar_holes_admit_singletons_and_refuse_other_text() {
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("inline declaration");
     let token = &batch.exports[0].handle;
     let handle = runtime
@@ -903,7 +909,7 @@ fn practical_regex_gslt_structural_repeat_bounds_preserve_native_nat_variable_po
         LanguageInstallPolicy::default(),
     )));
     let batch = runtime
-        .install_all(rholang_ddl_candidate(SOURCE))
+        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
         .expect("inline declaration");
     let token = &batch.exports[0].handle;
     let handle = runtime

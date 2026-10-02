@@ -1,8 +1,11 @@
 # Data-free observation of authored GSLT rewrite relations
 
-Status: implementation contract. The current Regex fixture still uses an `oslf`
-`Data` record; this document defines the replacement before the service and
-fixture change. It does not add Theory or Module syntax.
+Status: implementation contract. The primary Regex theory and application now
+use the authored relation/query path without an `oslf` `Data` record. A
+separately named v1 action-compatibility fixture retains that record for
+regression tests. Node application acceptance and registry-backed retrieval
+remain separate verification obligations. This design adds no Theory or Module
+syntax.
 
 ## Vocabulary and existing boundary
 
@@ -20,16 +23,16 @@ requires an explicit terminal policy and rejects `StuckNonterminal`. The
 already has an actionless, fair, exact-keyed rewrite-relation execution path.
 The [FLT semantic service](../../../rholang-runtime/src/semantic_service.rs)
 uses that path for native Boolean predicates and uses the same installed
-projection matcher for guest-to-host Boolean results. The
-[current v1 wire](../../../rholang-runtime/src/semantic_service/wire.rs)
-instead selects a named action/observation and returns an action receipt.
+projection matcher for guest-to-host Boolean results. Its v1 wire selects a
+named action/observation and returns an action receipt; its distinct v2 wire
+selects the authored relation/query and retains the full proof roster.
 
-The remaining Regex `Data` record repeats six entry-rule names and four
+The v1 compatibility record repeats six entry-rule names and four
 terminal-constructor sets. It also labels those actions `Pure` and grants
-`Reduce`. The actual Regex entry terms and directed rules are already declared
-in `Terms` and `Rewrites`. No source-defined host callback is permitted by the
-closed intrinsic ABI. The six operation names in the current request are
-aliases, not additional guest reduction rules.
+`Reduce`. The primary Regex entry terms and directed rules are declared in
+`Terms` and `Rewrites`. No source-defined host callback is permitted by the
+closed intrinsic ABI. The six former operation names were aliases, not
+additional guest reduction rules.
 
 ## Why a terminal policy cannot simply be inferred
 
@@ -121,7 +124,7 @@ fingerprint; no old receipt is relabeled as a new image receipt. Programmatic
 `language/3` definitions that explicitly retain action/observation records
 continue to use the v1 route unchanged.
 
-The internal semantic request has a distinct `ObserveRelation` operation. Its
+The internal semantic service has a distinct `RelationObservationRequest`. Its
 version-two transport is a closed eight-field tuple:
 
 ```text
@@ -129,9 +132,12 @@ version-two transport is a closed eight-field tuple:
    terminalProjection, structuralInput, callerLimits, replyChannel]
 ```
 
-The Rholang-facing helper hides the version and limit tuple, accepts named
-category/judgment/projection/term/reply arguments, and applies explicit caller
-attenuation only when requested. The current six-field v1 action ABI remains
+The application-local Rholang helper accepts a judgment, structural FLT, and
+reply channel; it fixes the category and named projection once, hiding the
+internal transport from call sites. An empty limits tuple selects the service
+defaults, which are still met with the host and installed-theory ceilings.
+The eleven-field limits tuple remains available for explicit caller
+attenuation. The six-field v1 action ABI remains
 unchanged and fail-closed; neither version is guessed from a malformed tuple.
 The v2 reply carries every published term, its direct-relation receipt, its
 terminal-judgment relation receipt, and the complete terminal-projection proof
@@ -172,8 +178,9 @@ separate authorized bridge; the absence of an effect table does not grant it.
 The selected projection's declared authority is independently checked and
 cannot be inferred from a shared carrier representation. Each normal form and
 each proof is retained
-until checked evidence rejects it. Sorting is for deterministic presentation,
-not disambiguation. All traversal, reconstruction, encoding, cancellation,
+until checked evidence rejects it. The kernel's complete result order is
+preserved without sorting, deduplication, or disambiguation. All traversal,
+reconstruction, encoding, cancellation,
 and teardown paths use heap worklists and bounded resources.
 
 ## Refinement obligations

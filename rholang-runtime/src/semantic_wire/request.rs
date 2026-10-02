@@ -54,7 +54,11 @@ impl OwnedRelationRequest {
             }
             decoder.budget.charge(name.len(), 0)?;
         }
-        let limits = decode_limits_v1(limits, decoder.budget)?;
+        let limits = if decoder.list(limits)?.is_empty() {
+            SemanticServiceLimits::default()
+        } else {
+            decode_limits_v1(limits, decoder.budget)?
+        };
         decoder.budget.charge(8, 0)?;
         let Some(ExprInstance::EListBody(list)) = datum.exprs[0].expr_instance.as_mut() else {
             unreachable!("exact tuple view established the unique list expression")
@@ -199,6 +203,21 @@ mod tests {
         assert_eq!(request.terminal_projection(), "TerminalVerdict");
         assert_eq!(exact_list(request.input()).unwrap().as_ptr(), pointer);
         assert_eq!(request.limits, SemanticServiceLimits::default());
+
+        let mut default_request = relation_datum(Par::default(), Par::default());
+        let Some(ExprInstance::EListBody(list)) = default_request.exprs[0].expr_instance.as_mut()
+        else {
+            unreachable!()
+        };
+        list.ps[6] = wire_list(Vec::new());
+        let mut work = 0;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 0, &mut cancel);
+        assert_eq!(
+            OwnedRelationRequest::decode(vec![default_request], &mut budget)
+                .unwrap()
+                .limits,
+            SemanticServiceLimits::default()
+        );
 
         for index in 0..6 {
             let mut value = relation_datum(Par::default(), Par::default());

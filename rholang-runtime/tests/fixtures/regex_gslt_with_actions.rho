@@ -457,6 +457,33 @@ Module RegexGSLT {
         if intrinsic checked_nat_add(i, one) => (next:Nat) then
         (RAlternative p hi i one req (SDone acc)) ~> (ROptional p hi next one req acc);
     }
+    Data({
+      "oslf": {
+        "effects": [{"name":"Pure", "class":"pure", "requires":[], "emits":[]}],
+        "actions": [
+          {"id":"full-match","domain":["Computation"],"codomain":"Computation","transition":["rewrite","StartFullMatch"],"effect":"Pure","effect_class":"pure","required_rights":["Reduce"],"grade":"Grade","execution":{"kind":"normalize","relation_sort":"Computation","terminal_constructors":["DoneBool"],"branching":"deterministic"}},
+          {"id":"search","domain":["Computation"],"codomain":"Computation","transition":["rewrite","StartSearch"],"effect":"Pure","effect_class":"pure","required_rights":["Reduce"],"grade":"Grade","execution":{"kind":"normalize","relation_sort":"Computation","terminal_constructors":["DoneMatch"],"branching":"deterministic"}},
+          {"id":"replace-first","domain":["Computation"],"codomain":"Computation","transition":["rewrite","StartReplaceFirst"],"effect":"Pure","effect_class":"pure","required_rights":["Reduce"],"grade":"Grade","execution":{"kind":"normalize","relation_sort":"Computation","terminal_constructors":["DoneText"],"branching":"deterministic"}},
+          {"id":"replace-all","domain":["Computation"],"codomain":"Computation","transition":["rewrite","StartReplaceAll"],"effect":"Pure","effect_class":"pure","required_rights":["Reduce"],"grade":"Grade","execution":{"kind":"normalize","relation_sort":"Computation","terminal_constructors":["DoneText"],"branching":"deterministic"}},
+          {"id":"nullable", "domain":["Computation"], "codomain":"Computation",
+           "transition":["rewrite","StartNullable"], "effect":"Pure", "effect_class":"pure",
+           "required_rights":["Reduce"], "grade":"Grade",
+           "execution":{"kind":"normalize", "relation_sort":"Computation", "terminal_constructors":["DoneBool"], "branching":"deterministic"}},
+          {"id":"derivative", "domain":["Computation"], "codomain":"Computation",
+           "transition":["rewrite","StartDerivative"], "effect":"Pure", "effect_class":"pure",
+           "required_rights":["Reduce"], "grade":"Grade",
+           "execution":{"kind":"normalize", "relation_sort":"Computation", "terminal_constructors":["DonePattern"], "branching":"deterministic"}}
+        ],
+        "observations": [
+          {"name":"FullMatch","action":"full-match","result":"Computation"},
+          {"name":"Search","action":"search","result":"Computation"},
+          {"name":"ReplaceFirst","action":"replace-first","result":"Computation"},
+          {"name":"ReplaceAll","action":"replace-all","result":"Computation"},
+          {"name":"Nullable", "action":"nullable", "result":"Computation"},
+          {"name":"Derivative", "action":"derivative", "result":"Computation"}
+        ]
+      }
+    })
     Options {
       Semantics {
         Limits {

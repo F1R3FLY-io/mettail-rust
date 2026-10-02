@@ -1,4 +1,4 @@
-new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe`), stdout(`rho:io:stdout`) in {
+new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`), stdout(`rho:io:stdout`) in {
   new loaded, handlePipe in {
     install!(
 Module RegexGSLT {
@@ -460,33 +460,6 @@ Module RegexGSLT {
         if intrinsic checked_nat_add(i, one) => (next:Nat) then
         (RAlternative p hi i one req (SDone acc)) ~> (ROptional p hi next one req acc);
     }
-    Data({
-      "oslf": {
-        "effects": [{"name":"Pure", "class":"pure", "requires":[], "emits":[]}],
-        "actions": [
-          {"id":"full-match","domain":["Computation"],"codomain":"Computation","transition":["rewrite","StartFullMatch"],"effect":"Pure","effect_class":"pure","required_rights":["Reduce"],"grade":"Grade","execution":{"kind":"normalize","relation_sort":"Computation","terminal_constructors":["DoneBool"],"branching":"deterministic"}},
-          {"id":"search","domain":["Computation"],"codomain":"Computation","transition":["rewrite","StartSearch"],"effect":"Pure","effect_class":"pure","required_rights":["Reduce"],"grade":"Grade","execution":{"kind":"normalize","relation_sort":"Computation","terminal_constructors":["DoneMatch"],"branching":"deterministic"}},
-          {"id":"replace-first","domain":["Computation"],"codomain":"Computation","transition":["rewrite","StartReplaceFirst"],"effect":"Pure","effect_class":"pure","required_rights":["Reduce"],"grade":"Grade","execution":{"kind":"normalize","relation_sort":"Computation","terminal_constructors":["DoneText"],"branching":"deterministic"}},
-          {"id":"replace-all","domain":["Computation"],"codomain":"Computation","transition":["rewrite","StartReplaceAll"],"effect":"Pure","effect_class":"pure","required_rights":["Reduce"],"grade":"Grade","execution":{"kind":"normalize","relation_sort":"Computation","terminal_constructors":["DoneText"],"branching":"deterministic"}},
-          {"id":"nullable", "domain":["Computation"], "codomain":"Computation",
-           "transition":["rewrite","StartNullable"], "effect":"Pure", "effect_class":"pure",
-           "required_rights":["Reduce"], "grade":"Grade",
-           "execution":{"kind":"normalize", "relation_sort":"Computation", "terminal_constructors":["DoneBool"], "branching":"deterministic"}},
-          {"id":"derivative", "domain":["Computation"], "codomain":"Computation",
-           "transition":["rewrite","StartDerivative"], "effect":"Pure", "effect_class":"pure",
-           "required_rights":["Reduce"], "grade":"Grade",
-           "execution":{"kind":"normalize", "relation_sort":"Computation", "terminal_constructors":["DonePattern"], "branching":"deterministic"}}
-        ],
-        "observations": [
-          {"name":"FullMatch","action":"full-match","result":"Computation"},
-          {"name":"Search","action":"search","result":"Computation"},
-          {"name":"ReplaceFirst","action":"replace-first","result":"Computation"},
-          {"name":"ReplaceAll","action":"replace-all","result":"Computation"},
-          {"name":"Nullable", "action":"nullable", "result":"Computation"},
-          {"name":"Derivative", "action":"derivative", "result":"Computation"}
-        ]
-      }
-    })
     Options {
       Semantics {
         Limits {
@@ -507,78 +480,76 @@ Module RegexGSLT {
     } |
     for(regex <- handlePipe) {
       new observeRegex, values, nullable, derived, matched, searched, firstReplaced, replaced in {
-        for(@[name, term, reply] <= observeRegex) {
-          observe!([1, *regex, name, term,
-            [10000000,100000,10000,10000,10000,100000,100000,10000000,100000,10000000,16777216],
-            reply])
+        for(@[judgment, term, reply] <= observeRegex) {
+          observe!([2, *regex, "Computation", judgment, "TerminalVerdict", term, [], reply])
         } |
-        observeRegex!(["Nullable", regex:Computation`nullable(a?)`, *nullable]) |
-        observeRegex!(["Derivative", regex:Computation`derivative(a,a+)`, *derived]) |
+        observeRegex!(["CheckBooleanTerminal", regex:Computation`nullable(a?)`, *nullable]) |
+        observeRegex!(["CheckPatternTerminal", regex:Computation`derivative(a,a+)`, *derived]) |
         values!(["abcb", "éλλx", "aaba", "x"]) |
         for(@[matchText, searchText, replaceText, replacement] <- values) {
-          observeRegex!(["FullMatch",
+          observeRegex!(["CheckBooleanTerminal",
             regex:Computation`fullMatch(a(b|c)+,${matchText:Text})`, *matched]) |
-          observeRegex!(["Search",
+          observeRegex!(["CheckMatchTerminal",
             regex:Computation`search(λ+,${searchText:Text})`, *searched]) |
-          observeRegex!(["ReplaceFirst",
+          observeRegex!(["CheckTextTerminal",
             regex:Computation`replaceFirst(a+,literal(${replacement:Text}),${replaceText:Text})`,
             *firstReplaced]) |
-          observeRegex!(["ReplaceAll",
+          observeRegex!(["CheckTextTerminal",
             regex:Computation`replaceAll(a+,literal(${replacement:Text}),${replaceText:Text})`,
             *replaced])
         } |
-        for(@[1, 0, [[term, receipt]], usage] <- nullable) {
+        for(@[2, 0, [[term, relationReceipt, terminalReceipts, projectionReceipts]], usage] <- nullable) {
           new result in {
             result!(term) |
             for(@regex:Computation`doneBool(yes)` <- result) {
               stdout!(["nullable", true]) |
-              @"regex.nullable"!([true, receipt, usage])
+              @"regex.nullable"!([true, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }
         } |
-        for(@[1, 0, [[term, receipt]], usage] <- derived) {
+        for(@[2, 0, [[term, relationReceipt, terminalReceipts, projectionReceipts]], usage] <- derived) {
           new result in {
             result!(term) |
             for(@regex:Computation`donePattern(a*)` <- result) {
               stdout!(["derivative", "a*"]) |
-              @"regex.derivative"!([term, receipt, usage])
+              @"regex.derivative"!([term, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }
         } |
-        for(@[1, 0, [[term, receipt]], usage] <- matched) {
+        for(@[2, 0, [[term, relationReceipt, terminalReceipts, projectionReceipts]], usage] <- matched) {
           new result in {
             result!(term) |
             for(@regex:Computation`doneBool(yes)` <- result) {
               stdout!(["full-match", true]) |
-              @"regex.match"!([true, receipt, usage]) |
+              @"regex.match"!([true, [relationReceipt, terminalReceipts, projectionReceipts], usage]) |
               @"regex.guard.input"!("abcb")
             }
           }
         } |
-        for(@[1, 0, [[term, receipt]], usage] <- searched) {
+        for(@[2, 0, [[term, relationReceipt, terminalReceipts, projectionReceipts]], usage] <- searched) {
           new result in {
             result!(term) |
             for(@regex:Computation`doneMatch(found(2,6,${found:Text}))` <- result) {
               stdout!(["search", 2, 6, found]) |
-              @"regex.search"!([2, 6, found, receipt, usage])
+              @"regex.search"!([2, 6, found, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }
         } |
-        for(@[1, 0, [[term, receipt]], usage] <- firstReplaced) {
+        for(@[2, 0, [[term, relationReceipt, terminalReceipts, projectionReceipts]], usage] <- firstReplaced) {
           new result in {
             result!(term) |
             for(@regex:Computation`doneText(${output:Text})` <- result) {
               stdout!(["replace-first", output]) |
-              @"regex.replace-first"!([output, receipt, usage])
+              @"regex.replace-first"!([output, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }
         } |
-        for(@[1, 0, [[term, receipt]], usage] <- replaced) {
+        for(@[2, 0, [[term, relationReceipt, terminalReceipts, projectionReceipts]], usage] <- replaced) {
           new result in {
             result!(term) |
             for(@regex:Computation`doneText(${output:Text})` <- result) {
               stdout!(["replace-all", output]) |
-              @"regex.replace"!([output, receipt, usage])
+              @"regex.replace"!([output, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }
         } |
