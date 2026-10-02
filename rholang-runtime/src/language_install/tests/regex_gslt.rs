@@ -232,6 +232,61 @@ fn practical_regex_gslt_application_contains_the_checked_declaration_and_parses_
 }
 
 #[test]
+fn practical_regex_declarations_group_tokens_first_and_projections_last() {
+    let application = include_str!("../../../tests/fixtures/regex_gslt_application.rho");
+    for (name, source) in [
+        ("data-free module", DATA_FREE_SOURCE),
+        ("action compatibility module", ACTION_SOURCE),
+        ("embedded application module", application),
+    ] {
+        let terms = source
+            .split_once("    Terms {")
+            .and_then(|(_, rest)| rest.split_once("\n    }"))
+            .map(|(body, _)| body)
+            .expect("Regex Terms block");
+        let mut saw_term = false;
+        let mut token_count = 0;
+        for line in terms.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            if line.starts_with("token ") {
+                assert!(!saw_term, "{name}: token regex follows a term");
+                token_count += 1;
+            } else {
+                saw_term = true;
+            }
+        }
+        assert_eq!(token_count, 2, "{name}: Scalar and Nat token regexes");
+
+        let rewrites = source
+            .split_once("    Rewrites {")
+            .and_then(|(_, rest)| rest.split_once("\n    }"))
+            .map(|(body, _)| body)
+            .expect("Regex Rewrites block");
+        let mut past_first_projection = false;
+        let mut projection_headers = Vec::new();
+        for line in rewrites
+            .lines()
+            .filter(|line| line.starts_with("      ") && !line.starts_with("        "))
+        {
+            let entry = line.trim();
+            if entry.starts_with("projection ") {
+                past_first_projection = true;
+                projection_headers.push(entry);
+            } else if entry != "}" && !entry.is_empty() {
+                assert!(!past_first_projection, "{name}: rewrite follows a projection");
+            }
+        }
+        assert_eq!(
+            projection_headers,
+            [
+                "projection CompletedBoolean : Computation ~> host::Bool {",
+                "projection TerminalVerdict : TerminalQuery ~> host::Bool {",
+            ],
+            "{name}: guest-to-host projections share the host::Bool target group"
+        );
+    }
+}
+
+#[test]
 fn authored_regex_limits_preserve_the_data_faithful_canonical_module() {
     const AUTHORED_TRAILER: &str = r#"        ]
       }

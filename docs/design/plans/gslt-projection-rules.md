@@ -4,7 +4,7 @@ Status: approved design, 2026-09-29; implementation in progress. The approval co
 
 ## Recommendation
 
-Put named projection rule groups **inside `Rewrites`**, alongside ordinary guest rules. Give each group an explicit guest category, host category, and direction. Keep the guest side on the left and the host side on the right, including for a host-to-guest rule:
+Put named projection rule groups **at the end of `Rewrites`**, after the ordinary guest rules. Give each group an explicit guest category, host category, and direction. Keep the guest side on the left and the host side on the right, including for a host-to-guest rule:
 
 ```text
 Rewrites {
@@ -16,6 +16,8 @@ Rewrites {
 ```
 
 This is proposed syntax. `projection` is contextual within `Rewrites`. It selects a typed relation; the rule bodies use the same term patterns, typed contexts, premises, matching, and checked construction machinery as other GSLT rules. `~>` means guest to host, `<~` means host to guest, and `<~>` requests a checked pair of inverse directions. It does not schedule both directions during guest normalization.
+
+For readable Theory declarations, place every `token` regular-expression declaration at the start of `Terms`, before constructors. At the end of `Rewrites`, keep projection groups contiguous by destination namespace and category, then by direction: for example, the Regex theory places both `Computation ~> host::Bool` and `TerminalQuery ~> host::Bool` in one host-Boolean group. Host-to-guest and guest-to-guest destinations belong in their own groups. This is an authoring layout convention, not permission to coalesce rule occurrences or change the checked execution order.
 
 A separate top-level `Projections` builder is unnecessary for the initial surface. If authors later prefer that visual organization, `Projections { Boolean : ... }` can be exact sugar for the qualified groups above. There must be one canonical meaning and one execution implementation. `Exports` retains its category visibility/renaming role; it does not acquire conversion semantics.
 
@@ -291,7 +293,7 @@ This contract also scales to several host input types, guest inputs, and a host 
 
 A host-typed input may be filled by an already parsed Rholang process hole at run time. The hole carries an expected endpoint such as `host::Proc` or `host::Str`; filling it first checks the actual structural Rholang term against that exact host category, lexical scope, ownership, and the request budget. A `host::Proc` hole may admit a process term; a `host::Str` hole admits a checked string value or term, not an arbitrary process merely because both have a `Par` representation. The selected host-to-guest projection then consumes the admitted value. Filling never reparses the process as guest text, and merely constructing a host process does not execute it.
 
-Host-category **admission** is not a host-to-host rewrite. If the fill already inhabits the projection's declared host input category, it can be projected directly. If it instead inhabits `host::Proc` and the selected projection requires `host::Str`, an explicit checked host transformation must establish a `host::Str` result first: this may be a structural extraction from a known constructor, an ordinary host rewrite, or an authorized host computation according to the host theory. The complete result family and receipts of that step feed the host-to-guest projection; no first-result selection, implicit evaluation, or type-name cast is permitted. Thus host→host rewriting is composable when genuinely required, but it is not mandatory merely to pattern-match a host-typed hole.
+Host-category **admission** is not a host-to-host rewrite. If the fill already inhabits the projection's declared host input category, it can be projected directly. If it instead inhabits `host::Proc` and the selected projection requires `host::Str`, an explicit checked host transformation must establish a `host::Str` result first: this may be a structural extraction from a known constructor, an ordinary host rewrite, or an authorized host computation according to the host theory. The complete result family and receipts of that step feed the host-to-guest projection; no first-result selection, implicit evaluation, or type-name cast is permitted. Thus host-to-host rewriting is composable when genuinely required, but it is not mandatory merely to pattern-match a host-typed hole.
 
 The current FLT template-hole record carries a **guest** `CategoryId` only ([runtime hole record](../../../grammar-core/src/runtime.rs#L78), [installed construction admission](../../../rholang-runtime/src/language_install.rs#L1828)). Host-typed inputs therefore require a versioned endpoint-qualified telescope at the mixed-operation boundary, with the existing structural hole transport and admission discipline reused. They must not be smuggled into the guest parser as a fictitious guest category. If a fill denotes a computation rather than an already admitted value, evaluating it is a separate explicitly authorized operation whose effects and result evidence precede projection.
 

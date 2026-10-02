@@ -332,18 +332,10 @@ Module RegexGSLT {
       RepeatFinishStep : if S ~> T then (RFinish S) ~> (RFinish T);
       RepeatFinishDone : (RFinish (SDone P)) ~> (RDone P);
 
-      projection CompletedBoolean : Computation ~> host::Bool {
-        True : (DoneBool (BTrue)) ~> true;
-        False : (DoneBool (BFalse)) ~> false;
-      }
-
       BooleanTerminal : (CheckBooleanTerminal (DoneBool B)) ~> (TerminalYes);
       PatternTerminal : (CheckPatternTerminal (DonePattern P)) ~> (TerminalYes);
       MatchTerminal : (CheckMatchTerminal (DoneMatch M)) ~> (TerminalYes);
       TextTerminal : (CheckTextTerminal (DoneText T)) ~> (TerminalYes);
-      projection TerminalVerdict : TerminalQuery ~> host::Bool {
-        Yes : (TerminalYes) ~> true;
-      }
 
       FullSurfaceDone: (FullSurface (EDone p) t) ~> (FullScan p t 0);
       FullReadEnd(p:Pattern, t:Text, i:Nat):
@@ -456,6 +448,14 @@ Module RegexGSLT {
       RepeatIncrementOptional(p:Pattern, hi:Nat, i:Nat, one:Nat, req:Pattern, acc:Pattern):
         if intrinsic checked_nat_add(i, one) => (next:Nat) then
         (RAlternative p hi i one req (SDone acc)) ~> (ROptional p hi next one req acc);
+
+      projection CompletedBoolean : Computation ~> host::Bool {
+        True : (DoneBool (BTrue)) ~> true;
+        False : (DoneBool (BFalse)) ~> false;
+      }
+      projection TerminalVerdict : TerminalQuery ~> host::Bool {
+        Yes : (TerminalYes) ~> true;
+      }
     }
     Options {
       Semantics {

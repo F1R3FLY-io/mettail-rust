@@ -11,24 +11,33 @@ The earlier [Regex fixture](../../rholang-runtime/tests/fixtures/regex_extension
 installs a Module/Theory and executes three syntax-expansion rewrites. The
 [practical application fixture](../../rholang-runtime/tests/fixtures/regex_gslt_application.rho)
 authors the larger rule families, observes their results, and uses a projected
-installed-FLT `where` guard. It must still pass through the isolated
-MeTTaIL-only F1r3node public entrypoint; a library test is an intermediate
-check, not that result.
+installed-FLT `where` guard. The focused test now passes through the isolated
+MeTTaIL-only F1r3node public entrypoint. A separate registry-backed case must
+retrieve a published Regex module by explicit versioned URI, validate and
+install it, select the named `Regex` export, and bind that handle to `regex`;
+the current inline case does not prove that registry route.
 
 ## One source, one semantic implementation
 
 The entire application, including Greg/Mike `Module`, `Theory`, `Types`,
-`Terms`, `Equations`, `Rewrites`, and canonical `Data` declarations, enters
+`Terms`, `Equations`, `Rewrites`, and `Options` declarations, enters
 through the generated parser for
 [Rholang](../../languages/src/rholang.rs). Inline DDL is parsed structurally
 once. Installing the resulting immutable language value produces an opaque
 handle. Each explicitly qualified FLT selects that handle and a declared
 category; its structural text-and-hole payload reaches the selected guest
 parser for its first parse. Neither declaration nor guest payload is printed
-and reparsed. The public node and MeTTaIL must use a compiler admitted by the
-checked native-comparison profile. Otherwise traversal of canonical `Data`
-maps fails closed during source preparation; disabling that check is not a
-demo setup step.
+and reparsed. The authored Regex fixture needs no mandatory `Data` block or
+duplicate action/observation table. The public node and MeTTaIL must use a
+compiler admitted by the checked native-comparison profile; disabling that
+admission check is not a demo setup step.
+
+The fixture places token regular expressions first in `Terms`, before its
+constructors. Ordinary guest rules precede the projection groups in
+`Rewrites`; the projections occupy the end of that block and are grouped by
+destination and direction. Both current projections target `host::Bool` and
+therefore appear together. This source layout must not collapse distinct rule
+occurrences or alter checked execution order.
 
 Regex semantics belong to declared GSLT rules, compiled by the existing theory
 compiler and executed by the shared semantic transition kernel. The existing
@@ -77,8 +86,8 @@ structurally distinct reading beside the WPDA's built-in transparent grouping.
 See [runtime postfix admission](runtime-lexical-lattice.md#nonassociative-postfix-declarations)
 for the generalized rule and its proof and codec boundaries.
 
-The literal token accepts individual ASCII letters/digits and non-ASCII Unicode
-scalars; the existing ASCII-only token must be expanded for the Unicode cases.
+The `token Scalar` regular expression at the top of `Terms` accepts individual
+ASCII letters/digits and non-ASCII Unicode scalars; `token Nat` follows it.
 Arbitrary scalars, including metacharacters and whitespace, remain expressible
 through typed `Scalar` holes. This first concrete surface does not promise an
 escape sublanguage, character classes, anchors, captures, backreferences,
@@ -214,9 +223,9 @@ guest body is `fullMatch(a(b|c)+,${text:Text})`, in the existing receive's
 `where` position. The selector is the lexical installed handle `h`; the complete
 FLT spelling is ``h:Computation`fullMatch(a(b|c)+,${text:Text})` ``. A receive
 binds `text`, and its guarded continuation uses that received value only after
-the predicate succeeds. The checked FLT and guard lowering already admit this
-surface form; the projected-Boolean execution path must pass the public-node
-acceptance test below.
+the predicate succeeds. The checked FLT and guard lowering admit this surface
+form, and the inline application has passed the focused public-node route.
+The broader acceptance cases below remain distinct obligations.
 
 The host grammar admits the FLT. Its selector and category identify the installed
 language and guest sort, but do not select an observation or make a guest term
@@ -230,21 +239,22 @@ projection CompletedBoolean : Computation ~> host::Bool {
 }
 ```
 
-The existing Operational Semantics in Logical Form (OSLF) observation action
-performs the guest computation first. The guard then applies this installed
-projection to each complete result. `DoneBool(BTrue)` projects to host `true`;
+The installed directed GSLT rewrite relation normalizes the guest computation
+first. The guard then applies this checked projection to every complete normal
+form. `DoneBool(BTrue)` projects to host `true`;
 `DoneBool(BFalse)` projects to host `false`. Derivative, search, and replacement
 results acquire no implicit Boolean meaning. The projection's `~>` direction
 does not authorize a reverse conversion; bidirectional `<~>` behavior exists
 only where the language explicitly authors it.
 
-Select the observation conservatively: its action must accept the FLT's exact
-guest category, its entry rules must remain possible for the input constructor,
-and its result sort must have exactly one executable guest-to-host Boolean
-projection. If multiple observations or projections remain possible, the guard
-is undetermined; it never chooses the first. The action must be pure, and the
-existing installed rights, resource bounds, and checked semantic service still
-govern execution. The compiled Rholang host profile needs its own host-owned
+Select the direct relation by the FLT's exact guest category and one installed
+guest-to-host Boolean projection from that category. The Data-free Regex theory
+does not need an action descriptor or observation-role table for this guard.
+Explicit action-backed observations remain a separate supported route. If the
+projection is ambiguous, incomplete, or unavailable, the guard never chooses
+the first candidate or invents `false`. Installed rights, resource bounds, and
+the checked semantic service still govern execution. The compiled Rholang host
+profile needs its own host-owned
 `Bridge` grant; enabling that grant does not add `Bridge` to guest-language
 rights. An optional
 [`predicate_role`](observation-predicate-roles.md) can describe a separate
@@ -289,16 +299,18 @@ is the composition point, not an alternate application protocol.
 
 ## Ordinary application and resource boundary
 
-The application installs its inline module, obtains the exported opaque handle,
-and constructs scoped FLTs. Ordinary reduce/observe calls use the existing
-six-field request `[1, handle, name, input, limits, reply]` as the system
-process's single payload. The installed URNs are `rho:mettail:flt:reduce` and
-`rho:mettail:flt:observe`. The complete
+The application installs its inline module, obtains the named `Regex` export's
+opaque handle, and binds it to `regex` for scoped FLTs. Its actionless
+observations use the distinct eight-field request
+`[2, handle, relationCategory, terminalJudgment, terminalProjection, input, limits, reply]`
+on `rho:mettail:flt:observe-relation`. The older six-field v1
+reduce/observe wire remains available for theories that declare named actions;
+the Regex application does not require those declarations. The complete
 [wire contract](installed-flt-judgments.md#installed-semantic-system-processes)
 defines statuses, term/receipt pairing, finite errors and cumulative usage.
 
-The same declared operation is observed both through that interface and directly
-in a guard; their checked semantic results must agree. Structural result
+The same declared full-match relation is observed through that interface and
+directly in a guard; their checked semantic results must agree. Structural result
 patterns extract `DoneBool`, `DoneMatch`, and `DoneText` results for deterministic
 output. The guarded example also sends a later matching message after an
 initial mismatch, demonstrating that rejection left the receive installed and
