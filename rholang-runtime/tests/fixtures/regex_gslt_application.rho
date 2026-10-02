@@ -1,4 +1,5 @@
 new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
+    display(`rho:mettail:flt:display`),
     stdout(`rho:io:stdout`), getRegistry(`rho:registry:1.0.0`),
     deployData(`rho:deploy:data`), deployerIdOps(`rho:system:deployerId:ops`) in {
   new loaded, handlePipe, registryReply, notify, deployReply, publicKeyReply,
@@ -501,9 +502,12 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
       handlePipe!(installed.get("ok").get("exports_by_name").get("Regex"))
     } |
     for(regex <- handlePipe) {
-      new observeRegex, values, nullable, derived, matched, searched, firstReplaced, replaced in {
+      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced in {
         for(@[judgment, term, reply] <= observeRegex) {
           observe!([2, *regex, "Computation", judgment, "TerminalVerdict", term, [], reply])
+        } |
+        for(@[category, term, reply] <= displayRegex) {
+          display!([2, *regex, category, term, [], reply])
         } |
         observeRegex!(["CheckBooleanTerminal", regex:Computation`nullable(a?)`, *nullable]) |
         observeRegex!(["CheckPatternTerminal", regex:Computation`derivative(a,a+)`, *derived]) |
@@ -533,7 +537,12 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
           new result in {
             result!(term) |
             for(@regex:Computation`donePattern(${pattern:Pattern})` <- result) {
-              stdout!(["derivative", pattern]) |
+              new displayed in {
+                displayRegex!(["Pattern", pattern, *displayed]) |
+                for(@[2, 0, rendered, displayUsage] <- displayed) {
+                  stdout!(["derivative", rendered])
+                }
+              } |
               @"regex.derivative"!([term, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }
@@ -552,7 +561,12 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
           new result in {
             result!(term) |
             for(@regex:Computation`doneMatch(found(2,6,${found:Text}))` <- result) {
-              stdout!(["search", 2, 6, found]) |
+              new displayed in {
+                displayRegex!(["Text", found, *displayed]) |
+                for(@[2, 0, rendered, displayUsage] <- displayed) {
+                  stdout!(["search", 2, 6, rendered])
+                }
+              } |
               @"regex.search"!([2, 6, found, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }
@@ -561,7 +575,12 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
           new result in {
             result!(term) |
             for(@regex:Computation`doneText(${output:Text})` <- result) {
-              stdout!(["replace-first", output]) |
+              new displayed in {
+                displayRegex!(["Text", output, *displayed]) |
+                for(@[2, 0, rendered, displayUsage] <- displayed) {
+                  stdout!(["replace-first", rendered])
+                }
+              } |
               @"regex.replace-first"!([output, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }
@@ -570,7 +589,12 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
           new result in {
             result!(term) |
             for(@regex:Computation`doneText(${output:Text})` <- result) {
-              stdout!(["replace-all", output]) |
+              new displayed in {
+                displayRegex!(["Text", output, *displayed]) |
+                for(@[2, 0, rendered, displayUsage] <- displayed) {
+                  stdout!(["replace-all", rendered])
+                }
+              } |
               @"regex.replace"!([output, [relationReceipt, terminalReceipts, projectionReceipts], usage])
             }
           }

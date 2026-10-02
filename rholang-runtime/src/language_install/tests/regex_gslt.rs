@@ -218,10 +218,22 @@ fn practical_regex_search_alt_concat_template_parses() {
 #[test]
 fn practical_regex_gslt_application_contains_the_checked_declaration_and_parses_once() {
     let application = include_str!("../../../tests/fixtures/regex_gslt_application.rho");
+    let marker = "            Module RegexGSLT {";
+    assert_eq!(application.matches(marker).count(), 1, "one embedded Regex module");
+    let start = application.find(marker).expect("embedded module start");
+    let close = application[start..]
+        .find("\n            }, *published) |")
+        .expect("embedded module closes before install publication");
+    let mut declaration = application[start..start + close]
+        .lines()
+        .map(|line| line.strip_prefix("            ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    declaration.push_str("\n}");
     assert_eq!(
-        application.matches(DATA_FREE_SOURCE.trim()).count(),
-        1,
-        "the application embeds the data-free service-tested declaration exactly"
+        declaration,
+        DATA_FREE_SOURCE.trim(),
+        "the indented application embeds the service-tested declaration exactly"
     );
     assert!(
         !application.contains("    Data({"),
