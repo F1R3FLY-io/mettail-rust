@@ -317,6 +317,217 @@ Inductive StepEnumeration :=
 Definition StepEnumerator := MachineState -> StepEnumeration.
 Definition CancellationProbe := nat -> bool.
 
+(** A lookahead request binds an exact installed owner to the source state.
+    The owner is supplied by the checked capability boundary, not inferred
+    from a constructor head.  EnumerationComplete is the kernel's exhaustive
+    assertion; the checker below may consume it, but cannot manufacture it. *)
+Record BoundStepSource := {
+  bound_step_owner : ExactKey;
+  bound_step_state : MachineState
+}.
+
+Record GuestStepOccurrence := {
+  occurrence_ordinal : nat;
+  occurrence_owner : ExactKey;
+  occurrence_witness : NormalizationStepWitness
+}.
+
+Fixpoint number_step_occurrences
+    (owner : ExactKey) (next : nat) (steps : list NormalizationStepWitness)
+    : list GuestStepOccurrence :=
+  match steps with
+  | [] => []
+  | step :: rest =>
+      {| occurrence_ordinal := next;
+         occurrence_owner := owner;
+         occurrence_witness := step |} ::
+      number_step_occurrences owner (S next) rest
+  end.
+
+Lemma numbered_occurrences_retain_order_and_multiplicity :
+  forall owner next steps,
+    map occurrence_witness (number_step_occurrences owner next steps) = steps /\
+    map occurrence_ordinal (number_step_occurrences owner next steps) =
+      seq next (length steps).
+Proof.
+  intros owner next steps. revert next.
+  induction steps as [|step rest IH]; intro next; simpl.
+  - auto.
+  - destruct (IH (S next)) as [Hsteps Hordinals].
+    now rewrite Hsteps, Hordinals.
+Qed.
+
+(** A no-successor certificate retains the actual complete enumeration, so
+    an incomplete or failed search cannot masquerade as quiescence. *)
+Record NoSuccessorCertificate := {
+  no_successor_source : BoundStepSource;
+  no_successor_enumeration : StepEnumeration;
+  no_successor_exhaustive :
+    no_successor_enumeration = EnumerationComplete []
+}.
+
+Inductive CheckedStepRoster :=
+| CheckedNoSuccessor (certificate : NoSuccessorCertificate)
+| CheckedSuccessors
+    (source : BoundStepSource) (occurrences : list GuestStepOccurrence).
+
+Definition check_step_roster
+    (policy : NormalizationPolicy)
+    (rules : list NormalizationRuleManifest)
+    (profile : Kernel.ResourceProfile)
+    (bounds : Kernel.SemanticTermBounds)
+    (source : BoundStepSource)
+    (enumeration : StepEnumeration) : option CheckedStepRoster :=
+  if Nat.eqb (machine_state_sort (bound_step_state source))
+       (policy_relation_sort policy)
+  then
+    match enumeration with
+    | EnumerationIncomplete _ => None
+    | EnumerationComplete steps =>
+        if forallb
+             (normalization_step_valid policy rules profile bounds
+               (bound_step_state source)) steps
+        then
+          match steps with
+          | [] =>
+              Some (CheckedNoSuccessor
+                {| no_successor_source := source;
+                   no_successor_enumeration := EnumerationComplete [];
+                   no_successor_exhaustive := eq_refl |})
+          | _ :: _ =>
+              Some (CheckedSuccessors source
+                (number_step_occurrences (bound_step_owner source) 0 steps))
+          end
+        else None
+    end
+  else None.
+
+Lemma valid_step_preserves_exact_source_and_sort :
+  forall policy rules profile bounds current step,
+    normalization_step_valid policy rules profile bounds current step = true ->
+    normalization_step_before step = current /\
+    machine_state_sort (normalization_step_after step) =
+      policy_relation_sort policy.
+Proof.
+  intros policy rules profile bounds current step Hvalid.
+  unfold normalization_step_valid in Hvalid.
+  repeat rewrite andb_true_iff in Hvalid.
+  destruct Hvalid as [[[[[Hbefore Hsort] _] _] _] _].
+  apply machine_state_eqb_spec in Hbefore.
+  apply Nat.eqb_eq in Hsort.
+  now split; [symmetry |].
+Qed.
+
+Lemma numbered_occurrences_preserve_binding_and_sort :
+  forall policy rules profile bounds source next steps,
+    Forall (fun step =>
+      normalization_step_valid policy rules profile bounds
+        (bound_step_state source) step = true) steps ->
+    Forall (fun occurrence =>
+      occurrence_owner occurrence = bound_step_owner source /\
+      normalization_step_before (occurrence_witness occurrence) =
+        bound_step_state source /\
+      machine_state_sort (normalization_step_after
+        (occurrence_witness occurrence)) = policy_relation_sort policy)
+      (number_step_occurrences (bound_step_owner source) next steps).
+Proof.
+  intros policy rules profile bounds source next steps Hvalid.
+  revert next.
+  induction Hvalid as [|step rest Hstep _ IH]; intro next; simpl.
+  - constructor.
+  - constructor.
+    + destruct (valid_step_preserves_exact_source_and_sort
+        policy rules profile bounds (bound_step_state source) step Hstep)
+        as [Hbefore Hsort].
+      now repeat split.
+    + exact (IH (S next)).
+Qed.
+
+Theorem checked_roster_is_complete_ordered_and_bound :
+  forall policy rules profile bounds source enumeration occurrences,
+    check_step_roster policy rules profile bounds source enumeration =
+      Some (CheckedSuccessors source occurrences) ->
+    exists steps,
+      enumeration = EnumerationComplete steps /\
+      steps <> [] /\
+      map occurrence_witness occurrences = steps /\
+      map occurrence_ordinal occurrences = seq 0 (length steps) /\
+      machine_state_sort (bound_step_state source) =
+        policy_relation_sort policy /\
+      Forall (fun occurrence =>
+        occurrence_owner occurrence = bound_step_owner source /\
+        normalization_step_before (occurrence_witness occurrence) =
+          bound_step_state source /\
+        machine_state_sort (normalization_step_after
+          (occurrence_witness occurrence)) = policy_relation_sort policy)
+        occurrences.
+Proof.
+  intros policy rules profile bounds source enumeration occurrences Hchecked.
+  unfold check_step_roster in Hchecked.
+  destruct (Nat.eqb (machine_state_sort (bound_step_state source))
+    (policy_relation_sort policy)) eqn:Hsource; try discriminate.
+  destruct enumeration as [steps|reason]; try discriminate.
+  destruct (forallb (normalization_step_valid policy rules profile bounds
+    (bound_step_state source)) steps) eqn:Hvalid; try discriminate.
+  destruct steps as [|step rest]; try discriminate.
+  inversion Hchecked; subst; clear Hchecked.
+  exists (step :: rest).
+  repeat split; try reflexivity; try discriminate.
+  - apply (proj1 (numbered_occurrences_retain_order_and_multiplicity
+      (bound_step_owner source) 0 (step :: rest))).
+  - apply (proj2 (numbered_occurrences_retain_order_and_multiplicity
+      (bound_step_owner source) 0 (step :: rest))).
+  - now apply Nat.eqb_eq in Hsource.
+  - apply (numbered_occurrences_preserve_binding_and_sort
+      policy rules profile bounds source 0 (step :: rest)).
+    apply Forall_forall. intros value Hin.
+    apply forallb_forall with (x := value) in Hvalid; assumption.
+Qed.
+
+Theorem checked_no_successor_requires_exhaustive_empty_enumeration :
+  forall policy rules profile bounds source enumeration certificate,
+    check_step_roster policy rules profile bounds source enumeration =
+      Some (CheckedNoSuccessor certificate) ->
+    enumeration = EnumerationComplete [] /\
+    no_successor_source certificate = source /\
+    machine_state_sort (bound_step_state source) = policy_relation_sort policy.
+Proof.
+  intros policy rules profile bounds source enumeration certificate Hchecked.
+  unfold check_step_roster in Hchecked.
+  destruct (Nat.eqb (machine_state_sort (bound_step_state source))
+    (policy_relation_sort policy)) eqn:Hsource; try discriminate.
+  destruct enumeration as [steps|reason]; try discriminate.
+  destruct (forallb (normalization_step_valid policy rules profile bounds
+    (bound_step_state source)) steps) eqn:Hvalid; try discriminate.
+  destruct steps as [|step rest]; try discriminate.
+  inversion Hchecked; subst; clear Hchecked.
+  repeat split; try reflexivity.
+  now apply Nat.eqb_eq in Hsource.
+Qed.
+
+Theorem complete_empty_roster_issues_no_successor_certificate :
+  forall policy rules profile bounds source,
+    machine_state_sort (bound_step_state source) = policy_relation_sort policy ->
+    exists certificate,
+      check_step_roster policy rules profile bounds source
+        (EnumerationComplete []) = Some (CheckedNoSuccessor certificate).
+Proof.
+  intros policy rules profile bounds source Hsort.
+  eexists. unfold check_step_roster.
+  rewrite Hsort, Nat.eqb_refl.
+  reflexivity.
+Qed.
+
+Theorem incomplete_enumeration_cannot_claim_a_checked_roster :
+  forall policy rules profile bounds source reason,
+    check_step_roster policy rules profile bounds source
+      (EnumerationIncomplete reason) = None.
+Proof.
+  intros. unfold check_step_roster.
+  now destruct (Nat.eqb (machine_state_sort (bound_step_state source))
+    (policy_relation_sort policy)).
+Qed.
+
 Record SuccessorGroup := {
   successor_state : MachineState;
   successor_primary : NormalizationStepWitness;
@@ -371,6 +582,79 @@ Proof.
   unfold coalesce_successors; simpl.
   now rewrite Hdifferent.
 Qed.
+
+(** Both rules below are executable, same-sort rewrites at the same source
+    constructor.  They have distinct rule identifiers but the very same exact
+    target.  Whole-normalization grouping is allowed to return one target;
+    every-trace lookahead must retain the two individual rule occurrences. *)
+Definition same_target_example_source : MachineState :=
+  {| machine_state_sort := 0;
+     machine_state_root := 1;
+     machine_state_key := [1];
+     machine_state_nodes := 1;
+     machine_state_bytes := 1 |}.
+
+Definition same_target_example_target : MachineState :=
+  {| machine_state_sort := 0;
+     machine_state_root := 2;
+     machine_state_key := [2];
+     machine_state_nodes := 1;
+     machine_state_bytes := 1 |}.
+
+Definition same_target_example_policy : NormalizationPolicy :=
+  {| policy_relation_sort := 0;
+     policy_terminal_constructors := [2];
+     policy_branching := FairAllNormalForms;
+     policy_reduce_right := 0;
+     policy_required_rights := [0] |}.
+
+Definition same_target_example_rule (identifier : RuleId)
+    : NormalizationRuleManifest :=
+  {| normalization_rule_transition :=
+       {| Kernel.transition_rule_id := identifier;
+          Kernel.transition_rule_origin := Kernel.RewriteOrigin;
+          Kernel.transition_rule_source_sort := 0;
+          Kernel.transition_rule_target_sort := 0;
+          Kernel.transition_rule_executable := true |};
+     normalization_rule_lhs_constructor := 1 |}.
+
+Definition same_target_example_step (identifier : RuleId)
+    : NormalizationStepWitness :=
+  {| normalization_step_rule := identifier;
+     normalization_step_before := same_target_example_source;
+     normalization_step_after := same_target_example_target;
+     normalization_step_premises := [];
+     normalization_step_intrinsics := [];
+     normalization_step_grade := Kernel.NoSemanticGrade;
+     normalization_step_effects := [];
+     normalization_step_match_work := 0;
+     normalization_step_premise_work := 0;
+     normalization_step_build_work := 0 |}.
+
+Definition same_target_example_bound : BoundStepSource :=
+  {| bound_step_owner := [77];
+     bound_step_state := same_target_example_source |}.
+
+Definition same_target_example_bounds : Kernel.SemanticTermBounds :=
+  {| Kernel.bound_input_nodes := 1;
+     Kernel.bound_input_bytes := 1;
+     Kernel.bound_output_nodes := 1;
+     Kernel.bound_output_bytes := 1 |}.
+
+Theorem equal_target_distinct_valid_rules_need_distinct_trace_edges :
+  let steps := [same_target_example_step 11; same_target_example_step 12] in
+  let occurrences := number_step_occurrences [77] 0 steps in
+  check_step_roster same_target_example_policy
+    [same_target_example_rule 11; same_target_example_rule 12]
+    Kernel.Uncosted same_target_example_bounds same_target_example_bound
+    (EnumerationComplete steps) =
+      Some (CheckedSuccessors same_target_example_bound occurrences) /\
+  map (fun occurrence =>
+    normalization_step_rule (occurrence_witness occurrence)) occurrences =
+      [11; 12] /\
+  length occurrences = 2 /\
+  length (coalesce_successors steps) = 1.
+Proof. vm_compute. repeat split; reflexivity. Qed.
 
 Definition group_observationally_coherent (group : SuccessorGroup) : bool :=
   forallb
@@ -797,8 +1081,13 @@ Print Assumptions selected_equations_cannot_enter_normalization.
 Print Assumptions missing_reduce_authority_is_rejected.
 Print Assumptions machine_state_eqb_spec.
 Print Assumptions intrinsic_receipt_well_shapedb_sound.
+Print Assumptions checked_roster_is_complete_ordered_and_bound.
+Print Assumptions checked_no_successor_requires_exhaustive_empty_enumeration.
+Print Assumptions complete_empty_roster_issues_no_successor_certificate.
+Print Assumptions incomplete_enumeration_cannot_claim_a_checked_roster.
 Print Assumptions equal_successor_keys_coalesce.
 Print Assumptions different_successor_keys_remain_distinct.
+Print Assumptions equal_target_distinct_valid_rules_need_distinct_trace_edges.
 Print Assumptions refutation_never_publishes_effects.
 Print Assumptions undetermined_normalization_never_publishes_effects.
 Print Assumptions cancellation_at_deterministic_entry_discards_private_state.
