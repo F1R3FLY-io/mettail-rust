@@ -60,7 +60,8 @@ pub use crate::semantic_service::{
     semantic_runtime_definitions, InstalledSemanticError, RelationObservationReport,
     RelationObservationRequest, RelationObservationResult, SemanticOperation,
     SemanticServiceLimits, SemanticServiceReport, SemanticServiceRequest, SemanticServiceResult,
-    LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_OBSERVE_URN, LANGUAGE_SEMANTIC_REDUCE_URN,
+    LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_ABI_V2, LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN,
+    LANGUAGE_SEMANTIC_OBSERVE_URN, LANGUAGE_SEMANTIC_REDUCE_URN,
 };
 pub use mettail_elab::wire::DDL_AST_ENVELOPE_V2;
 
@@ -4212,7 +4213,7 @@ pub(crate) mod tests {
             .expect("typed inline DDL lowers to a closed structural value")
     }
 
-    fn rholang_ddl_candidate(source: &str) -> InstallCandidate {
+    pub(crate) fn rholang_ddl_candidate(source: &str) -> InstallCandidate {
         let par = rholang_ddl_par(source);
         decode_install_candidate(par).unwrap_or_else(|error| {
             panic!("lowered DDL value satisfies structural admission: {error:?}")
@@ -8425,7 +8426,7 @@ pub(crate) mod tests {
             LanguageInstallPolicy::default(),
         ))));
         let definitions = language_runtime_definitions(runtime);
-        assert_eq!(definitions.len(), 10);
+        assert_eq!(definitions.len(), 11);
         assert_eq!(definitions[0].urn, LANGUAGE_INSTALL_URN);
         assert_eq!(definitions[1].urn, LANGUAGE_PARSE_URN);
         assert_eq!(definitions[2].urn, LANGUAGE_FLT_CONSTRUCT_URN);
@@ -8436,6 +8437,10 @@ pub(crate) mod tests {
         assert_eq!(definitions[7].urn, crate::theorem_channel::THEOREM_CHANNEL_REVOKE_URN);
         assert_eq!(definitions[8].urn, crate::semantic_service::LANGUAGE_SEMANTIC_REDUCE_URN);
         assert_eq!(definitions[9].urn, crate::semantic_service::LANGUAGE_SEMANTIC_OBSERVE_URN);
+        assert_eq!(
+            definitions[10].urn,
+            crate::semantic_service::LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN
+        );
         for definition in &definitions[8..] {
             assert_eq!(definition.arity, 1);
             assert!(!rholang::rust::interpreter::system_processes::non_deterministic_ops()

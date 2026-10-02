@@ -251,6 +251,25 @@ impl CompletionPermit {
         usage: SemanticWireUsage,
         cancellation: &mut StickyCancellation<C>,
     ) -> Result<Par> {
+        self.finish_version(1, body, usage, cancellation)
+    }
+
+    pub(crate) fn finish_v2<C: FnMut() -> bool>(
+        self,
+        body: ReplyBody,
+        usage: SemanticWireUsage,
+        cancellation: &mut StickyCancellation<C>,
+    ) -> Result<Par> {
+        self.finish_version(2, body, usage, cancellation)
+    }
+
+    fn finish_version<C: FnMut() -> bool>(
+        self,
+        version: u8,
+        body: ReplyBody,
+        usage: SemanticWireUsage,
+        cancellation: &mut StickyCancellation<C>,
+    ) -> Result<Par> {
         let limits = usage.effective_limits.unwrap_or(self.initial_limits);
         if limits
             .commitment_words()
@@ -285,7 +304,7 @@ impl CompletionPermit {
             &mut check,
         );
         let result = Encoder { budget: &mut local }
-            .tuple(|e| Ok([e.uint(1u8)?, e.uint(status)?, body.encode(e)?, e.usage(usage)?]))?;
+            .tuple(|e| Ok([e.uint(version)?, e.uint(status)?, body.encode(e)?, e.usage(usage)?]))?;
         local.charge(0, 0)?;
         Ok(result)
     }

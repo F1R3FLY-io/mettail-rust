@@ -24,7 +24,7 @@ use models::rust::utils::new_gbytearray_par;
 
 type Result<T> = std::result::Result<T, SemanticWireError>;
 
-fn slots<T, C: FnMut() -> bool>(
+pub(super) fn slots<T, C: FnMut() -> bool>(
     length: usize,
     visit: usize,
     budget: &mut ReflectedCodecBudget<'_, C>,
@@ -58,7 +58,7 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
         Ok(wire_list(out))
     }
 
-    fn roster<T>(
+    pub(super) fn roster<T>(
         &mut self,
         items: Vec<T>,
         mut encode: impl FnMut(&mut Self, T) -> Result<Par>,
@@ -70,12 +70,12 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
         Ok(wire_list(out))
     }
 
-    fn bytes(&mut self, bytes: Vec<u8>) -> Result<Par> {
+    pub(super) fn bytes(&mut self, bytes: Vec<u8>) -> Result<Par> {
         self.budget.charge(1, VALUE_DESCRIPTOR_BYTES)?;
         Ok(new_gbytearray_par(bytes, Vec::new(), false))
     }
 
-    fn fingerprint(&mut self, bytes: [u8; 32]) -> Result<Par> {
+    pub(super) fn fingerprint(&mut self, bytes: [u8; 32]) -> Result<Par> {
         self.budget.charge(33, VALUE_DESCRIPTOR_BYTES + 32)?;
         let mut out = Vec::new();
         out.try_reserve_exact(32)
@@ -84,7 +84,7 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
         Ok(new_gbytearray_par(out, Vec::new(), false))
     }
 
-    fn premise(&mut self, p: SemanticPremiseReceipt) -> Result<Par> {
+    pub(super) fn premise(&mut self, p: SemanticPremiseReceipt) -> Result<Par> {
         let tag = premise_tag(&p);
         match p {
             SemanticPremiseReceipt::Freshness { rule, premise } => {
@@ -151,7 +151,7 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
         })
     }
 
-    fn hop(&mut self, h: SemanticNormalizationHopReceiptV1) -> Result<Par> {
+    pub(super) fn hop(&mut self, h: SemanticNormalizationHopReceiptV1) -> Result<Par> {
         self.tuple(|e| {
             Ok([
                 e.bytes(h.before)?,
@@ -162,7 +162,7 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
         })
     }
 
-    fn resource(&mut self, r: SemanticResourceReceipt) -> Result<Par> {
+    pub(super) fn resource(&mut self, r: SemanticResourceReceipt) -> Result<Par> {
         match r {
             SemanticResourceReceipt::NoSemanticGrade => self.tuple(|e| Ok([e.uint(0_u32)?])),
             SemanticResourceReceipt::Checked {
@@ -271,7 +271,7 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
             .map_err(|_| SemanticWireError::Shape("receipt tuple arity"))
     }
 
-    fn roster<T>(
+    pub(super) fn roster<T>(
         &mut self,
         value: &Par,
         mut decode: impl FnMut(&mut Self, &Par) -> Result<T>,
@@ -292,7 +292,7 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         }
     }
 
-    fn bytes(&mut self, value: &Par) -> Result<Vec<u8>> {
+    pub(super) fn bytes(&mut self, value: &Par) -> Result<Vec<u8>> {
         let bytes = self.borrowed_bytes(value)?;
         let reservation = bytes
             .len()
@@ -306,7 +306,7 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         Ok(out)
     }
 
-    fn fingerprint(&mut self, value: &Par) -> Result<[u8; 32]> {
+    pub(super) fn fingerprint(&mut self, value: &Par) -> Result<[u8; 32]> {
         let bytes = self.borrowed_bytes(value)?;
         let bytes: &[u8; 32] = bytes
             .try_into()
@@ -315,7 +315,7 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         Ok(*bytes)
     }
 
-    fn premise(&mut self, value: &Par) -> Result<SemanticPremiseReceipt> {
+    pub(super) fn premise(&mut self, value: &Par) -> Result<SemanticPremiseReceipt> {
         let (tag, payload) = self
             .list(value)?
             .split_first()
@@ -382,7 +382,7 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         })
     }
 
-    fn hop(&mut self, value: &Par) -> Result<SemanticNormalizationHopReceiptV1> {
+    pub(super) fn hop(&mut self, value: &Par) -> Result<SemanticNormalizationHopReceiptV1> {
         let [before, after, proofs, work] = self.tuple(value)?;
         Ok(SemanticNormalizationHopReceiptV1 {
             before: self.bytes(before)?,
@@ -392,7 +392,7 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         })
     }
 
-    fn resource(&mut self, value: &Par) -> Result<SemanticResourceReceipt> {
+    pub(super) fn resource(&mut self, value: &Par) -> Result<SemanticResourceReceipt> {
         let (tag, payload) = self
             .list(value)?
             .split_first()

@@ -14,6 +14,83 @@ pub(crate) struct OwnedSemanticRequest {
     pub(crate) limits: SemanticServiceLimits,
 }
 
+/// The v2 relation request is a distinct eight-field envelope. It retains
+/// the structural FLT and reply channel by move; names and limits are checked
+/// before service authorization, without reading or reparsing guest syntax.
+pub(crate) struct OwnedRelationRequest {
+    fields: [Par; 8],
+    pub(crate) limits: SemanticServiceLimits,
+}
+
+impl OwnedRelationRequest {
+    pub(crate) fn decode<C: FnMut() -> bool>(
+        mut payload: Vec<Par>,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Self, SemanticWireError> {
+        budget.charge(1, 0)?;
+        if payload.len() != 1 {
+            return Err(SemanticWireError::Shape("relation call requires one datum"));
+        }
+        let mut datum = payload.pop().expect("singleton checked");
+        let mut decoder = Decoder { budget };
+        let [version, _handle, category, judgment, projection, _input, limits, _reply] =
+            decoder.tuple(&datum)?;
+        if decoder.uint(version)? != 2 {
+            return Err(SemanticWireError::Shape("relation request version"));
+        }
+        for (value, label) in [
+            (category, "relation category"),
+            (judgment, "terminal judgment"),
+            (projection, "terminal projection"),
+        ] {
+            decoder.budget.charge(1, 0)?;
+            if !value.locally_free.is_empty() || value.connective_used {
+                return Err(SemanticWireError::Shape("relation selector has nonliteral metadata"));
+            }
+            let name = exact_string(value)
+                .ok_or(SemanticWireError::Shape("relation selector must be a string"))?;
+            if name.is_empty() {
+                return Err(SemanticWireError::Shape(label));
+            }
+            decoder.budget.charge(name.len(), 0)?;
+        }
+        let limits = decode_limits_v1(limits, decoder.budget)?;
+        decoder.budget.charge(8, 0)?;
+        let Some(ExprInstance::EListBody(list)) = datum.exprs[0].expr_instance.as_mut() else {
+            unreachable!("exact tuple view established the unique list expression")
+        };
+        let fields = std::mem::take(&mut list.ps)
+            .try_into()
+            .map_err(|_| SemanticWireError::Shape("relation request arity"))?;
+        Ok(Self { fields, limits })
+    }
+
+    pub(crate) fn handle(&self) -> &Par {
+        &self.fields[1]
+    }
+
+    pub(crate) fn relation_category(&self) -> &str {
+        exact_string(&self.fields[2]).expect("validated category")
+    }
+
+    pub(crate) fn terminal_judgment(&self) -> &str {
+        exact_string(&self.fields[3]).expect("validated judgment")
+    }
+
+    pub(crate) fn terminal_projection(&self) -> &str {
+        exact_string(&self.fields[4]).expect("validated projection")
+    }
+
+    pub(crate) fn input(&self) -> &Par {
+        &self.fields[5]
+    }
+
+    pub(crate) fn into_reply(self) -> Par {
+        let [_, _, _, _, _, _, _, reply] = self.fields;
+        reply
+    }
+}
+
 impl OwnedSemanticRequest {
     pub(crate) fn decode<C: FnMut() -> bool>(
         mut payload: Vec<Par>,
@@ -88,6 +165,67 @@ mod tests {
             limits,
             reply,
         ])
+    }
+
+    fn relation_datum(input: Par, reply: Par) -> Par {
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 1000, &mut cancel);
+        let limits = encode_limits_v1(SemanticServiceLimits::default(), &mut budget).unwrap();
+        wire_list(vec![
+            new_gint_par(2, Vec::new(), false),
+            Par::default(),
+            new_gstring_par("Computation".into(), Vec::new(), false),
+            new_gstring_par("CheckBooleanTerminal".into(), Vec::new(), false),
+            new_gstring_par("TerminalVerdict".into(), Vec::new(), false),
+            input,
+            limits,
+            reply,
+        ])
+    }
+
+    #[test]
+    fn relation_request_requires_exact_v2_shape_and_moves_structural_input() {
+        let value = relation_datum(wire_list(vec![Par::default()]), Par::default());
+        let pointer = exact_list(&exact_list(&value).unwrap()[5])
+            .unwrap()
+            .as_ptr();
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 0, &mut cancel);
+        let request = OwnedRelationRequest::decode(vec![value], &mut budget).unwrap();
+        assert_eq!(request.relation_category(), "Computation");
+        assert_eq!(request.terminal_judgment(), "CheckBooleanTerminal");
+        assert_eq!(request.terminal_projection(), "TerminalVerdict");
+        assert_eq!(exact_list(request.input()).unwrap().as_ptr(), pointer);
+        assert_eq!(request.limits, SemanticServiceLimits::default());
+
+        for index in 0..6 {
+            let mut value = relation_datum(Par::default(), Par::default());
+            let Some(ExprInstance::EListBody(list)) = value.exprs[0].expr_instance.as_mut() else {
+                unreachable!()
+            };
+            match index {
+                0 => list.ps[0] = new_gint_par(1, Vec::new(), false),
+                1 => {
+                    list.ps.pop();
+                },
+                2 => list.ps[2] = Par::default(),
+                3 => list.ps[3].locally_free.push(1),
+                4 => list.ps[4] = new_gstring_par(String::new(), Vec::new(), false),
+                _ => list.ps.push(Par::default()),
+            }
+            let mut work = 0;
+            let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 0, &mut cancel);
+            assert!(OwnedRelationRequest::decode(vec![value], &mut budget).is_err());
+        }
+        let mut work = 0;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 0, &mut cancel);
+        assert!(OwnedRelationRequest::decode(
+            vec![datum(Par::default(), Par::default())],
+            &mut budget
+        )
+        .is_err());
     }
 
     #[test]

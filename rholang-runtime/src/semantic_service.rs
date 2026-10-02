@@ -32,11 +32,13 @@ use std::sync::Arc;
 pub(crate) mod predicate;
 mod relation_observation;
 mod wire;
+use relation_observation::PreparedRelationObservationReport;
 pub use relation_observation::{
     RelationObservationReport, RelationObservationRequest, RelationObservationResult,
 };
 pub use wire::{
-    semantic_runtime_definitions, LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_OBSERVE_URN,
+    semantic_runtime_definitions, LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_ABI_V2,
+    LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN, LANGUAGE_SEMANTIC_OBSERVE_URN,
     LANGUAGE_SEMANTIC_REDUCE_URN,
 };
 

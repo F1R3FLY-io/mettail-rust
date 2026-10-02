@@ -16,6 +16,7 @@ use num_bigint::BigInt;
 mod completion;
 mod ordering;
 mod receipt;
+mod relation;
 mod request;
 pub use completion::{decode_limits_v1, decode_usage_v1, encode_limits_v1, SemanticWireUsage};
 pub(crate) use completion::{CompletionPermit, DiagnosticDomain, ReplyBody, StickyCancellation};
@@ -23,7 +24,9 @@ pub(crate) use ordering::sort_results;
 pub(crate) use receipt::encode_results_v1;
 pub(crate) use receipt::reserve_reply_payload;
 pub use receipt::{decode_receipt_v1, encode_receipt_v1};
-pub(crate) use request::OwnedSemanticRequest;
+pub(crate) use relation::encode_relation_results_v2;
+pub use relation::{decode_relation_results_v2, DecodedRelationResult};
+pub(crate) use request::{OwnedRelationRequest, OwnedSemanticRequest};
 
 const VALUE_DESCRIPTOR_BYTES: usize = 16;
 

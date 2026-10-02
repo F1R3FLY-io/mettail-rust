@@ -51,7 +51,9 @@ fn predicate_roles_keep_kernel_diagnostics_and_never_become_false_results() {
     assert!(matches!(allocation, ReplyBody::Undetermined(DiagnosticDomain::Kernel, 8)));
 }
 use crate::language_install::{exact_list, wire_list};
-use crate::semantic_wire::{decode_receipt_v1, decode_u64, decode_usage_v1, encode_limits_v1};
+use crate::semantic_wire::{
+    decode_receipt_v1, decode_relation_results_v2, decode_u64, decode_usage_v1, encode_limits_v1,
+};
 use mettail_grammar_core::RuntimeTemplatePiece;
 use models::rust::utils::{new_gint_par, new_gstring_par, new_send_par};
 use std::collections::BTreeMap;
@@ -95,6 +97,106 @@ fn envelope(reply: &PreparedWireReply) -> (u64, &Par, SemanticWireUsage) {
         &fields[2],
         decode_usage_v1(&fields[3], &mut budget).unwrap(),
     )
+}
+
+#[tokio::test]
+async fn actionless_relation_v2_wire_returns_every_checked_regex_proof_roster() {
+    use crate::language_install::{
+        tests::{rholang_ddl_candidate, MemoryRegistry},
+        LanguageInstallPolicy, LanguageInstallService,
+    };
+
+    let source = include_str!("../../../tests/fixtures/regex_gslt.rho");
+    let runtime = Arc::new(RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    ))));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(source))
+        .expect("Regex module installs");
+    let handle = &batch.exports[0].handle;
+    let input = runtime
+        .construct_template(
+            handle,
+            &[RuntimeTemplatePiece::Text("nullable(())".into())],
+            &[],
+            Some("Computation"),
+            &BTreeMap::new(),
+        )
+        .expect("structural Regex computation");
+    let expected = runtime
+        .construct_template(
+            handle,
+            &[RuntimeTemplatePiece::Text("doneBool(yes)".into())],
+            &[],
+            Some("Computation"),
+            &BTreeMap::new(),
+        )
+        .expect("structural Regex result");
+    let limits = SemanticServiceLimits::default();
+    let mut work = 0;
+    let mut cancel = || false;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 1000, &mut cancel);
+    let request = vec![wire_list(vec![
+        new_gint_par(2, Vec::new(), false),
+        handle.clone(),
+        new_gstring_par("Computation".into(), Vec::new(), false),
+        new_gstring_par("CheckBooleanTerminal".into(), Vec::new(), false),
+        new_gstring_par("TerminalVerdict".into(), Vec::new(), false),
+        input,
+        encode_limits_v1(limits, &mut budget).unwrap(),
+        new_gstring_par("OUT".into(), Vec::new(), false),
+    ])];
+    let send = new_send_par(
+        LANGUAGE_SEMANTIC_BAND.channel(2, LANGUAGE_SEMANTIC_ABI_V2),
+        request.clone(),
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
+    let reply = prepare_relation_reply(&runtime, request, || false).unwrap();
+    let fields = exact_list(&reply.payload[0]).expect("v2 completion tuple");
+    assert_eq!(fields.len(), 4);
+    let mut work = 0;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+    assert_eq!(decode_u64(&fields[0], &mut budget), Ok(2));
+    assert_eq!(decode_u64(&fields[1], &mut budget), Ok(0));
+    let decoded = decode_relation_results_v2(&fields[2], &mut budget).unwrap();
+    assert_eq!(decoded.len(), 1);
+    assert_eq!(decoded[0].term.cmp(&expected), std::cmp::Ordering::Equal);
+    assert!(!decoded[0].terminal_receipts.is_empty());
+    assert!(!decoded[0].projection_receipts.is_empty());
+    let usage = decode_usage_v1(&fields[3], &mut budget).unwrap();
+    assert!(usage.kernel_work.is_some_and(|kernel| kernel <= usage.work));
+    let outputs = crate::run::run_normalized_par_with_definitions_and_read_par_channels(
+        &send,
+        crate::language_install::language_runtime_definitions(Arc::clone(&runtime)),
+        &["OUT"],
+    )
+    .await
+    .expect("registered v2 handler executes");
+    let public = outputs.get("OUT").expect("reply channel");
+    assert_eq!(public.len(), 1);
+    let public_fields = exact_list(&public[0]).expect("public v2 envelope");
+    let mut work = 0;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+    assert_eq!(decode_u64(&public_fields[0], &mut budget), Ok(2));
+    assert_eq!(decode_u64(&public_fields[1], &mut budget), Ok(0));
+    assert_eq!(
+        decode_relation_results_v2(&public_fields[2], &mut budget)
+            .unwrap()
+            .len(),
+        1
+    );
+    runtime.revoke(handle).unwrap();
+    let mut commits = 0;
+    assert!(reply
+        .publication
+        .with_commit(Box::new(|| commits += 1))
+        .is_err());
+    assert_eq!(commits, 0);
 }
 
 #[test]
