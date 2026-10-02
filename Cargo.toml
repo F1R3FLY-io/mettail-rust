@@ -94,10 +94,12 @@ tokio = { version = "1", features = ["full"] }
 # f1r3node-rust's `rholang` is mid-migration onto the cost-accounting parser worktree
 # (carries Proc::SignedTerm / TokenStack / Bind::Signed); its published pin
 # (rholang/Cargo.toml rev=c163755) REMOVED those, so building `rholang` from THIS
-# workspace needs the same git-worktree override f1r3node-rust uses. Remove this stanza
-# once the cost-accounting work merges to the rholang-rs master branch.
+# workspace needs the same git-worktree override f1r3node-rust uses. Both
+# workspaces use the `rholang-rs-mettail` checkout; a second copy of that same
+# commit under a cost-accounting-specific directory is unnecessary. Remove
+# this stanza once the cost-accounting work merges to rholang-rs master.
 [patch."https://github.com/F1R3FLY-io/rholang-rs"]
-rholang-parser = { path = "../rholang-rs-cost-accounting-transpiler/rholang-parser" }
+rholang-parser = { path = "../rholang-rs-mettail/rholang-parser" }
 
 [profile.dev]
 codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)
