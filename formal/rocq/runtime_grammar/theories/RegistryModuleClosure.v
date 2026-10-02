@@ -263,6 +263,123 @@ Theorem parser_cache_is_not_semantic_authority :
     semantic_record (replace_cache_image cache record) = semantic_record record.
 Proof. reflexivity. Qed.
 
+Record WireModuleProjection : Type := {
+  wire_module_identity : nat;
+  wire_module_exports : list nat;
+  wire_module_dependencies : list nat
+}.
+
+Record DecodedRegistryModule : Type := {
+  decoded_source : nat;
+  decoded_source_commitment : nat;
+  decoded_module : WireModuleProjection;
+  decoded_images : nat;
+  decoded_semantic_images : nat;
+  decoded_signatures : nat
+}.
+
+Record RegistryModuleWire : Type := {
+  wire_schema : nat;
+  wire_source : nat;
+  wire_source_commitment : nat;
+  wire_module : WireModuleProjection;
+  wire_exports : list nat;
+  wire_dependencies : list nat;
+  wire_images : nat;
+  wire_semantic_images : nat;
+  wire_signatures : nat
+}.
+
+Definition registry_module_schema : nat := 1.
+
+Definition encode_registry_module (record : DecodedRegistryModule)
+    : RegistryModuleWire :=
+  {| wire_schema := registry_module_schema;
+     wire_source := decoded_source record;
+     wire_source_commitment := decoded_source_commitment record;
+     wire_module := decoded_module record;
+     wire_exports := wire_module_exports (decoded_module record);
+     wire_dependencies := wire_module_dependencies (decoded_module record);
+     wire_images := decoded_images record;
+     wire_semantic_images := decoded_semantic_images record;
+     wire_signatures := decoded_signatures record |}.
+
+Definition decode_registry_module (wire : RegistryModuleWire)
+    : option DecodedRegistryModule :=
+  if Nat.eq_dec (wire_schema wire) registry_module_schema then
+    if list_eq_dec Nat.eq_dec (wire_exports wire)
+        (wire_module_exports (wire_module wire)) then
+      if list_eq_dec Nat.eq_dec (wire_dependencies wire)
+          (wire_module_dependencies (wire_module wire)) then
+        Some
+          {| decoded_source := wire_source wire;
+             decoded_source_commitment := wire_source_commitment wire;
+             decoded_module := wire_module wire;
+             decoded_images := wire_images wire;
+             decoded_semantic_images := wire_semantic_images wire;
+             decoded_signatures := wire_signatures wire |}
+      else None
+    else None
+  else None.
+
+Definition signed_registry_projection (wire : RegistryModuleWire) :=
+  (wire_schema wire,
+   wire_source_commitment wire,
+   wire_module wire,
+   wire_exports wire,
+   wire_dependencies wire).
+
+Theorem registry_wire_round_trip :
+  forall record,
+    decode_registry_module (encode_registry_module record) = Some record.
+Proof.
+  intros [source commitment module images semantic_images signatures].
+  unfold decode_registry_module, encode_registry_module.
+  simpl.
+  destruct (Nat.eq_dec registry_module_schema registry_module_schema) as [_ | Hschema];
+    [| contradiction].
+  destruct (list_eq_dec Nat.eq_dec (wire_module_exports module)
+    (wire_module_exports module)) as [_ | Hexports]; [| contradiction].
+  destruct (list_eq_dec Nat.eq_dec (wire_module_dependencies module)
+    (wire_module_dependencies module)) as [_ | Hdependencies];
+    [reflexivity | contradiction].
+Qed.
+
+Theorem registry_wire_decode_requires_exact_projections :
+  forall wire record,
+    decode_registry_module wire = Some record ->
+    wire_schema wire = registry_module_schema /\
+    wire_exports wire = wire_module_exports (wire_module wire) /\
+    wire_dependencies wire = wire_module_dependencies (wire_module wire).
+Proof.
+  intros wire record Hdecode.
+  unfold decode_registry_module in Hdecode.
+  destruct (Nat.eq_dec (wire_schema wire) registry_module_schema)
+    as [Hschema | Hschema]; [| discriminate].
+  destruct (list_eq_dec Nat.eq_dec (wire_exports wire)
+    (wire_module_exports (wire_module wire)))
+    as [Hexports | Hexports]; [| discriminate].
+  destruct (list_eq_dec Nat.eq_dec (wire_dependencies wire)
+    (wire_module_dependencies (wire_module wire)))
+    as [Hdependencies | Hdependencies]; [| discriminate].
+  repeat split; assumption.
+Qed.
+
+Theorem registry_wire_unsigned_fields_cannot_change_signed_projection :
+  forall wire source images semantic_images signatures,
+    signed_registry_projection
+      {| wire_schema := wire_schema wire;
+         wire_source := source;
+         wire_source_commitment := wire_source_commitment wire;
+         wire_module := wire_module wire;
+         wire_exports := wire_exports wire;
+         wire_dependencies := wire_dependencies wire;
+         wire_images := images;
+         wire_semantic_images := semantic_images;
+         wire_signatures := signatures |}
+    = signed_registry_projection wire.
+Proof. reflexivity. Qed.
+
 Inductive PreparedBatch (Export : Type) : Type :=
 | BatchRejected : PreparedBatch Export
 | BatchPrepared : list Export -> PreparedBatch Export.
@@ -302,5 +419,8 @@ Print Assumptions conflicting_commitments_for_one_reference_are_rejected.
 Print Assumptions admitted_dependency_cannot_be_a_self_cycle.
 Print Assumptions oracle_source_is_not_semantic_authority.
 Print Assumptions parser_cache_is_not_semantic_authority.
+Print Assumptions registry_wire_round_trip.
+Print Assumptions registry_wire_decode_requires_exact_projections.
+Print Assumptions registry_wire_unsigned_fields_cannot_change_signed_projection.
 Print Assumptions rejected_batch_publishes_no_prefix.
 Print Assumptions prepared_batch_publishes_exactly_all_exports.

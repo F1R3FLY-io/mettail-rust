@@ -7,7 +7,7 @@
 
 use crate::canonical::{
     InstallableAnyLanguageCore, InstallableLanguageCore, LanguageValueResolver, RhoValue,
-    ValueToCoreError,
+    ValueDecodeError, ValueToCoreError,
 };
 use crate::module::{CanonicalModuleDependency, CanonicalModuleValue};
 use mettail_grammar_core::{
@@ -69,6 +69,114 @@ impl RegistryModuleRecord {
         }
     }
 
+    /// Encode the entire Registry record as an ordinary, closed Rholang value.
+    /// The signed projection remains authoritative; source and images stay
+    /// outside it even though they travel in the same record.
+    pub fn to_rho_value(&self) -> Result<RhoValue, RegistryModuleError> {
+        self.validate_structure()?;
+        let value = RhoValue::Map(BTreeMap::from([
+            ("schema".into(), RhoValue::String(self.schema.clone())),
+            ("source".into(), RhoValue::String(self.source.clone())),
+            ("source_commitment".into(), RhoValue::Bytes(self.source_commitment.to_vec())),
+            ("module".into(), self.module.clone()),
+            ("exports".into(), RhoValue::Map(self.exports.clone())),
+            ("dependencies".into(), registry_dependency_projection(&self.dependencies)),
+            ("images".into(), registry_image_projection(&self.images)),
+            ("semantic_images".into(), registry_image_projection(&self.semantic_images)),
+            ("signatures".into(), self.signatures.clone()),
+        ]));
+        crate::canonical::admit_canonical_value(&value)
+            .map_err(RegistryModuleError::WireAdmission)?;
+        Ok(value)
+    }
+
+    /// Decode only the exact versioned-record shape. The canonical module is
+    /// decoded by the existing module/1 checker, and both redundant projections
+    /// must agree with it before this record can enter the installer.
+    pub fn from_rho_value(value: &RhoValue) -> Result<Self, ValueDecodeError> {
+        crate::canonical::admit_canonical_value(value)?;
+        let RhoValue::Map(fields) = value else {
+            return Err(ValueDecodeError::new("$", "expected a Registry module map"));
+        };
+        const KEYS: &[&str] = &[
+            "schema",
+            "source",
+            "source_commitment",
+            "module",
+            "exports",
+            "dependencies",
+            "images",
+            "semantic_images",
+            "signatures",
+        ];
+        for key in fields.keys() {
+            if !KEYS.contains(&key.as_str()) {
+                return Err(ValueDecodeError::new(format!("$.{key}"), "unknown field"));
+            }
+        }
+        let required = |key: &str| {
+            fields.get(key).ok_or_else(|| {
+                ValueDecodeError::new(format!("$.{key}"), "required field is absent")
+            })
+        };
+        let RhoValue::String(schema) = required("schema")? else {
+            return Err(ValueDecodeError::new("$.schema", "expected a string"));
+        };
+        if schema != REGISTRY_MODULE_SCHEMA_V1 {
+            return Err(ValueDecodeError::new("$.schema", "unsupported Registry module schema"));
+        }
+        let RhoValue::String(source) = required("source")? else {
+            return Err(ValueDecodeError::new("$.source", "expected a string"));
+        };
+        let RhoValue::Bytes(commitment) = required("source_commitment")? else {
+            return Err(ValueDecodeError::new("$.source_commitment", "expected bytes"));
+        };
+        let source_commitment: [u8; 32] = commitment.as_slice().try_into().map_err(|_| {
+            ValueDecodeError::new("$.source_commitment", "expected exactly 32 bytes")
+        })?;
+        let module = required("module")?;
+        let canonical = CanonicalModuleValue::from_rho_value(module)?;
+        let RhoValue::Map(exports) = required("exports")? else {
+            return Err(ValueDecodeError::new("$.exports", "expected a map"));
+        };
+        let expected_exports: BTreeMap<_, _> = canonical
+            .exports
+            .iter()
+            .map(|export| (export.name.clone(), export.spec.clone()))
+            .collect();
+        if exports != &expected_exports {
+            return Err(ValueDecodeError::new(
+                "$.exports",
+                "exports differ from the canonical module",
+            ));
+        }
+        let dependencies = required("dependencies")?;
+        if dependencies != &registry_dependency_projection(&canonical.dependencies) {
+            return Err(ValueDecodeError::new(
+                "$.dependencies",
+                "dependencies differ from the canonical module",
+            ));
+        }
+        let record = Self {
+            schema: schema.clone(),
+            source: source.clone(),
+            source_commitment,
+            module: module.clone(),
+            exports: exports.clone(),
+            dependencies: canonical.dependencies,
+            images: decode_registry_images(required("images")?, "$.images")?,
+            semantic_images: decode_registry_images(
+                required("semantic_images")?,
+                "$.semantic_images",
+            )?,
+            signatures: required("signatures")?.clone(),
+        };
+        record
+            .validate_structure()
+            .map_err(|error| ValueDecodeError::new("$", error.to_string()))?;
+        Ok(record)
+    }
+
     /// Validate every authority-bearing canonical projection. The source and
     /// its commitment are retained as a development oracle, but source bytes
     /// do not participate in production semantic admission.
@@ -109,23 +217,12 @@ impl RegistryModuleRecord {
     /// excluded because they are explicitly untrusted, replaceable caches.
     pub fn signed_payload(&self) -> Result<Vec<u8>, RegistryModuleError> {
         self.validate_structure()?;
-        let dependencies = RhoValue::List(
-            self.dependencies
-                .iter()
-                .map(|dependency| {
-                    RhoValue::Map(BTreeMap::from([
-                        ("uri".into(), RhoValue::String(dependency.reference.external_form())),
-                        ("commitment".into(), RhoValue::Bytes(dependency.commitment.to_vec())),
-                    ]))
-                })
-                .collect(),
-        );
         Ok(RhoValue::Map(BTreeMap::from([
             ("schema".into(), RhoValue::String(self.schema.clone())),
             ("source_commitment".into(), RhoValue::Bytes(self.source_commitment.to_vec())),
             ("module".into(), self.module.clone()),
             ("exports".into(), RhoValue::Map(self.exports.clone())),
-            ("dependencies".into(), dependencies),
+            ("dependencies".into(), registry_dependency_projection(&self.dependencies)),
         ]))
         .canonical_bytes())
     }
@@ -169,6 +266,89 @@ impl RegistryModuleRecord {
     }
 }
 
+fn registry_dependency_projection(dependencies: &[CanonicalModuleDependency]) -> RhoValue {
+    RhoValue::List(
+        dependencies
+            .iter()
+            .map(|dependency| {
+                RhoValue::Map(BTreeMap::from([
+                    ("uri".into(), RhoValue::String(dependency.reference.external_form())),
+                    ("commitment".into(), RhoValue::Bytes(dependency.commitment.to_vec())),
+                ]))
+            })
+            .collect(),
+    )
+}
+
+fn registry_image_projection(images: &BTreeMap<[u8; 32], Vec<u8>>) -> RhoValue {
+    RhoValue::Map(
+        images
+            .iter()
+            .map(|(fingerprint, image)| {
+                (fingerprint_hex(fingerprint), RhoValue::Bytes(image.clone()))
+            })
+            .collect(),
+    )
+}
+
+fn fingerprint_hex(fingerprint: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(64);
+    for byte in fingerprint {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn decode_registry_images(
+    value: &RhoValue,
+    path: &str,
+) -> Result<BTreeMap<[u8; 32], Vec<u8>>, ValueDecodeError> {
+    let RhoValue::Map(entries) = value else {
+        return Err(ValueDecodeError::new(path, "expected a map of image bytes"));
+    };
+    let mut images = BTreeMap::new();
+    for (key, value) in entries {
+        let key_path = format!("{path}.{key}");
+        if key.len() != 64 {
+            return Err(ValueDecodeError::new(
+                key_path,
+                "expected a 64-digit lowercase fingerprint",
+            ));
+        }
+        let mut fingerprint = [0u8; 32];
+        for (slot, pair) in key.as_bytes().chunks_exact(2).enumerate() {
+            let high = hex_nibble(pair[0]).ok_or_else(|| {
+                ValueDecodeError::new(
+                    key_path.clone(),
+                    "expected a lowercase hexadecimal fingerprint",
+                )
+            })?;
+            let low = hex_nibble(pair[1]).ok_or_else(|| {
+                ValueDecodeError::new(
+                    key_path.clone(),
+                    "expected a lowercase hexadecimal fingerprint",
+                )
+            })?;
+            fingerprint[slot] = (high << 4) | low;
+        }
+        let RhoValue::Bytes(image) = value else {
+            return Err(ValueDecodeError::new(key_path, "expected image bytes"));
+        };
+        images.insert(fingerprint, image.clone());
+    }
+    Ok(images)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegistryModuleError {
     UnsupportedSchema(String),
@@ -177,6 +357,7 @@ pub enum RegistryModuleError {
     CanonicalModule(crate::canonical::ValueDecodeError),
     DependencyProjectionMismatch,
     ExportProjectionMismatch,
+    WireAdmission(crate::canonical::ValueDecodeError),
 }
 
 impl std::fmt::Display for RegistryModuleError {
@@ -196,6 +377,9 @@ impl std::fmt::Display for RegistryModuleError {
                 .write_str("Registry dependencies differ from the canonical module projection"),
             Self::ExportProjectionMismatch => {
                 formatter.write_str("Registry exports differ from the canonical module projection")
+            },
+            Self::WireAdmission(error) => {
+                write!(formatter, "Registry wire value rejected: {error}")
             },
         }
     }
@@ -959,6 +1143,85 @@ mod tests {
                 spec: RhoValue::String("authoritative".into()),
             }],
         }
+    }
+
+    #[test]
+    fn registry_module_wire_round_trips_without_losing_unsigned_fields() {
+        let mut record = RegistryModuleRecord::new(
+            "Module Pair {}",
+            canonical_module(),
+            RhoValue::Map(BTreeMap::from([("signer".into(), RhoValue::Bytes(vec![0x21; 32]))])),
+        );
+        record.images.insert([0x44; 32], vec![1, 2, 3]);
+        record.semantic_images.insert([0x55; 32], vec![4, 5, 6]);
+        let wire = record.to_rho_value().expect("valid record encodes");
+        let decoded = RegistryModuleRecord::from_rho_value(&wire).expect("wire decodes");
+        assert_eq!(decoded, record);
+        assert_eq!(
+            decoded.signed_payload().expect("decoded record validates"),
+            record.signed_payload().expect("original record validates")
+        );
+    }
+
+    #[test]
+    fn registry_module_wire_rejects_projection_and_schema_tampering() {
+        let record = RegistryModuleRecord::new("Module Pair {}", canonical_module(), RhoValue::Nil);
+        let wire = record.to_rho_value().expect("valid record encodes");
+        for (field, replacement) in [
+            ("schema", RhoValue::String("mettail-registry-module/2".into())),
+            ("exports", RhoValue::Map(BTreeMap::new())),
+            ("dependencies", RhoValue::List(Vec::new())),
+            ("source_commitment", RhoValue::Bytes(vec![0; 31])),
+        ] {
+            let mut changed = wire.clone();
+            let RhoValue::Map(fields) = &mut changed else {
+                unreachable!("test wire is a map")
+            };
+            fields.insert(field.into(), replacement);
+            assert!(
+                RegistryModuleRecord::from_rho_value(&changed).is_err(),
+                "field {field} must not be accepted after tampering"
+            );
+        }
+        let mut changed = wire;
+        let RhoValue::Map(fields) = &mut changed else {
+            unreachable!("test wire is a map")
+        };
+        fields.insert("unknown".into(), RhoValue::Nil);
+        assert!(RegistryModuleRecord::from_rho_value(&changed).is_err());
+    }
+
+    #[test]
+    fn registry_module_wire_requires_canonical_image_keys_and_bytes() {
+        let record = RegistryModuleRecord::new("Module Pair {}", canonical_module(), RhoValue::Nil);
+        let wire = record.to_rho_value().expect("valid record encodes");
+        for bad_key in ["A".repeat(64), "0".repeat(63), "g".repeat(64)] {
+            let mut changed = wire.clone();
+            let RhoValue::Map(fields) = &mut changed else {
+                unreachable!("test wire is a map")
+            };
+            fields.insert(
+                "images".into(),
+                RhoValue::Map(BTreeMap::from([(bad_key, RhoValue::Bytes(vec![1]))])),
+            );
+            assert!(RegistryModuleRecord::from_rho_value(&changed).is_err());
+        }
+        let mut changed = wire;
+        let RhoValue::Map(fields) = &mut changed else {
+            unreachable!("test wire is a map")
+        };
+        fields.insert(
+            "images".into(),
+            RhoValue::Map(BTreeMap::from([("0".repeat(64), RhoValue::Nil)])),
+        );
+        assert!(RegistryModuleRecord::from_rho_value(&changed).is_err());
+    }
+
+    #[test]
+    fn registry_module_wire_refuses_oversized_unsigned_source() {
+        let mut record = RegistryModuleRecord::new("", canonical_module(), RhoValue::Nil);
+        record.source = "x".repeat(crate::canonical::MAX_CANONICAL_STRING_BYTES + 1);
+        assert!(matches!(record.to_rho_value(), Err(RegistryModuleError::WireAdmission(_))));
     }
 
     #[test]
