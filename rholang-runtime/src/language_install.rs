@@ -4027,7 +4027,10 @@ pub(crate) mod tests {
             ("mettail", s("language/2")),
             ("name", s(name)),
             ("rights", rights),
-            ("types", l([s(category)])),
+            (
+                "types",
+                l([m([("name", s(category)), ("admits_variables", RhoValue::Boolean(false))])]),
+            ),
             (
                 "terms",
                 l([m([
@@ -6757,6 +6760,25 @@ pub(crate) mod tests {
         assert!(matches!(
             runtime.parse_source(&left, "l", "RightExpr"),
             Err(LanguageRuntimeError::UnknownCategory(name)) if name == "RightExpr"
+        ));
+    }
+
+    #[test]
+    fn bare_category_retains_its_declared_identifier_variable_reading() {
+        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+            Arc::new(MemoryRegistry::default()),
+            LanguageInstallPolicy::default(),
+        )));
+        let open = runtime
+            .install(InstallCandidate::Canonical(tiny_value("Open", l([s("Parse")]))))
+            .expect("bare category installs");
+        assert!(matches!(
+            runtime.parse_source(&open, "other", "Expr"),
+            Ok(LanguageParseOutcome::Accepted)
+        ));
+        assert!(matches!(
+            runtime.parse_source(&open, "0", "Expr"),
+            Ok(LanguageParseOutcome::Accepted)
         ));
     }
 
