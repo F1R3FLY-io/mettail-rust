@@ -2377,6 +2377,7 @@ impl<'a> Drive<'a> {
             Proc::BigintCastProc(..) => self.stacks.value(lower_arm_bigint_cast_proc()?)?,
             Proc::BigratCastProc(..) => self.stacks.value(lower_arm_bigrat_cast_proc()?)?,
             // ── A-S4 metered machine arithmetic ─────────────────────────────────────────────
+            Proc::Concat(a, b) => self.bin(Kont::BinExpr(BinOp::PlusPlus), a, b, env)?,
             Proc::Add(a, b) => self.bin(Kont::AddParity, a, b, env)?,
             Proc::Sub(a, b) => self.bin(Kont::BinExpr(BinOp::Minus), a, b, env)?,
             Proc::Mul(a, b) => self.bin(Kont::BinExpr(BinOp::Mult), a, b, env)?,
@@ -4622,6 +4623,7 @@ fn find_first_body_site_preparing<T>(
                         build.push(&mut work, || Work::Proc(channel.as_ref()))?;
                     },
                     Proc::PParInfix(left, right)
+                    | Proc::Concat(left, right)
                     | Proc::Add(left, right)
                     | Proc::Sub(left, right)
                     | Proc::Mul(left, right)
@@ -4921,6 +4923,7 @@ fn replace_first_body_site_preparing(
                         build.push(&mut jobs, || Job::VisitProc(channel.as_ref()))?;
                     },
                     Proc::PParInfix(left, right)
+                    | Proc::Concat(left, right)
                     | Proc::Add(left, right)
                     | Proc::Sub(left, right)
                     | Proc::Mul(left, right)
@@ -5115,6 +5118,7 @@ fn replace_first_body_site_preparing(
                         Proc::PPersistOutputShort(Arc::new(channel), Arc::new(payload))
                     },
                     Proc::PParInfix(..)
+                    | Proc::Concat(..)
                     | Proc::Add(..)
                     | Proc::Sub(..)
                     | Proc::Mul(..)
@@ -5359,6 +5363,7 @@ fn rebuild_binary(orig: &Proc, a: Proc, b: Proc) -> Proc {
     let new_b = Arc::new(b);
     match orig {
         Proc::PParInfix(..) => Proc::PParInfix(new_a, new_b),
+        Proc::Concat(..) => Proc::Concat(new_a, new_b),
         Proc::Add(..) => Proc::Add(new_a, new_b),
         Proc::Sub(..) => Proc::Sub(new_a, new_b),
         Proc::Mul(..) => Proc::Mul(new_a, new_b),

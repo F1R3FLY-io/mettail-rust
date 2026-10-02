@@ -63,6 +63,17 @@ fn migrated_regex_types_parser_paths_agree() {
         .expect("WPDA parser accepts the same authored Regex type declarations");
 }
 
+#[test]
+fn rholang_concat_uses_the_existing_eplusplus_runtime_operator() {
+    let source = r#""rho:lib:1.0.0:" ++ "owner""#;
+    let parsed = Proc::parse_via_wpda(source).expect("generated Rholang parser accepts ++");
+    let lowered = lower_rholang_proc(&parsed).expect("++ lowers without reparsing");
+    assert!(
+        matches!(exact_expr(&lowered), Some(ExprInstance::EPlusPlusBody(_))),
+        "++ must use the interpreter's concatenation operator, not numeric +"
+    );
+}
+
 fn exact_expr(value: &Par) -> Option<&ExprInstance> {
     if !value.sends.is_empty()
         || !value.receives.is_empty()

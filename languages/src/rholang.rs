@@ -1992,6 +1992,7 @@ language! {
         // these arms now match the disposition the `UInt32` / `BigInt` / `BigRat` / `Fixed` arms
         // have always used for ÷0. Pinned by `rholang-runtime/tests/rho_rholang_conformance.rs`
         // (divergences A / A2).
+        Concat . a:Proc, b:Proc |- a "++" b : Proc;
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {

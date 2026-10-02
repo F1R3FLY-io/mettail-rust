@@ -551,6 +551,7 @@ fn normalize_send_sugar_canon(p: &Proc) -> Proc {
                 | Proc::Lt(left, right)
                 | Proc::GtEq(left, right)
                 | Proc::LtEq(left, right)
+                | Proc::Concat(left, right)
                 | Proc::Add(left, right)
                 | Proc::Sub(left, right)
                 | Proc::Mul(left, right)
@@ -864,6 +865,7 @@ fn normalize_send_sugar_canon(p: &Proc) -> Proc {
                     Proc::Lt(_, _) => build_binary!(Proc::Lt),
                     Proc::GtEq(_, _) => build_binary!(Proc::GtEq),
                     Proc::LtEq(_, _) => build_binary!(Proc::LtEq),
+                    Proc::Concat(_, _) => build_binary!(Proc::Concat),
                     Proc::Add(_, _) => build_binary!(Proc::Add),
                     Proc::Sub(_, _) => build_binary!(Proc::Sub),
                     Proc::Mul(_, _) => build_binary!(Proc::Mul),
