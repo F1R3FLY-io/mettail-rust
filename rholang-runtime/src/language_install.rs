@@ -4307,6 +4307,73 @@ pub(crate) mod tests {
         (runtime, token, installed)
     }
 
+    #[derive(Clone, Copy, Debug)]
+    enum RegexSemanticTestInput<'a> {
+        Parsed(&'a str),
+        AuthoredGroupOf(&'a str),
+    }
+
+    fn regex_semantic_test_input(
+        runtime: &RholangLanguageRuntime,
+        token: &Par,
+        input: RegexSemanticTestInput<'_>,
+    ) -> Par {
+        match input {
+            RegexSemanticTestInput::Parsed(source) => runtime
+                .construct_template(
+                    token,
+                    &[RuntimeTemplatePiece::Text(source.into())],
+                    &[],
+                    Some("Pattern"),
+                    &BTreeMap::new(),
+                )
+                .unwrap_or_else(|error| panic!("unique Regex source {source:?}: {error:?}")),
+            RegexSemanticTestInput::AuthoredGroupOf(body_source) => {
+                // Parentheses also have a universal transparent-group reading.
+                // Parse the unique body, then select the separately authored
+                // PGroup constructor explicitly; do not prune that ambiguity.
+                let handle = runtime
+                    .resolve(token, LanguageRight::Construct)
+                    .expect("owner");
+                let installed = runtime
+                    .service
+                    .table()
+                    .authorize(&handle, LanguageRight::Construct)
+                    .expect("installed Regex grammar");
+                let category = resolve_required_category(installed.core(), "Pattern")
+                    .expect("Pattern category");
+                let parses = runtime
+                    .parse_template(
+                        token,
+                        &[RuntimeTemplatePiece::Text(body_source.into())],
+                        &[],
+                        Some(category),
+                        LanguageRight::Construct,
+                        runtime.host.as_ref(),
+                    )
+                    .expect("parsed group body");
+                let first = parses.first().expect("nonempty group-body parse family");
+                assert!(
+                    parses.iter().all(|parse| {
+                        parse.syntax == first.syntax && parse.value == first.value
+                    }),
+                    "group body must have one structural meaning"
+                );
+                let body = dynamic_syntax_to_ground_term(
+                    &first.syntax,
+                    installed.core(),
+                    &BTreeMap::new(),
+                )
+                .expect("ground group body");
+                let owner = grammar_fingerprint_label(installed.commitment().language_fingerprint);
+                mettail_rholang_codegen::reflect_ground_term_par(
+                    &mettail_rholang_codegen::GroundTerm::new("PGroup", vec![body]),
+                    &owner,
+                )
+            },
+        }
+    }
+
     #[test]
     fn semantic_service_preserves_declared_tight_limit_without_partial_outputs() {
         let (runtime, _, installed) = installed_flt_adapter_fixture();
@@ -4324,21 +4391,22 @@ pub(crate) mod tests {
             .install(InstallCandidate::Canonical(value))
             .expect("separate declared policy");
         for (source, operation) in [
-            ("a+", SemanticOperation::Reduce("expand-plus")),
-            ("a?", SemanticOperation::Reduce("expand-optional")),
-            ("(a)", SemanticOperation::Reduce("remove-group")),
-            ("a+", SemanticOperation::Observe("ExpandedPlus")),
-            ("a?", SemanticOperation::Observe("ExpandedOptional")),
+            (RegexSemanticTestInput::Parsed("a+"), SemanticOperation::Reduce("expand-plus")),
+            (
+                RegexSemanticTestInput::Parsed("a?"),
+                SemanticOperation::Reduce("expand-optional"),
+            ),
+            (
+                RegexSemanticTestInput::AuthoredGroupOf("a"),
+                SemanticOperation::Reduce("remove-group"),
+            ),
+            (RegexSemanticTestInput::Parsed("a+"), SemanticOperation::Observe("ExpandedPlus")),
+            (
+                RegexSemanticTestInput::Parsed("a?"),
+                SemanticOperation::Observe("ExpandedOptional"),
+            ),
         ] {
-            let input = runtime
-                .construct_template(
-                    &token,
-                    &[RuntimeTemplatePiece::Text(source.into())],
-                    &[],
-                    Some("Pattern"),
-                    &BTreeMap::new(),
-                )
-                .expect("same grammar, exact installed owner");
+            let input = regex_semantic_test_input(&runtime, &token, source);
             let report = runtime.execute_semantic(
                 SemanticServiceRequest {
                     handle: &token,
@@ -4379,21 +4447,33 @@ pub(crate) mod tests {
         };
         let (runtime, token, installed) = installed_flt_adapter_fixture();
         for (source, operation, label) in [
-            ("a+", SemanticOperation::Reduce("expand-plus"), "PConcat"),
-            ("a?", SemanticOperation::Reduce("expand-optional"), "PAlt"),
-            ("(a)", SemanticOperation::Reduce("remove-group"), "PLiteral"),
-            ("a+", SemanticOperation::Observe("ExpandedPlus"), "PConcat"),
-            ("a?", SemanticOperation::Observe("ExpandedOptional"), "PAlt"),
+            (
+                RegexSemanticTestInput::Parsed("a+"),
+                SemanticOperation::Reduce("expand-plus"),
+                "PConcat",
+            ),
+            (
+                RegexSemanticTestInput::Parsed("a?"),
+                SemanticOperation::Reduce("expand-optional"),
+                "PAlt",
+            ),
+            (
+                RegexSemanticTestInput::AuthoredGroupOf("a"),
+                SemanticOperation::Reduce("remove-group"),
+                "PLiteral",
+            ),
+            (
+                RegexSemanticTestInput::Parsed("a+"),
+                SemanticOperation::Observe("ExpandedPlus"),
+                "PConcat",
+            ),
+            (
+                RegexSemanticTestInput::Parsed("a?"),
+                SemanticOperation::Observe("ExpandedOptional"),
+                "PAlt",
+            ),
         ] {
-            let input = runtime
-                .construct_template(
-                    &token,
-                    &[RuntimeTemplatePiece::Text(source.into())],
-                    &[],
-                    Some("Pattern"),
-                    &BTreeMap::new(),
-                )
-                .expect("installed guest parser");
+            let input = regex_semantic_test_input(&runtime, &token, source);
             let request = |limits| SemanticServiceRequest {
                 handle: &token,
                 operation,
@@ -5039,19 +5119,14 @@ pub(crate) mod tests {
         let mut budget = ReflectedCodecBudget::new(&mut work, 10_000_000, 10_000_000, &mut cancel);
         let adapter = InstalledFltAdapter::new(&installed, &mut budget).expect("adapter");
         // This tests structural conversion around the real kernel, not the
-        // forthcoming service's execution-accounting/receipt authorization.
-        for (source, action, label, arity) in
-            [("a+", 0, "PConcat", 2), ("a?", 1, "PAlt", 2), ("(a)", 2, "PLiteral", 1)]
-        {
-            let reflected = runtime
-                .construct_template(
-                    &token,
-                    &[RuntimeTemplatePiece::Text(source.into())],
-                    &[],
-                    Some("Pattern"),
-                    &BTreeMap::new(),
-                )
-                .expect("real installed parser and reflector");
+        // service's execution-accounting/receipt authorization. The group
+        // input explicitly selects the authored constructor from a parsed body.
+        for (source, action, label, arity) in [
+            (RegexSemanticTestInput::Parsed("a+"), 0, "PConcat", 2),
+            (RegexSemanticTestInput::Parsed("a?"), 1, "PAlt", 2),
+            (RegexSemanticTestInput::AuthoredGroupOf("a"), 2, "PLiteral", 1),
+        ] {
+            let reflected = regex_semantic_test_input(&runtime, &token, source);
             let input = adapter
                 .to_kernel(&reflected, category, input_limits, &mut budget)
                 .expect("typed structural conversion");
