@@ -171,41 +171,30 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         max_semantic_results: 256,
         ..Default::default()
     };
-    // The old normalizer has neither implicit variable rules nor the original
-    // constructor-free grouping branch. It witnesses the authored ground term,
-    // not the complete shared WPDA family. Where parentheses also admit generic
-    // grouping, explicitly supply that second exact ground term. The generated
-    // consumer parity fixture independently checks both grouping interpretations.
-    // This partition is test observation, never a parser/publication policy.
-    let check_variable_free = |actual: &[(
-        OwnedTerm,
-        mettail_prattail::automata::lex_weight::LexicographicWeight,
-    )],
-                               expected: &[mettail_grammar_core::WeightedParse],
-                               generic_grouping: Option<&DynamicValue>,
-                               input: &str| {
-        let ground: Vec<_> = actual
-            .iter()
-            .filter(|(term, _)| variable_free(&term.syntax))
-            .collect();
-        assert_eq!(ground.len(), expected.len() + usize::from(generic_grouping.is_some()),
-            "variable-free candidate count for {input:?}; all readings: {actual:?}; expected: {expected:?}");
-        assert_eq!(expected.len(), 1, "one variable-free contract result for {input:?}");
-        for (syntax, value) in std::iter::once((&expected[0].syntax, &expected[0].value))
-            .chain(generic_grouping.map(|term| (term, term)))
-        {
-            assert_eq!(
-                ground
-                    .iter()
-                    .filter(|(term, _)| {
-                        same_structure(&term.syntax, syntax) && same_structure(&term.value, value)
-                    })
-                    .count(),
-                1,
-                "each exact ground interpretation occurs once for {input:?}: {actual:?}"
+    // The authored Regex types are noadmit, and this declaration has no PGroup
+    // constructor. Parentheses are transparent grouping, so the original
+    // walker and installed parser must agree on one ground interpretation.
+    // The older RuntimeParser contract does not recognize this universal
+    // grouping branch; grouped terms get their exact structural oracle from
+    // the declared constructors below, never from that legacy normalizer.
+    // Other grammars may admit variables or authored grouping.
+    let assert_exact_ground_family =
+        |actual: &[(OwnedTerm, mettail_prattail::automata::lex_weight::LexicographicWeight)],
+         expected_syntax: &DynamicValue,
+         expected_value: &DynamicValue,
+         input: &str| {
+            assert_eq!(actual.len(), 1, "one complete ground reading for {input:?}: {actual:?}");
+            let (term, _) = &actual[0];
+            assert!(
+                variable_free(&term.syntax) && variable_free(&term.value),
+                "noadmit Regex categories cannot produce native variables: {input:?}: {actual:?}"
             );
-        }
-    };
+            assert!(
+                same_structure(&term.syntax, expected_syntax)
+                    && same_structure(&term.value, expected_value),
+                "original and declared ground structures agree for {input:?}: {actual:?}"
+            );
+        };
     for (category_name, input) in [
         ("Pattern", "(?!)"),
         ("Pattern", "()"),
@@ -223,9 +212,24 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         ("Computation", "nullable(a{0,0})"),
     ] {
         let category = resolve_required_category(core, category_name).expect("declared category");
-        let expected = parser
-            .parse_category(input, category)
-            .expect("existing Regex contract");
+        let expected = match input {
+            "(a*)?" => Some(("*", "?")),
+            "(a*){2,3}" => Some(("*", "{2,3}")),
+            "(a{2,3})+" => Some(("{2,3}", "+")),
+            _ => None,
+        }
+        .map(|(inner, outer)| {
+            let literal = term(core, "PLiteral", vec![DynamicValue::Text("a".into())]);
+            let grouped = quantifier(core, outer, quantifier(core, inner, literal));
+            (grouped.clone(), grouped)
+        })
+        .unwrap_or_else(|| {
+            let parses = parser
+                .parse_category(input, category)
+                .expect("legacy parser supports this ungrouped Regex source");
+            assert_eq!(parses.len(), 1, "one legacy result for {input:?}");
+            (parses[0].syntax.clone(), parses[0].value.clone())
+        });
         let session = parser
             .lexical_session(input)
             .expect("actual lexical session");
@@ -246,70 +250,7 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
             .parse(&handle, input, Some(category), runtime.host.as_ref(), policy)
             .expect("installed dispatch runs the shared original walker");
         assert_installed_family(&actual, &installed_results, input);
-        if input == "a" {
-            // Both implicit variable routes exist, but the original generated
-            // semantic visitor gives PVar(a) and PLiteral(SVar(a)) the same
-            // exact key. Keep one representative AND the distinct literal.
-            // The generated-consumer parity fixture proves the key equality;
-            // this is not permission to filter all variable interpretations.
-            let variable = mettail_grammar_core::native_variable::get_or_create_var("a");
-            let pattern = resolve_required_category(core, "Pattern").expect("Pattern");
-            let scalar = resolve_required_category(core, "Scalar").expect("Scalar");
-            let mut literal_variable = term(
-                core,
-                "PLiteral",
-                vec![DynamicValue::NativeVariable {
-                    category: scalar,
-                    variable: variable.clone(),
-                }],
-            );
-            if let DynamicValue::Term(term) = &mut literal_variable {
-                term.span = SourceSpan { start: 0, end: 1 };
-            }
-            let variable_representatives =
-                [DynamicValue::NativeVariable { category: pattern, variable }, literal_variable];
-            assert_eq!(actual.len(), 2, "the two original semantic equivalence classes");
-            assert_eq!(
-                actual
-                    .iter()
-                    .filter(|(term, _)| {
-                        variable_representatives
-                            .iter()
-                            .any(|expected| &term.syntax == expected && &term.value == expected)
-                    })
-                    .count(),
-                1,
-                "one native-variable representative with unchanged identity: {actual:?}"
-            );
-            assert_eq!(
-                actual
-                    .iter()
-                    .filter(|(term, _)| {
-                        term.syntax == expected[0].syntax && term.value == expected[0].value
-                    })
-                    .count(),
-                1,
-                "the literal class remains distinct from native variables: {actual:?}"
-            );
-        }
-        let ungrouped = match input {
-            "(a*)?" => Some(("*", "?")),
-            "(a*){2,3}" => Some(("*", "{2,3}")),
-            "(a{2,3})+" => Some(("{2,3}", "+")),
-            _ => None,
-        }
-        .map(|(inner, outer)| {
-            quantifier(
-                core,
-                outer,
-                quantifier(
-                    core,
-                    inner,
-                    term(core, "PLiteral", vec![DynamicValue::Text("a".into())]),
-                ),
-            )
-        });
-        check_variable_free(&actual, &expected, ungrouped.as_ref(), input);
+        assert_exact_ground_family(&actual, &expected.0, &expected.1, input);
     }
 
     let pattern = resolve_required_category(core, "Pattern").expect("Pattern");
@@ -339,19 +280,9 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
                         .parse(&handle, &input, Some(pattern), runtime.host.as_ref(), policy)
                         .expect("installed grouped quantifier route");
                     assert_installed_family(&actual, &installed_results, &input);
-                    let expected = parser
-                        .parse_category(&input, pattern)
-                        .expect("grouped contract");
-                    let ungrouped = quantifier(
-                        core,
-                        outer,
-                        quantifier(
-                            core,
-                            inner,
-                            term(core, "PLiteral", vec![DynamicValue::Text("a".into())]),
-                        ),
-                    );
-                    check_variable_free(&actual, &expected, Some(&ungrouped), &input);
+                    let literal = term(core, "PLiteral", vec![DynamicValue::Text("a".into())]);
+                    let expected = quantifier(core, outer, quantifier(core, inner, literal));
+                    assert_exact_ground_family(&actual, &expected, &expected, &input);
                 } else {
                     assert!(matches!(runtime.service.table()
                         .parse(&handle, &input, Some(pattern), runtime.host.as_ref(), policy),
@@ -420,6 +351,9 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         .expect("installed route preserves typed Text holes");
     assert_installed_family(&actual, &installed_results, "JoinPieces with two Text holes");
 
+    // This noadmit source has exactly one reading. A semantic cap of one is
+    // sufficient; zero is the smallest limit that must reject its complete
+    // family rather than publish a prefix.
     for (restricted, expected) in [
         (
             mettail_grammar_core::RuntimePolicy { max_parse_items: 0, ..policy },
@@ -430,7 +364,7 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
             mettail_grammar_core::RuntimeError::ForestNodeLimit,
         ),
         (
-            mettail_grammar_core::RuntimePolicy { max_semantic_results: 1, ..policy },
+            mettail_grammar_core::RuntimePolicy { max_semantic_results: 0, ..policy },
             mettail_grammar_core::RuntimeError::SemanticResultLimit,
         ),
     ] {
@@ -448,12 +382,12 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         }
     }
 
-    // The actual ambiguous input must exercise the owned persistent-key hook.
-    // Exhaustion is a failed realization request, never an empty family or a
-    // successfully published prefix of that request's results.
+    // Even this one-reading noadmit input must exercise the owned persistent-key
+    // hook. Exhaustion is a failed realization request, never an empty family
+    // or a successfully published prefix of that request's results.
     let session = parser
         .lexical_session("a")
-        .expect("literal/variable witness lexes");
+        .expect("ground literal witness lexes");
     let source = OwnedTokenSource::from_admitted_session(
         &session,
         SourceAdapterLimits {
@@ -462,7 +396,7 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
             text_bytes: 1_048_576,
         },
     )
-    .expect("actual ambiguity source");
+    .expect("actual ground source");
     for entry_limit in [true, false] {
         let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
             .expect("complete owned actions");
@@ -492,7 +426,7 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
                         )
                         .err()
                 })
-                .expect("the ambiguous family must report key-resource exhaustion"),
+                .expect("the ground family must report key-resource exhaustion"),
             other => panic!("key exhaustion is not syntax rejection: {other:?}"),
         };
         use mettail_prattail::wpda_runtime::RealizationError;
@@ -627,13 +561,9 @@ fn practical_regex_quantifiers_reject_adjacent_pairs_and_admit_grouping() {
             let grouped = format!("(a{inner}){outer}");
             let parses = parse(&grouped).unwrap_or_else(|error| panic!("{grouped}: {error:?}"));
             assert_eq!(parses.len(), 1, "{grouped}");
-            let expected = quantifier(
-                core,
-                outer,
-                term(core, "PGroup", vec![quantifier(core, inner, literal("a"))]),
-            );
+            let expected = quantifier(core, outer, quantifier(core, inner, literal("a")));
             assert_structure(&parses[0].syntax, &expected, &grouped);
-            eprintln!("{adjacent}: rejected; {grouped}: exact constructor structure verified");
+            eprintln!("{adjacent}: rejected; {grouped}: transparent grouping verified");
         }
     }
     for (source, expected) in [
