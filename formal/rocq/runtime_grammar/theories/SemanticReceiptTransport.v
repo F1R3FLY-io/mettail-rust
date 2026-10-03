@@ -1,7 +1,7 @@
 (** * Complete concrete receipt transport, without another semantic evaluator
 
     This finite record/sum mirrors every field of the runtime transition,
-    normalization-hop, normalization-proof, and six premise receipt variants.
+    normalization-hop, normalization-proof, and seven premise receipt variants.
     Identifiers and scalar values are mathematical naturals; byte strings model
     ordered bytes, not strings to parse. Resource reservations use fixed logical
     widths, not Rust layout, physical memory or the future public wire format.
@@ -31,6 +31,23 @@ Definition Bytes := list nat.
 Inductive Opcode := ExactTermEq | Utf8AtEnd | Utf8ScalarAt | Utf8Slice
   | CheckedNatAdd | Utf8ConcatMany.
 
+Record JudgmentProofStep := judgment_proof_step {
+  proof_activation : nat;
+  proof_rule : nat;
+  proof_parent_activation : option nat;
+  proof_premise_index : option nat
+}.
+
+Record JudgmentProofWitness := judgment_proof_witness {
+  proof_language : Bytes;
+  proof_theory : Bytes;
+  proof_image : Bytes;
+  proof_judgment : nat;
+  proof_arguments : list Bytes;
+  proof_steps : list JudgmentProofStep;
+  proof_work : nat
+}.
+
 Inductive Premise :=
 | Freshness (rule premise : nat)
 | Transition (rule premise child_rule : nat)
@@ -38,7 +55,8 @@ Inductive Premise :=
 | ForAll (rule premise elements : nat)
 | Intrinsic (rule premise : nat) (opcode : Opcode)
     (inputs outputs : list Bytes) (work : nat)
-| Guard (rule premise : nat) (guard_commitment evidence_commitment : Bytes).
+| Guard (rule premise : nat) (guard_commitment evidence_commitment : Bytes)
+| JudgmentProof (rule premise : nat) (proof : JudgmentProofWitness).
 
 Record Step := step {
   step_rule : nat;
@@ -100,6 +118,24 @@ Definition fixed (bytes : nat) : Event := (1, bytes).
 Definition payload (bytes : Bytes) : Event := (S (length bytes), 8 + length bytes).
 Definition key_list_events (keys : list Bytes) := fixed 8 :: map payload keys.
 
+(** The proof tree is represented by a flat activation sequence. Each optional
+    coordinate has an explicit tag, so None and Some 0 remain distinct. List
+    traversal is bounded by the same two counters as the surrounding receipt;
+    no step recursively contains a premise or another proof. *)
+Definition option_coordinate_events (width : nat) (coordinate : option nat) :=
+  match coordinate with None => [fixed 1] | Some _ => [fixed 1; fixed width] end.
+
+Definition judgment_proof_step_events step :=
+  [fixed 8; fixed 4] ++
+  option_coordinate_events 8 (proof_parent_activation step) ++
+  option_coordinate_events 4 (proof_premise_index step).
+
+Definition judgment_proof_events proof :=
+  [fixed 32; fixed 32; fixed 32; fixed 4] ++
+  key_list_events (proof_arguments proof) ++
+  (fixed 8 :: flat_map judgment_proof_step_events (proof_steps proof)) ++
+  [fixed 8].
+
 Definition premise_events p : list Event :=
   fixed 9 :: (* tag + rule + premise *)
   match p with
@@ -110,6 +146,7 @@ Definition premise_events p : list Event :=
   | Intrinsic _ _ _ inputs outputs _ =>
       fixed 9 :: key_list_events inputs ++ key_list_events outputs
   | Guard _ _ _ _ => [fixed 64]
+  | JudgmentProof _ _ proof => judgment_proof_events proof
   end.
 
 Definition premise_list_events ps := fixed 8 :: flat_map premise_events ps.
@@ -170,10 +207,29 @@ Proof.
     unfold work_sum, payload_sum in *; cbn; lia.
 Qed.
 
+Corollary successful_judgment_proof_walk_is_bounded :
+  forall proof work_limit payload_limit used_work used_payload final_work final_payload,
+    charge_events (judgment_proof_events proof) work_limit payload_limit
+      used_work used_payload = Some (final_work, final_payload) ->
+    final_work = used_work + work_sum (judgment_proof_events proof) /\
+    final_payload = used_payload + payload_sum (judgment_proof_events proof) /\
+    final_work <= work_limit /\ final_payload <= payload_limit.
+Proof.
+  intros. eapply successful_walk_preserves_both_prefixes_and_ceilings; eassumption.
+Qed.
+
 Theorem aggregate_scalar_is_not_recharged :
   forall lang thy img act rl inp out eff cls res ps hs first second,
     receipt_events (receipt lang thy img act rl inp out eff cls res ps hs first) =
     receipt_events (receipt lang thy img act rl inp out eff cls res ps hs second).
+Proof. reflexivity. Qed.
+
+Theorem judgment_proof_work_scalar_is_not_recharged :
+  forall language theory image judgment arguments steps first second,
+    judgment_proof_events
+      (judgment_proof_witness language theory image judgment arguments steps first) =
+    judgment_proof_events
+      (judgment_proof_witness language theory image judgment arguments steps second).
 Proof. reflexivity. Qed.
 
 Section Pairing.
@@ -231,7 +287,9 @@ End SemanticReceiptTransport.
 
 Print Assumptions SemanticReceiptTransport.envelope_projection_reuses_the_existing_binding_contract.
 Print Assumptions SemanticReceiptTransport.successful_walk_preserves_both_prefixes_and_ceilings.
+Print Assumptions SemanticReceiptTransport.successful_judgment_proof_walk_is_bounded.
 Print Assumptions SemanticReceiptTransport.aggregate_scalar_is_not_recharged.
+Print Assumptions SemanticReceiptTransport.judgment_proof_work_scalar_is_not_recharged.
 Print Assumptions SemanticReceiptTransport.pairing_keeps_the_complete_ordered_lists.
 Print Assumptions SemanticReceiptTransport.successful_pairing_keeps_every_receipt_field.
 Print Assumptions SemanticReceiptTransport.mismatched_lengths_cannot_publish_a_prefix.

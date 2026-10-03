@@ -44,6 +44,69 @@ Definition decode_blob value := match value with Blob b => Some b | _ => None en
 Lemma blob_inverse : forall b, decode_blob (Blob b) = Some b.
 Proof. reflexivity. Qed.
 
+(** Optional activation and premise coordinates use a tagged tuple. The
+    explicit tag keeps None distinct from Some 0; malformed arities fail. *)
+Definition encode_option_nat coordinate := Tuple (match coordinate with
+  | None => [UInt 0] | Some n => [UInt 1; UInt n] end).
+Definition decode_option_nat value := match value with
+  | Tuple [UInt 0] => Some None
+  | Tuple [UInt 1; UInt n] => Some (Some n)
+  | _ => None end.
+Lemma option_nat_inverse : forall coordinate,
+  decode_option_nat (encode_option_nat coordinate) = Some coordinate.
+Proof. destruct coordinate; reflexivity. Qed.
+
+Definition encode_judgment_proof_step step := Tuple [
+  UInt (R.proof_activation step); UInt (R.proof_rule step);
+  encode_option_nat (R.proof_parent_activation step);
+  encode_option_nat (R.proof_premise_index step)].
+Definition decode_judgment_proof_step value := match value with
+  | Tuple [UInt activation; UInt rule; parent; premise] =>
+      match decode_option_nat parent, decode_option_nat premise with
+      | Some parent', Some premise' =>
+          Some (R.judgment_proof_step activation rule parent' premise')
+      | _, _ => None end
+  | _ => None end.
+Theorem judgment_proof_step_inverse : forall step,
+  decode_judgment_proof_step (encode_judgment_proof_step step) = Some step.
+Proof.
+  intros [activation rule parent premise]. cbn -[decode_option_nat encode_option_nat].
+  now rewrite !option_nat_inverse.
+Qed.
+
+Definition encode_judgment_proof proof := Tuple [
+  Blob (R.proof_language proof); Blob (R.proof_theory proof);
+  Blob (R.proof_image proof); UInt (R.proof_judgment proof);
+  Tuple (map Blob (R.proof_arguments proof));
+  Tuple (map encode_judgment_proof_step (R.proof_steps proof));
+  UInt (R.proof_work proof)].
+Definition decode_judgment_proof value := match value with
+  | Tuple [Blob language; Blob theory; Blob image; UInt judgment;
+           Tuple arguments; Tuple steps; UInt work] =>
+      match decode_all decode_blob arguments,
+            decode_all decode_judgment_proof_step steps with
+      | Some args, Some proof_steps =>
+          Some (R.judgment_proof_witness language theory image judgment
+            args proof_steps work)
+      | _, _ => None end
+  | _ => None end.
+Theorem judgment_proof_inverse : forall proof,
+  decode_judgment_proof (encode_judgment_proof proof) = Some proof.
+Proof.
+  intros [language theory image judgment arguments steps work]. cbn.
+  rewrite (decode_all_map _ _ Blob decode_blob blob_inverse).
+  rewrite (decode_all_map _ _ encode_judgment_proof_step
+    decode_judgment_proof_step judgment_proof_step_inverse).
+  reflexivity.
+Qed.
+
+Theorem judgment_proof_encoding_is_injective : forall a b,
+  encode_judgment_proof a = encode_judgment_proof b -> a = b.
+Proof.
+  intros a b H. apply (f_equal decode_judgment_proof) in H.
+  rewrite !judgment_proof_inverse in H. now inversion H.
+Qed.
+
 Definition encode_opcode opcode := UInt (match opcode with
   | R.ExactTermEq => 0 | R.Utf8AtEnd => 1 | R.Utf8ScalarAt => 2
   | R.Utf8Slice => 3 | R.CheckedNatAdd => 4 | R.Utf8ConcatMany => 5 end).
@@ -66,6 +129,8 @@ Definition encode_premise premise := Tuple (match premise with
        Tuple (map Blob inputs); Tuple (map Blob outputs); UInt work]
   | R.Guard rule index guard evidence =>
       [UInt 5; UInt rule; UInt index; Blob guard; Blob evidence]
+  | R.JudgmentProof rule index proof =>
+      [UInt 6; UInt rule; UInt index; encode_judgment_proof proof]
   end).
 
 Definition decode_premise value := match value with
@@ -80,15 +145,20 @@ Definition decode_premise value := match value with
       | _, _, _ => None end
   | Tuple [UInt 5; UInt rule; UInt index; Blob guard; Blob evidence] =>
       Some (R.Guard rule index guard evidence)
+  | Tuple [UInt 6; UInt rule; UInt index; proof] =>
+      option_map (R.JudgmentProof rule index) (decode_judgment_proof proof)
   | _ => None end.
 
 Theorem premise_inverse : forall premise,
   decode_premise (encode_premise premise) = Some premise.
 Proof.
-  destruct premise; cbn -[encode_opcode decode_opcode]; try reflexivity.
-  rewrite opcode_inverse.
-  repeat rewrite (decode_all_map _ _ Blob decode_blob blob_inverse).
-  reflexivity.
+  destruct premise;
+    cbn -[encode_opcode decode_opcode encode_judgment_proof decode_judgment_proof];
+    try reflexivity.
+  - rewrite opcode_inverse.
+    repeat rewrite (decode_all_map _ _ Blob decode_blob blob_inverse).
+    reflexivity.
+  - now rewrite judgment_proof_inverse.
 Qed.
 
 Definition encode_step step := Tuple [UInt (R.step_rule step); Blob (R.step_before step);
@@ -224,10 +294,21 @@ Proof. reflexivity. Qed.
 Example extra_premise_field_is_refused :
   decode_premise (Tuple [UInt 0; UInt 0; UInt 0; UInt 0]) = None.
 Proof. reflexivity. Qed.
+Example old_judgment_tag_is_stable :
+  encode_premise (R.Judgment 1 2 3 4 5) =
+    Tuple [UInt 2; UInt 1; UInt 2; UInt 3; UInt 4; UInt 5].
+Proof. reflexivity. Qed.
+Example judgment_proof_tag_is_distinct :
+  decode_premise (Tuple [UInt 6; UInt 0; UInt 0; Tuple []]) = None.
+Proof. reflexivity. Qed.
 
 End SemanticReceiptWire.
 
 Print Assumptions SemanticReceiptWire.opcode_inverse.
+Print Assumptions SemanticReceiptWire.option_nat_inverse.
+Print Assumptions SemanticReceiptWire.judgment_proof_step_inverse.
+Print Assumptions SemanticReceiptWire.judgment_proof_inverse.
+Print Assumptions SemanticReceiptWire.judgment_proof_encoding_is_injective.
 Print Assumptions SemanticReceiptWire.premise_inverse.
 Print Assumptions SemanticReceiptWire.step_inverse.
 Print Assumptions SemanticReceiptWire.hop_inverse.
@@ -244,3 +325,5 @@ Print Assumptions SemanticReceiptWire.result_encoding_is_injective.
 Print Assumptions SemanticReceiptWire.absent_grade_is_not_zero_grade.
 Print Assumptions SemanticReceiptWire.unknown_premise_tag_is_refused.
 Print Assumptions SemanticReceiptWire.extra_premise_field_is_refused.
+Print Assumptions SemanticReceiptWire.old_judgment_tag_is_stable.
+Print Assumptions SemanticReceiptWire.judgment_proof_tag_is_distinct.

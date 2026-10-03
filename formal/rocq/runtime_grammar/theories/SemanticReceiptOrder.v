@@ -49,15 +49,85 @@ Proof.
   apply (f_equal W.decode_effect) in E. rewrite !W.effect_inverse in E. congruence.
 Qed.
 
+Definition unit_compare (_ _ : unit) := Eq.
+Lemma unit_laws : L.Laws unit_compare.
+Proof.
+  constructor.
+  - intros [] []; split; reflexivity.
+  - intros [] []; reflexivity.
+  - intros [] [] [] c H1 H2; exact H1.
+Qed.
+
+Definition option_nat_view coordinate : (unit + nat)%type :=
+  match coordinate with None => inl tt | Some value => inr value end.
+Definition option_nat_fields_compare := unit_compare <|> Nat.compare.
+Definition option_nat_compare a b :=
+  option_nat_fields_compare (option_nat_view a) (option_nat_view b).
+Lemma option_nat_view_injective : forall a b,
+  option_nat_view a = option_nat_view b -> a = b.
+Proof. destruct a, b; cbn [option_nat_view]; intro H; inversion H; subst; reflexivity. Qed.
+Lemma option_nat_laws : L.Laws option_nat_compare.
+Proof.
+  apply (L.injective_view_laws _ _ option_nat_view option_nat_fields_compare);
+    [apply L.sum_laws; [exact unit_laws | exact L.natural_laws] |
+     exact option_nat_view_injective].
+Qed.
+
+Definition judgment_proof_step_view step :=
+  (R.proof_activation step, R.proof_rule step,
+   R.proof_parent_activation step, R.proof_premise_index step).
+Definition judgment_proof_step_fields_compare :=
+  Nat.compare <+> Nat.compare <+> option_nat_compare <+> option_nat_compare.
+Definition judgment_proof_step_compare a b :=
+  judgment_proof_step_fields_compare
+    (judgment_proof_step_view a) (judgment_proof_step_view b).
+Lemma judgment_proof_step_view_injective : forall a b,
+  judgment_proof_step_view a = judgment_proof_step_view b -> a = b.
+Proof. destruct a, b; cbn [judgment_proof_step_view]; intro H; inversion H; subst; reflexivity. Qed.
+Lemma judgment_proof_step_laws : L.Laws judgment_proof_step_compare.
+Proof.
+  apply (L.injective_view_laws _ _ judgment_proof_step_view
+    judgment_proof_step_fields_compare); [|exact judgment_proof_step_view_injective].
+  unfold judgment_proof_step_fields_compare.
+  repeat first [apply L.pair_laws | exact L.natural_laws | exact option_nat_laws].
+Qed.
+
+Definition judgment_proof_view proof :=
+  (R.proof_language proof, R.proof_theory proof, R.proof_image proof,
+   R.proof_judgment proof, R.proof_arguments proof, R.proof_steps proof,
+   R.proof_work proof).
+Definition judgment_proof_fields_compare :=
+  bytes_compare <+> bytes_compare <+> bytes_compare <+> Nat.compare <+>
+  list_compare bytes_compare <+> list_compare judgment_proof_step_compare <+>
+  Nat.compare.
+Definition judgment_proof_compare a b :=
+  judgment_proof_fields_compare (judgment_proof_view a) (judgment_proof_view b).
+Lemma judgment_proof_view_injective : forall a b,
+  judgment_proof_view a = judgment_proof_view b -> a = b.
+Proof. destruct a, b; cbn [judgment_proof_view]; intro H; inversion H; subst; reflexivity. Qed.
+Lemma judgment_proof_laws : L.Laws judgment_proof_compare.
+Proof.
+  apply (L.injective_view_laws _ _ judgment_proof_view
+    judgment_proof_fields_compare); [|exact judgment_proof_view_injective].
+  unfold judgment_proof_fields_compare, bytes_compare.
+  repeat first [apply L.pair_laws | apply L.list_laws |
+    exact L.natural_laws | exact judgment_proof_step_laws].
+Qed.
+
+Theorem judgment_proof_comparison_is_exact : forall a b,
+  judgment_proof_compare a b = Eq <-> a = b.
+Proof. apply (L.comparison_eq judgment_proof_laws). Qed.
+
 Definition FreshFields := (nat * nat)%type.
 Definition TransitionFields := (nat * nat * nat)%type.
 Definition JudgmentFields := (nat * nat * nat * nat * nat)%type.
 Definition ForAllFields := (nat * nat * nat)%type.
 Definition IntrinsicFields := (nat * nat * nat * list R.Bytes * list R.Bytes * nat)%type.
 Definition GuardFields := (nat * nat * R.Bytes * R.Bytes)%type.
+Definition JudgmentProofFields := (nat * nat * R.JudgmentProofWitness)%type.
 Definition PremiseFields :=
   (FreshFields + (TransitionFields + (JudgmentFields + (ForAllFields +
-    (IntrinsicFields + GuardFields)))))%type.
+    (IntrinsicFields + (GuardFields + JudgmentProofFields))))))%type.
 
 Definition premise_view premise : PremiseFields := match premise with
   | R.Freshness rule index => inl (rule, index)
@@ -66,7 +136,10 @@ Definition premise_view premise : PremiseFields := match premise with
   | R.ForAll rule index elements => inr (inr (inr (inl (rule, index, elements))))
   | R.Intrinsic rule index opcode inputs outputs work =>
       inr (inr (inr (inr (inl (rule, index, opcode_key opcode, inputs, outputs, work)))))
-  | R.Guard rule index guard evidence => inr (inr (inr (inr (inr (rule, index, guard, evidence)))))
+  | R.Guard rule index guard evidence =>
+      inr (inr (inr (inr (inr (inl (rule, index, guard, evidence))))))
+  | R.JudgmentProof rule index proof =>
+      inr (inr (inr (inr (inr (inr (rule, index, proof))))))
   end.
 
 Definition premise_fields_compare :=
@@ -76,12 +149,14 @@ Definition premise_fields_compare :=
   (Nat.compare <+> Nat.compare <+> Nat.compare) <|>
   (Nat.compare <+> Nat.compare <+> Nat.compare <+> list_compare bytes_compare <+>
     list_compare bytes_compare <+> Nat.compare) <|>
-  (Nat.compare <+> Nat.compare <+> bytes_compare <+> bytes_compare).
+  ((Nat.compare <+> Nat.compare <+> bytes_compare <+> bytes_compare) <|>
+   (Nat.compare <+> Nat.compare <+> judgment_proof_compare)).
 
 Lemma premise_fields_laws : L.Laws premise_fields_compare.
 Proof.
   unfold premise_fields_compare, bytes_compare.
-  repeat first [apply L.sum_laws | apply L.pair_laws | apply L.list_laws | exact L.natural_laws].
+  repeat first [apply L.sum_laws | apply L.pair_laws | apply L.list_laws |
+    exact L.natural_laws | exact judgment_proof_laws].
 Qed.
 
 Lemma premise_view_preserves_wire : forall a b,
@@ -106,14 +181,9 @@ Proof.
     [exact premise_fields_laws | exact premise_view_injective].
 Qed.
 
-Definition unit_compare (_ _ : unit) := Eq.
-Lemma unit_laws : L.Laws unit_compare.
-Proof.
-  constructor.
-  - intros [] []; split; reflexivity.
-  - intros [] []; reflexivity.
-  - intros [] [] [] c H1 H2; exact H1.
-Qed.
+Theorem premise_comparison_retains_full_judgment_proof : forall a b,
+  premise_compare a b = Eq <-> a = b.
+Proof. apply (L.comparison_eq premise_laws). Qed.
 
 Definition resource_view resource : (unit + (nat * R.Bytes * R.Bytes))%type :=
   match resource with
@@ -271,8 +341,13 @@ Qed.
 
 End SemanticReceiptOrder.
 
+Print Assumptions SemanticReceiptOrder.option_nat_laws.
+Print Assumptions SemanticReceiptOrder.judgment_proof_step_laws.
+Print Assumptions SemanticReceiptOrder.judgment_proof_laws.
+Print Assumptions SemanticReceiptOrder.judgment_proof_comparison_is_exact.
 Print Assumptions SemanticReceiptOrder.premise_view_preserves_wire.
 Print Assumptions SemanticReceiptOrder.premise_laws.
+Print Assumptions SemanticReceiptOrder.premise_comparison_retains_full_judgment_proof.
 Print Assumptions SemanticReceiptOrder.resource_laws.
 Print Assumptions SemanticReceiptOrder.step_laws.
 Print Assumptions SemanticReceiptOrder.hop_laws.
