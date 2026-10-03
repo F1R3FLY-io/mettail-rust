@@ -214,9 +214,11 @@ Fixpoint bindings_match (need_observe : bool) (table : list LiveGrant)
 Definition lookahead_v2 : nat := 2.
 
 (** The first datum of either proposed v2 request is exactly
-    [version, subject, owner-bindings].  Its surrounding ^spec-all request
-    retains (envelope, reply); ^spec-n retains (envelope, bound, reply).
-    Mode and reply are modeled separately because neither grants authority.
+    [version, subject, owner-bindings].  It travels on a distinct v2 request
+    channel, with (envelope, reply) or (envelope, bound, reply).  The legacy
+    channels retain their original subject datum, even when that datum is a
+    list beginning with the literal 2.  Mode and reply are modeled separately
+    because neither grants authority.
     A bounded mode's nat abstracts the already-admitted nonnegative integer;
     the current Rust i64 bound is not the FIPS's full uint64 range. *)
 Record RequestEnvelopeV2 := {
@@ -231,7 +233,10 @@ Inductive RequestContext :=
 
 Inductive LookaheadMode := SpecAllMode | SpecNMode (bound : nat).
 
+Inductive RequestChannel := LegacyChannel | VersionedChannel.
+
 Record LookaheadWire := {
+  wire_channel : RequestChannel;
   wire_mode : LookaheadMode;
   wire_context : RequestContext;
   wire_reply : nat
@@ -256,16 +261,19 @@ Definition admit_envelope (need_observe : bool) (table : list LiveGrant)
 
 Definition admit_request (need_observe : bool) (table : list LiveGrant)
     (request : LookaheadWire) : bool :=
-  match wire_context request with
-  | LegacySubject HostOrStaticSubject => true
-  | LegacySubject (InstalledSubject _) => false
-  | VersionedEnvelope envelope => admit_envelope need_observe table envelope
+  match wire_channel request, wire_context request with
+  | LegacyChannel, LegacySubject HostOrStaticSubject => true
+  | LegacyChannel, LegacySubject (InstalledSubject _) => false
+  | VersionedChannel, VersionedEnvelope envelope =>
+      admit_envelope need_observe table envelope
+  | _, _ => false
   end.
 
 Theorem legacy_installed_subject_is_never_authorized :
   forall need_observe table mode reply guests,
     admit_request need_observe table
-      {| wire_mode := mode;
+      {| wire_channel := LegacyChannel;
+         wire_mode := mode;
          wire_context := LegacySubject (InstalledSubject guests);
          wire_reply := reply |} = false.
 Proof. reflexivity. Qed.
@@ -273,10 +281,25 @@ Proof. reflexivity. Qed.
 Theorem legacy_host_or_static_request_is_preserved :
   forall need_observe table mode reply,
     admit_request need_observe table
-      {| wire_mode := mode;
+      {| wire_channel := LegacyChannel;
+         wire_mode := mode;
          wire_context := LegacySubject HostOrStaticSubject;
          wire_reply := reply |} = true.
 Proof. reflexivity. Qed.
+
+Theorem request_channel_separates_legacy_data_from_v2_envelopes :
+  forall need_observe table mode reply envelope,
+    admit_request need_observe table
+      {| wire_channel := LegacyChannel;
+         wire_mode := mode;
+         wire_context := VersionedEnvelope envelope;
+         wire_reply := reply |} = false /\
+    admit_request need_observe table
+      {| wire_channel := VersionedChannel;
+         wire_mode := mode;
+         wire_context := LegacySubject HostOrStaticSubject;
+         wire_reply := reply |} = false.
+Proof. intros; split; reflexivity. Qed.
 
 Lemma binding_matches_preserves_path :
   forall need_observe table guest binding,
