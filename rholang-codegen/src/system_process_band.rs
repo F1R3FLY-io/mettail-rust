@@ -172,9 +172,11 @@ pub const NATIVE_HANDLER_BAND: SystemProcessBand = SystemProcessBand {
 /// is needed for: a deterministic `body_ref` that provably cannot collide with f1r3node's own
 /// (`0..=36`, `101..=108`), with the held-fold band, or with the native-handler band.
 ///
-/// The `index` field distinguishes the two request channels (0 = `[*]`, 1 = `[n]`) and the
-/// "fingerprint" input is the ABI version string rather than a language fingerprint, because
-/// the lookahead wire is fixed for the whole tree rather than scoped to one language.
+/// The `index` field distinguishes four request channels: legacy `[*]` and
+/// `[n]` at 0 and 1, and installed-language v2 `[*]` and `[n]` at 2 and 3.
+/// Separate channels keep an envelope-shaped legacy subject ordinary data.
+/// The "fingerprint" input is an ABI version string rather than a language
+/// fingerprint, because the request wire is shared across languages.
 pub const LOOKAHEAD_BAND: SystemProcessBand = SystemProcessBand {
     name: "lookahead",
     band_id: 3,

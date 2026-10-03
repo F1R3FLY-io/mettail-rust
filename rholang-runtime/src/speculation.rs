@@ -275,6 +275,12 @@
 /// bracket, the three outcomes, trace-vs-configuration modes, resumption.
 pub mod search;
 
+/// Installed semantic-image adapter for checked guest edges in the shared BFS.
+pub(crate) mod installed_provider;
+
+/// Stack-safe structural scan of installed guest occurrences in a request.
+pub(crate) mod occurrences;
+
 /// **Stage 2 — result assembly.** A configuration reified as a process, and the
 /// three collections `x!(P)[n]` places on `x`.
 pub mod delivery;
@@ -564,10 +570,10 @@ pub struct FiredStep {
 ///
 /// The root contains the submitted process and, when distinct, the
 /// administratively-saturated initial configuration.  Every [`TraceLink`]
-/// then records both the structured rendezvous identity and the reified
-/// configuration after that COMM.  Consequently [`ReductionTrace::processes`]
-/// is the actual path from input to result; a digest is only a handle derived
-/// from that path and is never substituted for one of its nodes.
+/// then records the typed host COMM or guest rewrite identity and the reified
+/// successor configuration. [`ReductionTrace::processes`] is the configuration
+/// projection; [`ReductionTrace::public_nodes`] also places proof markers before
+/// guest successors. A digest is only a handle and never replaces a public node.
 ///
 /// Cloning is one `Arc` increment.  Materialisation and destruction are
 /// iterative, so neither operation consumes native stack in trace depth.
@@ -580,8 +586,61 @@ pub struct ReductionTrace {
 
 struct TraceLink {
     parent: Option<Arc<TraceLink>>,
-    name: RendezvousName,
+    identity: TraceStepIdentity,
     result: Par,
+}
+
+/// Exact identity of one checked guest rewrite occurrence. `receipt` is the
+/// canonical structural encoding of the complete normalization step receipt
+/// (rule, before, after, and every premise), supplied by the checked guest
+/// adapter. A digest of that receipt would lose the public proof marker.
+/// `owner` is the non-secret `installed.commitment().language_fingerprint`
+/// from the resolved sealed owner. It must never contain opaque capability,
+/// selector, or unforgeable handle bytes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GuestRewriteIdentity {
+    pub location: Vec<u32>,
+    pub owner: [u8; 32],
+    pub image: [u8; 32],
+    pub ordinal: u64,
+    pub receipt: Par,
+}
+
+impl GuestRewriteIdentity {
+    pub fn new(
+        location: Vec<u32>,
+        owner: [u8; 32],
+        image: [u8; 32],
+        ordinal: u64,
+        receipt: Par,
+    ) -> Self {
+        Self { location, owner, image, ordinal, receipt }
+    }
+}
+
+/// The host and guest edge domains are distinct even when they reach the same
+/// successor configuration. Host identities retain their existing digest path.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TraceStepIdentity {
+    HostComm(RendezvousName),
+    GuestRewrite(GuestRewriteIdentity),
+}
+
+/// The two kinds of node in a published trace. Configuration nodes retain the
+/// historical `Par` encoding; guest proof nodes encode as tagged data.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PublicTraceNode {
+    Configuration(Par),
+    GuestProofMarker(GuestRewriteIdentity),
+}
+
+impl PublicTraceNode {
+    pub fn into_par(self) -> Par {
+        match self {
+            Self::Configuration(process) => process,
+            Self::GuestProofMarker(proof) => guest_proof_marker(&proof),
+        }
+    }
 }
 
 impl ReductionTrace {
@@ -618,16 +677,37 @@ impl ReductionTrace {
     /// Extend by one fired COMM and its resulting configuration.
     pub fn extend(&self, name: RendezvousName, result: Par) -> Self {
         let digest = trace_extend_digest(&self.digest, &result);
+        self.extend_link(TraceStepIdentity::HostComm(name), result, digest)
+    }
+
+    /// Extend by one checked guest rewrite proof and its resulting configuration.
+    /// The proof marker precedes the successor in the public path, leaving the
+    /// terminal configuration as its last node.
+    pub fn extend_guest(&self, proof: GuestRewriteIdentity, result: Par) -> Self {
+        let digest = trace_extend_guest_digest(&self.digest, &proof, &result);
+        self.extend_link(TraceStepIdentity::GuestRewrite(proof), result, digest)
+    }
+
+    fn extend_link(
+        &self,
+        identity: TraceStepIdentity,
+        result: Par,
+        digest: Blake2b256Hash,
+    ) -> Self {
         Self {
             root: Arc::clone(&self.root),
-            tail: Some(Arc::new(TraceLink { parent: self.tail.clone(), name, result })),
+            tail: Some(Arc::new(TraceLink {
+                parent: self.tail.clone(),
+                identity,
+                result,
+            })),
             steps: self.steps + 1,
             digest,
         }
     }
 
-    /// Number of fired COMMs. The root process/configuration nodes do not
-    /// consume the caller's lookahead bound.
+    /// Number of fired host COMMs and guest rewrite occurrences. Root nodes do
+    /// not consume the caller's lookahead bound.
     #[inline]
     pub fn len(&self) -> usize {
         self.steps
@@ -638,13 +718,15 @@ impl ReductionTrace {
         self.steps == 0
     }
 
-    /// Deterministic handle for the complete process path.
+    /// Deterministic handle for the complete typed path. Host-only digest bytes
+    /// retain the original process-path encoding.
     #[inline]
     pub fn digest(&self) -> Blake2b256Hash {
         self.digest.clone()
     }
 
-    /// Materialise the process/configuration path in root-to-leaf order.
+    /// Materialise the configuration projection in root-to-leaf order. This
+    /// omits guest proof markers; use `public_nodes` for publication.
     pub fn processes(&self) -> Vec<Par> {
         let root_len = self.root.len();
         let mut out = vec![None; root_len + self.steps];
@@ -665,19 +747,71 @@ impl ReductionTrace {
             .collect()
     }
 
-    /// Materialise the structured scheduling choices for replay diagnostics.
-    pub fn rendezvous_names(&self) -> Vec<RendezvousName> {
+    /// Typed public trace path. A host edge contributes only its successor,
+    /// while a guest edge contributes its proof marker before its successor.
+    pub fn public_trace_nodes(&self) -> Vec<PublicTraceNode> {
+        let mut guest_count = 0;
+        let mut cursor = self.tail.as_deref();
+        while let Some(link) = cursor {
+            guest_count +=
+                usize::from(matches!(&link.identity, TraceStepIdentity::GuestRewrite(_)));
+            cursor = link.parent.as_deref();
+        }
+        let mut out = Vec::with_capacity(self.root.len() + self.steps + guest_count);
+        out.extend(
+            self.root
+                .iter()
+                .cloned()
+                .map(PublicTraceNode::Configuration),
+        );
+        let mut links = Vec::with_capacity(self.steps);
+        let mut cursor = self.tail.as_deref();
+        while let Some(link) = cursor {
+            links.push(link);
+            cursor = link.parent.as_deref();
+        }
+        for link in links.into_iter().rev() {
+            if let TraceStepIdentity::GuestRewrite(proof) = &link.identity {
+                out.push(PublicTraceNode::GuestProofMarker(proof.clone()));
+            }
+            out.push(PublicTraceNode::Configuration(link.result.clone()));
+        }
+        out
+    }
+
+    /// Encode the public path for per-branch reports and PathMap entries.
+    pub fn public_nodes(&self) -> Vec<Par> {
+        self.public_trace_nodes()
+            .into_iter()
+            .map(PublicTraceNode::into_par)
+            .collect()
+    }
+
+    /// Typed edge identities, in firing order.
+    pub fn step_identities(&self) -> Vec<TraceStepIdentity> {
         let mut out = vec![None; self.steps];
         let mut cursor = self.tail.as_deref();
         let mut index = out.len();
         while let Some(link) = cursor {
             index -= 1;
-            out[index] = Some(link.name.clone());
+            out[index] = Some(link.identity.clone());
             cursor = link.parent.as_deref();
         }
         debug_assert_eq!(index, 0);
         out.into_iter()
-            .map(|name| name.expect("every rendezvous slot is initialized"))
+            .map(|identity| identity.expect("every trace slot is initialized"))
+            .collect()
+    }
+
+    /// Materialise host scheduling choices for replay diagnostics. Guest proof
+    /// identities remain available through `step_identities`.
+    pub fn rendezvous_names(&self) -> Vec<RendezvousName> {
+        self.step_identities()
+            .into_iter()
+            .filter_map(|identity| match identity {
+                TraceStepIdentity::HostComm(name) => Some(name),
+                TraceStepIdentity::GuestRewrite(_) => None,
+            })
             .collect()
     }
 
@@ -703,7 +837,14 @@ impl ReductionTrace {
 
         let mut joined = self.clone();
         for link in links.into_iter().rev() {
-            joined = joined.extend(link.name.clone(), link.result.clone());
+            joined = match &link.identity {
+                TraceStepIdentity::HostComm(name) => {
+                    joined.extend(name.clone(), link.result.clone())
+                },
+                TraceStepIdentity::GuestRewrite(proof) => {
+                    joined.extend_guest(proof.clone(), link.result.clone())
+                },
+            };
         }
         Some(joined)
     }
@@ -753,7 +894,7 @@ impl PartialEq for ReductionTrace {
     fn eq(&self, other: &Self) -> bool {
         self.steps == other.steps
             && self.root.as_ref() == other.root.as_ref()
-            && self.rendezvous_names() == other.rendezvous_names()
+            && self.step_identities() == other.step_identities()
             && self.processes() == other.processes()
     }
 }
@@ -778,9 +919,78 @@ fn trace_extend_digest(prefix: &Blake2b256Hash, process: &Par) -> Blake2b256Hash
     Blake2b256Hash::new(&bytes)
 }
 
+const GUEST_PROOF_MARKER_DOMAIN: &str = "mettail guest rewrite proof marker v1";
+const GUEST_TRACE_DIGEST_DOMAIN: &[u8] = b"mettail guest trace link v1";
+
+/// A public, tagged proof node containing the complete canonical receipt.
+/// The marker is inserted immediately before the resulting configuration.
+fn guest_proof_marker(proof: &GuestRewriteIdentity) -> Par {
+    use models::rhoapi::Var;
+    use models::rust::utils::{new_elist_par, new_gbytearray_par, new_gint_par, new_gstring_par};
+
+    let list =
+        |nodes: Vec<Par>| new_elist_par(nodes, Vec::new(), false, None::<Var>, Vec::new(), false);
+    list(vec![
+        new_gstring_par(GUEST_PROOF_MARKER_DOMAIN.to_string(), Vec::new(), false),
+        list(
+            proof
+                .location
+                .iter()
+                .map(|index| new_gint_par(i64::from(*index), Vec::new(), false))
+                .collect(),
+        ),
+        new_gbytearray_par(proof.owner.to_vec(), Vec::new(), false),
+        new_gbytearray_par(proof.image.to_vec(), Vec::new(), false),
+        new_gbytearray_par(proof.ordinal.to_le_bytes().to_vec(), Vec::new(), false),
+        proof.receipt.clone(),
+    ])
+}
+
+fn trace_extend_guest_digest(
+    prefix: &Blake2b256Hash,
+    proof: &GuestRewriteIdentity,
+    result: &Par,
+) -> Blake2b256Hash {
+    use prost::Message;
+
+    let marker = guest_proof_marker(proof).encode_to_vec();
+    let body = result.encode_to_vec();
+    let mut bytes = Vec::with_capacity(
+        GUEST_TRACE_DIGEST_DOMAIN.len() + 32 + 8 + marker.len() + 8 + body.len(),
+    );
+    bytes.extend_from_slice(GUEST_TRACE_DIGEST_DOMAIN);
+    bytes.extend_from_slice(&prefix.bytes());
+    bytes.extend_from_slice(&(marker.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&marker);
+    bytes.extend_from_slice(&(body.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&body);
+    Blake2b256Hash::new(&bytes)
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // How a branch ended — and the handle that makes truncation resumable
 // ══════════════════════════════════════════════════════════════════════════
+
+/// One exact installed guest slot in a composite speculative configuration.
+/// `binding_index` selects the checked, sealed request binding; it is not a
+/// caller-supplied owner token. The provider re-admits `value` against that
+/// binding and verifies `exact_key` after every host COMM or guest rewrite.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GuestSlotState {
+    pub binding_index: usize,
+    pub value: Par,
+    pub exact_key: Vec<u8>,
+}
+
+/// Guest half of a retained composite state. `public_configuration` is the
+/// canonical reification of the host snapshot together with these slots, made
+/// by the installed provider after live checks. Search never edits a host
+/// `HotStoreState` to simulate a guest rewrite.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckedGuestConfiguration {
+    pub slots: Vec<GuestSlotState>,
+    pub public_configuration: Par,
+}
 
 /// A **handle to a retained configuration** — the FIPS leaf, and what a
 /// truncated branch returns.
@@ -790,16 +1000,15 @@ fn trace_extend_digest(prefix: &Blake2b256Hash, process: &Par) -> Blake2b256Hash
 /// nor a datum's `Produce` source; a branch resumed from a reified process would
 /// therefore mint different unforgeable names than the branch that was
 /// truncated, and the resumption would not be a continuation of anything. The
-/// `HotStoreState` keeps all three.
-///
-/// Reification remains available *as an operation for inspection* — it is the
-/// `PathMap` stage's, because the shape it must produce is the one the FIPS's
-/// own pattern matches against (`let @{=ret!(squared) | _} <- trace.last()`),
-/// which is a decision about the leaf encoding rather than about the mechanism.
+/// `HotStoreState` keeps all three. Installed branches also retain their exact
+/// guest slots and the matching public composite configuration.
 #[derive(Clone, Debug)]
 pub struct ResumableBranch {
     /// The retained configuration. `SpeculativeSandbox::resume` installs it.
     pub state: SpeculativeState,
+    /// Exact installed guest slots and canonical composite reification. `None`
+    /// preserves the historical host-only handle shape and bytes.
+    pub guest: Option<CheckedGuestConfiguration>,
     /// The trace that produced it — the sequence of scheduling choices, in
     /// order. This is what the FIPS keys its `PathMap`s by.
     pub trace: ReductionTrace,
@@ -1496,7 +1705,7 @@ impl SpeculativeSandbox {
         let state = self.snapshot();
         match frontier {
             0 => BranchOutcome::Quiescent { state, trace },
-            _ => BranchOutcome::Truncated(ResumableBranch { state, trace, frontier }),
+            _ => BranchOutcome::Truncated(ResumableBranch { state, guest: None, trace, frontier }),
         }
     }
 
@@ -1876,6 +2085,7 @@ pub(crate) mod publication_tests {
 mod reduction_trace_tests {
     use super::*;
     use models::rust::utils::new_gint_par;
+    use prost::Message;
 
     fn name(index: usize) -> RendezvousName {
         RendezvousName {
@@ -1899,6 +2109,72 @@ mod reduction_trace_tests {
         assert_eq!(trace.len(), 2, "the bound counts COMM transitions");
         assert_eq!(trace.processes(), vec![input, initial, first, second]);
         assert_eq!(trace.rendezvous_names(), vec![name(0), name(1)]);
+        assert_eq!(trace.public_nodes(), trace.processes(), "host-only public bytes are unchanged");
+        let host_prefix = ReductionTrace::from_input_and_configuration(
+            new_gint_par(0, Vec::new(), false),
+            new_gint_par(1, Vec::new(), false),
+        );
+        let expected = trace_extend_digest(
+            &trace_extend_digest(&host_prefix.digest(), &new_gint_par(2, Vec::new(), false)),
+            &new_gint_par(3, Vec::new(), false),
+        );
+        assert_eq!(trace.digest(), expected, "host digest folding stays byte-for-byte intact");
+    }
+
+    fn guest(proof: u8) -> GuestRewriteIdentity {
+        GuestRewriteIdentity::new(
+            vec![0, 2],
+            [3; 32],
+            [4; 32],
+            proof as u64,
+            new_gint_par(i64::from(proof), Vec::new(), false),
+        )
+    }
+
+    #[test]
+    fn distinct_guest_proofs_of_one_target_have_distinct_public_paths_and_handles() {
+        let terminal = new_gint_par(7, Vec::new(), false);
+        let root = ReductionTrace::from_input_and_configuration(
+            new_gint_par(0, Vec::new(), false),
+            new_gint_par(1, Vec::new(), false),
+        );
+        let first = root.extend_guest(guest(10), terminal.clone());
+        let second = root.extend_guest(guest(11), terminal.clone());
+        assert_eq!(first.processes(), second.processes(), "the target is intentionally equal");
+        assert_ne!(first, second, "typed proof identity survives process equality");
+        assert_ne!(
+            first.digest(),
+            second.digest(),
+            "guest proof material enters a separate digest domain"
+        );
+        assert_ne!(
+            first
+                .public_nodes()
+                .iter()
+                .map(Message::encode_to_vec)
+                .collect::<Vec<_>>(),
+            second
+                .public_nodes()
+                .iter()
+                .map(Message::encode_to_vec)
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(first.public_nodes().last(), Some(&terminal));
+        assert_eq!(second.public_nodes().last(), Some(&terminal));
+        assert_eq!(first.public_nodes().len(), first.processes().len() + 1);
+        assert!(matches!(
+            first.public_trace_nodes().as_slice(),
+            [PublicTraceNode::Configuration(_), PublicTraceNode::Configuration(_),
+             PublicTraceNode::GuestProofMarker(proof), PublicTraceNode::Configuration(_)]
+                if proof == &guest(10)
+        ));
+        let joined = root
+            .concatenate(
+                &ReductionTrace::from_process(new_gint_par(1, Vec::new(), false))
+                    .extend_guest(guest(10), terminal),
+            )
+            .expect("matching boundary");
+        assert_eq!(joined, first, "resumption retains the guest proof edge");
     }
 
     #[test]

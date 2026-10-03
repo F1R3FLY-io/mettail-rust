@@ -21,9 +21,9 @@
 //! | [`truncated`](LookaheadResponse::truncated) | `SPEC_TRUNCATED_CHANNEL` — `[trace, handle]` per branch |
 //! | [`error`](LookaheadResponse::error) | `SPEC_ERR_CHANNEL` — a typed *request*-level refusal, distinct from a branch failure |
 //!
-//! A trace rides the wire as an `EList` containing the complete root-to-leaf
-//! process/configuration sequence: input, saturated initial configuration, and
-//! every reified successor. A handle is the 32-byte [`delivery::trace_digest`]
+//! A trace rides the wire as an `EList`: input, saturated initial configuration,
+//! and each successor, with a proof marker immediately before every guest
+//! successor. A handle is the 32-byte [`delivery::trace_digest`]
 //! of that whole sequence, which is also the key
 //! [`LookaheadService::resume`] takes back.
 //!
@@ -57,6 +57,8 @@
 //! service that charged an argument it was handed would be a second place cost
 //! is decided.
 
+use std::sync::Arc;
+
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::Par;
 use models::rhoapi::Var;
@@ -65,11 +67,15 @@ use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::RuntimeBudget;
 use rholang::rust::interpreter::system_processes::Definition;
 
+use crate::language_install::RholangLanguageRuntime;
+
 use super::delivery::{reify, resting_on, trace_digest, ReificationError, SpeculationDelivery};
+use super::installed_provider::InstalledCheckedGuestProvider;
 use super::search::{
     AbortedLeaf, ErrorCode, Exploration, Explorer, Lookahead, QuiescentLeaf, TraceMode,
     TruncatedLeaf,
 };
+use super::server::AdmittedLookaheadBinding;
 #[cfg(test)]
 use super::RendezvousName;
 use super::{ReductionTrace, ResumableBranch, SpeculationError, SpeculativeSandbox};
@@ -88,6 +94,9 @@ pub enum LeafProjection {
     RestingOn(Par),
     /// The reified terminal configuration as a process — the FIPS's own leaf.
     Configuration,
+    /// The normal-form term of a directly submitted, checked root FLT. The
+    /// complete composite configuration still remains in the public trace.
+    InstalledGuestRoot,
 }
 
 impl LeafProjection {
@@ -98,10 +107,19 @@ impl LeafProjection {
     }
 
     /// Apply the projection to one configuration.
-    fn apply(&self, state: &super::SpeculativeState) -> Result<Vec<Par>, ReificationError> {
+    fn apply(&self, leaf: &QuiescentLeaf) -> Result<Vec<Par>, ReificationError> {
         match self {
-            LeafProjection::RestingOn(channel) => Ok(resting_on(state, channel)),
-            LeafProjection::Configuration => Ok(vec![reify(state)?]),
+            LeafProjection::RestingOn(channel) => Ok(resting_on(&leaf.state, channel)),
+            LeafProjection::Configuration => match &leaf.guest {
+                Some(guest) => Ok(vec![guest.public_configuration.clone()]),
+                None => Ok(vec![reify(&leaf.state)?]),
+            },
+            LeafProjection::InstalledGuestRoot => match &leaf.guest {
+                Some(guest) if guest.slots.len() == 1 && guest.slots[0].binding_index == 0 => {
+                    Ok(vec![guest.slots[0].value.clone()])
+                },
+                _ => Err(ReificationError::InvalidInstalledGuestRoot),
+            },
         }
     }
 }
@@ -136,6 +154,12 @@ pub struct LookaheadRequest {
     /// any. Speculation over a language's terms needs them for the same reason
     /// ordinary execution does.
     pub definitions: Vec<Definition>,
+    /// Installed FLT occurrences admitted against the live capability table.
+    /// This is owned checked context, never the caller's wire claims.
+    pub(crate) installed_bindings: Vec<AdmittedLookaheadBinding>,
+    /// The live directory used to revalidate each installed owner at every
+    /// guest step and before publication; snapshots alone are not authority.
+    pub(crate) installed_runtime: Option<Arc<RholangLanguageRuntime>>,
 }
 
 impl LookaheadRequest {
@@ -149,6 +173,8 @@ impl LookaheadRequest {
             projection: LeafProjection::Configuration,
             trace_mode: TraceMode::default(),
             definitions: Vec::new(),
+            installed_bindings: Vec::new(),
+            installed_runtime: None,
         }
     }
 
@@ -175,6 +201,16 @@ impl LookaheadRequest {
         self.definitions = definitions;
         self
     }
+
+    pub(crate) fn with_installed_bindings(
+        mut self,
+        runtime: Arc<RholangLanguageRuntime>,
+        bindings: Vec<AdmittedLookaheadBinding>,
+    ) -> Self {
+        self.installed_bindings = bindings;
+        self.installed_runtime = Some(runtime);
+        self
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -185,7 +221,7 @@ impl LookaheadRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BranchReport {
     /// The wire form: the two-element `EList` `[trace, [term…]]` — ready to be
-    /// published as one datum. The trace is its own `EList` of actual processes and
+    /// published as one datum. The trace is its own `EList` of public path nodes and
     /// the projected terms are their own `EList` **nested inside** it; a
     /// consumer therefore destructures `[trace, terms]` and indexes `terms`.
     ///
@@ -292,11 +328,27 @@ impl LookaheadService {
             projection,
             trace_mode,
             definitions,
+            installed_bindings,
+            installed_runtime,
         } = request;
         let sandbox = SpeculativeSandbox::with_definitions(definitions).await?;
         sandbox.fund_from(host);
         let program = prelude.append(subject);
-        let mut explorer = Explorer::with_mode(&sandbox, trace_mode);
+        let mut explorer = if installed_bindings.is_empty() {
+            Explorer::with_mode(&sandbox, trace_mode)
+        } else {
+            let runtime = installed_runtime.ok_or_else(|| {
+                SpeculationError::Bootstrap(
+                    "installed lookahead bindings have no live authority directory".into(),
+                )
+            })?;
+            let provider = InstalledCheckedGuestProvider::new(
+                runtime,
+                installed_bindings,
+                host.clone(),
+            )?;
+            Explorer::with_checked_guest_provider(&sandbox, provider)
+        };
         let exploration = explorer.explore(program, rand, lookahead).await?;
         Self::respond(&sandbox, exploration, &projection)
     }
@@ -383,7 +435,7 @@ impl LookaheadService {
         leaf: &QuiescentLeaf,
         projection: &LeafProjection,
     ) -> Result<BranchReport, ReificationError> {
-        let terms = projection.apply(&leaf.state)?;
+        let terms = projection.apply(leaf)?;
         let digest = trace_digest(&leaf.trace).bytes();
         let mut handle = [0u8; 32];
         // A `Blake2b256Hash` is 32 bytes by construction; the copy is bounded by
@@ -406,9 +458,9 @@ fn ground_list(elements: Vec<Par>) -> Par {
     new_elist_par(elements, Vec::new(), false, None::<Var>, Vec::new(), false)
 }
 
-/// A trace as the complete root-to-leaf process/configuration sequence.
+/// A trace as the complete root-to-leaf public path, including guest proofs.
 fn trace_list(trace: &ReductionTrace) -> Par {
-    ground_list(trace.processes())
+    ground_list(trace.public_nodes())
 }
 
 /// `[left, right]` — the two-element list every report datum is.
@@ -455,6 +507,7 @@ fn request_error(code: ErrorCode, message: &str) -> Par {
 mod wire_shape_tests {
     use super::*;
     use crate::observation::RENDER_BUDGET_CHARS;
+    use crate::speculation::{CheckedGuestConfiguration, GuestRewriteIdentity, GuestSlotState};
     use models::rhoapi::expr::ExprInstance;
     use prost::Message;
     use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
@@ -474,6 +527,42 @@ mod wire_shape_tests {
             trace = trace.extend(name, new_gint_par(result, Vec::new(), false));
         }
         trace
+    }
+
+    #[test]
+    fn checked_root_guest_projection_returns_the_term_not_the_composite_trace_node() {
+        let term = new_gint_par(9, Vec::new(), false);
+        let composite = new_gint_par(100, Vec::new(), false);
+        let leaf = QuiescentLeaf {
+            trace: ReductionTrace::from_process(composite.clone()),
+            state: Default::default(),
+            guest: Some(CheckedGuestConfiguration {
+                slots: vec![GuestSlotState {
+                    binding_index: 0,
+                    value: term.clone(),
+                    exact_key: vec![1],
+                }],
+                public_configuration: composite.clone(),
+            }),
+        };
+        assert_eq!(LeafProjection::InstalledGuestRoot.apply(&leaf), Ok(vec![term]));
+        assert_eq!(LeafProjection::Configuration.apply(&leaf), Ok(vec![composite]));
+
+        let mut ambiguous = leaf.clone();
+        ambiguous
+            .guest
+            .as_mut()
+            .unwrap()
+            .slots
+            .push(GuestSlotState {
+                binding_index: 1,
+                value: new_gint_par(10, Vec::new(), false),
+                exact_key: vec![2],
+            });
+        assert_eq!(
+            LeafProjection::InstalledGuestRoot.apply(&ambiguous),
+            Err(ReificationError::InvalidInstalledGuestRoot),
+        );
     }
 
     /// ★ LAYER 4, on this module's own wire shape. [`trace_list`] is what every
@@ -497,6 +586,55 @@ mod wire_shape_tests {
             trace_list(&reordered).encode_to_vec(),
             "the ORDER of the resulting configurations is the branch's identity and must survive"
         );
+    }
+
+    #[test]
+    fn report_trace_includes_guest_proof_before_terminal_configuration() {
+        let terminal = new_gint_par(8, Vec::new(), false);
+        let root = ReductionTrace::from_input_and_configuration(
+            new_gint_par(0, Vec::new(), false),
+            new_gint_par(1, Vec::new(), false),
+        );
+        let first = root.extend_guest(
+            GuestRewriteIdentity::new(
+                vec![0],
+                [2; 32],
+                [3; 32],
+                10,
+                new_gint_par(4, Vec::new(), false),
+            ),
+            terminal.clone(),
+        );
+        let second = root.extend_guest(
+            GuestRewriteIdentity::new(
+                vec![0],
+                [2; 32],
+                [3; 32],
+                11,
+                new_gint_par(5, Vec::new(), false),
+            ),
+            terminal.clone(),
+        );
+        assert_ne!(trace_list(&first).encode_to_vec(), trace_list(&second).encode_to_vec());
+        let first_list = trace_list(&first);
+        let Some(ExprInstance::EListBody(list)) = first_list
+            .exprs
+            .first()
+            .and_then(|expr| expr.expr_instance.as_ref())
+        else {
+            panic!("report trace is a list");
+        };
+        assert_eq!(list.ps.len(), 4);
+        let Some(ExprInstance::EListBody(marker)) = list.ps[2]
+            .exprs
+            .first()
+            .and_then(|expr| expr.expr_instance.as_ref())
+        else {
+            panic!("guest proof marker is a tagged list");
+        };
+        assert_eq!(marker.ps.len(), 6);
+        assert_eq!(marker.ps[5], new_gint_par(4, Vec::new(), false));
+        assert_eq!(list.ps.last(), Some(&terminal));
     }
 
     /// The request-refusal datum's free text is bounded — the `^spec-err` half of the contract

@@ -1487,9 +1487,14 @@ enum Kont<'a> {
         env: EnvId,
     },
     /// `x!(P)[*]` — an unbounded speculation request over `(channel, payload)`.
-    SpecAll,
+    SpecAll {
+        binding: Option<Box<crate::lookahead::LookaheadOwnerBinding>>,
+    },
     /// `x!(P)[n]` — a bounded speculation request over `(channel, payload)`.
-    SpecN { bound: i64 },
+    SpecN {
+        bound: i64,
+        binding: Option<Box<crate::lookahead::LookaheadOwnerBinding>>,
+    },
     /// `lower_body_lifting_folds`' trampoline: `new(ret){ fold!(operand, ret) | for(r <- ret){ … } }`
     /// over `(operand, for_body)`.
     ///
@@ -1584,7 +1589,7 @@ impl Kont<'_> {
                 }
             },
             Kont::New { .. } => 1,
-            Kont::SpecAll => 2,
+            Kont::SpecAll { .. } => 2,
             Kont::SpecN { .. } => 2,
             Kont::HeldFold { .. } => 2,
             Kont::InstalledFlt { .. } => 1,
@@ -1631,7 +1636,7 @@ impl Kont<'_> {
             Kont::BagLit(_) => "BagLit",
             Kont::PathmapLit { .. } => "PathmapLit",
             Kont::New { .. } => "New",
-            Kont::SpecAll => "SpecAll",
+            Kont::SpecAll { .. } => "SpecAll",
             Kont::SpecN { .. } => "SpecN",
             Kont::HeldFold { .. } => "HeldFold",
             Kont::InstalledFlt { .. } => "InstalledFlt",
@@ -1940,6 +1945,9 @@ struct Drive<'a> {
     stacks: Stacks<'a>,
     /// One cell per receive bind that carries a `lower_pattern_proc` walk.
     pattern_states: Vec<PatternState>,
+    /// The lexical selector of each staged FLT result. A lookahead over that result
+    /// can retain the capability even though its source FLT was replaced by `*result`.
+    direct_flt_results: HashMap<FreeVar<String>, Arc<FltNode>>,
     /// A fresh lexical environment, materialised at most once. Public lowering
     /// retains its root options/resolver/admission policy; the explicit harness
     /// keeps the recursive oracle's `BoundEnv::new()` convention. Neither case
@@ -2092,6 +2100,7 @@ fn drive_machine_preparing(
         envs: EnvArena::new(root_env),
         stacks: Stacks::new(seed_job, reservation)?,
         pattern_states: Vec::new(),
+        direct_flt_results: HashMap::new(),
         empty_env: None,
         source_preparation,
     };
@@ -2234,13 +2243,19 @@ impl<'a> Drive<'a> {
             // ★ THE LOOKAHEAD ARMS — `x!(P)[*]` and `x!(P)[n]`. These do NOT lower to a send:
             // the lowering emits a speculation REQUEST and no send at all.
             Proc::PLookaheadAll(subject) => {
-                let (channel, payload) = self.lookahead_operand(subject.as_ref(), env)?;
-                self.push_children(Kont::SpecAll, [channel, payload])?;
+                let (channel, payload, binding) = self.lookahead_operand(subject.as_ref(), env)?;
+                self.push_children(
+                    Kont::SpecAll { binding: binding.map(Box::new) },
+                    [channel, payload],
+                )?;
             },
             Proc::PLookahead(subject, bound) => {
-                let (channel, payload) = self.lookahead_operand(subject.as_ref(), env)?;
+                let (channel, payload, binding) = self.lookahead_operand(subject.as_ref(), env)?;
                 let bound = lookahead_bound(bound.as_ref())?;
-                self.push_children(Kont::SpecN { bound }, [channel, payload])?;
+                self.push_children(
+                    Kont::SpecN { bound, binding: binding.map(Box::new) },
+                    [channel, payload],
+                )?;
             },
             // `for(...)` receive. Each `;`-separated row nests as the continuation of the
             // previous one.
@@ -2575,7 +2590,8 @@ impl<'a> Drive<'a> {
         self.push_children(Kont::Method { name, argc: arguments.len() }, children)
     }
 
-    /// `lower_lookahead_operand` — the `(channel, payload)` split of `x!(P)[*]`'s operand.
+    /// `lower_lookahead_operand` — the `(channel, payload)` split of `x!(P)[*]`'s operand,
+    /// plus the lexical capability when the payload is exactly one staged FLT result.
     ///
     /// Returns the two child JOBS rather than two `Par`s: the operand's halves are ordinary
     /// subtrees and must be lowered by the machine, not by a nested traversal.
@@ -2583,7 +2599,10 @@ impl<'a> Drive<'a> {
         &mut self,
         operand: &'a Proc,
         env: EnvId,
-    ) -> Result<(Job<'a>, Job<'a>), RholangAstLowerError> {
+    ) -> Result<
+        (Job<'a>, Job<'a>, Option<crate::lookahead::LookaheadOwnerBinding>),
+        RholangAstLowerError,
+    > {
         // A RECEIVE is diagnosed before expansion, not after. `desugar_surface_sugar_node`
         // rewrites a `!?`-carrying `for` into the `new`-scoped `send | receive` it denotes, and
         // that `new` would then be reported by the catch-all as "a non-send process" — true,
@@ -2595,10 +2614,16 @@ impl<'a> Drive<'a> {
         let operand = self.desugar_head(operand)?;
         match operand {
             Proc::POutput(channel, payload) => {
-                Ok((Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)))
+                let binding = self.direct_flt_lookahead_binding(payload.as_ref(), env)?;
+                Ok((Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env), binding))
             },
             Proc::POutputShort(channel_proc, payload) => {
-                Ok((Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)))
+                let binding = self.direct_flt_lookahead_binding(payload.as_ref(), env)?;
+                Ok((
+                    Job::Proc(channel_proc.as_ref(), env),
+                    Job::Proc(payload.as_ref(), env),
+                    binding,
+                ))
             },
             Proc::PPersistOutput(..) | Proc::PPersistOutputShort(..) => {
                 Err(RholangAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"))
@@ -2613,6 +2638,34 @@ impl<'a> Drive<'a> {
             },
             _ => Err(RholangAstLowerError::LookaheadOperandNotASend("a non-send process")),
         }
+    }
+
+    /// Only the synthetic drop inserted at a direct FLT payload site carries
+    /// provenance. Received values and composite payloads have no lexical owner
+    /// binding available here.
+    fn direct_flt_lookahead_binding(
+        &self,
+        payload: &Proc,
+        env: EnvId,
+    ) -> Result<Option<crate::lookahead::LookaheadOwnerBinding>, RholangAstLowerError> {
+        let Proc::PDrop(name) = payload else {
+            return Ok(None);
+        };
+        let Name::NVar(OrdVar(Var::Free(result))) = name.as_ref() else {
+            return Ok(None);
+        };
+        let Some(node) = self.direct_flt_results.get(result) else {
+            return Ok(None);
+        };
+        Ok(Some(crate::lookahead::LookaheadOwnerBinding {
+            path: Vec::new(),
+            handle: lower_proc_var(&node.selector, self.env(env))?,
+            expected_category: node
+                .stage(FltPolarity::PositiveConstruction)
+                .category
+                .to_owned(),
+            context: 0,
+        }))
     }
 
     /// `lower_name` / `lower_drop`.
@@ -2699,8 +2752,13 @@ impl<'a> Drive<'a> {
                 .channel(0, crate::language_install::LANGUAGE_FLT_CONSTRUCT_ABI_V1);
             let env_for = self.derive_environment(
                 env_new,
-                EnvironmentDerivation::Binders(&[Binder(result_var)]),
+                EnvironmentDerivation::Binders(&[Binder(result_var.clone())]),
             )?;
+            self.stacks.charge_storage(1, 1)?;
+            self.direct_flt_results
+                .try_reserve(1)
+                .map_err(|_| RholangAstLowerError::ScopeArenaAllocationFailed)?;
+            self.direct_flt_results.insert(result_var, node.clone());
             self.push_children(
                 Kont::InstalledFlt {
                     channel: Box::new(channel),
@@ -3189,17 +3247,27 @@ impl<'a> Drive<'a> {
                         .map_err(RholangAstLowerError::FreshConstruction)?,
                 )?;
             },
-            Kont::SpecAll => {
+            Kont::SpecAll { binding } => {
                 let payload = self.stacks.pop_value()?;
                 let channel = self.stacks.pop_value()?;
-                self.stacks
-                    .value(crate::lookahead::spec_all_request(payload, channel))?;
+                let request = match binding {
+                    Some(binding) => {
+                        crate::lookahead::spec_all_request_v2(payload, vec![*binding], channel)
+                    },
+                    None => crate::lookahead::spec_all_request(payload, channel),
+                };
+                self.stacks.value(request)?;
             },
-            Kont::SpecN { bound } => {
+            Kont::SpecN { bound, binding } => {
                 let payload = self.stacks.pop_value()?;
                 let channel = self.stacks.pop_value()?;
-                self.stacks
-                    .value(crate::lookahead::spec_n_request(payload, bound, channel))?;
+                let request = match binding {
+                    Some(binding) => {
+                        crate::lookahead::spec_n_request_v2(payload, bound, vec![*binding], channel)
+                    },
+                    None => crate::lookahead::spec_n_request(payload, bound, channel),
+                };
+                self.stacks.value(request)?;
             },
             // `new ret { fold!(operand, *ret) | for(@r <- ret){ … } }` — the held-fold
             // trampoline. The operand is sent to the fold contract's channel; the transformed

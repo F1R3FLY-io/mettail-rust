@@ -290,6 +290,7 @@ fn public_fresh_pattern_environment_does_not_reenable_harness() {
         stacks: Stacks::new(Job::Proc(&zero, ROOT_ENV), &mut reserve)
             .expect("scope fixture storage"),
         pattern_states: Vec::new(),
+        direct_flt_results: HashMap::new(),
         empty_env: None,
         source_preparation: SourcePreparation::Original,
     };

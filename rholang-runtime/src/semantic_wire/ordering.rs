@@ -5,12 +5,13 @@
 //! permutation reuse the design in vinary-math-ir/src/canonical.rs. No Par
 //! ordering, receipt encoding, proof deduplication or candidate pruning occurs.
 
-use super::receipt::{effect_tag, opcode_tag, premise_tag};
 use super::SemanticWireError;
+use super::receipt::{effect_tag, opcode_tag, premise_tag};
 use crate::semantic_service::SemanticServiceResult;
 use mettail_dovetail_runtime::{
-    SemanticNormalizationHopReceiptV1, SemanticNormalizationStepReceiptV1, SemanticPremiseReceipt,
-    SemanticResourceReceipt, SemanticTransitionReceipt,
+    SemanticJudgmentProofReceipt, SemanticJudgmentProofStep, SemanticNormalizationHopReceiptV1,
+    SemanticNormalizationStepReceiptV1, SemanticPremiseReceipt, SemanticResourceReceipt,
+    SemanticTransitionReceipt,
 };
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
 use std::cmp::Ordering;
@@ -70,6 +71,35 @@ impl<C: FnMut() -> bool> Comparator<'_, '_, C> {
         Ok(a.len().cmp(&b.len()))
     }
 
+    fn judgment_proof_step(
+        &mut self,
+        a: &SemanticJudgmentProofStep,
+        b: &SemanticJudgmentProofStep,
+    ) -> Result<Ordering> {
+        fields!(
+            self.scalar(a.activation, b.activation),
+            self.scalar(a.rule.0, b.rule.0),
+            self.scalar(a.parent_activation, b.parent_activation),
+            self.scalar(a.premise_index, b.premise_index)
+        )
+    }
+
+    fn judgment_proof(
+        &mut self,
+        a: &SemanticJudgmentProofReceipt,
+        b: &SemanticJudgmentProofReceipt,
+    ) -> Result<Ordering> {
+        fields!(
+            self.bytes(&a.language_fingerprint, &b.language_fingerprint),
+            self.bytes(&a.theory_fingerprint, &b.theory_fingerprint),
+            self.bytes(&a.image_fingerprint, &b.image_fingerprint),
+            self.scalar(a.judgment.0, b.judgment.0),
+            self.roster(&a.arguments, &b.arguments, |c, a, b| c.bytes(a, b)),
+            self.roster(&a.steps, &b.steps, Self::judgment_proof_step),
+            self.scalar(a.work, b.work)
+        )
+    }
+
     fn premise(
         &mut self,
         a: &SemanticPremiseReceipt,
@@ -109,6 +139,14 @@ impl<C: FnMut() -> bool> Comparator<'_, '_, C> {
                 self.scalar(aj.0, bj.0),
                 self.scalar(an, bn),
                 self.scalar(ast, bst)
+            ),
+            (
+                JudgmentProof { rule: ar, premise: ap, proof: aproof },
+                JudgmentProof { rule: br, premise: bp, proof: bproof },
+            ) => fields!(
+                self.scalar(ar.0, br.0),
+                self.scalar(ap, bp),
+                self.judgment_proof(aproof, bproof)
             ),
             (
                 ForAll { rule: ar, premise: ap, elements: ae },

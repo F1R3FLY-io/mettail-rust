@@ -25,14 +25,17 @@ use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{FltRegistry, FltResolve};
 use mettail_rholang_runtime::lookahead::{
-    spec_all_request, spec_n_request, SPEC_ALL_CHANNEL, SPEC_N_CHANNEL, SPEC_REQUEST_CHANNELS,
+    spec_all_request, spec_channel_par, spec_n_request, SPEC_ALL_CHANNEL, SPEC_ALL_V2_CHANNEL,
+    SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL, SPEC_REQUEST_CHANNELS,
 };
 use mettail_rholang_runtime::{
     lower_rholang_proc_with_resolver,
     run_normalized_par_for_oracle_and_read_runtime_value_channels, RholangAstLowerError,
 };
 use mettail_runtime::clear_var_cache;
+use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::Par;
+use models::rust::utils::{new_boundvar_par, new_gint_par, new_gstring_par};
 
 fn guest_resolver() -> Arc<dyn FltResolve> {
     Arc::new(FltRegistry::new().with_guest("lambda", Box::new(LambdaLanguage)))
@@ -56,6 +59,42 @@ fn sole_send(par: &Par) -> (Par, Par) {
     let chan = send.chan.clone().expect("a send must carry a channel");
     assert_eq!(send.data.len(), 1, "expected a unary send payload");
     (chan, send.data[0].clone())
+}
+
+/// Return request data below lexical receive and `new` scopes, including FLT trampolines.
+fn request_data(par: &Par, channel: &str) -> Vec<Vec<Par>> {
+    let mut pending = vec![par];
+    let mut found = Vec::new();
+    let channel = spec_channel_par(channel);
+    while let Some(par) = pending.pop() {
+        for send in &par.sends {
+            if send.chan.as_ref() == Some(&channel) {
+                found.push(send.data.clone());
+            }
+        }
+        for new in &par.news {
+            if let Some(body) = new.p.as_ref() {
+                pending.push(body);
+            }
+        }
+        for receive in &par.receives {
+            if let Some(body) = receive.body.as_ref() {
+                pending.push(body);
+            }
+        }
+    }
+    found
+}
+
+fn list_items(par: &Par) -> &[Par] {
+    match par
+        .exprs
+        .first()
+        .and_then(|expr| expr.expr_instance.as_ref())
+    {
+        Some(ExprInstance::EListBody(list)) => &list.ps,
+        other => panic!("expected an EList, got {other:?}"),
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -88,6 +127,69 @@ fn bounded_lookahead_lowers_to_the_bounded_speculation_request() {
         speculated,
         spec_n_request(subject, 7, channel),
         "`[7]` must lower to the `{SPEC_N_CHANNEL}` request with bound 7"
+    );
+}
+
+/// The lexical FLT selector is retained through construction's `*result` replacement.
+#[test]
+fn direct_lexical_flt_lookahead_carries_its_original_selector() {
+    let lowered = lower_ok(
+        r#"for(lambda <- @"HANDLE"){
+             @"results"!(lambda:Term`(lam x. x, lam a. a)`)[*]
+           }"#,
+    );
+    let requests = request_data(&lowered, SPEC_ALL_V2_CHANNEL);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].len(), 2);
+    let envelope = list_items(&requests[0][0]);
+    assert_eq!(envelope.len(), 3);
+    assert_eq!(envelope[0], new_gint_par(2, Vec::new(), false));
+    assert_eq!(envelope[1], new_boundvar_par(0, Vec::new(), false));
+    let bindings = list_items(&envelope[2]);
+    assert_eq!(bindings.len(), 1);
+    let binding = list_items(&bindings[0]);
+    assert_eq!(binding.len(), 4);
+    assert!(list_items(&binding[0]).is_empty(), "the direct FLT is at root path []");
+    assert_eq!(binding[1], new_boundvar_par(2, Vec::new(), false));
+    assert_eq!(binding[2], new_gstring_par("Term".into(), Vec::new(), false));
+    assert_eq!(binding[3], new_gint_par(0, Vec::new(), false));
+}
+
+#[test]
+fn bounded_direct_lexical_flt_lookahead_uses_v2() {
+    let lowered = lower_ok(
+        r#"for(lambda <- @"HANDLE"){
+             @"results"!(lambda:Term`lam x. x`)[7]
+           }"#,
+    );
+    let requests = request_data(&lowered, SPEC_N_V2_CHANNEL);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].len(), 3);
+    assert_eq!(requests[0][1], new_gint_par(7, Vec::new(), false));
+    let envelope = list_items(&requests[0][0]);
+    assert_eq!(envelope[0], new_gint_par(2, Vec::new(), false));
+    assert_eq!(list_items(&envelope[2]).len(), 1);
+}
+
+#[test]
+fn composite_payload_with_a_lexical_flt_keeps_v1() {
+    let lowered = lower_ok(
+        r#"for(lambda <- @"HANDLE"){
+             @"results"!([lambda:Term`lam x. x`])[*]
+           }"#,
+    );
+    let requests = request_data(&lowered, SPEC_ALL_CHANNEL);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].len(), 2);
+    let payload = list_items(&requests[0][0]);
+    assert_eq!(payload, [new_boundvar_par(0, Vec::new(), false)]);
+}
+
+#[test]
+fn ordinary_lookahead_keeps_the_v1_request_shape() {
+    assert_eq!(
+        lower_ok(r#"@"results"!(Nil)[*]"#),
+        spec_all_request(Par::default(), spec_channel_par("results")),
     );
 }
 

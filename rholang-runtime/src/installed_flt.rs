@@ -7,7 +7,8 @@ use dovetail::egraph::{EClassId, EGraph, EGraphConfig, ENode};
 use dovetail::key::FramedSemanticOperator;
 use mettail_ast::validation::is_reserved_reflect_label;
 use mettail_dovetail_runtime::{
-    theory_positional_native_view, ProvenSemanticRelationNormalForms, ProvenSemanticTransitions,
+    theory_positional_native_view, ProvenSemanticRelationNormalForms, ProvenSemanticRewriteSteps,
+    ProvenSemanticTransitions,
     RuntimeLiteralRef, SemanticInputDecision, SemanticInputLimits, SemanticMatchRefutation,
     SemanticMatchUndetermined, SemanticTransitionInput, TheoryPositionalNativeEncoding,
     TheoryPositionalNativeView,
@@ -743,6 +744,27 @@ impl<'a> InstalledFltAdapter<'a> {
                 .iter()
                 .map(|transition| (transition.output, transition.output_sort)),
             bundle.transitions.len(),
+            expected_sort,
+            budget,
+        )
+    }
+
+    /// Reflect every complete one-step proof occurrence, including duplicate
+    /// target terms, through the established positional reconstruction path.
+    /// No guest-specific renderer or re-parser is introduced for lookahead.
+    pub(crate) fn reflect_rewrite_steps<C: FnMut() -> bool>(
+        &self,
+        bundle: &ProvenSemanticRewriteSteps,
+        expected_sort: TheorySortId,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Vec<Par>, InstalledFltError> {
+        self.reflect_roots(
+            bundle.egraph(),
+            bundle
+                .occurrences
+                .iter()
+                .map(|occurrence| (occurrence.output, occurrence.output_sort)),
+            bundle.occurrences.len(),
             expected_sort,
             budget,
         )

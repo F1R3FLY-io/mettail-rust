@@ -529,6 +529,7 @@ fn empty_context_is_paid_once_and_cached_only_after_success() {
                 envs: EnvArena::new(&root),
                 stacks,
                 pattern_states: Vec::new(),
+                direct_flt_results: HashMap::new(),
                 empty_env: None,
                 source_preparation: SourcePreparation::Original,
             };

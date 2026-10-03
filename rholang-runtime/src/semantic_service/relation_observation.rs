@@ -325,9 +325,9 @@ fn normalize_relation<C: FnMut() -> bool>(
     );
     let proven = match decision {
         SemanticTransitionDecision::ProvenRelation(proven) => proven,
-        SemanticTransitionDecision::Proven(_) => {
+        SemanticTransitionDecision::Proven(_) | SemanticTransitionDecision::ProvenSteps(_) => {
             return Err(InstalledSemanticError::InvalidEvidence(
-                "relation returned a named action result",
+                "whole relation returned a different execution result",
             ));
         },
         SemanticTransitionDecision::Refuted(reason) => {

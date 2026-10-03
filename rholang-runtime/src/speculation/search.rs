@@ -170,8 +170,9 @@ use rholang::rust::interpreter::metering::MeteredMachine;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
 use super::{
-    content_fingerprint_digest, ReductionTrace, Rendezvous, RendezvousName, ResumableBranch,
-    SpeculationError, SpeculativeSandbox, SpeculativeState,
+    content_fingerprint_digest, CheckedGuestConfiguration, GuestRewriteIdentity, ReductionTrace,
+    Rendezvous, RendezvousName, ResumableBranch, SpeculationError, SpeculativeSandbox,
+    SpeculativeState,
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -385,6 +386,9 @@ pub struct QuiescentLeaf {
     pub trace: ReductionTrace,
     /// The terminal configuration.
     pub state: SpeculativeState,
+    /// Exact installed guest slots and canonical whole configuration, when
+    /// this leaf came from an installed mixed search.
+    pub guest: Option<CheckedGuestConfiguration>,
 }
 
 /// A branch the depth bound cut short with `E(S)` still non-empty — **neither**
@@ -581,7 +585,9 @@ impl Exploration {
     }
 
     /// The number of **distinct terminal configurations** among the successful
-    /// branches, compared by [`content_fingerprint`].
+    /// branches. Host-only configurations retain their existing store-content
+    /// fingerprint; installed configurations compare exact public composite
+    /// encodings so guest slots cannot disappear from this statistic.
     ///
     /// This is the number the non-confluence question asks: two for Ambient's
     /// open race, one for any λ term. Under
@@ -589,10 +595,23 @@ impl Exploration {
     /// construction; under [`TraceMode::EveryTrace`] it is generally smaller,
     /// and the gap is exactly the confluence of the guest.
     pub fn distinct_success_configurations(&self) -> usize {
-        let mut seen: std::collections::HashSet<Blake2b256Hash> =
+        use prost::Message;
+
+        #[derive(Hash, PartialEq, Eq)]
+        enum ConfigurationKey {
+            Host(Blake2b256Hash),
+            Installed(Vec<u8>),
+        }
+        let mut seen: std::collections::HashSet<ConfigurationKey> =
             std::collections::HashSet::with_capacity(self.success.len());
         for leaf in self.success.iter() {
-            seen.insert(content_fingerprint_digest(&leaf.state));
+            let key = match &leaf.guest {
+                Some(guest) => {
+                    ConfigurationKey::Installed(guest.public_configuration.encode_to_vec())
+                },
+                None => ConfigurationKey::Host(content_fingerprint_digest(&leaf.state)),
+            };
+            seen.insert(key);
         }
         seen.len()
     }
@@ -663,8 +682,42 @@ pub struct ExplorationStats {
 #[derive(Clone, Debug)]
 struct Node {
     state: SpeculativeState,
+    guest: Option<CheckedGuestConfiguration>,
     trace: ReductionTrace,
     sleep: SleepSet,
+}
+
+/// One checked proof occurrence returned by the installed kernel adapter.
+/// Equal successor configurations remain separate entries in this roster.
+pub(crate) struct CheckedGuestEdge {
+    pub identity: GuestRewriteIdentity,
+    pub successor: CheckedGuestConfiguration,
+}
+
+/// The installed guest side of the SAME BFS. Each call must return a complete,
+/// atomically checked roster or an error; a partial roster is never explored.
+/// The provider owns live authority checks, bounded charges, exact input
+/// re-admission and canonical composite reification. Search owns branching.
+pub(crate) trait CheckedGuestProvider: Send {
+    fn initial(
+        &mut self,
+        submitted: &Par,
+        saturated_host: &SpeculativeState,
+    ) -> Result<CheckedGuestConfiguration, SpeculationError>;
+
+    fn complete_roster(
+        &mut self,
+        host: &SpeculativeState,
+        current: &CheckedGuestConfiguration,
+    ) -> Result<Vec<CheckedGuestEdge>, SpeculationError>;
+
+    /// Re-scan and revalidate paths after a host COMM; old binding indices and
+    /// positions cannot be assumed to still name the same guest values.
+    fn after_host_comm(
+        &mut self,
+        previous: &CheckedGuestConfiguration,
+        host: &SpeculativeState,
+    ) -> Result<CheckedGuestConfiguration, SpeculationError>;
 }
 
 /// A rendezvous's index-free identity: the `Consume` content hash and the
@@ -789,6 +842,7 @@ pub fn charge_host_comms(
 pub struct Explorer<'sandbox> {
     sandbox: &'sandbox SpeculativeSandbox,
     mode: TraceMode,
+    checked_guest: Option<Box<dyn CheckedGuestProvider + 'sandbox>>,
     // ★ `Send` is not decoration. An exploration is awaited from inside the `[*]`
     // request server's system-process handler
     // ([`crate::speculation::server`]), and f1r3node requires a system process's
@@ -842,13 +896,34 @@ impl<'sandbox> Explorer<'sandbox> {
         Explorer {
             sandbox,
             mode: TraceMode::default(),
+            checked_guest: None,
             observer: None,
         }
     }
 
     /// An explorer over `sandbox` in `mode`.
     pub fn with_mode(sandbox: &'sandbox SpeculativeSandbox, mode: TraceMode) -> Self {
-        Explorer { sandbox, mode, observer: None }
+        Explorer {
+            sandbox,
+            mode,
+            checked_guest: None,
+            observer: None,
+        }
+    }
+
+    /// Add checked installed guest edges to this explorer's existing BFS.
+    /// EveryTrace is mandatory because a graph merge or independence reduction
+    /// could erase a distinct proof occurrence reaching an equal target.
+    pub(crate) fn with_checked_guest_provider(
+        sandbox: &'sandbox SpeculativeSandbox,
+        provider: impl CheckedGuestProvider + 'sandbox,
+    ) -> Self {
+        Explorer {
+            sandbox,
+            mode: TraceMode::EveryTrace,
+            checked_guest: Some(Box::new(provider)),
+            observer: None,
+        }
     }
 
     /// Attach a per-level progress observer. See [`LevelReport`], and the `Send` note on
@@ -911,15 +986,23 @@ impl<'sandbox> Explorer<'sandbox> {
             });
         }
         let root = self.sandbox.snapshot();
-        let root_process = super::delivery::reify(&root).map_err(|error| {
-            SpeculationError::Bootstrap(format!(
-                "initial trace configuration could not be reified: {error}"
-            ))
-        })?;
+        let guest = match self.checked_guest.as_mut() {
+            Some(provider) => Some(provider.initial(&input, &root)?),
+            None => None,
+        };
+        let root_process = match &guest {
+            Some(guest) => guest.public_configuration.clone(),
+            None => super::delivery::reify(&root).map_err(|error| {
+                SpeculationError::Bootstrap(format!(
+                    "initial trace configuration could not be reified: {error}"
+                ))
+            })?,
+        };
         let trace = ReductionTrace::from_input_and_configuration(input, root_process);
         self.search(
             vec![Node {
                 state: root,
+                guest,
                 trace,
                 sleep: SleepSet::new(),
             }],
@@ -951,9 +1034,28 @@ impl<'sandbox> Explorer<'sandbox> {
         let mut frontier = Vec::with_capacity(handles.len());
         let mut deepest = 0u64;
         for handle in handles.iter() {
+            let guest = match (&mut self.checked_guest, &handle.guest) {
+                (Some(provider), Some(guest)) => {
+                    let checked = provider.after_host_comm(guest, &handle.state)?;
+                    if checked != *guest {
+                        return Err(SpeculationError::Bootstrap(
+                            "resumed guest slots or configuration changed during live revalidation"
+                                .into(),
+                        ));
+                    }
+                    Some(checked)
+                },
+                (None, None) => None,
+                _ => {
+                    return Err(SpeculationError::Bootstrap(
+                        "guest resumption requires its checked installed provider".into(),
+                    ))
+                },
+            };
             deepest = deepest.max(handle.trace.len() as u64);
             frontier.push(Node {
                 state: handle.state.clone(),
+                guest,
                 trace: handle.trace.clone(),
                 // A resumed handle sleeps on nothing: the reduction that
                 // truncated it is over, and the branch is free to fire anything
@@ -1049,6 +1151,7 @@ impl<'sandbox> Explorer<'sandbox> {
             for node in frontier.drain(..) {
                 let Node {
                     state: node_state,
+                    guest: node_guest,
                     trace: node_trace,
                     sleep: node_sleep,
                 } = node;
@@ -1058,16 +1161,32 @@ impl<'sandbox> Explorer<'sandbox> {
                 // HotStoreState at all.
                 self.sandbox.load(node_state).await?;
                 let enabled = self.sandbox.enabled();
+                let guest_roster = match (&mut self.checked_guest, &node_guest) {
+                    (Some(provider), Some(guest)) => {
+                        // A checked roster is one atomic answer. An incomplete
+                        // or revoked enumeration aborts the request before any
+                        // of this level's leaves can be published.
+                        provider.complete_roster(&self.sandbox.snapshot(), guest)?
+                    },
+                    (None, None) => Vec::new(),
+                    _ => {
+                        return Err(SpeculationError::Bootstrap(
+                            "mixed search lost its checked guest state".into(),
+                        ))
+                    },
+                };
+                let out_degree = enabled.len() + guest_roster.len();
                 stats.nodes_expanded += 1;
-                stats.max_out_degree = stats.max_out_degree.max(enabled.len());
+                stats.max_out_degree = stats.max_out_degree.max(out_degree);
                 report.expanded += 1;
-                report.out_degrees.push(enabled.len());
+                report.out_degrees.push(out_degree);
 
-                if enabled.is_empty() {
+                if out_degree == 0 {
                     report.quiescent += 1;
                     success.push(QuiescentLeaf {
                         trace: node_trace,
                         state: self.sandbox.snapshot(),
+                        guest: node_guest,
                     });
                     continue;
                 }
@@ -1114,8 +1233,10 @@ impl<'sandbox> Explorer<'sandbox> {
                     },
                     false => (0..planned.len()).collect(),
                 };
-                report.class_sizes.push(expanded.len());
-                stats.max_conflict_class = stats.max_conflict_class.max(expanded.len());
+                report.class_sizes.push(expanded.len() + guest_roster.len());
+                stats.max_conflict_class = stats
+                    .max_conflict_class
+                    .max(expanded.len() + guest_roster.len());
 
                 // Remove asleep alternatives before deciding whether the
                 // parent configuration has to be retained for a sibling.
@@ -1132,12 +1253,12 @@ impl<'sandbox> Explorer<'sandbox> {
 
                 // Only a real second attempt needs the pre-fire state. This is
                 // one snapshot per branching node, never one per singleton.
-                let mut parent_state = match attempts.len() > 1 {
+                let mut parent_state = match attempts.len() > 1 || !guest_roster.is_empty() {
                     true => Some(self.sandbox.snapshot()),
                     false => None,
                 };
 
-                next.reserve(attempts.len());
+                next.reserve(attempts.len() + guest_roster.len());
                 let attempt_count = attempts.len();
                 for (attempt, index) in attempts.into_iter().enumerate() {
                     let (planned_name, semantic, resource_set) = &planned[index];
@@ -1146,7 +1267,7 @@ impl<'sandbox> Explorer<'sandbox> {
                     // sibling consumes the retained parent state instead of
                     // cloning it once more.
                     if attempt > 0 {
-                        let state = match attempt + 1 == attempt_count {
+                        let state = match attempt + 1 == attempt_count && guest_roster.is_empty() {
                             true => parent_state
                                 .take()
                                 .expect("a branching node retained its parent state"),
@@ -1181,12 +1302,25 @@ impl<'sandbox> Explorer<'sandbox> {
                             stats.edges_fired += 1;
                             fired_earlier.push((semantic.clone(), resource_set.clone()));
                             let child_state = self.sandbox.snapshot();
-                            let child_process =
-                                super::delivery::reify(&child_state).map_err(|error| {
+                            let child_guest = match (&mut self.checked_guest, &node_guest) {
+                                (Some(provider), Some(guest)) => {
+                                    Some(provider.after_host_comm(guest, &child_state)?)
+                                },
+                                (None, None) => None,
+                                _ => {
+                                    return Err(SpeculationError::Bootstrap(
+                                        "mixed search lost its checked guest state".into(),
+                                    ))
+                                },
+                            };
+                            let child_process = match &child_guest {
+                                Some(guest) => guest.public_configuration.clone(),
+                                None => super::delivery::reify(&child_state).map_err(|error| {
                                     SpeculationError::Bootstrap(format!(
                                         "trace configuration could not be reified: {error}"
                                     ))
-                                })?;
+                                })?,
+                            };
                             let child_trace = node_trace.extend(step.name, child_process);
 
                             if self.mode.merges() {
@@ -1219,6 +1353,7 @@ impl<'sandbox> Explorer<'sandbox> {
 
                             next.push(Node {
                                 state: child_state,
+                                guest: child_guest,
                                 trace: child_trace,
                                 sleep: child_sleep,
                             });
@@ -1230,6 +1365,27 @@ impl<'sandbox> Explorer<'sandbox> {
                             report.aborted += 1;
                             failure.push(AbortedLeaf::of(node_trace.clone(), &error));
                         },
+                    }
+                }
+
+                // Every checked guest occurrence is a distinct sibling, even
+                // when several proofs have the same target. Its host snapshot
+                // is unchanged; only the retained guest slots differ.
+                if !guest_roster.is_empty() {
+                    let host_state =
+                        parent_state.expect("guest siblings retained their parent host state");
+                    for edge in guest_roster {
+                        let child_trace = node_trace.extend_guest(
+                            edge.identity,
+                            edge.successor.public_configuration.clone(),
+                        );
+                        next.push(Node {
+                            state: host_state.clone(),
+                            guest: Some(edge.successor),
+                            trace: child_trace,
+                            sleep: SleepSet::new(),
+                        });
+                        stats.edges_fired += 1;
                     }
                 }
             }
@@ -1251,14 +1407,31 @@ impl<'sandbox> Explorer<'sandbox> {
         // its last allotted step is the completed evaluation it is.
         for node in frontier.drain(..) {
             self.sandbox.load(node.state.clone()).await?;
-            let frontier_size = self.sandbox.enabled().len();
+            let host_count = self.sandbox.enabled().len();
+            let guest_count = match (&mut self.checked_guest, &node.guest) {
+                (Some(provider), Some(guest)) => {
+                    provider.complete_roster(&node.state, guest)?.len()
+                },
+                (None, None) => 0,
+                _ => {
+                    return Err(SpeculationError::Bootstrap(
+                        "mixed search lost its checked guest state".into(),
+                    ))
+                },
+            };
+            let frontier_size = host_count + guest_count;
             stats.nodes_expanded += 1;
             stats.max_out_degree = stats.max_out_degree.max(frontier_size);
             match frontier_size {
-                0 => success.push(QuiescentLeaf { trace: node.trace, state: node.state }),
+                0 => success.push(QuiescentLeaf {
+                    trace: node.trace,
+                    state: node.state,
+                    guest: node.guest,
+                }),
                 _ => truncated.push(TruncatedLeaf {
                     branch: ResumableBranch {
                         state: node.state,
+                        guest: node.guest,
                         trace: node.trace,
                         frontier: frontier_size,
                     },
@@ -1268,5 +1441,297 @@ impl<'sandbox> Explorer<'sandbox> {
 
         stats.consumed = self.sandbox.consumed();
         Ok(Exploration { success, truncated, failure, stats })
+    }
+}
+
+#[cfg(test)]
+mod checked_guest_search_tests {
+    use super::*;
+    use crate::speculation::{GuestSlotState, TraceStepIdentity};
+    use models::rhoapi::{ReceiveBind, Send, Var};
+    use models::rust::utils::{
+        new_elist_par, new_freevar_par, new_gint_par, new_gstring_par, new_receive_par,
+    };
+    use rholang::rust::interpreter::accounting::cost_accounting::CostAccounting;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    fn par(value: i64) -> Par {
+        new_gint_par(value, Vec::new(), false)
+    }
+
+    fn configuration(value: u8) -> CheckedGuestConfiguration {
+        CheckedGuestConfiguration {
+            slots: vec![GuestSlotState {
+                binding_index: 0,
+                value: par(i64::from(value)),
+                exact_key: vec![value],
+            }],
+            public_configuration: par(i64::from(value)),
+        }
+    }
+
+    struct TwoProofProvider {
+        revalidations: Arc<AtomicUsize>,
+        refuse_roster: bool,
+    }
+
+    impl CheckedGuestProvider for TwoProofProvider {
+        fn initial(
+            &mut self,
+            _submitted: &Par,
+            _saturated_host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            Ok(configuration(0))
+        }
+
+        fn complete_roster(
+            &mut self,
+            _host: &SpeculativeState,
+            current: &CheckedGuestConfiguration,
+        ) -> Result<Vec<CheckedGuestEdge>, SpeculationError> {
+            if self.refuse_roster {
+                return Err(SpeculationError::Bootstrap("checked roster refused".into()));
+            }
+            match current.slots.as_slice() {
+                [slot]
+                    if slot.binding_index == 0 && slot.exact_key == [0] && slot.value == par(0) =>
+                {
+                    Ok([10u8, 11]
+                        .into_iter()
+                        .map(|proof| CheckedGuestEdge {
+                            identity: GuestRewriteIdentity::new(
+                                vec![0],
+                                [2; 32],
+                                [3; 32],
+                                u64::from(proof),
+                                par(i64::from(proof)),
+                            ),
+                            successor: configuration(1),
+                        })
+                        .collect())
+                },
+                [slot]
+                    if slot.binding_index == 0 && slot.exact_key == [1] && slot.value == par(1) =>
+                {
+                    Ok(Vec::new())
+                },
+                _ => Err(SpeculationError::Bootstrap("guest slot drift".into())),
+            }
+        }
+
+        fn after_host_comm(
+            &mut self,
+            previous: &CheckedGuestConfiguration,
+            _host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            self.revalidations.fetch_add(1, Ordering::SeqCst);
+            Ok(previous.clone())
+        }
+    }
+
+    async fn sandbox() -> SpeculativeSandbox {
+        let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
+        let budget = CostAccounting::empty_cost();
+        budget.set(Cost::create(1_000_000, "checked guest search test"));
+        sandbox.fund_from(&budget);
+        sandbox
+    }
+
+    fn provider(revalidations: Arc<AtomicUsize>) -> TwoProofProvider {
+        TwoProofProvider { revalidations, refuse_roster: false }
+    }
+
+    fn one_host_comm() -> Par {
+        let channel = new_gstring_par("host c".to_string(), Vec::new(), false);
+        let send = Par::default().with_sends(vec![Send {
+            chan: Some(channel.clone()),
+            data: vec![par(1)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }]);
+        let receive = new_receive_par(
+            vec![ReceiveBind {
+                patterns: vec![new_freevar_par(0, Vec::new())],
+                source: Some(channel),
+                remainder: None,
+                free_count: 1,
+            }],
+            Par::default(),
+            false,
+            false,
+            1,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        );
+        send.append(receive)
+    }
+
+    struct HostRevalidatingProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl HostRevalidatingProvider {
+        fn composite(
+            host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            let host_par = crate::speculation::delivery::reify(host)
+                .map_err(|error| SpeculationError::Bootstrap(error.to_string()))?;
+            Ok(CheckedGuestConfiguration {
+                slots: vec![GuestSlotState {
+                    binding_index: 0,
+                    value: par(7),
+                    exact_key: vec![7],
+                }],
+                public_configuration: new_elist_par(
+                    vec![host_par, par(7)],
+                    Vec::new(),
+                    false,
+                    None::<Var>,
+                    Vec::new(),
+                    false,
+                ),
+            })
+        }
+    }
+
+    impl CheckedGuestProvider for HostRevalidatingProvider {
+        fn initial(
+            &mut self,
+            _submitted: &Par,
+            host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            Self::composite(host)
+        }
+
+        fn complete_roster(
+            &mut self,
+            _host: &SpeculativeState,
+            _current: &CheckedGuestConfiguration,
+        ) -> Result<Vec<CheckedGuestEdge>, SpeculationError> {
+            Ok(Vec::new())
+        }
+
+        fn after_host_comm(
+            &mut self,
+            _previous: &CheckedGuestConfiguration,
+            host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Self::composite(host)
+        }
+    }
+
+    #[tokio::test]
+    async fn host_comm_revalidates_and_reifies_the_composite_successor() {
+        let sandbox = sandbox().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut explorer = Explorer::with_checked_guest_provider(
+            &sandbox,
+            HostRevalidatingProvider { calls: calls.clone() },
+        );
+        let result = explorer
+            .explore(
+                one_host_comm(),
+                Blake2b512Random::create_from_length(128),
+                Lookahead::Steps(1),
+            )
+            .await
+            .expect("host and guest composite search");
+        assert_eq!(result.success.len(), 1);
+        assert_eq!(result.stats.edges_fired, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let leaf = &result.success[0];
+        let guest = leaf.guest.as_ref().expect("retained guest slots");
+        assert_eq!(guest.slots[0].value, par(7));
+        assert_eq!(leaf.trace.processes().last(), Some(&guest.public_configuration));
+        assert!(matches!(
+            leaf.trace.step_identities().as_slice(),
+            [TraceStepIdentity::HostComm(_)]
+        ));
+    }
+
+    #[tokio::test]
+    async fn checked_equal_target_proofs_survive_existing_bfs_as_distinct_paths() {
+        let sandbox = sandbox().await;
+        let mut explorer = Explorer::with_checked_guest_provider(
+            &sandbox,
+            provider(Arc::new(AtomicUsize::new(0))),
+        );
+        assert_eq!(explorer.mode(), TraceMode::EveryTrace);
+        let result = explorer
+            .explore(Par::default(), Blake2b512Random::create_from_length(128), Lookahead::Steps(1))
+            .await
+            .expect("complete checked roster");
+        assert_eq!(result.success.len(), 2);
+        assert!(result.truncated.is_empty());
+        assert_eq!(result.stats.edges_fired, 2);
+        assert_eq!(result.success[0].guest, Some(configuration(1)));
+        assert_eq!(result.success[1].guest, Some(configuration(1)));
+        assert_eq!(
+            content_fingerprint_digest(&result.success[0].state),
+            content_fingerprint_digest(&result.success[1].state),
+            "guest edges do not mutate the host store",
+        );
+        assert_eq!(result.distinct_success_configurations(), 1);
+        let first = &result.success[0].trace;
+        let second = &result.success[1].trace;
+        assert_eq!(first.processes(), second.processes());
+        assert_ne!(first.digest(), second.digest());
+        assert_ne!(first.public_nodes(), second.public_nodes());
+        assert_eq!(first.public_nodes().last(), Some(&par(1)));
+        assert_eq!(second.public_nodes().last(), Some(&par(1)));
+        assert!(
+            matches!(first.step_identities().as_slice(), [TraceStepIdentity::GuestRewrite(proof)] if proof.ordinal == 10)
+        );
+        assert!(
+            matches!(second.step_identities().as_slice(), [TraceStepIdentity::GuestRewrite(proof)] if proof.ordinal == 11)
+        );
+    }
+
+    #[tokio::test]
+    async fn checked_guest_cut_retains_slots_and_resume_revalidates_before_firing() {
+        let sandbox = sandbox().await;
+        let revalidations = Arc::new(AtomicUsize::new(0));
+        let mut explorer =
+            Explorer::with_checked_guest_provider(&sandbox, provider(revalidations.clone()));
+        let cut = explorer
+            .explore(Par::default(), Blake2b512Random::create_from_length(128), Lookahead::Steps(0))
+            .await
+            .expect("checked zero-step cut");
+        assert_eq!(cut.truncated.len(), 1);
+        assert_eq!(cut.truncated[0].branch.frontier, 2);
+        assert_eq!(cut.truncated[0].branch.guest, Some(configuration(0)));
+        let resumed = explorer
+            .resume(&cut.handles(), Lookahead::Steps(1))
+            .await
+            .expect("checked resume");
+        assert!(revalidations.load(Ordering::SeqCst) >= 1);
+        assert_eq!(resumed.success.len(), 2);
+        assert!(resumed.truncated.is_empty());
+        assert!(resumed.success.iter().all(|leaf| leaf.trace.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn refused_complete_guest_roster_never_returns_partial_exploration() {
+        let sandbox = sandbox().await;
+        let mut explorer = Explorer::with_checked_guest_provider(
+            &sandbox,
+            TwoProofProvider {
+                revalidations: Arc::new(AtomicUsize::new(0)),
+                refuse_roster: true,
+            },
+        );
+        let result = explorer
+            .explore(Par::default(), Blake2b512Random::create_from_length(128), Lookahead::Steps(1))
+            .await;
+        assert!(
+            matches!(result, Err(SpeculationError::Bootstrap(message)) if message == "checked roster refused")
+        );
     }
 }

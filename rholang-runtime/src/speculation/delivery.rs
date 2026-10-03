@@ -11,16 +11,16 @@
 //!
 //! ```text
 //!   collection      ::= EPathMap::Set(PathMap<()>)
-//!   process-trace   ::= [input, initial, state₁, …, terminal]
-//!   success-entry   ::= process-trace
-//!   truncated-entry ::= process-trace ++ [(handle, frontier)]
-//!   failure-entry   ::= process-prefix ++ [[code, message]]
+//!   public-trace    ::= [input, initial, (proof-marker?, state₁), …, terminal]
+//!   success-entry   ::= public-trace
+//!   truncated-entry ::= public-trace ++ [(handle, frontier)]
+//!   failure-entry   ::= public-prefix ++ [[code, message]]
 //! ```
 //!
-//! The trace is the complete root-to-leaf sequence of Rholang processes: the
-//! submitted input, the saturated initial configuration, and the reified
-//! successor configuration after every selected communication. A trace node is
-//! never replaced by a digest. [`ReductionTrace`] shares branch prefixes in
+//! The trace starts with the submitted input and saturated configuration. Each
+//! host COMM adds its successor; each guest rewrite adds a proof marker and its
+//! successor. The terminal configuration remains last. A trace node is never
+//! replaced by a digest. [`ReductionTrace`] shares branch prefixes in
 //! memory; the published `EPathMap` inserts each complete entry directly into
 //! `PathMap<()>`, whose trie shares common encoded prefixes across entries.
 //!
@@ -691,10 +691,12 @@ mod publication_law {
             success: vec![QuiescentLeaf {
                 trace: trace.clone(),
                 state: state.clone(),
+                guest: None,
             }],
             truncated: vec![TruncatedLeaf {
                 branch: ResumableBranch {
                     state: state.clone(),
+                    guest: None,
                     trace: trace.clone(),
                     frontier: 1,
                 },
@@ -950,6 +952,8 @@ mod publication_law {
 #[cfg(test)]
 mod step_digest_tests {
     use super::*;
+    use crate::speculation::GuestRewriteIdentity;
+    use prost::Message;
 
     fn hash(byte: u8) -> Blake2b256Hash {
         Blake2b256Hash::new(&[byte])
@@ -970,6 +974,32 @@ mod step_digest_tests {
             trace = trace.extend(name, new_gint_par(result, Vec::new(), false));
         }
         trace
+    }
+
+    #[test]
+    fn pathmap_retains_equal_terminal_guest_proofs_as_two_entries() {
+        let root = ReductionTrace::from_input_and_configuration(
+            new_gint_par(0, Vec::new(), false),
+            Par::default(),
+        );
+        let proof = |ordinal: u64| {
+            GuestRewriteIdentity::new(
+                vec![1],
+                [2; 32],
+                [3; 32],
+                ordinal,
+                new_gint_par(ordinal as i64, Vec::new(), false),
+            )
+        };
+        let first = root.extend_guest(proof(10), Par::default());
+        let second = root.extend_guest(proof(11), Par::default());
+        let first_entry = ground_list(trace_pars(&first));
+        let second_entry = ground_list(trace_pars(&second));
+        assert_ne!(first_entry.encode_to_vec(), second_entry.encode_to_vec());
+        let both = trace_pathmap([first_entry.clone(), second_entry.clone()]);
+        assert_ne!(both.encode_to_vec(), trace_pathmap([first_entry]).encode_to_vec());
+        assert_ne!(both.encode_to_vec(), trace_pathmap([second_entry]).encode_to_vec());
+        assert_eq!(trace_pars(&first).last(), Some(&Par::default()));
     }
 
     /// ★ THE INVARIANT, in one line and with no runtime: store positions do not name a
@@ -1064,10 +1094,12 @@ mod step_digest_tests {
                 success: vec![QuiescentLeaf {
                     trace: trace.clone(),
                     state: state.clone(),
+                    guest: None,
                 }],
                 truncated: vec![TruncatedLeaf {
                     branch: ResumableBranch {
                         state: state.clone(),
+                        guest: None,
                         trace: trace.clone(),
                         frontier: 2,
                     },
@@ -1136,6 +1168,7 @@ mod step_digest_tests {
                     .map(|byte| QuiescentLeaf {
                         trace: trace(*byte),
                         state: state.clone(),
+                        guest: None,
                     })
                     .collect(),
                 truncated: order
@@ -1143,6 +1176,7 @@ mod step_digest_tests {
                     .map(|byte| TruncatedLeaf {
                         branch: ResumableBranch {
                             state: state.clone(),
+                            guest: None,
                             trace: trace(*byte),
                             frontier: 1,
                         },
@@ -1299,7 +1333,7 @@ fn filter_and_adjust_bitset(bitset: Vec<u8>, bound_count: usize) -> Vec<u8> {
 
 /// One trace as the `Par`s a delivered entry's prefix is made of.
 fn trace_pars(trace: &ReductionTrace) -> Vec<Par> {
-    trace.processes()
+    trace.public_nodes()
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1329,6 +1363,9 @@ pub enum ReificationError {
     /// in its trace disagree. This is an internal search/trace integrity
     /// failure; publishing either value would make the trace lie.
     TraceTerminalMismatch,
+    /// A root-FLT result was requested without exactly one checked root slot.
+    /// Never substitute a composite configuration or an arbitrary slot.
+    InvalidInstalledGuestRoot,
 }
 
 impl std::fmt::Display for ReificationError {
@@ -1343,6 +1380,9 @@ impl std::fmt::Display for ReificationError {
             },
             ReificationError::TraceTerminalMismatch => {
                 write!(formatter, "the trace terminal differs from the retained leaf state")
+            },
+            ReificationError::InvalidInstalledGuestRoot => {
+                write!(formatter, "the checked root guest slot is missing or ambiguous")
             },
         }
     }
@@ -1651,7 +1691,10 @@ fn ground_list(elements: Vec<Par>) -> Par {
 pub fn success_entry(leaf: &QuiescentLeaf) -> Result<Par, ReificationError> {
     // Reify once more as an integrity assertion: the retained terminal state
     // and the last trace node must denote the same published configuration.
-    let terminal = reify(&leaf.state)?;
+    let terminal = match &leaf.guest {
+        Some(guest) => guest.public_configuration.clone(),
+        None => reify(&leaf.state)?,
+    };
     let elements = trace_pars(&leaf.trace);
     if elements.last() != Some(&terminal) {
         return Err(ReificationError::TraceTerminalMismatch);
@@ -1667,7 +1710,10 @@ pub fn success_entry(leaf: &QuiescentLeaf) -> Result<Par, ReificationError> {
 /// many ways this branch could have continued.
 pub fn truncated_entry(leaf: &TruncatedLeaf) -> Result<Par, ReificationError> {
     let mut elements = trace_pars(&leaf.branch.trace);
-    let terminal = reify(&leaf.branch.state)?;
+    let terminal = match &leaf.branch.guest {
+        Some(guest) => guest.public_configuration.clone(),
+        None => reify(&leaf.branch.state)?,
+    };
     if elements.last() != Some(&terminal) {
         return Err(ReificationError::TraceTerminalMismatch);
     }

@@ -144,9 +144,15 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
+use mettail_dovetail_runtime::{SemanticInputLimits, SemanticTransitionInput};
+use mettail_grammar_core::{
+    CategoryId, InstalledLanguage, InstalledLanguageHandle, InstalledLanguageTable, LanguageRight,
+    TheorySortId,
+};
 use mettail_rholang_codegen::{
-    drive_err_channel, drive_fuel_channel, parse_reflected_tag, rho_net_drive_call_par,
-    rho_net_drive_float_call_par, LOOKAHEAD_BAND,
+    drive_err_channel, drive_fuel_channel, encode_dynamic_native_label, parse_reflected_tag,
+    rho_net_drive_call_par, rho_net_drive_float_call_par, DynamicNativeRef, ReflectedCodecBudget,
+    ReflectedPositionalContext, LOOKAHEAD_BAND,
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{ListParWithRandom, Par};
@@ -155,28 +161,41 @@ use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::RuntimeBudget;
 use rholang::rust::interpreter::contract_call::ContractCall;
 use rholang::rust::interpreter::errors::InterpreterError;
+use rholang::rust::interpreter::metering::MeteredMachine;
 use rholang::rust::interpreter::system_processes::Definition;
+use rspace_plus_plus::rspace::errors::RSpaceError;
+use rspace_plus_plus::rspace::rspace_interface::ProduceCommitGuard;
 
+use crate::installed_flt::InstalledFltAdapter;
+use crate::language_install::{
+    exact_expr, exact_list, exact_string, grammar_fingerprint_label, RholangLanguageRuntime,
+};
 use crate::lookahead::{
-    spec_channel_par, SPEC_ALL_CHANNEL, SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL,
-    SPEC_FAILURE_CHANNEL, SPEC_LEAF_CHANNEL, SPEC_N_CHANNEL, SPEC_SUCCESS_CHANNEL,
-    SPEC_TRUNCATED_CHANNEL,
+    spec_channel_par, SPEC_ALL_CHANNEL, SPEC_ALL_V2_CHANNEL, SPEC_DELIVERY_CHANNEL,
+    SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL, SPEC_LEAF_CHANNEL, SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL,
+    SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
 };
 use crate::native_contract::private_name_tag;
 use crate::observation::render_par_text;
+use crate::semantic_service::SemanticServiceLimits;
 
 use super::delivery::{resting_on_string, trace_digest};
+use super::occurrences::{scan_installed_occurrences, term_at_path, SubjectOccurrence};
 use super::search::{charge_host_comms, ErrorCode, Lookahead, QuiescentLeaf, TraceMode};
 use super::service::{LeafProjection, LookaheadRequest, LookaheadResponse, LookaheadService};
 
 /// The ABI version the two `body_ref`s are derived from. Bumping it re-derives both, which is
 /// what a wire-incompatible change to the request shape should do.
 pub const LOOKAHEAD_ABI_VERSION: &str = "mettail-lookahead-v1";
+/// V2 handlers use new channels and body refs; v1 registrations stay exact.
+pub const LOOKAHEAD_ABI_VERSION_V2: &str = "mettail-lookahead-v2";
 
 /// The lookahead band index of the unbounded request channel.
 const SPEC_ALL_INDEX: u8 = 0;
 /// The lookahead band index of the bounded request channel.
 const SPEC_N_INDEX: u8 = 1;
+const SPEC_ALL_V2_INDEX: u8 = 2;
+const SPEC_N_V2_INDEX: u8 = 3;
 
 /// The diagnostic weight each charged-back COMM rides into the host's event log with. The
 /// *amount* charged is one COMM per call regardless (see [`charge_host_comms`]); this is the
@@ -317,6 +336,7 @@ impl std::fmt::Debug for SpeculationGuest {
 #[derive(Clone)]
 pub struct LookaheadEngine {
     guests: Arc<Vec<SpeculationGuest>>,
+    installed_runtime: Option<Arc<RholangLanguageRuntime>>,
     trace_mode: TraceMode,
     /// The host deploy's budget, bound after `create_rho_runtime` returns. A `OnceLock`
     /// rather than a lock: it is written once, read from every handler invocation, and read
@@ -336,6 +356,7 @@ impl LookaheadEngine {
     pub fn new() -> Self {
         LookaheadEngine {
             guests: Arc::new(Vec::new()),
+            installed_runtime: None,
             trace_mode: TraceMode::default(),
             host: Arc::new(OnceLock::new()),
         }
@@ -344,6 +365,13 @@ impl LookaheadEngine {
     /// Register a guest language. The subject's own fingerprint selects it.
     pub fn with_guest(mut self, guest: SpeculationGuest) -> Self {
         Arc::make_mut(&mut self.guests).push(guest);
+        self
+    }
+
+    /// Bind the authority directory used to admit versioned installed FLT
+    /// requests. Each request still resolves and rechecks its opaque selector.
+    pub fn with_language_runtime(mut self, runtime: Arc<RholangLanguageRuntime>) -> Self {
+        self.installed_runtime = Some(runtime);
         self
     }
 
@@ -378,8 +406,312 @@ impl LookaheadEngine {
         self.host.get().is_some()
     }
 
-    /// **The two system-process `Definition`s** — `^spec-all` (arity 2) and `^spec-n`
-    /// (arity 3).
+    /// Admit the request's installed owner claims before constructing a
+    /// sandbox. The structural scanner supplies the complete tagged occurrence
+    /// roster; explicit scalar claims are resolved by the same path numbering.
+    fn admit_subject(
+        &self,
+        wire_subject: Par,
+        host: &RuntimeBudget,
+        versioned: bool,
+    ) -> Result<(Par, Vec<AdmittedLookaheadBinding>), String> {
+        if !versioned {
+            if !self.scan_and_charge(&wire_subject, host)?.is_empty() {
+                return Err("legacy lookahead request cannot authorize an installed FLT".into());
+            }
+            return Ok((wire_subject, Vec::new()));
+        }
+        let admitted = {
+            let (subject, bindings) = self
+                .parse_envelope_and_charge(&wire_subject, host)?
+                .ok_or_else(|| "v2 request requires [2, subject, owner-bindings]".to_string())?;
+            let occurrences = self.scan_and_charge(subject, host)?;
+            if bindings
+                .windows(2)
+                .any(|pair| pair[1].path.starts_with(&pair[0].path))
+            {
+                return Err("v2 owner binding paths may not overlap".into());
+            }
+            for occurrence in &occurrences {
+                if bindings
+                    .binary_search_by(|binding| binding.path.cmp(&occurrence.path))
+                    .is_err()
+                {
+                    return Err(
+                        "v2 owner bindings do not cover the exact installed occurrence roster"
+                            .into(),
+                    );
+                }
+            }
+            if bindings.is_empty() {
+                Vec::new()
+            } else {
+                let runtime = self
+                    .installed_runtime
+                    .as_ref()
+                    .ok_or_else(|| "v2 installed language runtime is not bound".to_string())?;
+                let mut admitted = Vec::new();
+                admitted
+                    .try_reserve(bindings.len())
+                    .map_err(|_| "v2 admitted binding roster allocation failed".to_string())?;
+                for binding in &bindings {
+                    let term = self.term_at_path_and_charge(subject, &binding.path, host)?;
+                    admitted.push(self.admit_binding(binding, term, runtime, host)?);
+                }
+                admitted
+            }
+        };
+        // The exact envelope has already been parsed and charged. Move its
+        // subject out after all borrowed claims expire; cloning it here would
+        // duplicate arbitrary caller-controlled structure without metering.
+        let subject = take_envelope_subject(wire_subject)
+            .ok_or_else(|| "validated v2 envelope lost its subject".to_string())?;
+        Ok((subject, admitted))
+    }
+
+    fn admit_binding(
+        &self,
+        binding: &WireOwnerBinding<'_>,
+        subject: &Par,
+        runtime: &RholangLanguageRuntime,
+        host: &RuntimeBudget,
+    ) -> Result<AdmittedLookaheadBinding, String> {
+        if binding.context != 0 {
+            return Err("v2 nonzero guest context is not supported by closed-term admission".into());
+        }
+        let handle = runtime
+            .resolve(binding.token, LanguageRight::Reduce)
+            .map_err(|_| "v2 installed owner selector is not authorized for Reduce".to_string())?;
+        let installed = runtime
+            .service()
+            .table()
+            .authorize(&handle, LanguageRight::Reduce)
+            .map_err(|_| "v2 installed owner is no longer live".to_string())?;
+        let fingerprint = grammar_fingerprint_label(installed.commitment().language_fingerprint);
+        // Native admission is intentionally limited to the three codec forms
+        // below. BigInt, BigRat, and Fixed need their own exact bounded codec
+        // paths before they can be accepted as untagged v2 roots.
+        if let Some(actual) = reflected_fingerprint(subject) {
+            if actual != fingerprint {
+                return Err("v2 subject does not have the bound installed owner".into());
+            }
+        } else if !matches!(
+            exact_expr(subject),
+            Some(ExprInstance::GString(_) | ExprInstance::GInt(_) | ExprInstance::GBool(_))
+        ) {
+            return Err(
+                "v2 root is neither a reflected FLT nor a supported text/int64/bool literal".into(),
+            );
+        }
+        let limits = installed.language_core().theory.limits;
+        let policy = runtime.service().policy().semantic_service;
+        let available = host.remaining().value.max(0) as u64;
+        let work_limit = u64::from(limits.max_steps)
+            .min(policy.execution.work)
+            .min(available);
+        if work_limit == 0 {
+            return Err("v2 installed admission has no funded host work".into());
+        }
+        let byte_limit = (limits.max_output_bytes as usize)
+            .min(policy.execution.term_bytes)
+            .min(policy.boundary_payload_bytes);
+        let mut used = 0;
+        let mut cancelled = || false;
+        let mut budget =
+            ReflectedCodecBudget::new(&mut used, work_limit, byte_limit, &mut cancelled);
+        let checked = (|| {
+            let native = match exact_expr(subject) {
+                Some(ExprInstance::GString(value)) => Some(DynamicNativeRef::Text(value)),
+                Some(ExprInstance::GInt(value)) => {
+                    Some(DynamicNativeRef::Integer(i128::from(*value)))
+                },
+                Some(ExprInstance::GBool(value)) => Some(DynamicNativeRef::Boolean(*value)),
+                _ => None,
+            };
+            let reflected_native = if let Some(native) = native {
+                let context = ReflectedPositionalContext::new(&fingerprint, &mut budget)
+                    .map_err(|_| "v2 native owner context could not be prepared".to_string())?;
+                let label = encode_dynamic_native_label(native, &mut budget)
+                    .map_err(|_| "v2 native literal could not be reflected".to_string())?;
+                Some(
+                    context
+                        .assemble(&label, Vec::new(), &mut budget)
+                        .map_err(|_| "v2 native literal could not be reflected".to_string())?
+                        .0,
+                )
+            } else {
+                None
+            };
+            let adapter = InstalledFltAdapter::new(&installed, &mut budget)
+                .map_err(|_| "v2 installed image could not be prepared".to_string())?;
+            let (category, sort) = adapter
+                .select_category(binding.category, &mut budget)
+                .map_err(|_| "v2 expected category is not bound by the owner".to_string())?;
+            let input = adapter
+                .to_kernel(
+                    reflected_native.as_ref().unwrap_or(subject),
+                    category,
+                    SemanticInputLimits {
+                        work: work_limit,
+                        nodes: (limits.max_term_nodes as usize).min(policy.execution.term_nodes),
+                        bytes: byte_limit,
+                    },
+                    &mut budget,
+                )
+                .map_err(|_| {
+                    "v2 subject is not a canonical term of the declared sort".to_string()
+                })?;
+            Ok::<_, String>((category, sort, input))
+        })();
+        let spent = budget.work_used();
+        drop(budget);
+        if spent > 0 {
+            MeteredMachine::new(host.clone())
+                .reserve_primitive(Cost::create(
+                    i64::try_from(spent).unwrap_or(i64::MAX),
+                    "installed lookahead request admission",
+                ))
+                .map_err(|_| "v2 installed admission exhausted host phlogiston".to_string())?;
+        }
+        let (category, sort, input) = checked?;
+        let admitted = AdmittedLookaheadBinding {
+            path: binding.path.clone(),
+            handle,
+            installed,
+            sort,
+            category,
+            context: binding.context,
+            input,
+        };
+        Ok(admitted)
+    }
+
+    fn term_at_path_and_charge<'a>(
+        &self,
+        subject: &'a Par,
+        path: &[u32],
+        host: &RuntimeBudget,
+    ) -> Result<&'a Par, String> {
+        let policy = self
+            .installed_runtime
+            .as_ref()
+            .map(|runtime| runtime.service().policy().semantic_service)
+            .unwrap_or_else(SemanticServiceLimits::default);
+        let work_limit = policy
+            .execution
+            .work
+            .min(host.remaining().value.max(0) as u64);
+        if work_limit == 0 {
+            return Err("v2 owner path lookup has no funded host work".into());
+        }
+        let mut used = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(
+            &mut used,
+            work_limit,
+            policy.boundary_payload_bytes,
+            &mut cancelled,
+        );
+        let located = term_at_path(subject, path, &mut budget);
+        let spent = budget.work_used();
+        drop(budget);
+        if spent > 0 {
+            MeteredMachine::new(host.clone())
+                .reserve_primitive(Cost::create(
+                    i64::try_from(spent).unwrap_or(i64::MAX),
+                    "lookahead owner path lookup",
+                ))
+                .map_err(|_| "v2 owner path lookup exhausted host phlogiston".to_string())?;
+        }
+        located
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "v2 owner binding path does not exist in subject".to_string())
+    }
+
+    fn scan_and_charge<'a>(
+        &self,
+        subject: &'a Par,
+        host: &RuntimeBudget,
+    ) -> Result<Vec<SubjectOccurrence<'a>>, String> {
+        let policy = self
+            .installed_runtime
+            .as_ref()
+            .map(|runtime| runtime.service().policy().semantic_service)
+            .unwrap_or_else(SemanticServiceLimits::default);
+        let work_limit = policy
+            .execution
+            .work
+            .min(host.remaining().value.max(0) as u64);
+        if work_limit == 0 {
+            return Err("lookahead subject scan has no funded host work".into());
+        }
+        let mut used = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(
+            &mut used,
+            work_limit,
+            policy.boundary_payload_bytes,
+            &mut cancelled,
+        );
+        let scanned = scan_installed_occurrences(subject, &mut budget);
+        let spent = budget.work_used();
+        drop(budget);
+        if spent > 0 {
+            MeteredMachine::new(host.clone())
+                .reserve_primitive(Cost::create(
+                    i64::try_from(spent).unwrap_or(i64::MAX),
+                    "lookahead subject occurrence scan",
+                ))
+                .map_err(|_| "lookahead subject scan exhausted host phlogiston".to_string())?;
+        }
+        scanned.map_err(|error| error.to_string())
+    }
+
+    fn parse_envelope_and_charge<'a>(
+        &self,
+        subject: &'a Par,
+        host: &RuntimeBudget,
+    ) -> Result<Option<(&'a Par, Vec<WireOwnerBinding<'a>>)>, String> {
+        let policy = self
+            .installed_runtime
+            .as_ref()
+            .map(|runtime| runtime.service().policy().semantic_service)
+            .unwrap_or_else(SemanticServiceLimits::default);
+        let work_limit = policy
+            .execution
+            .work
+            .min(host.remaining().value.max(0) as u64);
+        if work_limit == 0 {
+            return Err("v2 envelope parsing has no funded host work".into());
+        }
+        let mut used = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(
+            &mut used,
+            work_limit,
+            policy.boundary_payload_bytes,
+            &mut cancelled,
+        );
+        let parsed = parse_envelope_v2_with_charge(subject, |work, bytes| {
+            budget
+                .charge(work, bytes)
+                .map_err(|_| "v2 envelope exceeds the funded request budget".to_string())
+        });
+        let spent = budget.work_used();
+        drop(budget);
+        if spent > 0 {
+            MeteredMachine::new(host.clone())
+                .reserve_primitive(Cost::create(
+                    i64::try_from(spent).unwrap_or(i64::MAX),
+                    "lookahead v2 envelope parsing",
+                ))
+                .map_err(|_| "v2 envelope parsing exhausted host phlogiston".to_string())?;
+        }
+        parsed
+    }
+
+    /// Four system-process definitions: the original two v1 channels and two
+    /// dedicated v2 channels, each retaining its family's outer arity.
     ///
     /// The `fixed_channel`s are the **quoted strings** the lowering sends on, not band
     /// channels: a `Definition` installs a continuation on exactly the channel named, and the
@@ -387,20 +719,37 @@ impl LookaheadEngine {
     /// [`LOOKAHEAD_BAND`](mettail_rholang_codegen::LOOKAHEAD_BAND), so they are deterministic
     /// and provably disjoint from f1r3node's own and from the two MeTTaIL contract bands.
     pub fn definitions(&self) -> Vec<Definition> {
-        vec![self.definition(false), self.definition(true)]
+        vec![
+            self.definition(false, false),
+            self.definition(true, false),
+            self.definition(false, true),
+            self.definition(true, true),
+        ]
     }
 
-    fn definition(&self, bounded: bool) -> Definition {
-        let (channel, arity, index, urn) = match bounded {
-            false => (SPEC_ALL_CHANNEL, 2, SPEC_ALL_INDEX, "mtl:spec:all"),
-            true => (SPEC_N_CHANNEL, 3, SPEC_N_INDEX, "mtl:spec:n"),
+    fn definition(&self, bounded: bool, versioned: bool) -> Definition {
+        let (channel, arity, index, urn, abi) = match (bounded, versioned) {
+            (false, false) => {
+                (SPEC_ALL_CHANNEL, 2, SPEC_ALL_INDEX, "mtl:spec:all", LOOKAHEAD_ABI_VERSION)
+            },
+            (true, false) => (SPEC_N_CHANNEL, 3, SPEC_N_INDEX, "mtl:spec:n", LOOKAHEAD_ABI_VERSION),
+            (false, true) => (
+                SPEC_ALL_V2_CHANNEL,
+                2,
+                SPEC_ALL_V2_INDEX,
+                "mtl:spec:all:v2",
+                LOOKAHEAD_ABI_VERSION_V2,
+            ),
+            (true, true) => {
+                (SPEC_N_V2_CHANNEL, 3, SPEC_N_V2_INDEX, "mtl:spec:n:v2", LOOKAHEAD_ABI_VERSION_V2)
+            },
         };
         let engine = self.clone();
         Definition {
             urn: urn.to_string(),
             fixed_channel: spec_channel_par(channel),
             arity,
-            body_ref: LOOKAHEAD_BAND.body_ref(index, LOOKAHEAD_ABI_VERSION),
+            body_ref: LOOKAHEAD_BAND.body_ref(index, abi),
             remainder: None,
             handler: Box::new(move |context| {
                 let space = context.space.clone();
@@ -412,7 +761,7 @@ impl LookaheadEngine {
                         dispatcher: dispatcher.clone(),
                     };
                     let engine = engine.clone();
-                    Box::pin(async move { engine.serve(call, args, bounded).await })
+                    Box::pin(async move { engine.serve(call, args, bounded, versioned).await })
                         as Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
                 })
             }),
@@ -427,10 +776,13 @@ impl LookaheadEngine {
         call: ContractCall,
         args: (Vec<ListParWithRandom>, bool, Vec<Par>),
         bounded: bool,
+        versioned: bool,
     ) -> Result<Vec<Par>, InterpreterError> {
-        let urn = match bounded {
-            false => SPEC_ALL_CHANNEL,
-            true => SPEC_N_CHANNEL,
+        let urn = match (bounded, versioned) {
+            (false, false) => SPEC_ALL_CHANNEL,
+            (true, false) => SPEC_N_CHANNEL,
+            (false, true) => SPEC_ALL_V2_CHANNEL,
+            (true, true) => SPEC_N_V2_CHANNEL,
         };
         // The arriving datum's randomness IS the deploy's, split at the position the send
         // occupied — so every name a speculation mints is a function of the deploy and two
@@ -453,10 +805,11 @@ impl LookaheadEngine {
             is_replay,
             previous,
             index: 0,
+            guard: None,
         };
 
         // ── the operands ─────────────────────────────────────────────────
-        let (subject, lookahead, reply) = match parse_request(&payload, bounded) {
+        let (subject, lookahead, reply) = match parse_request_owned(payload, bounded) {
             Ok(operands) => operands,
             Err(message) => {
                 // A malformed request is REPORTED, not silently dropped: the send committed,
@@ -488,8 +841,38 @@ impl LookaheadEngine {
             return Err(InterpreterError::SetupError(message));
         };
 
+        let (subject, installed_bindings) = match self.admit_subject(subject, host, versioned) {
+            Ok(admitted) => admitted,
+            Err(message) => {
+                publisher
+                    .publish(
+                        request_error_datum(ErrorCode::Bootstrap, &message),
+                        &spec(SPEC_ERR_CHANNEL),
+                    )
+                    .await?;
+                return Ok(Vec::new());
+            },
+        };
+        if !installed_bindings.is_empty() {
+            let runtime = self
+                .installed_runtime
+                .as_ref()
+                .expect("admitted installed bindings require a live runtime");
+            publisher.guard = Some(Arc::new(InstalledLookaheadPublication {
+                table: Arc::clone(runtime.service().table()),
+                handles: installed_bindings
+                    .iter()
+                    .map(|binding| binding.handle.clone())
+                    .collect(),
+            }));
+        }
+
         // ── which guest, if any ──────────────────────────────────────────
-        let guest = match self.guest_for(&subject) {
+        let guest = match if installed_bindings.is_empty() {
+            self.guest_for(&subject)
+        } else {
+            Ok(None)
+        } {
             Ok(guest) => guest,
             Err(refusal) => {
                 // ★ The DATUM names only the refused fingerprint. The engine's guest list —
@@ -509,13 +892,32 @@ impl LookaheadEngine {
 
         // ★ `prelude | seed(⟦P⟧)` for a registered guest; the bare subject otherwise. This
         // is the line the module header's `prelude` warning is about.
-        let request = match guest {
-            Some(guest) => LookaheadRequest::new(guest.seed(subject, SPEC_LEAF_CHANNEL), lookahead)
-                .with_prelude(guest.prelude.clone())
-                .with_projection(LeafProjection::resting_on(SPEC_LEAF_CHANNEL))
-                .with_definitions(guest.definitions()),
-            None => LookaheadRequest::new(subject, lookahead)
-                .with_projection(LeafProjection::Configuration),
+        let request = if !installed_bindings.is_empty() {
+            let projection =
+                if installed_bindings.len() == 1 && installed_bindings[0].path.is_empty() {
+                    LeafProjection::InstalledGuestRoot
+                } else {
+                    LeafProjection::Configuration
+                };
+            let runtime = self
+                .installed_runtime
+                .as_ref()
+                .expect("admitted installed bindings require a live runtime")
+                .clone();
+            LookaheadRequest::new(subject, lookahead)
+                .with_projection(projection)
+                .with_installed_bindings(runtime, installed_bindings)
+        } else {
+            match guest {
+                Some(guest) => {
+                    LookaheadRequest::new(guest.seed(subject, SPEC_LEAF_CHANNEL), lookahead)
+                        .with_prelude(guest.prelude.clone())
+                        .with_projection(LeafProjection::resting_on(SPEC_LEAF_CHANNEL))
+                        .with_definitions(guest.definitions())
+                },
+                None => LookaheadRequest::new(subject, lookahead)
+                    .with_projection(LeafProjection::Configuration),
+            }
         }
         .with_trace_mode(self.trace_mode);
 
@@ -739,6 +1141,23 @@ impl std::fmt::Display for GuestRefusal {
 // Publishing
 // ══════════════════════════════════════════════════════════════════════════
 
+/// Recheck every installed owner at the exact RSpace produce commit. The
+/// registry lock is held only around the synchronous commit closure, never
+/// across the asynchronous producer or the speculative search.
+struct InstalledLookaheadPublication {
+    table: Arc<InstalledLanguageTable>,
+    handles: Vec<InstalledLanguageHandle>,
+}
+
+impl ProduceCommitGuard for InstalledLookaheadPublication {
+    fn with_commit(&self, commit: Box<dyn FnOnce() + '_>) -> Result<(), RSpaceError> {
+        const REQUIRED: &[LanguageRight] = &[LanguageRight::Reduce];
+        self.table
+            .with_authorized_batch(self.handles.iter().map(|handle| (handle, REQUIRED)), commit)
+            .map_err(|_| RSpaceError::ProduceCommitDenied)
+    }
+}
+
 /// Produces the server's data back into the running program, one datum at a time, each with
 /// its own randomness.
 ///
@@ -757,6 +1176,7 @@ struct Publisher<'call> {
     is_replay: bool,
     previous: Vec<Par>,
     index: i16,
+    guard: Option<Arc<dyn ProduceCommitGuard>>,
 }
 
 impl Publisher<'_> {
@@ -774,14 +1194,19 @@ impl Publisher<'_> {
         }
         let random = self.random.split_short(self.index);
         self.index += 1;
-        let Some((produce, _, _, _)) = self.call.unapply((
+        let args = (
             vec![ListParWithRandom {
                 pars: Vec::new(),
                 random_state: random.to_bytes(),
             }],
             self.is_replay,
             self.previous.clone(),
-        )) else {
+        );
+        let producer = match &self.guard {
+            Some(guard) => self.call.unapply_guarded(args, Arc::clone(guard)),
+            None => self.call.unapply(args),
+        };
+        let Some((produce, _, _, _)) = producer else {
             return Err(InterpreterError::IllegalArgumentError(
                 "the lookahead publisher could not build a producer".to_string(),
             ));
@@ -795,6 +1220,110 @@ impl Publisher<'_> {
 // Request parsing and wire shapes
 // ══════════════════════════════════════════════════════════════════════════
 
+/// Authority admitted against the live installed table, independent of the
+/// caller's serialized claims. The opaque handle retains its revocation epoch;
+/// publication must revalidate it under the table's commit guard.
+pub(crate) struct AdmittedLookaheadBinding {
+    pub(crate) path: Vec<u32>,
+    pub(crate) handle: InstalledLanguageHandle,
+    pub(crate) installed: Arc<InstalledLanguage>,
+    pub(crate) sort: TheorySortId,
+    pub(crate) category: CategoryId,
+    pub(crate) context: u32,
+    /// Exact, checked structural input, including native-literal roots that
+    /// have no constructor-head fingerprint.
+    pub(crate) input: SemanticTransitionInput,
+}
+
+struct WireOwnerBinding<'a> {
+    path: Vec<u32>,
+    token: &'a Par,
+    category: &'a str,
+    context: u32,
+}
+
+/// Move the validated subject out of an owned v2 envelope. The caller must
+/// first run `parse_envelope_v2_with_charge` so this positional extraction has
+/// no independent interpretation of program-controlled wire data.
+fn take_envelope_subject(mut envelope: Par) -> Option<Par> {
+    let ExprInstance::EListBody(list) = envelope.exprs.first_mut()?.expr_instance.as_mut()? else {
+        return None;
+    };
+    (list.ps.len() == 3).then(|| std::mem::take(&mut list.ps[1]))
+}
+
+/// The exact v2 first datum is `[2, subject, owner-bindings]`; each binding is
+/// `[path, opaque-handle, expected-category, context]`. A claim never grants
+/// authority: resolution and structural admission happen separately.
+fn parse_envelope_v2_with_charge<'a>(
+    subject: &'a Par,
+    mut charge: impl FnMut(usize, usize) -> Result<(), String>,
+) -> Result<Option<(&'a Par, Vec<WireOwnerBinding<'a>>)>, String> {
+    charge(1, 0)?;
+    let Some([version, actual, claims]) = exact_list(subject) else {
+        return Ok(None);
+    };
+    if ground_int(version) != Some(2) {
+        return Ok(None);
+    }
+    let claims =
+        exact_list(claims).ok_or_else(|| "v2 owner-bindings must be an exact list".to_string())?;
+    charge(
+        claims.len(),
+        claims
+            .len()
+            .checked_mul(32)
+            .ok_or_else(|| "v2 binding roster is too large".to_string())?,
+    )?;
+    let mut bindings = Vec::new();
+    bindings
+        .try_reserve(claims.len())
+        .map_err(|_| "v2 binding roster allocation failed".to_string())?;
+    for claim in claims {
+        charge(1, 0)?;
+        let Some([path, token, category, context]) = exact_list(claim) else {
+            return Err("v2 owner binding must have four fields".into());
+        };
+        let indices =
+            exact_list(path).ok_or_else(|| "v2 owner path must be an exact list".to_string())?;
+        charge(
+            indices.len(),
+            indices
+                .len()
+                .checked_mul(4)
+                .ok_or_else(|| "v2 owner path is too long".to_string())?,
+        )?;
+        let mut path = Vec::new();
+        path.try_reserve(indices.len())
+            .map_err(|_| "v2 owner path allocation failed".to_string())?;
+        for index in indices {
+            path.push(
+                ground_int(index)
+                    .and_then(|index| u32::try_from(index).ok())
+                    .ok_or_else(|| "v2 owner path contains a noncanonical index".to_string())?,
+            );
+        }
+        let category = exact_string(category)
+            .filter(|category| !category.is_empty())
+            .ok_or_else(|| "v2 owner category must be a nonempty string".to_string())?;
+        charge(category.len(), 0)?;
+        let context = ground_int(context)
+            .and_then(|context| u32::try_from(context).ok())
+            .ok_or_else(|| "v2 owner context must be a nonnegative coordinate".to_string())?;
+        bindings.push(WireOwnerBinding { path, token, category, context });
+    }
+    charge(bindings.len(), 0)?;
+    if bindings.windows(2).any(|pair| pair[0].path >= pair[1].path) {
+        return Err("v2 owner paths must be distinct and strictly ordered".into());
+    }
+    Ok(Some((actual, bindings)))
+}
+
+#[cfg(test)]
+fn parse_envelope_v2(subject: &Par) -> Result<Option<(&Par, Vec<WireOwnerBinding<'_>>)>, String> {
+    parse_envelope_v2_with_charge(subject, |_, _| Ok(()))
+}
+
 /// `(subject, lookahead, replyChannel)` from a request's payload.
 ///
 /// ★ Every operand here is **program-controlled**, and the refusals are consensus-visible. The
@@ -804,38 +1333,43 @@ impl Publisher<'_> {
 /// malformed-bound arm renders its operand through [`render_par_text`] — bounded and
 /// derive-independent — for the reason spelled out on [`guest_evaluator_failures`], with the
 /// aggravation that here the input is attacker-chosen rather than merely large.
-fn parse_request(payload: &[Par], bounded: bool) -> Result<(Par, Lookahead, Par), String> {
+fn parse_request_owned(
+    mut payload: Vec<Par>,
+    bounded: bool,
+) -> Result<(Par, Lookahead, Par), String> {
     match bounded {
-        false => match payload {
-            [subject, reply] => Ok((subject.clone(), Lookahead::Unbounded, reply.clone())),
-            _ => Err(format!("expected (subject, replyChannel), got arity {}", payload.len())),
+        false if payload.len() == 2 => {
+            let reply = payload.pop().expect("arity checked");
+            let subject = payload.pop().expect("arity checked");
+            Ok((subject, Lookahead::Unbounded, reply))
         },
-        true => match payload {
-            [subject, bound, reply] => {
-                let bound = ground_int(bound).ok_or_else(|| {
-                    format!(
-                        "the `[n]` bound must be a ground integer, got {}",
-                        render_par_text(bound)
-                    )
-                })?;
-                let bound = u64::try_from(bound)
-                    .map_err(|_| format!("the `[n]` bound must be non-negative, got {bound}"))?;
-                Ok((subject.clone(), Lookahead::Steps(bound), reply.clone()))
-            },
-            _ => {
-                Err(format!("expected (subject, bound, replyChannel), got arity {}", payload.len()))
-            },
+        false => Err(format!("expected (subject, replyChannel), got arity {}", payload.len())),
+        true if payload.len() == 3 => {
+            let reply = payload.pop().expect("arity checked");
+            let bound = payload.pop().expect("arity checked");
+            let subject = payload.pop().expect("arity checked");
+            let value = ground_int(&bound).ok_or_else(|| {
+                format!("the `[n]` bound must be a ground integer, got {}", render_par_text(&bound))
+            })?;
+            let bound = u64::try_from(value)
+                .map_err(|_| format!("the `[n]` bound must be non-negative, got {value}"))?;
+            Ok((subject, Lookahead::Steps(bound), reply))
+        },
+        true => {
+            Err(format!("expected (subject, bound, replyChannel), got arity {}", payload.len()))
         },
     }
 }
 
+#[cfg(test)]
+fn parse_request(payload: &[Par], bounded: bool) -> Result<(Par, Lookahead, Par), String> {
+    parse_request_owned(payload.to_vec(), bounded)
+}
+
 /// The `i64` a ground-integer `Par` carries.
 fn ground_int(par: &Par) -> Option<i64> {
-    match par.exprs.as_slice() {
-        [expr] => match expr.expr_instance.as_ref() {
-            Some(ExprInstance::GInt(value)) => Some(*value),
-            _ => None,
-        },
+    match crate::language_install::exact_expr(par) {
+        Some(ExprInstance::GInt(value)) => Some(*value),
         _ => None,
     }
 }
@@ -951,30 +1485,114 @@ fn trace_list(leaf: &QuiescentLeaf) -> Par {
 mod tests {
     use super::*;
 
-    /// The two `body_ref`s are distinct, positive, inside the lookahead band, and outside
-    /// f1r3node's own ranges — so installing both cannot shadow either, nor anything of
-    /// f1r3node's.
     #[test]
-    fn the_two_request_definitions_occupy_distinct_reserved_body_refs() {
+    fn installed_publication_commits_once_only_while_every_owner_is_live() {
+        use rspace_plus_plus::rspace::rspace_interface::commit_produce;
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let handle = runtime
+            .resolve(&token, LanguageRight::Reduce)
+            .expect("live installed owner");
+        let guard = InstalledLookaheadPublication {
+            table: Arc::clone(runtime.service().table()),
+            handles: vec![handle.clone(), handle],
+        };
+        let mut commits = 0;
+        assert_eq!(commit_produce(Some(&guard), || commits += 1), Ok(()));
+        assert_eq!(commits, 1, "one produce runs its commit exactly once");
+
+        runtime
+            .revoke(&token)
+            .expect("no table lock survives commit");
+        assert_eq!(
+            commit_produce(Some(&guard), || commits += 1),
+            Err(RSpaceError::ProduceCommitDenied)
+        );
+        assert_eq!(commits, 1, "a revoked owner cannot enter the commit closure");
+    }
+
+    /// V1 IDs retain their exact original ABI label; the v2 channels get two
+    /// other IDs in the same reserved band.
+    #[test]
+    fn request_definitions_occupy_distinct_reserved_body_refs() {
         let all = LOOKAHEAD_BAND.body_ref(SPEC_ALL_INDEX, LOOKAHEAD_ABI_VERSION);
         let bounded = LOOKAHEAD_BAND.body_ref(SPEC_N_INDEX, LOOKAHEAD_ABI_VERSION);
-        assert_ne!(all, bounded, "the two request channels need distinct body_refs");
+        let all_v2 = LOOKAHEAD_BAND.body_ref(SPEC_ALL_V2_INDEX, LOOKAHEAD_ABI_VERSION_V2);
+        let bounded_v2 = LOOKAHEAD_BAND.body_ref(SPEC_N_V2_INDEX, LOOKAHEAD_ABI_VERSION_V2);
+        assert_eq!(all, LOOKAHEAD_BAND.body_ref(0, "mettail-lookahead-v1"));
+        assert_eq!(bounded, LOOKAHEAD_BAND.body_ref(1, "mettail-lookahead-v1"));
+        assert_eq!(
+            [all, bounded, all_v2, bounded_v2]
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            4,
+        );
         let band = LOOKAHEAD_BAND.body_ref_range();
-        assert!(band.contains(&all) && band.contains(&bounded));
+        assert!([all, bounded, all_v2, bounded_v2]
+            .iter()
+            .all(|body_ref| band.contains(body_ref)));
         assert!(*band.start() > 108, "above f1r3node's std and test-framework body_refs");
     }
 
     /// The `Definition`s install on the QUOTED-STRING channels the lowering sends on, with
-    /// the arities the two request shapes carry.
+    /// the arities each mode carries.
     #[test]
     fn the_definitions_install_on_the_wire_channels() {
         let engine = LookaheadEngine::new();
         let definitions = engine.definitions();
-        assert_eq!(definitions.len(), 2);
+        assert_eq!(definitions.len(), 4);
         assert_eq!(definitions[0].fixed_channel, spec_channel_par(SPEC_ALL_CHANNEL));
         assert_eq!(definitions[0].arity, 2, "(subject, replyChannel)");
         assert_eq!(definitions[1].fixed_channel, spec_channel_par(SPEC_N_CHANNEL));
         assert_eq!(definitions[1].arity, 3, "(subject, bound, replyChannel)");
+        assert_eq!(definitions[2].fixed_channel, spec_channel_par(SPEC_ALL_V2_CHANNEL));
+        assert_eq!(definitions[2].arity, 2);
+        assert_eq!(definitions[3].fixed_channel, spec_channel_par(SPEC_N_V2_CHANNEL));
+        assert_eq!(definitions[3].arity, 3);
+    }
+
+    #[test]
+    fn legacy_host_list_starting_with_two_is_never_an_envelope() {
+        use crate::language_install::wire_list;
+
+        let host_subject = wire_list(vec![
+            new_gint_par(2, Vec::new(), false),
+            spec_channel_par("ordinary-host-data"),
+            wire_list(Vec::new()),
+        ]);
+        let host = RuntimeBudget::unmetered();
+        let engine = LookaheadEngine::new();
+        let (legacy, bindings) = engine
+            .admit_subject(host_subject.clone(), &host, false)
+            .expect("v1 channel preserves host list data");
+        assert_eq!(legacy, host_subject);
+        assert!(bindings.is_empty());
+        let (versioned, bindings) = engine
+            .admit_subject(host_subject, &host, true)
+            .expect("same datum is the v2 envelope only on the v2 channel");
+        assert_eq!(versioned, spec_channel_par("ordinary-host-data"));
+        assert!(bindings.is_empty());
+    }
+
+    #[test]
+    fn versioned_subject_is_moved_out_of_the_owned_envelope() {
+        use crate::language_install::wire_list;
+        use crate::lookahead::spec_envelope_v2;
+
+        let subject = wire_list(vec![spec_channel_par("retained-child")]);
+        let child_storage = exact_list(&subject).expect("subject list").as_ptr();
+        let envelope = spec_envelope_v2(subject, Vec::new());
+        let (admitted, bindings) = LookaheadEngine::new()
+            .admit_subject(envelope, &RuntimeBudget::unmetered(), true)
+            .expect("empty v2 binding roster preserves the host subject");
+        assert!(bindings.is_empty());
+        assert_eq!(
+            exact_list(&admitted)
+                .expect("admitted subject list")
+                .as_ptr(),
+            child_storage
+        );
     }
 
     /// A request's operands are read positionally, and a malformed one is a typed refusal
@@ -1007,6 +1625,40 @@ mod tests {
             parse_request(&[subject, negative, reply], true).is_err(),
             "a negative bound must be refused"
         );
+    }
+
+    #[test]
+    fn versioned_request_enforces_exact_ordered_binding_paths() {
+        use crate::language_install::wire_list;
+        use crate::lookahead::{spec_envelope_v2, LookaheadOwnerBinding};
+
+        let subject = spec_channel_par("subject");
+        let binding = |path| LookaheadOwnerBinding {
+            path,
+            handle: spec_channel_par("selector"),
+            expected_category: "Term".into(),
+            context: 0,
+        };
+        let envelope = spec_envelope_v2(subject.clone(), vec![binding(vec![0]), binding(vec![1])]);
+        let (actual, claims) = parse_envelope_v2(&envelope)
+            .expect("canonical envelope")
+            .expect("versioned");
+        assert_eq!(actual, &subject);
+        assert_eq!(claims.len(), 2);
+        assert_eq!(claims[0].path, vec![0]);
+        assert_eq!(claims[1].path, vec![1]);
+
+        for paths in [[vec![0], vec![0]], [vec![1], vec![0]]] {
+            let envelope =
+                spec_envelope_v2(subject.clone(), paths.into_iter().map(binding).collect());
+            assert!(parse_envelope_v2(&envelope).is_err());
+        }
+        let malformed = wire_list(vec![
+            new_gint_par(2, Vec::new(), false),
+            subject,
+            new_gint_par(0, Vec::new(), false),
+        ]);
+        assert!(parse_envelope_v2(&malformed).is_err());
     }
 
     /// ★ A refused `[n]` bound is named **legibly and boundedly**, because the refusal becomes

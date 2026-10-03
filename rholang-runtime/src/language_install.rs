@@ -5142,8 +5142,9 @@ pub(crate) mod tests {
             );
             let mut bundle = match decision {
                 SemanticTransitionDecision::Proven(bundle) => bundle,
-                SemanticTransitionDecision::ProvenRelation(_) => {
-                    panic!("named action unexpectedly returned a direct relation")
+                SemanticTransitionDecision::ProvenRelation(_)
+                | SemanticTransitionDecision::ProvenSteps(_) => {
+                    panic!("named action unexpectedly returned a different execution result")
                 },
                 SemanticTransitionDecision::Refuted(reason) => panic!("kernel refuted: {reason:?}"),
                 SemanticTransitionDecision::Undetermined { reason, work, .. } => {
@@ -5499,8 +5500,9 @@ pub(crate) mod tests {
                     || false,
                 ) {
                     SemanticTransitionDecision::Proven(bundle) => bundle,
-                    SemanticTransitionDecision::ProvenRelation(_) => {
-                        panic!("named action unexpectedly returned a direct relation")
+                    SemanticTransitionDecision::ProvenRelation(_)
+                    | SemanticTransitionDecision::ProvenSteps(_) => {
+                        panic!("named action unexpectedly returned a different execution result")
                     },
                     SemanticTransitionDecision::Refuted(reason) => {
                         panic!("deep rule refuted: {reason:?}")

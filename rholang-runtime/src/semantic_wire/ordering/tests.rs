@@ -2,9 +2,15 @@ use super::*;
 use crate::language_install::{exact_expr, exact_list, wire_list};
 use crate::semantic_service::tests::transport_receipt;
 use crate::semantic_wire::{decode_receipt_v1, encode_receipt_v1, encode_u64};
-use mettail_dovetail_runtime::SemanticIntrinsicOpcodeV1;
-use mettail_grammar_core::{SemanticEffectClassV1, TheorySortId};
-use models::rhoapi::{expr::ExprInstance, Par};
+use mettail_dovetail_runtime::{
+    SemanticIntrinsicOpcodeV1, SemanticJudgmentProofReceipt, SemanticJudgmentProofStep,
+    SemanticPremiseReceipt,
+};
+use mettail_grammar_core::{
+    SemanticEffectClassV1, TheoryJudgmentId, TheoryJudgmentRuleProgramId, TheoryRuleProgramId,
+    TheorySortId,
+};
+use models::rhoapi::{Par, expr::ExprInstance};
 use models::rust::utils::{new_gbytearray_par, new_gint_par};
 use num_bigint::BigInt;
 
@@ -100,6 +106,71 @@ fn key(receipt: &SemanticTransitionReceipt) -> Key {
 
 fn compare(a: &SemanticTransitionReceipt, b: &SemanticTransitionReceipt) -> Ordering {
     with_budget(|budget| Comparator { budget }.result_key(a, b)).unwrap()
+}
+
+#[test]
+fn judgment_proof_receipt_round_trips_and_orders_by_every_witness_field() {
+    let mut base = transport_receipt();
+    base.premises.push(SemanticPremiseReceipt::JudgmentProof {
+        rule: TheoryRuleProgramId(23),
+        premise: 7,
+        proof: SemanticJudgmentProofReceipt {
+            language_fingerprint: [11; 32],
+            theory_fingerprint: [12; 32],
+            image_fingerprint: [13; 32],
+            judgment: TheoryJudgmentId(5),
+            arguments: vec![vec![], vec![1, 2, 3]],
+            steps: vec![
+                SemanticJudgmentProofStep {
+                    activation: 0,
+                    rule: TheoryJudgmentRuleProgramId(1),
+                    parent_activation: None,
+                    premise_index: None,
+                },
+                SemanticJudgmentProofStep {
+                    activation: u64::MAX,
+                    rule: TheoryJudgmentRuleProgramId(2),
+                    parent_activation: Some(0),
+                    premise_index: Some(u32::MAX),
+                },
+            ],
+            work: u64::MAX,
+        },
+    });
+    let encoded = with_budget(|budget| encode_receipt_v1(base.clone(), budget)).unwrap();
+    let decoded = with_budget(|budget| decode_receipt_v1(&encoded, budget)).unwrap();
+    assert_eq!(decoded, base);
+    let original = Key::read(&encoded);
+    let Key::Tuple(fields) = &original else {
+        unreachable!()
+    };
+    let Key::Tuple(premises) = &fields[10] else {
+        unreachable!()
+    };
+    let witness_variants = premises.last().expect("new proof premise").variants();
+    let mut valid_mutations = 0;
+    for varied_witness in witness_variants {
+        let mut changed = original.clone();
+        let Key::Tuple(fields) = &mut changed else {
+            unreachable!()
+        };
+        let Key::Tuple(premises) = &mut fields[10] else {
+            unreachable!()
+        };
+        *premises.last_mut().expect("new proof premise") = varied_witness;
+        let Ok(candidate) = with_budget(|budget| decode_receipt_v1(&changed.wire(), budget)) else {
+            continue;
+        };
+        let expected = base
+            .output
+            .cmp(&candidate.output)
+            .then_with(|| original.cmp(&changed));
+        assert_ne!(expected, Ordering::Equal);
+        assert_eq!(compare(&base, &candidate), expected);
+        assert_eq!(compare(&candidate, &base), expected.reverse());
+        valid_mutations += 1;
+    }
+    assert!(valid_mutations >= 20, "mutate every new proof-evidence field");
 }
 
 #[test]

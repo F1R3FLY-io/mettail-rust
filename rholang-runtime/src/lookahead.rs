@@ -87,6 +87,8 @@
 use models::rhoapi::Par;
 use models::rust::utils::{new_gint_par, new_gstring_par};
 
+use crate::language_install::wire_list;
+
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // The reserved channel names
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -100,6 +102,13 @@ pub const SPEC_ALL_CHANNEL: &str = "^spec-all";
 ///
 /// Payload: `(⟦P⟧, GInt(n), replyChannel)`.
 pub const SPEC_N_CHANNEL: &str = "^spec-n";
+
+/// Versioned unbounded request channel. The separate channel keeps a legacy
+/// host list such as `[2, P, []]` from being parsed as a v2 envelope.
+pub const SPEC_ALL_V2_CHANNEL: &str = "^spec-all-v2";
+
+/// Versioned bounded request channel, with the same outer arity as `^spec-n`.
+pub const SPEC_N_V2_CHANNEL: &str = "^spec-n-v2";
 
 /// Provenance for each branch that reached quiescence: `[trace, term]`.
 pub const SPEC_SUCCESS_CHANNEL: &str = "^spec-success";
@@ -145,7 +154,8 @@ pub const SPEC_DELIVERY_CHANNEL: &str = "^spec-delivery";
 pub const SPEC_LEAF_CHANNEL: &str = "^spec-leaf";
 
 /// Every channel a lookahead request can rest on unanswered — the fail-closed check's input.
-pub const SPEC_REQUEST_CHANNELS: &[&str] = &[SPEC_ALL_CHANNEL, SPEC_N_CHANNEL];
+pub const SPEC_REQUEST_CHANNELS: &[&str] =
+    &[SPEC_ALL_CHANNEL, SPEC_N_CHANNEL, SPEC_ALL_V2_CHANNEL, SPEC_N_V2_CHANNEL];
 
 /// Every channel the engine reports on, in the order a transcript should show them.
 pub const SPEC_REPORT_CHANNELS: &[&str] = &[
@@ -183,17 +193,96 @@ pub fn spec_n_request(subject: Par, bound: i64, reply_channel: Par) -> Par {
     )
 }
 
+/// One exact owner claim for a reflected installed-language occurrence.
+///
+/// `handle` is the original opaque installed-language selector. The category is
+/// resolved through that handle's admitted image; it is not an authority token.
+/// A path is a sequence of child indices in the subject. The current direct
+/// FLT lowering supplies the root path `[]` and context zero.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookaheadOwnerBinding {
+    pub path: Vec<u32>,
+    pub handle: Par,
+    pub expected_category: String,
+    pub context: u32,
+}
+
+fn owner_binding_datum(binding: LookaheadOwnerBinding) -> Par {
+    wire_list(vec![
+        wire_list(
+            binding
+                .path
+                .into_iter()
+                .map(|index| new_gint_par(i64::from(index), Vec::new(), false))
+                .collect(),
+        ),
+        binding.handle,
+        new_gstring_par(binding.expected_category, Vec::new(), false),
+        new_gint_par(i64::from(binding.context), Vec::new(), false),
+    ])
+}
+
+/// The exact v2 first datum: `[2, subject, owner-bindings]`.
+///
+/// A versioned request has the same outer arity and reply channel as v1. An
+/// empty binding list is valid only for a subject with no installed FLT.
+pub fn spec_envelope_v2(subject: Par, bindings: Vec<LookaheadOwnerBinding>) -> Par {
+    wire_list(vec![
+        new_gint_par(2, Vec::new(), false),
+        subject,
+        wire_list(bindings.into_iter().map(owner_binding_datum).collect()),
+    ])
+}
+
+/// Build an unbounded request with explicit installed owner bindings.
+pub fn spec_all_request_v2(
+    subject: Par,
+    bindings: Vec<LookaheadOwnerBinding>,
+    reply_channel: Par,
+) -> Par {
+    send_to(SPEC_ALL_V2_CHANNEL, vec![spec_envelope_v2(subject, bindings), reply_channel])
+}
+
+/// Build a bounded request with explicit installed owner bindings.
+pub fn spec_n_request_v2(
+    subject: Par,
+    bound: i64,
+    bindings: Vec<LookaheadOwnerBinding>,
+    reply_channel: Par,
+) -> Par {
+    send_to(
+        SPEC_N_V2_CHANNEL,
+        vec![
+            spec_envelope_v2(subject, bindings),
+            new_gint_par(bound, Vec::new(), false),
+            reply_channel,
+        ],
+    )
+}
+
 /// A quoted-string channel `@"name"`, the same shape the `^drive` observation channels use.
 pub fn spec_channel_par(name: &str) -> Par {
     new_gstring_par(name.to_string(), Vec::new(), false)
 }
 
 fn send_to(channel: &str, data: Vec<Par>) -> Par {
-    use models::rust::utils::new_send_par;
-    // `new_send_par(chan, data, persistent, send_locally_free, send_connective_used,
-    // par_locally_free, par_connective_used)` — the last two are the enclosing `Par`'s,
-    // which the `Send`'s own do not imply. A request seed is ground on both.
-    new_send_par(spec_channel_par(channel), data, false, Vec::new(), false, Vec::new(), false)
+    use models::rust::utils::{new_send_par, union};
+    // A staged installed request contains a bound selector and a bound FLT
+    // result. The caches must follow those children so substitution descends
+    // through the send and through its versioned first datum.
+    let locally_free = data
+        .iter()
+        .fold(Vec::new(), |acc, item| union(acc, item.locally_free.clone()));
+    let connective_used = data.iter().any(|item| item.connective_used);
+    new_send_par(
+        spec_channel_par(channel),
+        data,
+        false,
+        locally_free.clone(),
+        connective_used,
+        locally_free,
+        connective_used,
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -245,6 +334,7 @@ pub fn unserved_requests(resting: &[(&'static str, Vec<Par>)]) -> Vec<UnservedRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::language_install::exact_list;
 
     /// ★ This cell reads the wire through prost's derived `Debug` **on purpose**, and it is the
     /// one place in this tree that may. It is therefore a free canary: if a `prost` bump
@@ -261,6 +351,48 @@ mod tests {
         assert_ne!(all, bounded, "`[*]` and `[n]` must not lower to the same request");
         // The bounded request carries its bound; the unbounded one does not.
         assert!(format!("{bounded:?}").contains("Int(7)"), "the `[n]` bound must ride the wire");
+    }
+
+    #[test]
+    fn v2_keeps_the_same_outer_arity_and_places_exact_owner_claims_first() {
+        let subject = spec_channel_par("subject");
+        let selector = spec_channel_par("opaque-selector-test-shape");
+        let reply = spec_channel_par("results");
+        let request = spec_all_request_v2(
+            subject.clone(),
+            vec![LookaheadOwnerBinding {
+                path: vec![],
+                handle: selector.clone(),
+                expected_category: "Term".into(),
+                context: 0,
+            }],
+            reply.clone(),
+        );
+        let send = request.sends.first().expect("one request send");
+        assert_eq!(send.chan.as_ref(), Some(&spec_channel_par(SPEC_ALL_V2_CHANNEL)));
+        assert_eq!(send.data.len(), 2);
+        assert_eq!(send.data[1], reply);
+        let [version, actual, bindings] = exact_list(&send.data[0]).expect("v2 envelope") else {
+            panic!("v2 first datum has exactly three fields")
+        };
+        assert_eq!(version, &new_gint_par(2, Vec::new(), false));
+        assert_eq!(actual, &subject);
+        let [binding] = exact_list(bindings).expect("binding list") else {
+            panic!("one binding")
+        };
+        let [path, handle, category, context] = exact_list(binding).expect("binding fields") else {
+            panic!("four binding fields")
+        };
+        assert!(exact_list(path).expect("root path").is_empty());
+        assert_eq!(handle, &selector);
+        assert_eq!(category, &spec_channel_par("Term"));
+        assert_eq!(context, &new_gint_par(0, Vec::new(), false));
+
+        let bounded = spec_n_request_v2(subject, 7, Vec::new(), spec_channel_par("bounded"));
+        let bounded_send = bounded.sends.first().expect("one bounded request send");
+        assert_eq!(bounded_send.chan.as_ref(), Some(&spec_channel_par(SPEC_N_V2_CHANNEL)));
+        assert_eq!(bounded_send.data.len(), 3);
+        assert_eq!(bounded_send.data[1], new_gint_par(7, Vec::new(), false));
     }
 
     #[test]

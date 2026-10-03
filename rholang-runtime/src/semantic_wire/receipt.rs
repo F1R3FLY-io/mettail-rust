@@ -6,20 +6,21 @@
 //! its bytes. Every variable roster is iterative. Receipt work fields are data,
 //! never recharged as execution. This is transport, not proof verification.
 
-use super::{decode_u32, decode_u64, encode_u64, SemanticWireError, VALUE_DESCRIPTOR_BYTES};
+use super::{SemanticWireError, VALUE_DESCRIPTOR_BYTES, decode_u32, decode_u64, encode_u64};
 use crate::language_install::{exact_expr, exact_list, wire_list};
 use crate::semantic_service::SemanticServiceResult;
 use mettail_dovetail_runtime::{
-    SemanticIntrinsicOpcodeV1, SemanticIntrinsicReceiptV1, SemanticNormalizationHopReceiptV1,
+    SemanticIntrinsicOpcodeV1, SemanticIntrinsicReceiptV1, SemanticJudgmentProofReceipt,
+    SemanticJudgmentProofStep, SemanticNormalizationHopReceiptV1,
     SemanticNormalizationStepReceiptV1, SemanticPremiseReceipt, SemanticResourceReceipt,
     SemanticTransitionReceipt,
 };
 use mettail_grammar_core::{
-    SemanticEffectClassV1, TheoryActionId, TheoryEffectId, TheoryJudgmentId, TheoryRuleProgramId,
-    TheorySortId,
+    SemanticEffectClassV1, TheoryActionId, TheoryEffectId, TheoryJudgmentId,
+    TheoryJudgmentRuleProgramId, TheoryRuleProgramId, TheorySortId,
 };
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
-use models::rhoapi::{expr::ExprInstance, Par};
+use models::rhoapi::{Par, expr::ExprInstance};
 use models::rust::utils::new_gbytearray_par;
 
 type Result<T> = std::result::Result<T, SemanticWireError>;
@@ -84,6 +85,38 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
         Ok(new_gbytearray_par(out, Vec::new(), false))
     }
 
+    fn optional_uint(&mut self, value: Option<u64>) -> Result<Par> {
+        match value {
+            None => self.tuple(|e| Ok([e.uint(0u32)?])),
+            Some(value) => self.tuple(|e| Ok([e.uint(1u32)?, e.uint(value)?])),
+        }
+    }
+
+    fn judgment_proof_step(&mut self, step: SemanticJudgmentProofStep) -> Result<Par> {
+        self.tuple(|e| {
+            Ok([
+                e.uint(step.activation)?,
+                e.uint(step.rule.0)?,
+                e.optional_uint(step.parent_activation)?,
+                e.optional_uint(step.premise_index.map(u64::from))?,
+            ])
+        })
+    }
+
+    fn judgment_proof(&mut self, proof: SemanticJudgmentProofReceipt) -> Result<Par> {
+        self.tuple(|e| {
+            Ok([
+                e.fingerprint(proof.language_fingerprint)?,
+                e.fingerprint(proof.theory_fingerprint)?,
+                e.fingerprint(proof.image_fingerprint)?,
+                e.uint(proof.judgment.0)?,
+                e.roster(proof.arguments, Self::bytes)?,
+                e.roster(proof.steps, Self::judgment_proof_step)?,
+                e.uint(proof.work)?,
+            ])
+        })
+    }
+
     pub(super) fn premise(&mut self, p: SemanticPremiseReceipt) -> Result<Par> {
         let tag = premise_tag(&p);
         match p {
@@ -108,6 +141,9 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
                     e.uint(proofs)?,
                     e.uint(proof_steps)?,
                 ])
+            }),
+            SemanticPremiseReceipt::JudgmentProof { rule, premise, proof } => self.tuple(|e| {
+                Ok([e.uint(tag)?, e.uint(rule.0)?, e.uint(premise)?, e.judgment_proof(proof)?])
             }),
             SemanticPremiseReceipt::ForAll { rule, premise, elements } => self.tuple(|e| {
                 Ok([e.uint(tag)?, e.uint(rule.0)?, e.uint(premise)?, e.uint(elements)?])
@@ -209,6 +245,7 @@ pub(super) fn premise_tag(premise: &SemanticPremiseReceipt) -> u32 {
         SemanticPremiseReceipt::ForAll { .. } => 3,
         SemanticPremiseReceipt::Intrinsic { .. } => 4,
         SemanticPremiseReceipt::Guard { .. } => 5,
+        SemanticPremiseReceipt::JudgmentProof { .. } => 6,
     }
 }
 
@@ -315,6 +352,48 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         Ok(*bytes)
     }
 
+    fn optional_uint(&mut self, value: &Par) -> Result<Option<u64>> {
+        let (tag, payload) = self
+            .list(value)?
+            .split_first()
+            .ok_or(SemanticWireError::Shape("empty optional coordinate"))?;
+        match (self.coordinate(tag)?, payload) {
+            (0, []) => Ok(None),
+            (1, [value]) => Ok(Some(self.uint(value)?)),
+            _ => Err(SemanticWireError::Shape("optional coordinate tag or arity")),
+        }
+    }
+
+    fn judgment_proof_step(&mut self, value: &Par) -> Result<SemanticJudgmentProofStep> {
+        let [activation, rule, parent, premise] = self.tuple(value)?;
+        let premise_index = self
+            .optional_uint(premise)?
+            .map(|value| {
+                u32::try_from(value)
+                    .map_err(|_| SemanticWireError::Shape("proof premise coordinate overflow"))
+            })
+            .transpose()?;
+        Ok(SemanticJudgmentProofStep {
+            activation: self.uint(activation)?,
+            rule: TheoryJudgmentRuleProgramId(self.coordinate(rule)?),
+            parent_activation: self.optional_uint(parent)?,
+            premise_index,
+        })
+    }
+
+    fn judgment_proof(&mut self, value: &Par) -> Result<SemanticJudgmentProofReceipt> {
+        let [language, theory, image, judgment, arguments, steps, work] = self.tuple(value)?;
+        Ok(SemanticJudgmentProofReceipt {
+            language_fingerprint: self.fingerprint(language)?,
+            theory_fingerprint: self.fingerprint(theory)?,
+            image_fingerprint: self.fingerprint(image)?,
+            judgment: TheoryJudgmentId(self.coordinate(judgment)?),
+            arguments: self.roster(arguments, Self::bytes)?,
+            steps: self.roster(steps, Self::judgment_proof_step)?,
+            work: self.uint(work)?,
+        })
+    }
+
     pub(super) fn premise(&mut self, value: &Par) -> Result<SemanticPremiseReceipt> {
         let (tag, payload) = self
             .list(value)?
@@ -336,6 +415,11 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
                 judgment: TheoryJudgmentId(self.coordinate(judgment)?),
                 proofs: self.coordinate(proofs)?,
                 proof_steps: self.coordinate(steps)?,
+            },
+            (6, [rule, premise, proof]) => SemanticPremiseReceipt::JudgmentProof {
+                rule: TheoryRuleProgramId(self.coordinate(rule)?),
+                premise: self.coordinate(premise)?,
+                proof: self.judgment_proof(proof)?,
             },
             (3, [rule, premise, elements]) => SemanticPremiseReceipt::ForAll {
                 rule: TheoryRuleProgramId(self.coordinate(rule)?),
@@ -409,8 +493,21 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
     }
 
     fn receipt(&mut self, value: &Par) -> Result<SemanticTransitionReceipt> {
-        let [language, theory, image, action, rule, input, output, effect, class, resource, premises, hops, work] =
-            self.tuple(value)?;
+        let [
+            language,
+            theory,
+            image,
+            action,
+            rule,
+            input,
+            output,
+            effect,
+            class,
+            resource,
+            premises,
+            hops,
+            work,
+        ] = self.tuple(value)?;
         self.budget.charge(0, VALUE_DESCRIPTOR_BYTES)?;
         Ok(SemanticTransitionReceipt {
             language_fingerprint: self.fingerprint(language)?,
@@ -444,6 +541,18 @@ pub fn encode_receipt_v1<C: FnMut() -> bool>(
     budget: &mut ReflectedCodecBudget<'_, C>,
 ) -> Result<Par> {
     let encoded = Encoder { budget }.receipt(receipt)?;
+    budget.charge(0, 0)?;
+    Ok(encoded)
+}
+
+/// Encode one exact directed-rewrite witness for a public lookahead trace
+/// marker. This reuses the receipt codec's bounded, canonical step schema;
+/// equal target terms do not erase distinct rule or premise evidence.
+pub(crate) fn encode_normalization_step_v1<C: FnMut() -> bool>(
+    step: SemanticNormalizationStepReceiptV1,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Par> {
+    let encoded = Encoder { budget }.step(step)?;
     budget.charge(0, 0)?;
     Ok(encoded)
 }
@@ -544,6 +653,32 @@ mod tests {
             ExprInstance::EListBody(list) => list,
             _ => panic!("fixture list"),
         }
+    }
+
+    #[test]
+    fn normalization_step_marker_reuses_exact_bounded_receipt_schema() {
+        let step = transport_receipt().normalization_hops[0].exhaustive_proofs[0].clone();
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
+        let marker = encode_normalization_step_v1(step.clone(), &mut budget)
+            .expect("exact rewrite witness marker");
+        let encoded_bytes = 1_000_000 - budget.finish();
+        let encoded_work = work;
+        let mut decode_work = 0;
+        let mut decode_cancel = || false;
+        let mut decode_budget =
+            ReflectedCodecBudget::new(&mut decode_work, 1_000_000, 1_000_000, &mut decode_cancel);
+        assert_eq!(Decoder { budget: &mut decode_budget }.step(&marker), Ok(step.clone()));
+        let mut exact_work = 0;
+        let mut exact_cancel = || false;
+        let mut exact_budget = ReflectedCodecBudget::new(
+            &mut exact_work,
+            encoded_work,
+            encoded_bytes,
+            &mut exact_cancel,
+        );
+        assert_eq!(encode_normalization_step_v1(step, &mut exact_budget), Ok(marker));
     }
 
     #[test]

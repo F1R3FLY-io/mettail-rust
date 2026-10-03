@@ -7,14 +7,14 @@
 use crate::installed_flt::{InstalledFltAdapter, InstalledFltBindingError, InstalledFltError};
 use crate::language_install::{LanguageRuntimeError, RholangLanguageRuntime};
 use mettail_dovetail_runtime::{
-    theory_positional_native_view, ProjectedMatcherRestoreError, RuntimeLiteralRef,
-    SemanticActionExecutionRequest, SemanticInputLimits, SemanticMatchRefutation,
-    SemanticMatchUndetermined, SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt,
-    SemanticProjectionDecision, SemanticProjectionExecutionRequest, SemanticProjectionReceipt,
+    ProjectedMatcherRestoreError, RuntimeLiteralRef, SemanticActionExecutionRequest,
+    SemanticInputLimits, SemanticMatchRefutation, SemanticMatchUndetermined,
+    SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt, SemanticProjectionDecision,
+    SemanticProjectionExecutionRequest, SemanticProjectionReceipt,
     SemanticRelationExecutionRequest, SemanticRelationNormalFormReceipt, SemanticResourceReceipt,
     SemanticTransition, SemanticTransitionDecision, SemanticTransitionInput,
     SemanticTransitionLimits, SemanticTransitionMatcher, SemanticTransitionReceipt,
-    TheoryPatternRestoreError, TheoryPositionalNativeView,
+    TheoryPatternRestoreError, TheoryPositionalNativeView, theory_positional_native_view,
 };
 use mettail_grammar_core::{
     BuiltinCarrier, Carrier, InstalledLanguage, InstalledLanguageHandle, InstalledLanguageTable,
@@ -40,9 +40,9 @@ pub use relation_observation::{
     RelationObservationReport, RelationObservationRequest, RelationObservationResult,
 };
 pub use wire::{
-    semantic_runtime_definitions, LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_ABI_V2,
-    LANGUAGE_SEMANTIC_DISPLAY_URN, LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN,
-    LANGUAGE_SEMANTIC_OBSERVE_URN, LANGUAGE_SEMANTIC_REDUCE_URN,
+    LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_ABI_V2, LANGUAGE_SEMANTIC_DISPLAY_URN,
+    LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN, LANGUAGE_SEMANTIC_OBSERVE_URN,
+    LANGUAGE_SEMANTIC_REDUCE_URN, semantic_runtime_definitions,
 };
 
 const SEMANTIC_SETUP_SCHEDULE_V1: u128 = 1;
@@ -367,7 +367,7 @@ impl RholangLanguageRuntime {
                         _ => {
                             return Err(InstalledSemanticError::InvalidSelection(
                                 "where predicate requires an exact category",
-                            ))
+                            ));
                         },
                     }
                 } else {
@@ -630,16 +630,17 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
     })??;
     let proven = match decision {
         SemanticTransitionDecision::Proven(proven) => proven,
-        SemanticTransitionDecision::ProvenRelation(_) => {
+        SemanticTransitionDecision::ProvenRelation(_)
+        | SemanticTransitionDecision::ProvenSteps(_) => {
             return Err(InstalledSemanticError::InvalidEvidence(
-                "named action returned a direct relation result",
-            ))
+                "named action returned a different execution result",
+            ));
         },
         SemanticTransitionDecision::Refuted(reason) => {
-            return Err(InstalledSemanticError::Refuted(reason))
+            return Err(InstalledSemanticError::Refuted(reason));
         },
         SemanticTransitionDecision::Undetermined { reason, .. } => {
-            return Err(InstalledSemanticError::Undetermined(reason))
+            return Err(InstalledSemanticError::Undetermined(reason));
         },
     };
     if Some(proven.work) != *kernel_work || proven.work < admission || proven.transitions.is_empty()
@@ -895,13 +896,13 @@ fn prepare_native_predicate_results<C: FnMut() -> bool>(
     })??;
     let proven = match decision {
         SemanticTransitionDecision::ProvenRelation(proven) => proven,
-        SemanticTransitionDecision::Proven(_) => {
+        SemanticTransitionDecision::Proven(_) | SemanticTransitionDecision::ProvenSteps(_) => {
             return Err(InstalledSemanticError::InvalidEvidence(
-                "relation returned a named action result",
+                "whole relation returned a different execution result",
             ));
         },
         SemanticTransitionDecision::Refuted(reason) => {
-            return Err(InstalledSemanticError::Refuted(reason))
+            return Err(InstalledSemanticError::Refuted(reason));
         },
         SemanticTransitionDecision::Undetermined { reason, .. } => {
             return Err(InstalledSemanticError::Undetermined(reason));
@@ -1054,7 +1055,7 @@ fn validate_fresh_receipt<C: FnMut() -> bool>(
         (TheoryResourceProfileV1::Costed { .. }, _) => {
             return Err(InstalledSemanticError::Undetermined(
                 SemanticMatchUndetermined::ResourceGradeUnavailable,
-            ))
+            ));
         },
         _ => return Err(InstalledSemanticError::InvalidEvidence("receipt resource profile")),
     }
@@ -1361,6 +1362,34 @@ impl<'a> InstalledSemanticBundle<'a> {
             is_cancelled,
         ))
     }
+
+    /// Enumerate complete, ungrouped one-step rewrite proofs for installed
+    /// lookahead. The matcher is the same restored image used by the normal
+    /// relation service; this boundary supplies neither a second evaluator nor
+    /// authority beyond the prepared handle. The caller must recheck that
+    /// handle before publishing any branch.
+    pub(crate) fn execute_step_roster_accounted<C: FnMut() -> bool>(
+        &self,
+        sort: TheorySortId,
+        input: SemanticTransitionInput,
+        limits: SemanticTransitionLimits,
+        is_cancelled: C,
+    ) -> Result<(SemanticTransitionDecision, u64), InstalledSemanticError> {
+        let image = self
+            .installed
+            .semantic_image()
+            .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+        Ok(self.matcher.execute_rewrite_step_roster_accounted(
+            SemanticRelationExecutionRequest {
+                image,
+                relation_sort: sort,
+                granted_rights: self.handle.rights(),
+                input,
+                limits,
+            },
+            is_cancelled,
+        ))
+    }
 }
 
 /// Setup schedule v1. These are logical image coordinates/payload reservations,
@@ -1523,6 +1552,35 @@ fn charge_receipt_premises<C: FnMut() -> bool>(
                 budget.charge(1, 4)?;
             },
             SemanticPremiseReceipt::Judgment { .. } => budget.charge(1, 12)?,
+            SemanticPremiseReceipt::JudgmentProof { proof, .. } => {
+                // The whole proof is evidence, not a second execution charge.
+                // Reserve its concrete boundary payload iteratively before
+                // exposing any part of the semantic result.
+                budget.charge(1, 8)?; // proof tuple
+                for fingerprint in [
+                    &proof.language_fingerprint,
+                    &proof.theory_fingerprint,
+                    &proof.image_fingerprint,
+                ] {
+                    charge_receipt_payload(fingerprint, budget)?;
+                }
+                budget.charge(1, 4)?; // judgment coordinate
+                budget.charge(1, 8)?; // argument roster
+                for argument in &proof.arguments {
+                    charge_receipt_payload(argument, budget)?;
+                }
+                budget.charge(1, 8)?; // proof-step roster
+                for step in &proof.steps {
+                    budget.charge(1, 14)?; // activation, rule, two option tags
+                    if step.parent_activation.is_some() {
+                        budget.charge(1, 8)?;
+                    }
+                    if step.premise_index.is_some() {
+                        budget.charge(1, 4)?;
+                    }
+                }
+                budget.charge(1, 8)?; // proof-search work, recorded as data
+            },
             SemanticPremiseReceipt::Guard { .. } => budget.charge(1, 64)?,
             SemanticPremiseReceipt::Intrinsic { receipt, .. } => {
                 budget.charge(1, 9)?; // opcode and intrinsic-local work
@@ -1661,8 +1719,8 @@ pub(crate) mod tests {
     fn semantic_service_retains_context_before_setup_but_not_before_full_authorization() {
         use crate::language_install::tests::MemoryRegistry;
         use crate::language_install::{
-            InstallCandidate, LanguageInstallPolicy, LanguageInstallService,
-            LANGUAGE_CAPABILITY_ABI_V1,
+            InstallCandidate, LANGUAGE_CAPABILITY_ABI_V1, LanguageInstallPolicy,
+            LanguageInstallService,
         };
         use mettail_grammar_core::{LanguageRights, RuntimePolicy, RuntimeTemplatePiece};
         use std::collections::BTreeMap;
@@ -1822,10 +1880,12 @@ pub(crate) mod tests {
                 .as_ref()
                 .expect("negative retains publication context");
             assert!(retained.required.contains(&LanguageRight::Reduce));
-            assert!(report
-                .usage
-                .kernel_work
-                .is_some_and(|w| w > 0 && w < report.usage.work));
+            assert!(
+                report
+                    .usage
+                    .kernel_work
+                    .is_some_and(|w| w > 0 && w < report.usage.work)
+            );
             let mut calls = 0;
             assert_eq!(commit_produce(Some(retained), || calls += 1), Ok(()));
             assert_eq!(calls, 1);
@@ -1897,7 +1957,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn semantic_service_publication_guards_actual_matched_and_unmatched_space_mutation() {
         use models::rhoapi::{
-            tagged_continuation::TaggedCont, BindPattern, ListParWithRandom, TaggedContinuation,
+            BindPattern, ListParWithRandom, TaggedContinuation, tagged_continuation::TaggedCont,
         };
         use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
         use rspace_plus_plus::rspace::rspace_interface::ISpace;

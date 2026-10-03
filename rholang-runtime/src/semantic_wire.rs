@@ -9,7 +9,7 @@
 
 use crate::language_install::{exact_expr, signed_i128};
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
-use models::rhoapi::{expr::ExprInstance, Par};
+use models::rhoapi::{Par, expr::ExprInstance};
 use models::rust::utils::{new_gbigint_expr, new_gint_par};
 use num_bigint::BigInt;
 
@@ -18,14 +18,15 @@ mod ordering;
 mod receipt;
 mod relation;
 mod request;
-pub use completion::{decode_limits_v1, decode_usage_v1, encode_limits_v1, SemanticWireUsage};
 pub(crate) use completion::{CompletionPermit, DiagnosticDomain, ReplyBody, StickyCancellation};
+pub use completion::{SemanticWireUsage, decode_limits_v1, decode_usage_v1, encode_limits_v1};
 pub(crate) use ordering::sort_results;
+pub(crate) use receipt::encode_normalization_step_v1;
 pub(crate) use receipt::encode_results_v1;
 pub(crate) use receipt::reserve_reply_payload;
 pub use receipt::{decode_receipt_v1, encode_receipt_v1};
 pub(crate) use relation::encode_relation_results_v2;
-pub use relation::{decode_relation_results_v2, DecodedRelationResult};
+pub use relation::{DecodedRelationResult, decode_relation_results_v2};
 pub(crate) use request::{OwnedDisplayRequest, OwnedRelationRequest, OwnedSemanticRequest};
 
 const VALUE_DESCRIPTOR_BYTES: usize = 16;
