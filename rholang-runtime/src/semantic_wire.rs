@@ -9,7 +9,7 @@
 
 use crate::language_install::{exact_expr, signed_i128};
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
-use models::rhoapi::{Par, expr::ExprInstance};
+use models::rhoapi::{expr::ExprInstance, Par};
 use models::rust::utils::{new_gbigint_expr, new_gint_par};
 use num_bigint::BigInt;
 
@@ -18,15 +18,15 @@ mod ordering;
 mod receipt;
 mod relation;
 mod request;
+pub use completion::{decode_limits_v1, decode_usage_v1, encode_limits_v1, SemanticWireUsage};
 pub(crate) use completion::{CompletionPermit, DiagnosticDomain, ReplyBody, StickyCancellation};
-pub use completion::{SemanticWireUsage, decode_limits_v1, decode_usage_v1, encode_limits_v1};
 pub(crate) use ordering::sort_results;
 pub(crate) use receipt::encode_normalization_step_v1;
 pub(crate) use receipt::encode_results_v1;
 pub(crate) use receipt::reserve_reply_payload;
 pub use receipt::{decode_receipt_v1, encode_receipt_v1};
 pub(crate) use relation::encode_relation_results_v2;
-pub use relation::{DecodedRelationResult, decode_relation_results_v2};
+pub use relation::{decode_relation_results_v2, DecodedRelationResult};
 pub(crate) use request::{OwnedDisplayRequest, OwnedRelationRequest, OwnedSemanticRequest};
 
 const VALUE_DESCRIPTOR_BYTES: usize = 16;
@@ -52,15 +52,24 @@ pub fn encode_u64<C: FnMut() -> bool>(
     budget: &mut ReflectedCodecBudget<'_, C>,
 ) -> Result<Par, SemanticWireError> {
     match i64::try_from(value) {
-        Ok(small) => {
+        Ok(_) => {
             budget.charge(1, VALUE_DESCRIPTOR_BYTES)?;
-            Ok(new_gint_par(small, Vec::new(), false))
         },
         Err(_) => {
             budget.charge(10, VALUE_DESCRIPTOR_BYTES + 9)?;
-            Ok(Par::default()
-                .with_exprs(vec![new_gbigint_expr(BigInt::from(value).to_signed_bytes_be())]))
         },
+    }
+    Ok(encode_u64_literal(value))
+}
+
+/// The same canonical scalar representation for an already-admitted bound.
+/// The caller owns its surrounding resource reservation; no conversion through
+/// text or signed narrowing is involved.
+pub(crate) fn encode_u64_literal(value: u64) -> Par {
+    match i64::try_from(value) {
+        Ok(small) => new_gint_par(small, Vec::new(), false),
+        Err(_) => Par::default()
+            .with_exprs(vec![new_gbigint_expr(BigInt::from(value).to_signed_bytes_be())]),
     }
 }
 
@@ -71,6 +80,20 @@ pub fn decode_u64<C: FnMut() -> bool>(
     budget: &mut ReflectedCodecBudget<'_, C>,
 ) -> Result<u64, SemanticWireError> {
     budget.charge(1, 0)?;
+    decode_u64_literal_with_charge(value, || budget.charge(9, 0).map_err(Into::into))
+}
+
+/// Decode the same scalar on a request channel whose outer request is already
+/// funded. The maximum accepted BigInt occupies nine bytes; malformed larger
+/// values are rejected before any integer allocation or text rendering.
+pub(crate) fn decode_u64_literal(value: &Par) -> Result<u64, SemanticWireError> {
+    decode_u64_literal_with_charge(value, || Ok(()))
+}
+
+fn decode_u64_literal_with_charge(
+    value: &Par,
+    mut charge_wide: impl FnMut() -> Result<(), SemanticWireError>,
+) -> Result<u64, SemanticWireError> {
     if !value.locally_free.is_empty() || value.connective_used {
         return Err(SemanticWireError::Shape("integer has nonliteral metadata"));
     }
@@ -82,7 +105,7 @@ pub fn decode_u64<C: FnMut() -> bool>(
             if bytes.len() != 9 || bytes[0] != 0 {
                 return Err(SemanticWireError::NonCanonicalInteger);
             }
-            budget.charge(9, 0)?;
+            charge_wide()?;
             let value = signed_i128(bytes)
                 .and_then(|value| u64::try_from(value).ok())
                 .ok_or(SemanticWireError::IntegerRange)?;

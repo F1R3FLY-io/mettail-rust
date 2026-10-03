@@ -5,6 +5,10 @@ fn integer(value: i64) -> Proc {
     Proc::CastInt(Arc::new(Int::NumLit(value)))
 }
 
+fn big_integer(value: num_bigint::BigInt) -> Proc {
+    Proc::CastBigInt(Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(value))))
+}
+
 fn fold(operand: Proc) -> Proc {
     Proc::IntBinProc(Arc::new(operand), Arc::new(Int::NumLit(8)))
 }
@@ -92,6 +96,10 @@ fn source_profile_admits_lookahead_and_checks_subject_and_bound() {
     let admitted = [
         Proc::PLookaheadAll(Arc::new(Proc::POutputNil(Arc::new(integer(1))))),
         Proc::PLookahead(Arc::new(Proc::POutputNil(Arc::new(integer(1)))), Arc::new(integer(3))),
+        Proc::PLookahead(
+            Arc::new(Proc::POutputNil(Arc::new(integer(1)))),
+            Arc::new(big_integer(num_bigint::BigInt::from(u64::MAX))),
+        ),
     ];
     for source in admitted {
         source
@@ -118,6 +126,35 @@ fn source_profile_admits_lookahead_and_checks_subject_and_bound() {
                 ..
             })
         ));
+    }
+}
+
+#[test]
+fn lookahead_bound_admits_exact_unsigned_range_without_narrowing() {
+    assert_eq!(lookahead_bound(&integer(0)).unwrap(), 0);
+    assert_eq!(lookahead_bound(&integer(i64::MAX)).unwrap(), i64::MAX as u64);
+    for value in [i64::MAX as u64 + 1, u64::MAX] {
+        assert_eq!(lookahead_bound(&big_integer(num_bigint::BigInt::from(value))).unwrap(), value,);
+    }
+    assert!(lookahead_bound(&integer(-1)).is_err());
+    assert!(lookahead_bound(&big_integer(num_bigint::BigInt::from(-1))).is_err());
+    assert!(lookahead_bound(&big_integer(num_bigint::BigInt::from(u64::MAX) + 1)).is_err());
+}
+
+#[test]
+fn full_unsigned_lookahead_bounds_use_existing_source_parser_and_exact_wire() {
+    for value in [i64::MAX as u64 + 1, u64::MAX] {
+        let source = format!(r#"@"r"!(Nil)[{value}]"#);
+        let parsed = Proc::parse_via_wpda(&source).expect("upper-half bound parses as Rholang");
+        let actual = crate::rholang_ast::lower_rholang_proc(&parsed)
+            .expect("upper-half bound lowers without narrowing");
+        let expected = crate::lookahead::spec_n_request_v2(
+            Par::default(),
+            value,
+            Vec::new(),
+            crate::lookahead::spec_channel_par("r"),
+        );
+        assert_eq!(actual, expected);
     }
 }
 

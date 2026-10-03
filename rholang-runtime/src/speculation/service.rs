@@ -15,7 +15,8 @@
 //!
 //! | [`LookaheadResponse`] field | `crate::lookahead` channel |
 //! |---|---|
-//! | [`reply`](LookaheadResponse::reply) | the send's own channel `x` — one datum per success branch |
+//! | [`reply`](LookaheadResponse::reply) | v1 `x` — one bare datum per success branch |
+//! | [`delivery`](LookaheadResponse::delivery) | v2 `x` — one datum with the success and failure PathMap names |
 //! | [`success`](LookaheadResponse::success) | `SPEC_SUCCESS_CHANNEL` — `[trace, term]` per branch |
 //! | [`failure`](LookaheadResponse::failure) | `SPEC_FAILURE_CHANNEL` — `[trace, [code, message]]` per branch |
 //! | [`truncated`](LookaheadResponse::truncated) | `SPEC_TRUNCATED_CHANNEL` — `[trace, handle]` per branch |
@@ -247,7 +248,7 @@ pub struct BranchReport {
 /// What the engine hands back for one request. See the module header for the
 /// channel each field maps onto.
 pub struct LookaheadResponse {
-    /// One datum per success branch, for the send's own channel `x`: the **bare
+    /// One datum per success branch for the legacy v1 reply channel: the **bare
     /// projected term**, so an ordinary receive pattern matches it verbatim.
     /// A branch whose projection yields several terms contributes several.
     pub reply: Vec<Par>,
@@ -342,11 +343,8 @@ impl LookaheadService {
                     "installed lookahead bindings have no live authority directory".into(),
                 )
             })?;
-            let provider = InstalledCheckedGuestProvider::new(
-                runtime,
-                installed_bindings,
-                host.clone(),
-            )?;
+            let provider =
+                InstalledCheckedGuestProvider::new(runtime, installed_bindings, host.clone())?;
             Explorer::with_checked_guest_provider(&sandbox, provider)
         };
         let exploration = explorer.explore(program, rand, lookahead).await?;

@@ -511,9 +511,10 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
         } |
         observeRegex!(["CheckBooleanTerminal", regex:Computation`nullable(a?)`, *nullable]) |
         lookaheadNullable!(regex:Computation`nullable(a?)`)[*] |
-        for(@regex:Computation`doneBool(yes)` <- lookaheadNullable) {
-          stdout!(["lookahead-nullable", true]) |
-          @"regex.lookahead.nullable"!(true)
+        for(@success, @failure <- lookaheadNullable) {
+          stdout!(["lookahead-success-traces", success.readZipper().leafCount()]) |
+          @"regex.lookahead.success"!(success) |
+          @"regex.lookahead.failure"!(failure)
         } |
         observeRegex!(["CheckPatternTerminal", regex:Computation`derivative(a,a+)`, *derived]) |
         values!(["abcb", "éλλx", "aaba", "x"]) |

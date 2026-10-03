@@ -5,9 +5,9 @@
 //! [`UnservedRequest`](crate::lookahead::UnservedRequest). [`super::service`] owns the
 //! **answer**: given a request's operands it runs a real branching exploration and hands
 //! back the values each report channel carries. Neither of them makes a request *happen*.
-//! This module does: it is a pair of **system-process `Definition`s**, installed on those two
-//! reserved channels, that consume a request out of a **running program**, serve it, and
-//! publish the results back into that same program.
+//! This module does: it installs four **system-process `Definition`s**, two v1
+//! and two v2, which consume requests out of a running program and publish
+//! results back into that same program.
 //!
 //! ## ★ Why a system process, and not a host-side driver
 //!
@@ -91,7 +91,14 @@
 //!
 //! ## What is published, and where
 //!
-//! One exploration, five channels, no information dropped:
+//! The v1 channels retain their original bare-result replies and companion
+//! reports. A v2 request uses the same exploration and delivers one atomic
+//! `(successPathMap, failurePathMap)` datum on `x`. An internal
+//! `^spec-truncated-v2` report carries `[2, truncatedPathMap]`; it does not
+//! change the approved two-payload reply. The existing companion reports and
+//! aggregate delivery remain available for both request versions.
+//!
+//! The v1 publication path is:
 //!
 //! ```text
 //!            @"^spec-all"!( ⟦P⟧ , x )
@@ -112,9 +119,8 @@
 //!
 //! The bare term on `x` is what makes an ordinary FLT receive pattern match a speculative
 //! result **verbatim**; the trace-keyed data on the companion channels are the provenance;
-//! the FIPS's own three collections are on [`SPEC_DELIVERY_CHANNEL`] for a consumer that
-//! wants one value rather than data on channels. See [`SPEC_DELIVERY_CHANNEL`] for why all
-//! three readings are published rather than one being chosen.
+//! the aggregate three collections are on [`SPEC_DELIVERY_CHANNEL`] for an
+//! existing consumer that wants one value rather than data on channels.
 //!
 //! ### A guest branch that computed nothing is a FAILURE, not silence
 //!
@@ -173,7 +179,7 @@ use crate::language_install::{
 use crate::lookahead::{
     spec_channel_par, SPEC_ALL_CHANNEL, SPEC_ALL_V2_CHANNEL, SPEC_DELIVERY_CHANNEL,
     SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL, SPEC_LEAF_CHANNEL, SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL,
-    SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
+    SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL, SPEC_TRUNCATED_V2_CHANNEL,
 };
 use crate::native_contract::private_name_tag;
 use crate::observation::render_par_text;
@@ -960,7 +966,7 @@ impl LookaheadEngine {
             return Err(InterpreterError::OutOfPhlogistonsError);
         }
 
-        self.publish_response(&mut publisher, response, guest, &reply)
+        self.publish_response(&mut publisher, response, guest, &reply, versioned)
             .await
     }
 
@@ -971,6 +977,7 @@ impl LookaheadEngine {
         response: LookaheadResponse,
         guest: Option<&SpeculationGuest>,
         reply: &Par,
+        versioned: bool,
     ) -> Result<Vec<Par>, InterpreterError> {
         let LookaheadResponse {
             reply: terms,
@@ -983,12 +990,41 @@ impl LookaheadEngine {
             ..
         } = response;
 
-        // ★ The bare terminal term on the send's own channel — one datum per success branch,
-        // so an ordinary FLT receive pattern matches it verbatim.
-        let mut published = Vec::with_capacity(terms.len());
-        for term in terms {
-            publisher.publish(term.clone(), reply).await?;
-            published.push(term);
+        // A v2 reply is ONE RSpace produce with two PathMap payloads in the
+        // approved order. The complete delivery was assembled before this
+        // point; a service-level rendering refusal cannot leak a partial
+        // success/failure answer onto the public channel. V1 retains its
+        // original one-bare-term-per-success ABI for existing programs.
+        let published = if versioned {
+            if let Some(datum) = error.as_ref() {
+                publisher
+                    .publish(datum.clone(), &spec(SPEC_ERR_CHANNEL))
+                    .await?;
+                return Ok(Vec::new());
+            }
+            let [success_name, failure_name] = delivery.fips_reply();
+            let payloads = [success_name.clone(), failure_name.clone()];
+            publisher.publish_payloads(&payloads, reply).await?;
+            payloads.to_vec()
+        } else {
+            let mut published = Vec::with_capacity(terms.len());
+            for term in terms {
+                publisher.publish(term.clone(), reply).await?;
+                published.push(term);
+            }
+            published
+        };
+
+        if versioned {
+            publisher
+                .publish(
+                    ground_list(vec![
+                        new_gint_par(2, Vec::new(), false),
+                        delivery.truncated.clone(),
+                    ]),
+                    &spec(SPEC_TRUNCATED_V2_CHANNEL),
+                )
+                .await?;
         }
 
         // The trace-keyed per-branch provenance.
@@ -1181,6 +1217,15 @@ struct Publisher<'call> {
 
 impl Publisher<'_> {
     async fn publish(&mut self, datum: Par, channel: &Par) -> Result<(), InterpreterError> {
+        self.publish_payloads(&[datum], channel).await
+    }
+
+    /// One RSpace produce, so all payloads enter the same datum atomically.
+    async fn publish_payloads(
+        &mut self,
+        payloads: &[Par],
+        channel: &Par,
+    ) -> Result<(), InterpreterError> {
         // `Blake2b512Random::split_short` takes an `i16`, which is also the width
         // `Reduce::eval_par` splits a parallel composition at. Exhausting it would mean one
         // request delivered 32 768 data; refusing is honest, silently reusing a split would
@@ -1211,7 +1256,7 @@ impl Publisher<'_> {
                 "the lookahead publisher could not build a producer".to_string(),
             ));
         };
-        produce(&[datum], channel).await?;
+        produce(payloads, channel).await?;
         Ok(())
     }
 }
@@ -1327,7 +1372,8 @@ fn parse_envelope_v2(subject: &Par) -> Result<Option<(&Par, Vec<WireOwnerBinding
 /// `(subject, lookahead, replyChannel)` from a request's payload.
 ///
 /// ★ Every operand here is **program-controlled**, and the refusals are consensus-visible. The
-/// surface's `lookahead_bound` (`rholang_ast`) restricts `[n]` to a ground non-negative literal,
+/// surface's `lookahead_bound` (`rholang_ast`) restricts `[n]` to a ground
+/// unsigned-64-bit literal,
 /// but `^spec-n` is an ordinary Rholang channel served by an installed system process: a program
 /// can write `@"^spec-n"!(P, <any Par at all>, x)` and reach this function directly. So the
 /// malformed-bound arm renders its operand through [`render_par_text`] — bounded and
@@ -1348,11 +1394,12 @@ fn parse_request_owned(
             let reply = payload.pop().expect("arity checked");
             let bound = payload.pop().expect("arity checked");
             let subject = payload.pop().expect("arity checked");
-            let value = ground_int(&bound).ok_or_else(|| {
-                format!("the `[n]` bound must be a ground integer, got {}", render_par_text(&bound))
+            let bound = crate::semantic_wire::decode_u64_literal(&bound).map_err(|_| {
+                format!(
+                    "the `[n]` bound must be a ground integer in canonical unsigned 64-bit form, got {}",
+                    render_par_text(&bound)
+                )
             })?;
-            let bound = u64::try_from(value)
-                .map_err(|_| format!("the `[n]` bound must be non-negative, got {value}"))?;
             Ok((subject, Lookahead::Steps(bound), reply))
         },
         true => {
@@ -1484,6 +1531,97 @@ fn trace_list(leaf: &QuiescentLeaf) -> Par {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lower_plain(source: &str) -> Par {
+        use mettail_languages::rholang::Proc;
+
+        let parsed = Proc::parse_via_wpda(source).expect("plain Rholang test process parses");
+        crate::rholang_ast::lower_rholang_proc(&parsed).expect("plain Rholang test process lowers")
+    }
+
+    fn pathmap_length(value: &Par) -> usize {
+        let Some(ExprInstance::EPathmapBody(map)) = exact_expr(value) else {
+            panic!("reply payload must be a PathMap");
+        };
+        // The native carrier represents an empty set with its dedicated
+        // `Empty` mode; populated trace collections use `Set` mode.
+        let expected_mode = if map.is_empty() {
+            models::rust::epathmap_trie_codec::EPathMapMode::Empty
+        } else {
+            models::rust::epathmap_trie_codec::EPathMapMode::Set
+        };
+        assert_eq!(map.mode(), expected_mode);
+        map.len()
+    }
+
+    #[tokio::test]
+    async fn versioned_reply_is_one_two_pathmap_datum() {
+        use crate::lookahead::spec_all_request_v2;
+
+        let receiver = lower_plain(
+            r#"for (@success, @failure <- @"reply") {
+                 @"seen-success"!(success) | @"seen-failure"!(failure)
+               }"#,
+        );
+        let request = spec_all_request_v2(
+            new_gint_par(7, Vec::new(), false),
+            Vec::new(),
+            spec_channel_par("reply"),
+        );
+        let rest = crate::run_normalized_par_with_lookahead_engine(
+            &request.append(receiver),
+            &LookaheadEngine::new(),
+            &[
+                "reply",
+                "seen-success",
+                "seen-failure",
+                SPEC_TRUNCATED_V2_CHANNEL,
+                SPEC_ERR_CHANNEL,
+            ],
+        )
+        .await
+        .expect("versioned lookahead runs in the same RSpace as its receiver");
+
+        assert!(rest["reply"].is_empty(), "the two-payload datum was consumed once");
+        assert_eq!(rest["seen-success"].len(), 1);
+        assert_eq!(rest["seen-failure"].len(), 1);
+        assert_eq!(pathmap_length(&rest["seen-success"][0]), 1);
+        assert_eq!(pathmap_length(&rest["seen-failure"][0]), 0);
+        assert!(rest[SPEC_ERR_CHANNEL].is_empty());
+
+        let reports = &rest[SPEC_TRUNCATED_V2_CHANNEL];
+        assert_eq!(reports.len(), 1, "one typed extension per v2 request");
+        let fields = exact_list(&reports[0]).expect("typed truncation is a list");
+        assert_eq!(fields.len(), 2);
+        assert!(matches!(exact_expr(&fields[0]), Some(ExprInstance::GInt(2))));
+        assert_eq!(pathmap_length(&fields[1]), 0);
+    }
+
+    #[tokio::test]
+    async fn versioned_bound_keeps_truncation_off_the_public_reply() {
+        use crate::lookahead::spec_n_request_v2;
+
+        let subject = lower_plain(r#"@"tick"!(1) | for (@value <- @"tick") { @"OUT"!(value) }"#);
+        let request = spec_n_request_v2(subject, 0, Vec::new(), spec_channel_par("reply"));
+        let rest = crate::run_normalized_par_with_lookahead_engine(
+            &request,
+            &LookaheadEngine::new(),
+            &["reply", SPEC_TRUNCATED_V2_CHANNEL, SPEC_ERR_CHANNEL],
+        )
+        .await
+        .expect("bounded versioned lookahead runs");
+
+        assert_eq!(rest["reply"].len(), 2, "x has exactly the approved two map payloads");
+        assert_eq!(pathmap_length(&rest["reply"][0]), 0);
+        assert_eq!(pathmap_length(&rest["reply"][1]), 0);
+        assert!(rest[SPEC_ERR_CHANNEL].is_empty());
+        let reports = &rest[SPEC_TRUNCATED_V2_CHANNEL];
+        assert_eq!(reports.len(), 1);
+        let fields = exact_list(&reports[0]).expect("typed truncation is a list");
+        assert_eq!(fields.len(), 2);
+        assert!(matches!(exact_expr(&fields[0]), Some(ExprInstance::GInt(2))));
+        assert!(pathmap_length(&fields[1]) > 0, "the cut branch remains queryable");
+    }
 
     #[test]
     fn installed_publication_commits_once_only_while_every_owner_is_live() {
@@ -1625,6 +1763,26 @@ mod tests {
             parse_request(&[subject, negative, reply], true).is_err(),
             "a negative bound must be refused"
         );
+    }
+
+    #[test]
+    fn request_bound_accepts_full_u64_and_rejects_noncanonical_wide_values() {
+        let subject = spec_channel_par("subject");
+        let reply = spec_channel_par("results");
+        for expected in [i64::MAX as u64 + 1, u64::MAX] {
+            let bound = crate::semantic_wire::encode_u64_literal(expected);
+            let (_, actual, _) = parse_request(&[subject.clone(), bound, reply.clone()], true)
+                .expect("canonical upper-half bound");
+            assert_eq!(actual, Lookahead::Steps(expected));
+        }
+        for bytes in [vec![], vec![0], vec![0; 9], vec![0; 10], vec![0xff; 9]] {
+            let bound =
+                Par::default().with_exprs(vec![models::rust::utils::new_gbigint_expr(bytes)]);
+            assert!(
+                parse_request(&[subject.clone(), bound, reply.clone()], true).is_err(),
+                "malformed or out-of-range BigInt bound must be refused"
+            );
+        }
     }
 
     #[test]

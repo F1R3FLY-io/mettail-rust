@@ -25,8 +25,8 @@ use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{FltRegistry, FltResolve};
 use mettail_rholang_runtime::lookahead::{
-    spec_all_request, spec_channel_par, spec_n_request, SPEC_ALL_CHANNEL, SPEC_ALL_V2_CHANNEL,
-    SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL, SPEC_REQUEST_CHANNELS,
+    spec_all_request, spec_channel_par, spec_n_request, spec_n_request_v2, SPEC_ALL_CHANNEL,
+    SPEC_ALL_V2_CHANNEL, SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL, SPEC_REQUEST_CHANNELS,
 };
 use mettail_rholang_runtime::{
     lower_rholang_proc_with_resolver,
@@ -198,6 +198,18 @@ fn ordinary_lookahead_keeps_the_v1_request_shape() {
 fn a_zero_bound_is_admitted() {
     let lowered = lower_ok(r#"@"r"!(Nil)[0]"#);
     assert!(format!("{lowered:?}").contains(SPEC_N_CHANNEL), "a `[0]` bound must lower");
+}
+
+#[test]
+fn upper_unsigned_bounds_parse_and_lower_without_signed_narrowing() {
+    for value in [i64::MAX as u64 + 1, u64::MAX] {
+        let source = format!(r#"@"r"!(Nil)[{value}]"#);
+        assert_eq!(
+            lower_ok(&source),
+            spec_n_request_v2(Par::default(), value, Vec::new(), spec_channel_par("r")),
+            "the upper half uses the exact versioned scalar wire",
+        );
+    }
 }
 
 /// The lookahead attaches to every send SUGAR, not only the one the demo uses.

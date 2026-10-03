@@ -1614,8 +1614,8 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
 // The three delivered collections
 // ══════════════════════════════════════════════════════════════════════════
 
-/// The three collections `x!(P)[n]` places on `x`: the FIPS's `success` and
-/// `failure`, plus the USER-decided third map `truncated`.
+/// The three assembled collections: the approved `success` and `failure`
+/// names are the two v2 reply payloads; `truncated` is reported separately.
 ///
 /// Each is a homogeneous set-mode `EPathMap` whose members are `EList` trace
 /// paths. Prefixes are shared by PathMap's trie rather than duplicated in a
@@ -1634,8 +1634,14 @@ pub struct SpeculationDelivery {
 }
 
 impl SpeculationDelivery {
-    /// The three collections in FIPS order, for a caller placing them on a
-    /// channel.
+    /// The approved reply payloads in their exact wire order. Both names are
+    /// produced in one RSpace datum; truncation remains on a separate,
+    /// explicitly versioned internal report channel.
+    pub fn fips_reply(&self) -> [&Par; 2] {
+        [&self.success, &self.failure]
+    }
+
+    /// The legacy aggregate order for the `^spec-delivery` channel.
     ///
     /// ⚠ This is a *positional* reading — `[success, truncated, failure]` — and
     /// a caller that pairs it with channel names by position is one edit away
@@ -1659,7 +1665,7 @@ impl SpeculationDelivery {
     ///
     /// The order is [`SPEC_REPORT_CHANNELS`](crate::lookahead::SPEC_REPORT_CHANNELS)'s,
     /// which is the order a transcript shows, NOT [`as_slice`](Self::as_slice)'s
-    /// FIPS order — and the fact that those two differ is precisely why the
+    /// aggregate order — and the fact that those two differ is precisely why the
     /// pairing must not be positional.
     pub fn on_report_channels(&self) -> [(&'static str, &Par); 3] {
         [

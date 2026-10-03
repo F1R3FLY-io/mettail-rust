@@ -62,11 +62,13 @@ macro_rules! rholang_source_profile_rows {
             Name::NQuote => [Arc<Proc> => Q];
             Name::NQuoteShort => [Arc<Proc> => Q];
             Proc::CastInt => [Arc<Int> => I];
+            Proc::CastBigInt => [Arc<BigInt> => I];
             Proc::CastBool => [Arc<Bool> => I];
             Proc::CastStr => [Arc<Str> => I];
             Proc::CastList => [Arc<List> => I];
             Proc::CastMap => [Arc<Map> => I];
             Int::NumLit => [i64 => Opaque];
+            BigInt::NumLit => [mettail_runtime::CanonicalBigInt => Opaque];
             Int::NegInt => [Arc<Int> => I];
             Bool::BoolLit => [bool => Opaque];
             Str::StringLit => [String => Opaque];

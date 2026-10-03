@@ -643,7 +643,10 @@ fn lower_arm_p_lookahead(
 ) -> Result<Par, RholangAstLowerError> {
     let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
     let bound = lookahead_bound(bound.as_ref())?;
-    Ok(crate::lookahead::spec_n_request(payload, bound, channel))
+    Ok(match i64::try_from(bound) {
+        Ok(signed_bound) => crate::lookahead::spec_n_request(payload, signed_bound, channel),
+        Err(_) => crate::lookahead::spec_n_request_v2(payload, bound, Vec::new(), channel),
+    })
 }
 
 #[inline(never)]

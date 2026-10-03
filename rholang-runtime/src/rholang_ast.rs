@@ -1492,7 +1492,7 @@ enum Kont<'a> {
     },
     /// `x!(P)[n]` — a bounded speculation request over `(channel, payload)`.
     SpecN {
-        bound: i64,
+        bound: u64,
         binding: Option<Box<crate::lookahead::LookaheadOwnerBinding>>,
     },
     /// `lower_body_lifting_folds`' trampoline: `new(ret){ fold!(operand, ret) | for(r <- ret){ … } }`
@@ -3265,7 +3265,14 @@ impl<'a> Drive<'a> {
                     Some(binding) => {
                         crate::lookahead::spec_n_request_v2(payload, bound, vec![*binding], channel)
                     },
-                    None => crate::lookahead::spec_n_request(payload, bound, channel),
+                    None => match i64::try_from(bound) {
+                        Ok(signed_bound) => {
+                            crate::lookahead::spec_n_request(payload, signed_bound, channel)
+                        },
+                        Err(_) => {
+                            crate::lookahead::spec_n_request_v2(payload, bound, Vec::new(), channel)
+                        },
+                    },
                 };
                 self.stacks.value(request)?;
             },
@@ -5772,20 +5779,30 @@ fn mk_proc_list(items: Vec<Proc>) -> Proc {
 
 // ── the lookahead suffix: operand admission + bound admission ───────────────────────────────
 
-/// Admit a `P[n]` step bound: a ground, non-negative integer literal.
+/// Admit a `P[n]` step bound: a ground, unsigned-64-bit integer literal.
 ///
 /// Non-negative because `n` counts COMMs and a negative count denotes nothing; `0` is admitted
 /// and is meaningful — it explores nothing and truncates immediately, which is the identity of
 /// the bounded family and a useful probe.
-fn lookahead_bound(bound: &Proc) -> Result<i64, RholangAstLowerError> {
+fn lookahead_bound(bound: &Proc) -> Result<u64, RholangAstLowerError> {
     match bound {
         Proc::CastInt(value) => match value.as_ref() {
-            Int::NumLit(literal) if *literal >= 0 => Ok(*literal),
+            Int::NumLit(literal) if *literal >= 0 => Ok(*literal as u64),
             Int::NumLit(literal) => {
                 Err(RholangAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
                     "negative bound {literal}"
                 )))
             },
+            other => Err(RholangAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
+                "{other:?}"
+            ))),
+        },
+        Proc::CastBigInt(value) => match value.as_ref() {
+            BigInt::NumLit(literal) => u64::try_from(literal.get()).map_err(|_| {
+                RholangAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(
+                    "bound is outside the unsigned 64-bit range".to_owned(),
+                )
+            }),
             other => Err(RholangAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
                 "{other:?}"
             ))),

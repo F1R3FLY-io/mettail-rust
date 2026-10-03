@@ -45,35 +45,28 @@
 //! `Par` rather than a channel *name*, so `new r in { r!(P)[*] }` works on an unforgeable name
 //! and not only on a quoted string.
 //!
-//! ## The result shape, and why it is data-on-channels rather than a `PathMap`
+//! ## The result shape
 //!
-//! ⚠ **PathMap methods do not lower on the reducer path** — all 22 zipper methods fail, and a
-//! `Pathmap` lowers to an `EMap`. So a delivery built on PathMap operations is one the receiving
-//! program cannot then read. The FIPS's "success map / failure map" is therefore realized as
-//! **resting data on channels**, which is the shape Rholang can actually consume:
+//! The versioned request places one datum with two trace-set `EPathMap` payloads
+//! on the send's reply channel `x`: `(success, failure)`. A receiving program can
+//! bind both names and query their trace entries through the PathMap API. The
+//! original v1 request channels retain their bare-term reply ABI for existing
+//! programs and demonstrations. A nonempty trace set has native `Set` mode;
+//! an empty one has native `Empty` mode.
 //!
 //! | what | where | datum |
 //! |---|---|---|
-//! | each SUCCESS branch's terminal term | the send's own channel `x` | the bare reflected term |
+//! | v2 FIPS reply | the send's own channel `x` | one datum `(successPathMap, failurePathMap)` |
+//! | v1 legacy reply | the send's own channel `x` | one bare projected term per success branch |
 //! | success provenance | [`SPEC_SUCCESS_CHANNEL`] | `[trace, term]` |
 //! | each ABORTED branch | [`SPEC_FAILURE_CHANNEL`] | `[trace, reason]` |
-//! | each TRUNCATED branch (`[n]` only) | [`SPEC_TRUNCATED_CHANNEL`] | `[trace, handle]` |
+//! | each TRUNCATED branch (`[n]` only) | [`SPEC_TRUNCATED_CHANNEL`] | `[trace, handle, frontier]` |
+//! | v2 internal truncation extension | [`SPEC_TRUNCATED_V2_CHANNEL`] | `[2, truncatedPathMap]` |
 //! | the request was never served | [`SPEC_ALL_CHANNEL`] / [`SPEC_N_CHANNEL`] | the request itself, resting |
 //!
-//! Publishing the **bare terminal term** on `x` (rather than a tuple) is what makes the ordinary
-//! FLT receive pattern work verbatim —
-//!
-//! ```text
-//! @"results"!(lambda:Term`((plus, two), three)`)[*] |
-//! for(@lambda:Term`lam f. lam x. ${body}` <- @"results") { @"OUT"!(lambda:Term`${body}`) }
-//! ```
-//!
-//! — so a program filters over values the machine **computed**, not constants someone
-//! transcribed. One datum per success branch means a confluent guest leaves exactly one (and the
-//! `for` above consumes it), while a non-confluent guest leaves several, which is precisely the
-//! resting-data shape the assay desk already filters over. The trace-keyed pairs are on a
-//! companion channel for programs that want provenance, so keying by trace is preserved without
-//! forcing every consumer to destructure a pair.
+//! The two v2 payloads are one RSpace produce, so a receiver cannot observe
+//! only one of the two maps. The versioned truncation datum is separate and
+//! never adds a third payload to the approved reply.
 //!
 //! ## Truncation is a THIRD outcome, not a failure
 //!
@@ -119,13 +112,20 @@ pub const SPEC_FAILURE_CHANNEL: &str = "^spec-failure";
 /// One datum per TRUNCATED-and-resumable branch: `[trace, handle]`. `[n]` only.
 pub const SPEC_TRUNCATED_CHANNEL: &str = "^spec-truncated";
 
+/// Internal v2 truncation extension: one datum `[2, truncatedPathMap]` per
+/// bounded request. The approved public reply remains exactly the success and
+/// failure PathMap payloads on the send's channel; this channel is not part of
+/// that FIPS wire. The old per-branch `^spec-truncated` reports remain intact.
+pub const SPEC_TRUNCATED_V2_CHANNEL: &str = "^spec-truncated-v2";
+
 /// Typed engine-side failures (a subject the enumerator cannot speculate over, an exhausted
 /// budget, a not-yet-implemented capability). Distinct from [`SPEC_FAILURE_CHANNEL`], which is
 /// about a *branch*; this is about the *request*.
 pub const SPEC_ERR_CHANNEL: &str = "^spec-err";
 
-/// The FIPS's own three collections, as ONE datum: `[success, truncated, failure]`, each an
-/// `ESet` of `EList` entries `[step₀ … step_{k-1}, leaf]`
+/// The legacy aggregate of three collections, as ONE datum:
+/// `[success, truncated, failure]`, each a set-mode `EPathMap` of `EList` entries
+/// `[step₀ … step_{k-1}, leaf]`
 /// ([`crate::speculation::delivery::SpeculationDelivery`]).
 ///
 /// ★ This is the **other half** of the shape reconciliation, and it exists because the two
@@ -133,13 +133,12 @@ pub const SPEC_ERR_CHANNEL: &str = "^spec-err";
 ///
 /// | reading | where | leaf | the question it answers |
 /// |---|---|---|---|
-/// | the bare projected term | the send's own channel `x` | the guest's answer | *"what did `P` compute?"* — an ordinary FLT receive pattern matches it verbatim |
+/// | the bare projected term | a v1 send's own channel `x` | the guest's answer | *"what did `P` compute?"* — an ordinary FLT receive pattern matches it verbatim |
 /// | the trace-keyed per-branch datum | [`SPEC_SUCCESS_CHANNEL`] & co. | the projected term | *"which branch computed it, and how did it get there?"* |
-/// | the FIPS collection | this channel | the reified terminal **configuration** | *"what is the whole path set?"* — one value, keyed by trace, the FIPS's `success`/`failure` maps verbatim |
+/// | the aggregate collection | this channel | the reified terminal **configuration** | *"what is the whole path set?"* — one legacy value with all three outcomes |
 ///
-/// Delivering only the first would discard provenance; delivering only the third would force
-/// every consumer to destructure an `ESet` before it could read an answer. All three are
-/// published, from one exploration.
+/// The v2 public reply uses the `success` and `failure` PathMaps directly on
+/// `x`. This aggregate remains for existing consumers.
 pub const SPEC_DELIVERY_CHANNEL: &str = "^spec-delivery";
 
 /// ⚠ **Sandbox-internal, never host-visible.** The channel a guest's in-Rho quiescence driver
@@ -246,7 +245,7 @@ pub fn spec_all_request_v2(
 /// Build a bounded request with explicit installed owner bindings.
 pub fn spec_n_request_v2(
     subject: Par,
-    bound: i64,
+    bound: u64,
     bindings: Vec<LookaheadOwnerBinding>,
     reply_channel: Par,
 ) -> Par {
@@ -254,7 +253,7 @@ pub fn spec_n_request_v2(
         SPEC_N_V2_CHANNEL,
         vec![
             spec_envelope_v2(subject, bindings),
-            new_gint_par(bound, Vec::new(), false),
+            crate::semantic_wire::encode_u64_literal(bound),
             reply_channel,
         ],
     )
@@ -393,6 +392,19 @@ mod tests {
         assert_eq!(bounded_send.chan.as_ref(), Some(&spec_channel_par(SPEC_N_V2_CHANNEL)));
         assert_eq!(bounded_send.data.len(), 3);
         assert_eq!(bounded_send.data[1], new_gint_par(7, Vec::new(), false));
+
+        let maximum = spec_n_request_v2(
+            spec_channel_par("subject"),
+            u64::MAX,
+            Vec::new(),
+            spec_channel_par("bounded"),
+        );
+        let maximum_send = maximum.sends.first().expect("one maximum-bound request");
+        assert_eq!(
+            maximum_send.data[1],
+            crate::semantic_wire::encode_u64_literal(u64::MAX),
+            "the upper half is transported by the existing exact BigInt scalar codec",
+        );
     }
 
     #[test]
