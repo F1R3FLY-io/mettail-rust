@@ -43,6 +43,7 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
                   CallNullable . p:Pattern |- "nullable(" p ")" : Computation;
                   CallDerivative . c:Scalar, p:Pattern |- "derivative(" c "," p ")" : Computation;
                   DoneBool . b:Bool |- "doneBool(" b ")" : Computation;
+                  ForkYes . |- "forkYes" : Computation;
                   DonePattern . p:Pattern |- "donePattern(" p ")" : Computation;
                   CheckBooleanTerminal . x:Computation |- "terminalBool(" x ")" : TerminalQuery;
                   CheckPatternTerminal . x:Computation |- "terminalPattern(" x ")" : TerminalQuery;
@@ -192,6 +193,8 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
                 }
                 Rewrites {
                   StartNullable : (CallNullable P) ~> (NullableSurface (EEval P (ENil)));
+                  ForkYesDirect : (ForkYes) ~> (DoneBool (BTrue));
+                  ForkYesThroughNullable : (ForkYes) ~> (CallNullable (POptional (PLiteral "a")));
                   StartDerivative : (CallDerivative C P) ~> (DerivativeScalar C P);
                   NullableSurfaceStep : if S ~> T then (NullableSurface S) ~> (NullableSurface T);
                   NullableSurfaceDone : (NullableSurface (EDone P)) ~> (NullableCore (NEval P (NNil)));
@@ -502,7 +505,7 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
       handlePipe!(installed.get("ok").get("exports_by_name").get("Regex"))
     } |
     for(regex <- handlePipe) {
-      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable in {
+      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable, lookaheadChoices in {
         for(@[judgment, term, reply] <= observeRegex) {
           observe!([2, *regex, "Computation", judgment, "TerminalVerdict", term, [], reply])
         } |
@@ -511,10 +514,16 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
         } |
         observeRegex!(["CheckBooleanTerminal", regex:Computation`nullable(a?)`, *nullable]) |
         lookaheadNullable!(regex:Computation`nullable(a?)`)[*] |
+        lookaheadChoices!(regex:Computation`forkYes`)[*] |
         for(@success, @failure <- lookaheadNullable) {
           stdout!(["lookahead-success-traces", success.readZipper().leafCount()]) |
           @"regex.lookahead.success"!(success) |
           @"regex.lookahead.failure"!(failure)
+        } |
+        for(@success, @failure <- lookaheadChoices) {
+          stdout!(["lookahead-distinct-success-traces", success.readZipper().leafCount()]) |
+          @"regex.lookahead.choices.success"!(success) |
+          @"regex.lookahead.choices.failure"!(failure)
         } |
         observeRegex!(["CheckPatternTerminal", regex:Computation`derivative(a,a+)`, *derived]) |
         values!(["abcb", "éλλx", "aaba", "x"]) |
