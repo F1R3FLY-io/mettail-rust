@@ -502,7 +502,7 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
       handlePipe!(installed.get("ok").get("exports_by_name").get("Regex"))
     } |
     for(regex <- handlePipe) {
-      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced in {
+      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable in {
         for(@[judgment, term, reply] <= observeRegex) {
           observe!([2, *regex, "Computation", judgment, "TerminalVerdict", term, [], reply])
         } |
@@ -510,6 +510,11 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
           display!([2, *regex, category, term, [], reply])
         } |
         observeRegex!(["CheckBooleanTerminal", regex:Computation`nullable(a?)`, *nullable]) |
+        lookaheadNullable!(regex:Computation`nullable(a?)`)[*] |
+        for(@regex:Computation`doneBool(yes)` <- lookaheadNullable) {
+          stdout!(["lookahead-nullable", true]) |
+          @"regex.lookahead.nullable"!(true)
+        } |
         observeRegex!(["CheckPatternTerminal", regex:Computation`derivative(a,a+)`, *derived]) |
         values!(["abcb", "éλλx", "aaba", "x"]) |
         for(@[matchText, searchText, replaceText, replacement] <- values) {

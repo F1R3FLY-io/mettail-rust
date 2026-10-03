@@ -24,6 +24,8 @@ macro_rules! rholang_source_profile_rows {
             Proc::PPersistOutput => [Arc<Name> => N, Arc<Proc> => T];
             Proc::POutputQuoted => [Arc<Name> => N, Arc<Proc> => T];
             Proc::POutputShort => [Arc<Proc> => T, Arc<Proc> => T];
+            Proc::PLookaheadAll => [Arc<Proc> => T];
+            Proc::PLookahead => [Arc<Proc> => T, Arc<Proc> => T];
             Proc::PPersistOutputShort => [Arc<Proc> => T, Arc<Proc> => T];
             Proc::POutputEmpty => [Arc<Name> => N];
             Proc::PPersistOutputEmpty => [Arc<Name> => N];

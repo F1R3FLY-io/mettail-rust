@@ -85,6 +85,43 @@ fn bounded_source_refusal_precedes_folds_scopes_and_ddl_preparation() {
 }
 
 #[test]
+fn source_profile_admits_lookahead_and_checks_subject_and_bound() {
+    use mettail_languages::rholang::source_profile::{RholangSourceProfile, SourceRole};
+    use mettail_languages::rholang::{source_constructor, SourceConstructor, SourceProfileError};
+
+    let admitted = [
+        Proc::PLookaheadAll(Arc::new(Proc::POutputNil(Arc::new(integer(1))))),
+        Proc::PLookahead(Arc::new(Proc::POutputNil(Arc::new(integer(1)))), Arc::new(integer(3))),
+    ];
+    for source in admitted {
+        source
+            .try_check_source_profile(SourceRole::Term, &RholangSourceProfile, &mut |_, _| {
+                Ok::<(), ()>(())
+            })
+            .expect("lookahead fields are admitted under the term role");
+    }
+
+    let rejected = [
+        Proc::PLookaheadAll(Arc::new(fold(integer(1)))),
+        Proc::PLookahead(Arc::new(Proc::PZero), Arc::new(fold(integer(3)))),
+    ];
+    for source in rejected {
+        assert!(matches!(
+            source.try_check_source_profile(
+                SourceRole::Term,
+                &RholangSourceProfile,
+                &mut |_, _| Ok::<(), ()>(())
+            ),
+            Err(SourceProfileError::Unsupported {
+                constructor: SourceConstructor::Proc(source_constructor::Proc::IntBinProc),
+                role: SourceRole::Term,
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
 fn source_gate_and_body_driver_share_both_existing_budget_dimensions() {
     use mettail_languages::rholang::source_profile::{RholangSourceProfile, SourceRole};
     use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
