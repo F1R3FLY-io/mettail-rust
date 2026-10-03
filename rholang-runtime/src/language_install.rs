@@ -8840,18 +8840,10 @@ pub(crate) mod tests {
         );
         assert_eq!(outputs.get("LEFT"), Some(&Vec::new()));
         assert_eq!(outputs.get("RIGHT"), Some(&Vec::new()));
-        let joined_payload = new_elist_par(
-            vec![reflected_zero.clone(), reflected_zero],
-            Vec::new(),
-            false,
-            None,
-            Vec::new(),
-            false,
-        );
         assert_eq!(
             outputs.get("OUT"),
-            Some(&vec![joined_payload]),
-            "each process hole binds the datum from its own join position",
+            Some(&vec![reflected_zero.clone(), reflected_zero]),
+            "OUT!(x, y) publishes two arguments, each bound from its own join position",
         );
     }
 
