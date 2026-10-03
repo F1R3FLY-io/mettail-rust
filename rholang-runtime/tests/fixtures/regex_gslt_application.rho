@@ -505,7 +505,7 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
       handlePipe!(installed.get("ok").get("exports_by_name").get("Regex"))
     } |
     for(regex <- handlePipe) {
-      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable, lookaheadChoices in {
+      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable, lookaheadChoices, lookaheadZero, lookaheadOne in {
         for(@[judgment, term, reply] <= observeRegex) {
           observe!([2, *regex, "Computation", judgment, "TerminalVerdict", term, [], reply])
         } |
@@ -515,6 +515,8 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
         observeRegex!(["CheckBooleanTerminal", regex:Computation`nullable(a?)`, *nullable]) |
         lookaheadNullable!(regex:Computation`nullable(a?)`)[*] |
         lookaheadChoices!(regex:Computation`forkYes`)[*] |
+        lookaheadZero!(regex:Computation`forkYes`)[0] |
+        lookaheadOne!(regex:Computation`forkYes`)[1] |
         for(@success, @failure <- lookaheadNullable) {
           stdout!(["lookahead-success-traces", success.readZipper().leafCount()]) |
           @"regex.lookahead.success"!(success) |
@@ -524,6 +526,14 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
           stdout!(["lookahead-distinct-success-traces", success.readZipper().leafCount()]) |
           @"regex.lookahead.choices.success"!(success) |
           @"regex.lookahead.choices.failure"!(failure)
+        } |
+        for(@success, @failure <- lookaheadZero) {
+          @"regex.lookahead.zero.success"!(success) |
+          @"regex.lookahead.zero.failure"!(failure)
+        } |
+        for(@success, @failure <- lookaheadOne) {
+          @"regex.lookahead.one.success"!(success) |
+          @"regex.lookahead.one.failure"!(failure)
         } |
         observeRegex!(["CheckPatternTerminal", regex:Computation`derivative(a,a+)`, *derived]) |
         values!(["abcb", "éλλx", "aaba", "x"]) |
