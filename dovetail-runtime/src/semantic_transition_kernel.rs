@@ -15,16 +15,16 @@ use dovetail::set_automaton::{
 };
 use dovetail::{egraph::EClassId, egraph::EGraph, egraph::EGraphConfig, egraph::ENode};
 use mettail_grammar_core::{
-    CollectionKind, LanguageRight, LanguageRights, PathMapModeV1, ProjectedTheorySemanticImageV1,
-    ProjectionDirectionV1, ProjectionRelationBodyImageV1, SemanticEffectClassV1,
-    SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1, TheoryActionId,
-    TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryImageError,
-    TheoryImageIntrinsicV1, TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
-    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId, TheoryLimitsV1,
-    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1, TheoryPatternStateFormV1,
-    TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1,
-    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheorySemanticImageV1,
-    TheorySortId, TheorySortKindImageV1, TheoryVariableId, PROJECTED_THEORY_IMAGE_ABI_V1,
+    CollectionKind, LanguageRight, LanguageRights, PROJECTED_THEORY_IMAGE_ABI_V1, PathMapModeV1,
+    ProjectedTheorySemanticImageV1, ProjectionDirectionV1, ProjectionRelationBodyImageV1,
+    SemanticEffectClassV1, SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1,
+    TheoryActionId, TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId,
+    TheoryImageError, TheoryImageIntrinsicV1, TheoryImageOperatorV1, TheoryImageTermFormV1,
+    TheoryJudgmentId, TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId,
+    TheoryLimitsV1, TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1,
+    TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1,
+    TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1,
+    TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1, TheoryVariableId,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -417,7 +417,7 @@ pub struct SemanticJudgmentProofStep {
     pub premise_index: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SemanticJudgmentProofReceipt {
     pub language_fingerprint: [u8; 32],
     pub theory_fingerprint: [u8; 32],
@@ -765,6 +765,7 @@ pub struct SemanticRelationExecutionRequest<'a> {
 enum SemanticExecutionSelection {
     Action(TheoryActionId),
     RewriteRelation(TheorySortId),
+    RewriteStep(TheorySortId),
 }
 
 struct SemanticExecutionRequest<'a> {
@@ -1006,6 +1007,7 @@ impl SemanticTransitionMatcher {
                         SemanticProjectionDecision::Undetermined { reason, work, stats }
                     },
                     SemanticTransitionDecision::ProvenRelation(_)
+                    | SemanticTransitionDecision::ProvenSteps(_)
                     | SemanticTransitionDecision::Proven(_) => return invalid(work),
                 },
                 work,
@@ -2539,6 +2541,71 @@ impl SemanticTransitionMatcher {
         )
     }
 
+    /// Enumerate every complete proof of one directed rewrite from an admitted
+    /// term. An empty proven roster is exhaustive no-successor evidence. The
+    /// roster is published atomically, without grouping equal target terms.
+    pub fn execute_rewrite_step_roster_accounted<C>(
+        &self,
+        request: SemanticRelationExecutionRequest<'_>,
+        is_cancelled: C,
+    ) -> (SemanticTransitionDecision, u64)
+    where
+        C: FnMut() -> bool,
+    {
+        let SemanticRelationExecutionRequest {
+            image,
+            relation_sort,
+            granted_rights,
+            input,
+            limits,
+        } = request;
+        let mut guards = UnavailableGuardEvaluator;
+        self.execute_entry_with_guards_accounted(
+            SemanticExecutionRequest {
+                image,
+                selection: SemanticExecutionSelection::RewriteStep(relation_sort),
+                granted_rights,
+                input,
+                limits,
+            },
+            &mut guards,
+            is_cancelled,
+        )
+    }
+
+    /// Guard-capable form of the exhaustive one-step roster. The installed
+    /// caller must supply an effect-isolated evaluator: proving a guard must
+    /// not commit host or guest effects, including on failed branches.
+    pub fn execute_rewrite_step_roster_with_guards_accounted<C, G>(
+        &self,
+        request: SemanticRelationExecutionRequest<'_>,
+        guards: &mut G,
+        is_cancelled: C,
+    ) -> (SemanticTransitionDecision, u64)
+    where
+        C: FnMut() -> bool,
+        G: SemanticGuardEvaluator,
+    {
+        let SemanticRelationExecutionRequest {
+            image,
+            relation_sort,
+            granted_rights,
+            input,
+            limits,
+        } = request;
+        self.execute_entry_with_guards_accounted(
+            SemanticExecutionRequest {
+                image,
+                selection: SemanticExecutionSelection::RewriteStep(relation_sort),
+                granted_rights,
+                input,
+                limits,
+            },
+            guards,
+            is_cancelled,
+        )
+    }
+
     fn execute_entry_with_guards_accounted<C, G>(
         &self,
         request: SemanticExecutionRequest<'_>,
@@ -2647,6 +2714,50 @@ impl SemanticTransitionMatcher {
                     };
                     (Some(matches), Some(action_image))
                 },
+                SemanticExecutionSelection::RewriteStep(sort) => {
+                    let (decision, match_work, match_stats) = self
+                        .match_rewrite_relation_accounted(
+                            sort,
+                            SemanticActionMatchRequest {
+                                image,
+                                granted_rights,
+                                egraph: &mut egraph,
+                                root,
+                                limits: SemanticTransitionLimits {
+                                    work: limits.work.saturating_sub(prefix_work),
+                                    outputs: limits.frontier,
+                                    ..limits
+                                },
+                            },
+                            &mut is_cancelled,
+                        );
+                    if let Err(reason) = absorb_matcher_accounting(
+                        &mut work,
+                        limits.work,
+                        &mut stats,
+                        match_work,
+                        match_stats,
+                    ) {
+                        return SemanticTransitionDecision::Undetermined { reason, work, stats };
+                    }
+                    let matches = match decision {
+                        SemanticMatchDecision::Proven(proven) => proven.matches,
+                        SemanticMatchDecision::Refuted(SemanticMatchRefutation::NoTransition) => {
+                            Vec::new()
+                        },
+                        SemanticMatchDecision::Refuted(reason) => {
+                            return SemanticTransitionDecision::Refuted(reason);
+                        },
+                        SemanticMatchDecision::Undetermined { reason, .. } => {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason,
+                                work,
+                                stats,
+                            };
+                        },
+                    };
+                    (Some(matches), None)
+                },
                 SemanticExecutionSelection::RewriteRelation(_) => {
                     if !granted_rights.contains(LanguageRight::Reduce) {
                         return SemanticTransitionDecision::Refuted(
@@ -2693,6 +2804,7 @@ impl SemanticTransitionMatcher {
                 (SemanticExecutionSelection::RewriteRelation(sort), None) => {
                     Some((sort, &[][..], SemanticNormalizationBranchingV1::FairAllNormalForms))
                 },
+                (SemanticExecutionSelection::RewriteStep(_), None) => None,
                 _ => {
                     return SemanticTransitionDecision::Undetermined {
                         reason: SemanticMatchUndetermined::InvalidImageEvidence,
@@ -3244,6 +3356,46 @@ impl SemanticTransitionMatcher {
                                     }
                                     match decision {
                                         SemanticJudgmentDecision::Proven(proven) => {
+                                            if matches!(
+                                                selection,
+                                                SemanticExecutionSelection::RewriteStep(_)
+                                            ) {
+                                                for proof in proven.proofs {
+                                                    let mut child = match clone_action_branch(
+                                                        &branch,
+                                                    ) {
+                                                        Ok(child) => child,
+                                                        Err(reason) => {
+                                                            return SemanticTransitionDecision::Undetermined {
+                                                                reason, work, stats,
+                                                            };
+                                                        },
+                                                    };
+                                                    if let Err(reason) = push_premise_receipt(
+                                                        &mut child,
+                                                        SemanticPremiseReceipt::JudgmentProof {
+                                                            rule: frame_rule,
+                                                            premise,
+                                                            proof,
+                                                        },
+                                                        limits.proof_nodes,
+                                                    ) {
+                                                        return SemanticTransitionDecision::Undetermined {
+                                                            reason, work, stats,
+                                                        };
+                                                    }
+                                                    if let Err(reason) = push_action_branch(
+                                                        &mut frontier,
+                                                        child,
+                                                        limits.frontier,
+                                                    ) {
+                                                        return SemanticTransitionDecision::Undetermined {
+                                                            reason, work, stats,
+                                                        };
+                                                    }
+                                                }
+                                                continue;
+                                            }
                                             let Ok(proofs) = u32::try_from(proven.proofs.len())
                                             else {
                                                 return SemanticTransitionDecision::Undetermined {
@@ -3686,7 +3838,9 @@ impl SemanticTransitionMatcher {
 
                 match std::mem::replace(&mut execution_stage, ActionExecutionStage::Entry) {
                     ActionExecutionStage::Entry => {
-                        if completed.is_empty() {
+                        if completed.is_empty()
+                            && !matches!(selection, SemanticExecutionSelection::RewriteStep(_))
+                        {
                             return SemanticTransitionDecision::Refuted(
                                 SemanticMatchRefutation::PremiseRefuted,
                             );
@@ -4156,6 +4310,20 @@ impl SemanticTransitionMatcher {
                 }
             }
 
+            if let SemanticExecutionSelection::RewriteStep(relation_sort) = selection {
+                return publish_rewrite_step_roster(
+                    image,
+                    relation_sort,
+                    image_fingerprint,
+                    input,
+                    egraph,
+                    completed,
+                    limits,
+                    &mut work,
+                    stats,
+                    &mut is_cancelled,
+                );
+            }
             if completed.is_empty() {
                 return SemanticTransitionDecision::Refuted(
                     SemanticMatchRefutation::PremiseRefuted,
@@ -4388,6 +4556,104 @@ impl SemanticTransitionMatcher {
         })();
         (decision, work)
     }
+}
+
+fn publish_rewrite_step_roster<C>(
+    image: &TheorySemanticImageV1,
+    relation_sort: TheorySortId,
+    image_fingerprint: [u8; 32],
+    input: Vec<u8>,
+    egraph: EGraph<FramedSemanticOperator>,
+    completed: Vec<CompletedActionBranch>,
+    limits: SemanticTransitionLimits,
+    work: &mut u64,
+    stats: SetAutomatonStats,
+    is_cancelled: &mut C,
+) -> SemanticTransitionDecision
+where
+    C: FnMut() -> bool,
+{
+    let steps = match normalization_successor_steps(
+        image,
+        &egraph,
+        relation_sort,
+        &input,
+        completed,
+        work,
+        limits,
+        is_cancelled,
+    ) {
+        Ok(steps) => steps,
+        Err(reason) => {
+            return SemanticTransitionDecision::Undetermined { reason, work: *work, stats };
+        },
+    };
+    if steps.len() > limits.outputs {
+        return SemanticTransitionDecision::Undetermined {
+            reason: SemanticMatchUndetermined::OutputLimitExceeded,
+            work: *work,
+            stats,
+        };
+    }
+    let mut roots = Vec::new();
+    if roots.try_reserve_exact(steps.len()).is_err() {
+        return SemanticTransitionDecision::Undetermined {
+            reason: SemanticMatchUndetermined::AllocationFailed,
+            work: *work,
+            stats,
+        };
+    }
+    roots.extend(steps.iter().map(|step| egraph.find(step.output)));
+    let (published_egraph, remap) = match project_reachable_egraph(
+        &egraph,
+        &roots,
+        work,
+        ProjectionLimits {
+            work: limits.work,
+            nodes: limits.output_nodes,
+            bytes: limits.output_bytes,
+            limit_reason: SemanticMatchUndetermined::OutputLimitExceeded,
+        },
+        is_cancelled,
+    ) {
+        Ok(projected) => projected,
+        Err(reason) => {
+            return SemanticTransitionDecision::Undetermined { reason, work: *work, stats };
+        },
+    };
+    let mut occurrences = Vec::new();
+    if occurrences.try_reserve_exact(steps.len()).is_err() {
+        return SemanticTransitionDecision::Undetermined {
+            reason: SemanticMatchUndetermined::AllocationFailed,
+            work: *work,
+            stats,
+        };
+    }
+    for (ordinal, step) in steps.into_iter().enumerate() {
+        let output = match remapped_eclass(&remap, egraph.find(step.output)) {
+            Ok(output) => output,
+            Err(reason) => {
+                return SemanticTransitionDecision::Undetermined { reason, work: *work, stats };
+            },
+        };
+        occurrences.push(SemanticRewriteStepOccurrence {
+            ordinal,
+            output,
+            output_sort: relation_sort,
+            receipt: step.proof,
+        });
+    }
+    SemanticTransitionDecision::ProvenSteps(ProvenSemanticRewriteSteps {
+        egraph: published_egraph,
+        language_fingerprint: image.language_fingerprint,
+        theory_fingerprint: image.theory_fingerprint,
+        image_fingerprint,
+        relation_sort,
+        input,
+        occurrences,
+        work: *work,
+        stats,
+    })
 }
 
 fn publish_relation_normal_forms<C>(
@@ -4687,6 +4953,41 @@ pub struct ProvenSemanticRelationNormalForms {
     pub stats: SetAutomatonStats,
 }
 
+/// One directed rewrite proof occurrence. Equal output keys remain separate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticRewriteStepOccurrence {
+    pub ordinal: usize,
+    pub output: EClassId,
+    pub output_sort: TheorySortId,
+    pub receipt: SemanticNormalizationStepReceiptV1,
+}
+
+/// Exhaustive one-step result. An empty roster is checked no-successor
+/// evidence. `work` is the aggregate charge for the entire enumeration.
+pub struct ProvenSemanticRewriteSteps {
+    egraph: EGraph<FramedSemanticOperator>,
+    pub language_fingerprint: [u8; 32],
+    pub theory_fingerprint: [u8; 32],
+    pub image_fingerprint: [u8; 32],
+    pub relation_sort: TheorySortId,
+    pub input: Vec<u8>,
+    pub occurrences: Vec<SemanticRewriteStepOccurrence>,
+    pub work: u64,
+    pub stats: SetAutomatonStats,
+}
+
+impl ProvenSemanticRewriteSteps {
+    pub fn egraph(&self) -> &EGraph<FramedSemanticOperator> {
+        &self.egraph
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (EGraph<FramedSemanticOperator>, Vec<SemanticRewriteStepOccurrence>) {
+        (self.egraph, self.occurrences)
+    }
+}
+
 impl ProvenSemanticRelationNormalForms {
     pub fn egraph(&self) -> &EGraph<FramedSemanticOperator> {
         &self.egraph
@@ -4848,6 +5149,7 @@ impl ProvenSemanticTransitions {
 pub enum SemanticTransitionDecision {
     Proven(ProvenSemanticTransitions),
     ProvenRelation(ProvenSemanticRelationNormalForms),
+    ProvenSteps(ProvenSemanticRewriteSteps),
     Refuted(SemanticMatchRefutation),
     Undetermined {
         reason: SemanticMatchUndetermined,
@@ -4952,6 +5254,12 @@ pub enum SemanticPremiseReceipt {
         proofs: u32,
         proof_steps: u32,
     },
+    /// One specific judgment derivation enabling a rewrite occurrence.
+    JudgmentProof {
+        rule: TheoryRuleProgramId,
+        premise: u32,
+        proof: SemanticJudgmentProofReceipt,
+    },
     ForAll {
         rule: TheoryRuleProgramId,
         premise: u32,
@@ -5000,7 +5308,9 @@ pub enum SemanticGuardDecision {
 
 /// Capability-injected evaluator for an authoritative guard commitment.
 /// Implementations are installed together with the checked theory and receive
-/// no ambient authority from grammar data.
+/// no ambient authority from grammar data. When used for exhaustive rewrite
+/// rosters, they must isolate effects until a selected path is committed;
+/// evaluating failed or unselected proofs must not commit guest effects.
 pub trait SemanticGuardEvaluator {
     fn evaluate_guard(&mut self, request: SemanticGuardRequest<'_>) -> SemanticGuardDecision;
 }
@@ -5110,6 +5420,13 @@ struct NormalizationSuccessorGroup {
     output: EClassId,
     key: Vec<u8>,
     proofs: Vec<SemanticNormalizationStepReceiptV1>,
+}
+
+struct NormalizationSuccessorStep {
+    output: EClassId,
+    key: Vec<u8>,
+    proof: SemanticNormalizationStepReceiptV1,
+    emission_order: usize,
 }
 
 enum ActionExecutionStage {
@@ -8078,6 +8395,21 @@ fn clone_premise_receipts(
                 proofs: *proofs,
                 proof_steps: *proof_steps,
             },
+            SemanticPremiseReceipt::JudgmentProof { rule, premise, proof } => {
+                SemanticPremiseReceipt::JudgmentProof {
+                    rule: *rule,
+                    premise: *premise,
+                    proof: SemanticJudgmentProofReceipt {
+                        language_fingerprint: proof.language_fingerprint,
+                        theory_fingerprint: proof.theory_fingerprint,
+                        image_fingerprint: proof.image_fingerprint,
+                        judgment: proof.judgment,
+                        arguments: clone_byte_vectors(&proof.arguments)?,
+                        steps: clone_copy_slice(&proof.steps)?,
+                        work: proof.work,
+                    },
+                }
+            },
             SemanticPremiseReceipt::ForAll { rule, premise, elements } => {
                 SemanticPremiseReceipt::ForAll {
                     rule: *rule,
@@ -8133,7 +8465,24 @@ fn push_premise_receipt(
     receipt: SemanticPremiseReceipt,
     limit: usize,
 ) -> Result<(), SemanticMatchUndetermined> {
-    if branch.premises.len() == limit {
+    let used = branch.premises.iter().try_fold(0usize, |total, receipt| {
+        let nodes = match receipt {
+            SemanticPremiseReceipt::JudgmentProof { proof, .. } => {
+                proof.steps.len().checked_add(1)?
+            },
+            _ => 1,
+        };
+        total.checked_add(nodes)
+    });
+    let new_nodes = match &receipt {
+        SemanticPremiseReceipt::JudgmentProof { proof, .. } => proof.steps.len().checked_add(1),
+        _ => Some(1),
+    };
+    if !used
+        .zip(new_nodes)
+        .and_then(|(used, new_nodes)| used.checked_add(new_nodes))
+        .is_some_and(|total| total <= limit)
+    {
         return Err(SemanticMatchUndetermined::ProofLimitExceeded);
     }
     branch
@@ -8247,7 +8596,7 @@ fn normalization_terminal_state(
     Ok(false)
 }
 
-fn normalization_successor_groups<C>(
+fn normalization_successor_steps<C>(
     image: &TheorySemanticImageV1,
     egraph: &EGraph<FramedSemanticOperator>,
     relation_sort: TheorySortId,
@@ -8256,7 +8605,7 @@ fn normalization_successor_groups<C>(
     work: &mut u64,
     limits: SemanticTransitionLimits,
     is_cancelled: &mut C,
-) -> Result<Vec<NormalizationSuccessorGroup>, SemanticMatchUndetermined>
+) -> Result<Vec<NormalizationSuccessorStep>, SemanticMatchUndetermined>
 where
     C: FnMut() -> bool,
 {
@@ -8307,31 +8656,60 @@ where
             is_cancelled,
         )?;
         let after = clone_copy_slice(key.as_bytes())?;
-        steps.push((
-            clone_copy_slice(&after)?,
+        let emission_order = steps.len();
+        steps.push(NormalizationSuccessorStep {
+            key: clone_copy_slice(&after)?,
             output,
-            SemanticNormalizationStepReceiptV1 {
+            proof: SemanticNormalizationStepReceiptV1 {
                 rule: rule_id,
                 before: clone_copy_slice(before)?,
                 after,
                 premises: completed.premises,
             },
-        ));
+            emission_order,
+        });
         if steps.len() > limits.proof_nodes {
             return Err(SemanticMatchUndetermined::ProofLimitExceeded);
         }
     }
     steps.sort_unstable_by(|left, right| {
-        left.0
-            .cmp(&right.0)
-            .then_with(|| left.2.rule.cmp(&right.2.rule))
-            .then_with(|| left.2.premises.cmp(&right.2.premises))
+        left.key
+            .cmp(&right.key)
+            .then_with(|| left.proof.rule.cmp(&right.proof.rule))
+            .then_with(|| left.proof.premises.cmp(&right.proof.premises))
+            .then_with(|| left.emission_order.cmp(&right.emission_order))
     });
+    Ok(steps)
+}
+
+fn normalization_successor_groups<C>(
+    image: &TheorySemanticImageV1,
+    egraph: &EGraph<FramedSemanticOperator>,
+    relation_sort: TheorySortId,
+    before: &[u8],
+    completed: Vec<CompletedActionBranch>,
+    work: &mut u64,
+    limits: SemanticTransitionLimits,
+    is_cancelled: &mut C,
+) -> Result<Vec<NormalizationSuccessorGroup>, SemanticMatchUndetermined>
+where
+    C: FnMut() -> bool,
+{
+    let steps = normalization_successor_steps(
+        image,
+        egraph,
+        relation_sort,
+        before,
+        completed,
+        work,
+        limits,
+        is_cancelled,
+    )?;
     let mut groups: Vec<NormalizationSuccessorGroup> = Vec::new();
     groups
         .try_reserve_exact(steps.len())
         .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
-    for (key, output, proof) in steps {
+    for NormalizationSuccessorStep { key, output, proof, .. } in steps {
         if let Some(group) = groups.last_mut().filter(|group| group.key == key) {
             group
                 .proofs
@@ -10544,10 +10922,10 @@ where
 mod tests {
     use super::*;
     use mettail_grammar_core::{
-        TheoryConstructorId, TheoryConstructorImageV1, TheoryJudgmentPatternAutomatonV1,
-        TheoryLiteralV1, TheoryPatternAutomatonV1, TheorySortImageV1,
         THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT,
-        THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
+        THEORY_SEMANTIC_IMAGE_ABI_CURRENT, TheoryConstructorId, TheoryConstructorImageV1,
+        TheoryJudgmentPatternAutomatonV1, TheoryLiteralV1, TheoryPatternAutomatonV1,
+        TheorySortImageV1,
     };
 
     #[test]
@@ -10717,9 +11095,11 @@ mod tests {
                 value: TheoryLiteralV1::Unit,
             },
         ] {
-            assert!(TheoryPositionalNativeEncoding::new(&operator)
-                .expect("unsupported is distinct from overflow")
-                .is_none());
+            assert!(
+                TheoryPositionalNativeEncoding::new(&operator)
+                    .expect("unsupported is distinct from overflow")
+                    .is_none()
+            );
         }
     }
 
@@ -11967,43 +12347,47 @@ mod tests {
         let scalar_substitution =
             vec![(TheoryVariableId(0), text), (TheoryVariableId(1), inside_scalar)];
         let mut work = 0;
-        assert!(execute_intrinsic(
-            &image,
-            &rule,
-            &TheoryImageIntrinsicV1::Utf8ScalarAt {
-                text: TheoryVariableId(0),
-                cursor: TheoryVariableId(1),
-                scalar: TheoryVariableId(5),
-                next_cursor: TheoryVariableId(6),
-            },
-            &scalar_substitution,
-            &mut egraph,
-            &mut work,
-            semantic_limits(),
-            &mut || false,
-        )
-        .expect("an interior byte is a complete semantic refutation")
-        .is_none());
+        assert!(
+            execute_intrinsic(
+                &image,
+                &rule,
+                &TheoryImageIntrinsicV1::Utf8ScalarAt {
+                    text: TheoryVariableId(0),
+                    cursor: TheoryVariableId(1),
+                    scalar: TheoryVariableId(5),
+                    next_cursor: TheoryVariableId(6),
+                },
+                &scalar_substitution,
+                &mut egraph,
+                &mut work,
+                semantic_limits(),
+                &mut || false,
+            )
+            .expect("an interior byte is a complete semantic refutation")
+            .is_none()
+        );
 
         let addition_substitution =
             vec![(TheoryVariableId(1), negative), (TheoryVariableId(13), one)];
         let mut work = 0;
-        assert!(execute_intrinsic(
-            &image,
-            &rule,
-            &TheoryImageIntrinsicV1::CheckedNatAdd {
-                left: TheoryVariableId(1),
-                right: TheoryVariableId(13),
-                output: TheoryVariableId(9),
-            },
-            &addition_substitution,
-            &mut egraph,
-            &mut work,
-            semantic_limits(),
-            &mut || false,
-        )
-        .expect("negative integers are outside the natural-number relation")
-        .is_none());
+        assert!(
+            execute_intrinsic(
+                &image,
+                &rule,
+                &TheoryImageIntrinsicV1::CheckedNatAdd {
+                    left: TheoryVariableId(1),
+                    right: TheoryVariableId(13),
+                    output: TheoryVariableId(9),
+                },
+                &addition_substitution,
+                &mut egraph,
+                &mut work,
+                semantic_limits(),
+                &mut || false,
+            )
+            .expect("negative integers are outside the natural-number relation")
+            .is_none()
+        );
 
         let pieces_substitution = vec![(TheoryVariableId(4), pieces)];
         let mut bounded = semantic_limits();
@@ -12731,11 +13115,15 @@ mod tests {
         );
 
         let mut work = 0;
-        assert!(freshness_holds(&egraph, needle, bound, &mut work, 64, &mut || false)
-            .expect("bound occurrences are shielded"));
+        assert!(
+            freshness_holds(&egraph, needle, bound, &mut work, 64, &mut || false)
+                .expect("bound occurrences are shielded")
+        );
         let mut work = 0;
-        assert!(!freshness_holds(&egraph, needle, free, &mut work, 64, &mut || false)
-            .expect("an unshielded occurrence is free"));
+        assert!(
+            !freshness_holds(&egraph, needle, free, &mut work, 64, &mut || false)
+                .expect("an unshielded occurrence is free")
+        );
         let mut work = 0;
         assert_eq!(
             freshness_holds(&egraph, needle, free, &mut work, 64, &mut || true),

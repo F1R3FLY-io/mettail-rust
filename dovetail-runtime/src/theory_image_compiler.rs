@@ -2797,6 +2797,97 @@ mod tests {
     }
 
     #[test]
+    fn rewrite_step_roster_preserves_equal_targets_and_exact_work() {
+        let mut language = fixture();
+        let mut alternative = language.theory.rewrites[0].clone();
+        alternative.name = "add-zero-second-proof".into();
+        language.theory.rewrites.push(alternative);
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile equal-target rewrites");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore step matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let run = |work| {
+            matcher.execute_rewrite_step_roster_accounted(
+                SemanticRelationExecutionRequest {
+                    image: &image,
+                    relation_sort: TheorySortId(0),
+                    granted_rights: &rights,
+                    input: normalization_input(TheoryConstructorId(0), 1),
+                    limits: SemanticTransitionLimits { work, ..normalization_limits() },
+                },
+                || false,
+            )
+        };
+        let (decision, used) = run(normalization_limits().work);
+        let SemanticTransitionDecision::ProvenSteps(roster) = decision else {
+            panic!("complete one-step roster must be proven")
+        };
+        assert!(used > 0);
+        assert_eq!(roster.work, used);
+        assert_eq!(roster.occurrences.len(), 2);
+        assert_eq!(roster.occurrences[0].ordinal, 0);
+        assert_eq!(roster.occurrences[1].ordinal, 1);
+        assert_eq!(roster.occurrences[0].receipt.after, roster.occurrences[1].receipt.after);
+        assert_ne!(roster.occurrences[0].receipt.rule, roster.occurrences[1].receipt.rule);
+        assert!(roster.occurrences.iter().all(|step| {
+            step.receipt.before == roster.input
+                && step.output_sort == roster.relation_sort
+                && !roster.egraph().nodes(step.output).is_empty()
+        }));
+        assert!(matches!(
+            run(used - 1),
+            (SemanticTransitionDecision::Undetermined { .. }, charged) if charged <= used - 1
+        ));
+        assert!(
+            matches!(run(used), (SemanticTransitionDecision::ProvenSteps(_), exact) if exact == used)
+        );
+    }
+
+    #[test]
+    fn rewrite_step_roster_proves_empty_native_literal_and_refuses_without_reduce() {
+        let mut language = fixture();
+        language.grammar.categories[0].carrier = Carrier::Builtin(BuiltinCarrier::Boolean);
+        language.theory.sorts[0].kind = TheorySortKindV1::Syntax {
+            literal: Some(TheoryLiteralCarrierV1::Boolean),
+        };
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile native Boolean image");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore step matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (decision, used) = matcher.execute_rewrite_step_roster_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &rights,
+                input: native_boolean_input(true),
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        let SemanticTransitionDecision::ProvenSteps(roster) = decision else {
+            panic!("exhaustive no-successor result must be proven")
+        };
+        assert!(roster.occurrences.is_empty());
+        assert_eq!(roster.work, used);
+        assert_eq!(roster.image_fingerprint, image.fingerprint().expect("image fingerprint"));
+        assert_eq!(roster.relation_sort, TheorySortId(0));
+        let (denied, _) = matcher.execute_rewrite_step_roster_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &LanguageRights::from_rights([]),
+                input: native_boolean_input(true),
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        assert!(matches!(
+            denied,
+            SemanticTransitionDecision::Refuted(SemanticMatchRefutation::RequestRejected)
+        ));
+    }
+
+    #[test]
     fn direct_relation_reuses_worklist_and_preserves_distinct_normal_forms() {
         let mut language = fixture();
         language
@@ -3159,7 +3250,7 @@ mod tests {
             SemanticTransitionDecision::Undetermined { reason, work, .. } => {
                 panic!("guarded relation remained undetermined after {work} work: {reason:?}")
             },
-            SemanticTransitionDecision::Proven(_) => {
+            SemanticTransitionDecision::Proven(_) | SemanticTransitionDecision::ProvenSteps(_) => {
                 panic!("direct relation returned a named-action result")
             },
         };
@@ -3224,6 +3315,82 @@ mod tests {
             },
         ];
         language
+    }
+
+    #[test]
+    fn rewrite_step_roster_retains_each_judgment_proof_without_partial_publication() {
+        let mut language = judgment_fixture();
+        let mut second_proof = language.theory.judgments[0].rules[0].clone();
+        second_proof.name = "zero-fact-alternative".into();
+        language.theory.judgments[0].rules.push(second_proof);
+        language.theory.rewrites[0] = TheoryRewriteV1 {
+            name: "unwrap-if-zero".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: vec![variable(0, "value")],
+                terms: vec![term_variable(0), term_constructor("Wrap", vec![TheoryTermId(0)])],
+                premises: vec![TheoryPremiseNodeV1 {
+                    form: TheoryPremiseFormV1::Judgment(JudgmentAtomV1 {
+                        judgment: "IsZero".into(),
+                        terms: vec![TheoryTermId(0)],
+                    }),
+                }],
+                premise_roots: vec![TheoryPremiseId(0)],
+            },
+            left: TheoryTermId(1),
+            right: TheoryTermId(0),
+        };
+        language.theory.actions[0].transition =
+            TheoryRuleReferenceV1::Rewrite("unwrap-if-zero".into());
+        let image = compile_theory_semantic_image(&language, TheoryImageAdmissionLimits::default())
+            .expect("compile two-proof judgment rewrite");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore step matcher");
+        let rights = LanguageRights::from_rights([
+            LanguageRight::Reduce,
+            LanguageRight::Check,
+            LanguageRight::SearchProof,
+        ]);
+        let run = |limits, cancelled| {
+            matcher.execute_rewrite_step_roster_accounted(
+                SemanticRelationExecutionRequest {
+                    image: &image,
+                    relation_sort: TheorySortId(0),
+                    granted_rights: &rights,
+                    input: normalization_input(TheoryConstructorId(1), 0),
+                    limits,
+                },
+                || cancelled,
+            )
+        };
+        let (decision, used) = run(normalization_limits(), false);
+        let SemanticTransitionDecision::ProvenSteps(roster) = decision else {
+            panic!("both judgment proofs must produce step occurrences")
+        };
+        assert_eq!(roster.work, used);
+        assert_eq!(roster.occurrences.len(), 2);
+        assert_eq!(roster.occurrences[0].receipt.after, roster.occurrences[1].receipt.after);
+        let proof_rules: Vec<_> = roster
+            .occurrences
+            .iter()
+            .map(|step| match step.receipt.premises.as_slice() {
+                [crate::SemanticPremiseReceipt::JudgmentProof { proof, .. }] => {
+                    assert_eq!(proof.judgment, TheoryJudgmentId(0));
+                    assert!(!proof.arguments.is_empty());
+                    assert_eq!(proof.steps.len(), 1);
+                    proof.steps[0].rule
+                },
+                other => panic!("one exact judgment proof receipt per edge: {other:?}"),
+            })
+            .collect();
+        assert_ne!(proof_rules[0], proof_rules[1]);
+        for (limits, cancelled) in [
+            (SemanticTransitionLimits { outputs: 1, ..normalization_limits() }, false),
+            (normalization_limits(), true),
+        ] {
+            assert!(matches!(
+                run(limits, cancelled),
+                (SemanticTransitionDecision::Undetermined { .. }, _)
+            ));
+        }
     }
 
     fn nested_transition_fixture() -> LanguageCoreV1 {
@@ -6023,7 +6190,8 @@ mod tests {
         );
         let proven = match decision {
             SemanticTransitionDecision::Proven(proven) => proven,
-            SemanticTransitionDecision::ProvenRelation(_) => {
+            SemanticTransitionDecision::ProvenRelation(_)
+            | SemanticTransitionDecision::ProvenSteps(_) => {
                 panic!("named action unexpectedly returned a direct relation result")
             },
             SemanticTransitionDecision::Refuted(reason) => {
