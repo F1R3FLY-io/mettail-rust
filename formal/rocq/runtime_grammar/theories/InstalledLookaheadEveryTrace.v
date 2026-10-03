@@ -20,7 +20,11 @@
 
     LookaheadTraceDelivery (RhoBridge) supplies the corresponding process-path
     wire shape. Importing RhoBridge here would invert the project dependency,
-    so the path below retains its same submitted/saturated/successor structure. *)
+    so the path below retains its same submitted/saturated/successor structure.
+    That process-only projection is NOT injective on proof-labelled traces:
+    equal-target distinct guest proofs collide. A public every-trace PathMap
+    must retain edge/proof identity in its keys or values; no current Rust
+    wire-refinement claim is made here. *)
 
 From Stdlib Require Import List Bool PeanoNat Lia.
 From RuntimeGrammar Require Import SemanticNormalization SemanticTransitionKernel.
@@ -53,6 +57,411 @@ Record Configuration := {
   configuration_epoch : nat;
   configuration_bindings : list Binding
 }.
+
+(** The request boundary is separate from the step roster.  The former must
+    establish authority *before* a sandbox is created; the latter assumes a
+    configuration already carries admitted bindings.  The present Rust wire
+    has no such envelope yet.  This is a proposed v2 contract, not a theorem
+    that the current encoder or server implements it.
+
+    A path is a sequence of child indices in the admitted subject, not a
+    fingerprint or a hash of a reflected term.  The trusted occurrence scan
+    supplies [SubjectGuest]s, including native-literal roots for which no
+    constructor-head fingerprint exists.  Its completeness and stability
+    across host/guest successors remain separate production obligations. *)
+Definition BindingPath := list nat.
+
+Fixpoint path_eqb (left right : BindingPath) : bool :=
+  match left, right with
+  | [], [] => true
+  | x :: xs, y :: ys => Nat.eqb x y && path_eqb xs ys
+  | _, _ => false
+  end.
+
+Lemma path_eqb_eq : forall left right,
+  path_eqb left right = true -> left = right.
+Proof.
+  induction left as [|x xs IH]; intros [|y ys] Heq; simpl in Heq;
+    try discriminate; [reflexivity|].
+  apply andb_true_iff in Heq as [Hhead Htail].
+  apply Nat.eqb_eq in Hhead. apply IH in Htail. congruence.
+Qed.
+
+Fixpoint path_ltb (left right : BindingPath) : bool :=
+  match left, right with
+  | [], [] => false
+  | [], _ :: _ => true
+  | _ :: _, [] => false
+  | x :: xs, y :: ys =>
+      if Nat.eqb x y then path_ltb xs ys else Nat.ltb x y
+  end.
+
+Fixpoint strictly_ordered_paths (paths : list BindingPath) : bool :=
+  match paths with
+  | [] | [_] => true
+  | first :: ((second :: _) as rest) =>
+      path_ltb first second && strictly_ordered_paths rest
+  end.
+
+Fixpoint distinct_paths (paths : list BindingPath) : bool :=
+  match paths with
+  | [] => true
+  | first :: rest =>
+      forallb (fun path => negb (path_eqb first path)) rest &&
+      distinct_paths rest
+  end.
+
+Definition canonical_paths (paths : list BindingPath) : bool :=
+  strictly_ordered_paths paths && distinct_paths paths.
+
+(** A direct FLT's selector is retained by checked body staging.  The other
+    origins cannot recover a capability from a reflected constructor tag;
+    their request must supply an explicit checked binding.  Origin is a
+    trusted source/provenance classification, never an attacker-supplied
+    shortcut around the authority table. *)
+Inductive GuestOrigin :=
+| DirectLexical (selector : HandleId)
+| ReceivedValue
+| CompositeChild.
+
+Record SubjectGuest := {
+  subject_path : BindingPath;
+  subject_expected_sort : nat;
+  subject_expected_context : nat;
+  subject_identity_hint : option nat;
+  subject_origin : GuestOrigin
+}.
+
+Inductive SubjectView :=
+| HostOrStaticSubject
+| InstalledSubject (guests : list SubjectGuest).
+
+Record RequestOwnerBinding := {
+  request_path : BindingPath;
+  request_handle : HandleId;
+  request_owner : OwnerId;
+  request_commitment : nat;
+  request_epoch : nat;
+  request_expected_sort : nat;
+  request_context : nat
+}.
+
+(** The table is the authority, not the request or the subject's tag.  A
+    forged token is absent; a duplicated table entry is ambiguous; revocation
+    either removes an entry or marks its retained epoch non-live.  Numeric IDs
+    abstract the production opaque GPrivate token and sealed table handle. *)
+Record LiveGrant := {
+  grant_handle : HandleId;
+  grant_owner : OwnerId;
+  grant_commitment : nat;
+  grant_epoch : nat;
+  grant_sort : nat;
+  grant_reduce : bool;
+  grant_observe : bool;
+  grant_live : bool
+}.
+
+Definition unique_grant (handle : HandleId) (table : list LiveGrant)
+    : option LiveGrant :=
+  match filter (fun grant => Nat.eqb (grant_handle grant) handle) table with
+  | [grant] => Some grant
+  | _ => None
+  end.
+
+Definition origin_matches (origin : GuestOrigin) (handle : HandleId) : bool :=
+  match origin with
+  | DirectLexical selector => Nat.eqb selector handle
+  | ReceivedValue | CompositeChild => true
+  end.
+
+Definition identity_matches (hint : option nat) (commitment : nat) : bool :=
+  match hint with
+  | None => true (* Native-literal roots still require the opaque binding. *)
+  | Some identity => Nat.eqb identity commitment
+  end.
+
+Definition binding_matches (need_observe : bool) (table : list LiveGrant)
+    (guest : SubjectGuest) (binding : RequestOwnerBinding) : bool :=
+  path_eqb (subject_path guest) (request_path binding) &&
+  Nat.eqb (subject_expected_sort guest) (request_expected_sort binding) &&
+  Nat.eqb (subject_expected_context guest) (request_context binding) &&
+  identity_matches (subject_identity_hint guest)
+    (request_commitment binding) &&
+  origin_matches (subject_origin guest) (request_handle binding) &&
+  match unique_grant (request_handle binding) table with
+  | None => false
+  | Some grant =>
+      grant_live grant &&
+      Nat.eqb (grant_handle grant) (request_handle binding) &&
+      Nat.eqb (grant_owner grant) (request_owner binding) &&
+      Nat.eqb (grant_commitment grant) (request_commitment binding) &&
+      Nat.eqb (grant_epoch grant) (request_epoch binding) &&
+      Nat.eqb (grant_sort grant) (request_expected_sort binding) &&
+      grant_reduce grant &&
+      (negb need_observe || grant_observe grant)
+  end.
+
+Fixpoint bindings_match (need_observe : bool) (table : list LiveGrant)
+    (guests : list SubjectGuest) (bindings : list RequestOwnerBinding) : bool :=
+  match guests, bindings with
+  | [], [] => true
+  | guest :: rest, binding :: remaining =>
+      binding_matches need_observe table guest binding &&
+      bindings_match need_observe table rest remaining
+  | _, _ => false
+  end.
+
+Definition lookahead_v2 : nat := 2.
+
+(** The first datum of either proposed v2 request is exactly
+    [version, subject, owner-bindings].  Its surrounding ^spec-all request
+    retains (envelope, reply); ^spec-n retains (envelope, bound, reply).
+    Mode and reply are modeled separately because neither grants authority.
+    A bounded mode's nat abstracts the already-admitted nonnegative integer;
+    the current Rust i64 bound is not the FIPS's full uint64 range. *)
+Record RequestEnvelopeV2 := {
+  envelope_version : nat;
+  envelope_subject : SubjectView;
+  envelope_bindings : list RequestOwnerBinding
+}.
+
+Inductive RequestContext :=
+| LegacySubject (subject : SubjectView)
+| VersionedEnvelope (envelope : RequestEnvelopeV2).
+
+Inductive LookaheadMode := SpecAllMode | SpecNMode (bound : nat).
+
+Record LookaheadWire := {
+  wire_mode : LookaheadMode;
+  wire_context : RequestContext;
+  wire_reply : nat
+}.
+
+Definition admit_envelope (need_observe : bool) (table : list LiveGrant)
+    (envelope : RequestEnvelopeV2) : bool :=
+  Nat.eqb (envelope_version envelope) lookahead_v2 &&
+  match envelope_subject envelope with
+  | HostOrStaticSubject =>
+      match envelope_bindings envelope with [] => true | _ => false end
+  | InstalledSubject guests =>
+      match guests with
+      | [] => false
+      | _ :: _ =>
+          canonical_paths (map subject_path guests) &&
+          canonical_paths (map request_path (envelope_bindings envelope)) &&
+          bindings_match need_observe table guests
+            (envelope_bindings envelope)
+      end
+  end.
+
+Definition admit_request (need_observe : bool) (table : list LiveGrant)
+    (request : LookaheadWire) : bool :=
+  match wire_context request with
+  | LegacySubject HostOrStaticSubject => true
+  | LegacySubject (InstalledSubject _) => false
+  | VersionedEnvelope envelope => admit_envelope need_observe table envelope
+  end.
+
+Theorem legacy_installed_subject_is_never_authorized :
+  forall need_observe table mode reply guests,
+    admit_request need_observe table
+      {| wire_mode := mode;
+         wire_context := LegacySubject (InstalledSubject guests);
+         wire_reply := reply |} = false.
+Proof. reflexivity. Qed.
+
+Theorem legacy_host_or_static_request_is_preserved :
+  forall need_observe table mode reply,
+    admit_request need_observe table
+      {| wire_mode := mode;
+         wire_context := LegacySubject HostOrStaticSubject;
+         wire_reply := reply |} = true.
+Proof. reflexivity. Qed.
+
+Lemma binding_matches_preserves_path :
+  forall need_observe table guest binding,
+    binding_matches need_observe table guest binding = true ->
+    subject_path guest = request_path binding.
+Proof.
+  intros need_observe table guest binding Hmatch.
+  unfold binding_matches in Hmatch.
+  repeat rewrite andb_true_iff in Hmatch.
+  apply path_eqb_eq. tauto.
+Qed.
+
+Lemma bindings_match_exact_paths :
+  forall need_observe table guests bindings,
+    bindings_match need_observe table guests bindings = true ->
+    map subject_path guests = map request_path bindings.
+Proof.
+  intros need_observe table guests.
+  induction guests as [|guest rest IH]; intros [|binding remaining] Hmatch;
+    simpl in Hmatch; try discriminate; [reflexivity|].
+  apply andb_true_iff in Hmatch as [Hhead Htail].
+  simpl. f_equal.
+  - now apply binding_matches_preserves_path with (need_observe := need_observe)
+      (table := table).
+  - now apply IH.
+Qed.
+
+Theorem admitted_installed_envelope_has_exact_canonical_paths :
+  forall need_observe table version guests bindings,
+    admit_envelope need_observe table
+      {| envelope_version := version;
+         envelope_subject := InstalledSubject guests;
+         envelope_bindings := bindings |} = true ->
+    version = lookahead_v2 /\
+    canonical_paths (map subject_path guests) = true /\
+    canonical_paths (map request_path bindings) = true /\
+    map subject_path guests = map request_path bindings.
+Proof.
+  intros need_observe table version guests bindings Hadmit.
+  unfold admit_envelope in Hadmit; simpl in Hadmit.
+  apply andb_true_iff in Hadmit as [Hversion Hrest].
+  apply Nat.eqb_eq in Hversion.
+  destruct guests as [|guest rest]; [discriminate|].
+  repeat rewrite andb_true_iff in Hrest.
+  destruct Hrest as [[Hleft Hright] Hmatch].
+  repeat split; try assumption.
+  now apply bindings_match_exact_paths with (need_observe := need_observe)
+    (table := table).
+Qed.
+
+Theorem admitted_binding_has_unique_live_authority :
+  forall need_observe table guest binding,
+    binding_matches need_observe table guest binding = true ->
+    exists grant,
+      unique_grant (request_handle binding) table = Some grant /\
+      grant_live grant = true /\
+      grant_reduce grant = true /\
+      (need_observe = true -> grant_observe grant = true).
+Proof.
+  intros need_observe table guest binding Hmatch.
+  unfold binding_matches in Hmatch.
+  apply andb_true_iff in Hmatch as [_ Hgrant].
+  destruct (unique_grant (request_handle binding) table)
+    as [grant|] eqn:Hunique; [|discriminate].
+  repeat rewrite andb_true_iff in Hgrant.
+  exists grant. repeat split; try assumption; try tauto.
+  intros Hobserve. subst need_observe. simpl in Hgrant. tauto.
+Qed.
+
+Definition request_test_guest (path : BindingPath) (hint : option nat)
+    (origin : GuestOrigin) : SubjectGuest :=
+  {| subject_path := path; subject_expected_sort := 3;
+     subject_expected_context := 0; subject_identity_hint := hint;
+     subject_origin := origin |}.
+
+Definition request_test_binding (path : BindingPath) (handle owner
+    commitment epoch sort : nat) : RequestOwnerBinding :=
+  {| request_path := path; request_handle := handle;
+     request_owner := owner; request_commitment := commitment;
+     request_epoch := epoch; request_expected_sort := sort;
+     request_context := 0 |}.
+
+Definition request_test_grant (handle owner commitment epoch sort : nat)
+    (reduce observe live : bool) : LiveGrant :=
+  {| grant_handle := handle; grant_owner := owner;
+     grant_commitment := commitment; grant_epoch := epoch;
+     grant_sort := sort; grant_reduce := reduce;
+     grant_observe := observe; grant_live := live |}.
+
+Definition request_test_envelope (guests : list SubjectGuest)
+    (bindings : list RequestOwnerBinding) : RequestEnvelopeV2 :=
+  {| envelope_version := lookahead_v2;
+     envelope_subject := InstalledSubject guests;
+     envelope_bindings := bindings |}.
+
+Definition request_test_direct : SubjectGuest :=
+  request_test_guest [] (Some 19) (DirectLexical 7).
+
+Definition request_test_received : SubjectGuest :=
+  request_test_guest [] None ReceivedValue.
+
+Definition request_test_owner : RequestOwnerBinding :=
+  request_test_binding [] 7 5 19 2 3.
+
+Definition request_test_wrong_context : RequestOwnerBinding :=
+  {| request_path := []; request_handle := 7;
+     request_owner := 5; request_commitment := 19;
+     request_epoch := 2; request_expected_sort := 3;
+     request_context := 1 |}.
+
+Definition request_test_live : LiveGrant :=
+  request_test_grant 7 5 19 2 3 true true true.
+
+Example direct_lexical_request_admits_exact_selector :
+  admit_envelope true [request_test_live]
+    (request_test_envelope [request_test_direct]
+      [request_test_owner]) = true.
+Proof. vm_compute. reflexivity. Qed.
+
+Example received_request_needs_explicit_owner_binding :
+  admit_envelope true [request_test_live]
+    (request_test_envelope [request_test_received]
+      [request_test_owner]) = true /\
+  admit_envelope true [request_test_live]
+    (request_test_envelope [request_test_received] []) = false.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+Example composite_children_need_exact_distinct_paths :
+  admit_envelope true [request_test_live]
+    (request_test_envelope
+      [request_test_guest [0] (Some 19) CompositeChild;
+       request_test_guest [1] None CompositeChild]
+      [request_test_binding [0] 7 5 19 2 3;
+       request_test_binding [1] 7 5 19 2 3]) = true /\
+  admit_envelope true [request_test_live]
+    (request_test_envelope
+      [request_test_guest [0] (Some 19) CompositeChild;
+       request_test_guest [1] None CompositeChild]
+      [request_test_binding [0] 7 5 19 2 3;
+       request_test_binding [0] 7 5 19 2 3]) = false.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+Example forged_ambiguous_and_mismatched_bindings_refuse :
+  admit_envelope true [request_test_live]
+    (request_test_envelope [request_test_direct]
+      [request_test_binding [] 8 5 19 2 3]) = false /\
+  admit_envelope true [request_test_live; request_test_live]
+    (request_test_envelope [request_test_direct]
+      [request_test_owner]) = false /\
+  admit_envelope true [request_test_live]
+    (request_test_envelope [request_test_direct]
+      [request_test_binding [] 7 6 19 2 3]) = false /\
+  admit_envelope true [request_test_live]
+    (request_test_envelope [request_test_direct]
+      [request_test_binding [] 7 5 20 2 3]) = false /\
+  admit_envelope true [request_test_live]
+    (request_test_envelope [request_test_direct]
+      [request_test_binding [] 7 5 19 2 4]) = false /\
+  admit_envelope true [request_test_live]
+    (request_test_envelope [request_test_direct]
+      [request_test_wrong_context]) = false /\
+  admit_envelope true [request_test_grant 8 5 19 2 3 true true true]
+    (request_test_envelope [request_test_direct]
+      [request_test_binding [] 8 5 19 2 3]) = false.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+Example revoked_and_unfunded_rights_refuse :
+  admit_envelope true [request_test_grant 7 5 19 2 3 true true false]
+    (request_test_envelope [request_test_direct]
+      [request_test_owner]) = false /\
+  admit_envelope true [request_test_grant 7 5 19 3 3 true true true]
+    (request_test_envelope [request_test_direct]
+      [request_test_owner]) = false /\
+  admit_envelope true [request_test_grant 7 5 19 2 3 false true true]
+    (request_test_envelope [request_test_direct]
+      [request_test_owner]) = false /\
+  admit_envelope true [request_test_grant 7 5 19 2 3 true false true]
+    (request_test_envelope [request_test_direct]
+      [request_test_owner]) = false.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(** [admit_request] is an admission check only.  Publication must repeat live
+    table authorization under the commit guard; a prior successful admission
+    is not a lease and revocation may interleave.  No theorem here refines the
+    current Rust parser or derives the trusted subject occurrence scan. *)
 
 Record HostCommOccurrence := {
   host_comm_id : nat;
@@ -431,6 +840,88 @@ Definition trace_current (trace : Trace) : Configuration :=
 Definition trace_process_path (trace : Trace) : list Configuration :=
   trace_submitted trace :: trace_saturated trace :: map snd (trace_steps trace).
 
+(** The process-only path above remains useful as a configuration projection,
+    but cannot key every proof-labelled trace.  A typed link keeps host and
+    guest evidence apart.  Production must keep the existing host digest bytes
+    unchanged and hash guest material under a disjoint domain; this model's
+    constructors express the domain distinction, not a Rust hash refinement. *)
+Inductive TraceLink :=
+| HostTraceLink (host : HostCommOccurrence)
+| GuestTraceLink (guest : GuestRewriteOccurrence).
+
+Definition occurrence_link (occurrence : StepOccurrence) : TraceLink :=
+  match occurrence_form occurrence with
+  | HostComm host => HostTraceLink host
+  | GuestRewrite guest => GuestTraceLink guest
+  end.
+
+Inductive TraceDigestMaterial :=
+| ExistingHostDigest (bytes : list nat)
+| GuestDomainDigest (owner : OwnerId) (location : LocationId)
+    (proof rule : nat).
+
+Definition link_digest_material (host_bytes : HostCommOccurrence -> list nat)
+    (link : TraceLink) : TraceDigestMaterial :=
+  match link with
+  | HostTraceLink host => ExistingHostDigest (host_bytes host)
+  | GuestTraceLink guest =>
+      GuestDomainDigest (guest_claimed_owner guest) (guest_location guest)
+        (guest_proof_id guest)
+        (Norm.normalization_step_rule (guest_witness guest))
+  end.
+
+Inductive PublicPathNode :=
+| ConfigurationNode (state : Configuration)
+| GuestProofMarker (guest : GuestRewriteOccurrence).
+
+Definition fired_path_nodes (fired : StepOccurrence * Configuration)
+    : list PublicPathNode :=
+  match occurrence_link (fst fired) with
+  | HostTraceLink _ => [ConfigurationNode (snd fired)]
+  | GuestTraceLink guest =>
+      [GuestProofMarker guest; ConfigurationNode (snd fired)]
+  end.
+
+Definition public_path_nodes (trace : Trace) : list PublicPathNode :=
+  ConfigurationNode (trace_submitted trace) ::
+  ConfigurationNode (trace_saturated trace) ::
+  flat_map fired_path_nodes (trace_steps trace).
+
+Theorem host_only_public_path_keeps_process_nodes :
+  forall trace,
+    Forall (fun fired =>
+      match occurrence_form (fst fired) with
+      | HostComm _ => True | GuestRewrite _ => False
+      end) (trace_steps trace) ->
+    public_path_nodes trace = map ConfigurationNode (trace_process_path trace).
+Proof.
+  intros trace Hhost.
+  assert (Hsteps : forall fireds,
+    Forall (fun fired =>
+      match occurrence_form (fst fired) with
+      | HostComm _ => True | GuestRewrite _ => False
+      end) fireds ->
+    flat_map fired_path_nodes fireds =
+      map (fun fired => ConfigurationNode (snd fired)) fireds).
+  {
+    intros fireds Hfireds.
+    induction Hfireds as [|[occurrence successor] rest Hhead Htail IH];
+      simpl; [reflexivity|].
+    destruct (occurrence_form occurrence) as [host|guest] eqn:Hform;
+      simpl in Hhead.
+    - unfold fired_path_nodes, occurrence_link. simpl.
+      rewrite Hform. simpl.
+      change (ConfigurationNode successor :: flat_map fired_path_nodes rest =
+        ConfigurationNode successor ::
+          map (fun fired => ConfigurationNode (snd fired)) rest).
+      now rewrite IH.
+    - rewrite Hform in Hhead. contradiction.
+  }
+  unfold public_path_nodes, trace_process_path.
+  cbn [map]. rewrite (Hsteps _ Hhost).
+  now rewrite map_map.
+Qed.
+
 Definition extend_trace (trace : Trace)
     (successor : StepOccurrence * Configuration) : Trace :=
   {| trace_submitted := trace_submitted trace;
@@ -520,6 +1011,27 @@ Definition publish_success (live : Configuration -> bool)
       then Some traces else None
   | StepTruncated _ | StepRefused | StepIncomplete _ => None
   end.
+
+(** The table argument is read again at publication, after exploration.  The
+    admitted request is not a durable authorization lease.  The existing
+    [live] predicate still checks the resulting configurations separately.
+    Production needs the installed table's guarded commit operation to make
+    this recheck atomic with publication; that linkage is not modeled here. *)
+Definition publish_request_success (need_observe : bool)
+    (current_table : list LiveGrant) (request : LookaheadWire)
+    (live : Configuration -> bool) (decision : StepDecision)
+    : option (list Trace) :=
+  if admit_request need_observe current_table request
+  then publish_success live decision else None.
+
+Theorem rejected_current_authority_cannot_publish :
+  forall need_observe current_table request live decision,
+    admit_request need_observe current_table request = false ->
+    publish_request_success need_observe current_table request live decision = None.
+Proof.
+  intros need_observe current_table request live decision Hreject.
+  unfold publish_request_success. now rewrite Hreject.
+Qed.
 
 Theorem every_complete_occurrence_gets_one_trace :
   forall host_checked policy rules profile bounds trace roster successors,
@@ -788,7 +1300,7 @@ Definition sample_step (rule : nat) : Norm.NormalizationStepWitness :=
 
 Definition sample_guest (rule : nat) : GuestRewriteOccurrence :=
   {| guest_location := 0; guest_claimed_owner := 3;
-     guest_proof_id := 0; guest_witness := sample_step rule |}.
+     guest_proof_id := rule; guest_witness := sample_step rule |}.
 
 Definition sample_roster : list StepOccurrence :=
   [{| occurrence_order := 0; occurrence_form := GuestRewrite (sample_guest 10) |};
@@ -798,6 +1310,50 @@ Example equal_target_different_rule_counterexample :
   length sample_roster = 2 /\
   length (Norm.coalesce_successors [sample_step 10; sample_step 11]) = 1.
 Proof. split; reflexivity. Qed.
+
+Definition trace_proof_path (trace : Trace) : list (option nat) :=
+  map (fun fired =>
+    match occurrence_form (fst fired) with
+    | HostComm host => Some (host_proof_id host)
+    | GuestRewrite guest => Some (guest_proof_id guest)
+    end) (trace_steps trace).
+
+Definition sample_request_configuration : Configuration :=
+  {| configuration_host := 0; configuration_guests := [];
+     configuration_epoch := 0; configuration_bindings := [] |}.
+
+Definition sample_proof_trace (rule : nat) : Trace :=
+  extend_trace
+    {| trace_submitted := sample_request_configuration;
+       trace_saturated := sample_request_configuration;
+       trace_steps := [] |}
+    ({| occurrence_order := 0;
+        occurrence_form := GuestRewrite (sample_guest rule) |},
+      sample_request_configuration).
+
+Example equal_target_distinct_proofs_collide_in_process_path :
+  trace_process_path (sample_proof_trace 10) =
+    trace_process_path (sample_proof_trace 11) /\
+  trace_proof_path (sample_proof_trace 10) = [Some 10] /\
+  trace_proof_path (sample_proof_trace 11) = [Some 11] /\
+  trace_proof_path (sample_proof_trace 10) <>
+    trace_proof_path (sample_proof_trace 11).
+Proof. vm_compute. repeat split; discriminate || reflexivity. Qed.
+
+Example proof_markers_separate_equal_targets_and_leave_terminal_state_last :
+  public_path_nodes (sample_proof_trace 10) <>
+    public_path_nodes (sample_proof_trace 11) /\
+  last (public_path_nodes (sample_proof_trace 10))
+    (ConfigurationNode sample_request_configuration) =
+      ConfigurationNode sample_request_configuration /\
+  last (public_path_nodes (sample_proof_trace 11))
+    (ConfigurationNode sample_request_configuration) =
+      ConfigurationNode sample_request_configuration /\
+  link_digest_material (fun _ => [])
+    (GuestTraceLink (sample_guest 10)) <>
+  link_digest_material (fun _ => [])
+    (GuestTraceLink (sample_guest 11)).
+Proof. vm_compute. repeat split; discriminate || reflexivity. Qed.
 
 Print Assumptions guest_fire_preserves_owner_sort_and_host.
 Print Assumptions guest_fire_requires_live_reduce_binding_and_pure_step.
@@ -825,5 +1381,18 @@ Print Assumptions refusal_and_truncation_never_publish_success.
 Print Assumptions revoked_at_publication_discards_complete_traces.
 Print Assumptions process_path_retains_every_successor.
 Print Assumptions equal_target_different_rule_counterexample.
+Print Assumptions equal_target_distinct_proofs_collide_in_process_path.
+Print Assumptions host_only_public_path_keeps_process_nodes.
+Print Assumptions proof_markers_separate_equal_targets_and_leave_terminal_state_last.
+Print Assumptions legacy_installed_subject_is_never_authorized.
+Print Assumptions legacy_host_or_static_request_is_preserved.
+Print Assumptions admitted_installed_envelope_has_exact_canonical_paths.
+Print Assumptions admitted_binding_has_unique_live_authority.
+Print Assumptions direct_lexical_request_admits_exact_selector.
+Print Assumptions received_request_needs_explicit_owner_binding.
+Print Assumptions composite_children_need_exact_distinct_paths.
+Print Assumptions forged_ambiguous_and_mismatched_bindings_refuse.
+Print Assumptions revoked_and_unfunded_rights_refuse.
+Print Assumptions rejected_current_authority_cannot_publish.
 
 End InstalledLookaheadEveryTrace.
