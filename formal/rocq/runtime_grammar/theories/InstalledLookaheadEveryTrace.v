@@ -7,6 +7,17 @@
     occurrences were found. This file proves consequences of that claim, not
     completeness of RSpace matching, receipt generation, or Rust enumeration.
 
+    Production correspondence: search.rs enumerates RSpace rendezvous in
+    SpeculativeSandbox::enabled, fires each selected rendezvous, appends its
+    successor to ReductionTrace, and classifies the boundary frontier by
+    enabled-edge emptiness. The host-only refinement below applies to that
+    search only when host_checked agrees with enabled/fire, enumeration is
+    complete and stable, and TraceMode::EveryTrace disables pruning and
+    merging. The current Rust explorer does not yet enumerate installed guest
+    rewrites, so no theorem here asserts that dynamic lookahead is implemented.
+    The runtime must also prove that recorded work equals actual host charges,
+    and that the complete roster contains every enabled occurrence.
+
     LookaheadTraceDelivery (RhoBridge) supplies the corresponding process-path
     wire shape. Importing RhoBridge here would invert the project dependency,
     so the path below retains its same submitted/saturated/successor structure. *)
@@ -94,6 +105,9 @@ Definition guest_ready
     (bounds : Kernel.SemanticTermBounds)
     (configuration : Configuration)
     (slot : GuestSlot) (guest : GuestRewriteOccurrence) : bool :=
+  (* A sandboxed guest rewrite changes only its structural guest slot. The
+     normalization witness may carry effect IDs for ordinary normalization;
+     those are not admitted on the speculative route. *)
   Nat.eqb (slot_owner slot) (guest_claimed_owner guest) &&
   match find_binding (slot_handle slot) (configuration_bindings configuration) with
   | None => false
@@ -106,6 +120,9 @@ Definition guest_ready
         (Norm.policy_relation_sort policy) &&
       Norm.normalization_step_valid policy rules profile bounds
         (slot_state slot) (guest_witness guest) &&
+      (match Norm.normalization_step_effects (guest_witness guest) with
+       | [] => true | _ :: _ => false
+       end) &&
       Nat.eqb
         (Norm.machine_state_sort
           (Norm.normalization_step_after (guest_witness guest)))
@@ -173,6 +190,78 @@ Proof.
     apply Nat.eqb_eq. tauto.
 Qed.
 
+Theorem guest_fire_requires_live_reduce_binding_and_pure_step :
+  forall policy rules profile bounds configuration guest successor,
+    fire_guest policy rules profile bounds configuration guest = Some successor ->
+    exists slot binding,
+      nth_error (configuration_guests configuration) (guest_location guest) =
+        Some slot /\
+      find_binding (slot_handle slot) (configuration_bindings configuration) =
+        Some binding /\
+      slot_owner slot = guest_claimed_owner guest /\
+      binding_handle binding = slot_handle slot /\
+      binding_owner binding = slot_owner slot /\
+      binding_epoch binding = configuration_epoch configuration /\
+      binding_reduce binding = true /\
+      Norm.normalization_step_effects (guest_witness guest) = [] /\
+      Norm.normalization_step_before (guest_witness guest) = slot_state slot.
+Proof.
+  intros policy rules profile bounds configuration guest successor Hfire.
+  unfold fire_guest in Hfire.
+  destruct (nth_error (configuration_guests configuration) (guest_location guest))
+    as [slot|] eqn:Hslot; [|discriminate].
+  destruct (guest_ready policy rules profile bounds configuration slot guest)
+    eqn:Hready; [|discriminate].
+  unfold guest_ready in Hready.
+  apply andb_true_iff in Hready.
+  destruct Hready as [Howner Hbinding].
+  destruct (find_binding (slot_handle slot)
+    (configuration_bindings configuration)) as [binding|] eqn:Hfind;
+    [|discriminate].
+  cbn in Hbinding.
+  repeat rewrite andb_true_iff in Hbinding.
+  destruct (Norm.normalization_step_effects (guest_witness guest))
+    as [|effect rest] eqn:Heffects.
+  2: {
+    cbn in Hbinding.
+    destruct Hbinding as [[_ Himpossible] _].
+    discriminate Himpossible.
+  }
+  exists slot, binding.
+  repeat split; try reflexivity; try (apply Nat.eqb_eq; tauto); try tauto.
+  assert (Hvalid : Norm.normalization_step_valid policy rules profile bounds
+    (slot_state slot) (guest_witness guest) = true) by tauto.
+  apply (proj1 (Norm.valid_step_preserves_exact_source_and_sort
+    policy rules profile bounds (slot_state slot) (guest_witness guest) Hvalid)).
+Qed.
+
+Theorem guest_fire_preserves_authority_snapshot :
+  forall policy rules profile bounds configuration guest successor,
+    fire_guest policy rules profile bounds configuration guest = Some successor ->
+    configuration_epoch successor = configuration_epoch configuration /\
+    configuration_bindings successor = configuration_bindings configuration.
+Proof.
+  intros policy rules profile bounds configuration guest successor Hfire.
+  unfold fire_guest in Hfire.
+  destruct (nth_error (configuration_guests configuration) (guest_location guest))
+    as [slot|]; [|discriminate].
+  destruct (guest_ready policy rules profile bounds configuration slot guest);
+    [|discriminate].
+  now inversion Hfire.
+Qed.
+
+Corollary guest_fire_has_no_committable_effects :
+  forall policy rules profile bounds configuration guest successor,
+    fire_guest policy rules profile bounds configuration guest = Some successor ->
+    Norm.normalization_step_effects (guest_witness guest) = [].
+Proof.
+  intros policy rules profile bounds configuration guest successor Hfire.
+  destruct (guest_fire_requires_live_reduce_binding_and_pure_step
+    policy rules profile bounds configuration guest successor Hfire)
+    as [slot [binding Hbinding]].
+  tauto.
+Qed.
+
 Definition HostChecker := Configuration -> HostCommOccurrence -> bool.
 
 Definition fire_occurrence
@@ -211,11 +300,116 @@ Fixpoint fire_roster
       end
   end.
 
+(** The occurrence itself is the receipt carrier: a host occurrence retains
+    its rendezvous and proof identity, while a guest occurrence retains its
+    exact normalization witness, including rule, premises, intrinsic receipts,
+    grade, and component work. Neither the successor state nor its exact key
+    is used to merge receipts. The caller supplies the host COMM charge, since
+    this model cannot derive the RSpace metering policy. On refusal,
+    fire_roster returns None and this abstraction loses attempted-prefix work;
+    production must separately retain and charge that work. Host COMM effects
+    must likewise remain confined to the speculative RSpace snapshot. *)
+Definition fired_receipts
+    (successors : list (StepOccurrence * Configuration)) : list EdgeForm :=
+  map (fun fired => occurrence_form (fst fired)) successors.
+
+Definition occurrence_work
+    (host_work : HostCommOccurrence -> nat)
+    (occurrence : StepOccurrence) : nat :=
+  match occurrence_form occurrence with
+  | HostComm host => host_work host
+  | GuestRewrite guest => Norm.normalization_step_work (guest_witness guest)
+  end.
+
+Definition roster_work (host_work : HostCommOccurrence -> nat)
+    (roster : list StepOccurrence) : nat :=
+  fold_right (fun occurrence total => occurrence_work host_work occurrence + total)
+    0 roster.
+
+Definition fired_work (host_work : HostCommOccurrence -> nat)
+    (successors : list (StepOccurrence * Configuration)) : nat :=
+  roster_work host_work (map fst successors).
+
+Theorem fired_roster_retains_exact_occurrences :
+  forall host_checked policy rules profile bounds configuration roster successors,
+    fire_roster host_checked policy rules profile bounds configuration roster =
+      Some successors ->
+    map fst successors = roster.
+Proof.
+  intros host_checked policy rules profile bounds configuration roster.
+  induction roster as [|occurrence rest IH]; intros successors Hfire;
+    simpl in Hfire.
+  - now inversion Hfire.
+  - destruct (fire_occurrence host_checked policy rules profile bounds
+        configuration occurrence) as [next|];
+      destruct (fire_roster host_checked policy rules profile bounds
+        configuration rest) as [tail|] eqn:Htail; try discriminate.
+    inversion Hfire; subst. simpl. now rewrite (IH tail eq_refl).
+Qed.
+
+Theorem fired_roster_receipts_and_work_are_exact :
+  forall host_checked policy rules profile bounds configuration roster
+      successors host_work,
+    fire_roster host_checked policy rules profile bounds configuration roster =
+      Some successors ->
+    fired_receipts successors = map occurrence_form roster /\
+    fired_work host_work successors = roster_work host_work roster.
+Proof.
+  intros host_checked policy rules profile bounds configuration roster
+    successors host_work Hfire.
+  pose proof (fired_roster_retains_exact_occurrences
+    host_checked policy rules profile bounds configuration roster successors
+    Hfire) as Hoccurrences.
+  split.
+  - unfold fired_receipts. now rewrite <- map_map, Hoccurrences.
+  - unfold fired_work. now rewrite Hoccurrences.
+Qed.
+
+Theorem fired_roster_has_no_guest_committable_effects :
+  forall host_checked policy rules profile bounds configuration roster successors,
+    fire_roster host_checked policy rules profile bounds configuration roster =
+      Some successors ->
+    Forall (fun fired =>
+      match occurrence_form (fst fired) with
+      | HostComm _ => True
+      | GuestRewrite guest =>
+          Norm.normalization_step_effects (guest_witness guest) = []
+      end) successors.
+Proof.
+  intros host_checked policy rules profile bounds configuration roster.
+  induction roster as [|occurrence rest IH]; intros successors Hfire;
+    simpl in Hfire.
+  - inversion Hfire. constructor.
+  - destruct (fire_occurrence host_checked policy rules profile bounds
+        configuration occurrence) as [next|] eqn:Hnext;
+      destruct (fire_roster host_checked policy rules profile bounds
+        configuration rest) as [tail|] eqn:Htail; try discriminate.
+    inversion Hfire; subst. constructor.
+    + cbn.
+      destruct (occurrence_form occurrence) as [host|guest] eqn:Hform;
+        cbn; [exact I|].
+      unfold fire_occurrence in Hnext. rewrite Hform in Hnext.
+      eapply guest_fire_has_no_committable_effects; eauto.
+    + exact (IH tail eq_refl).
+Qed.
+
+Theorem guest_occurrence_has_positive_logical_work :
+  forall host_work guest order,
+    1 <= occurrence_work host_work
+      {| occurrence_order := order; occurrence_form := GuestRewrite guest |}.
+Proof.
+  intros. unfold occurrence_work. simpl.
+  apply Norm.normalization_step_work_positive.
+Qed.
+
 Fixpoint increasing_orders (orders : list nat) : bool :=
   match orders with
-  | [] | [_] => true
-  | first :: (second :: _ as rest) =>
-      Nat.ltb first second && increasing_orders rest
+  | [] => true
+  | first :: rest =>
+      match rest with
+      | [] => true
+      | second :: _ => Nat.ltb first second && increasing_orders rest
+      end
   end.
 
 Definition canonically_ordered (roster : list StepOccurrence) : bool :=
@@ -242,6 +436,25 @@ Definition extend_trace (trace : Trace)
   {| trace_submitted := trace_submitted trace;
      trace_saturated := trace_saturated trace;
      trace_steps := trace_steps trace ++ [successor] |}.
+
+Definition trace_last_edge (trace : Trace) : option StepOccurrence :=
+  option_map fst (hd_error (rev (trace_steps trace))).
+
+Lemma trace_last_edge_extend : forall trace successor,
+  trace_last_edge (extend_trace trace successor) = Some (fst successor).
+Proof.
+  intros trace successor. unfold trace_last_edge, extend_trace; simpl.
+  rewrite rev_app_distr. reflexivity.
+Qed.
+
+Lemma map_trace_last_edge_extend : forall trace successors,
+  map trace_last_edge (map (extend_trace trace) successors) =
+    map (fun successor => Some (fst successor)) successors.
+Proof.
+  intros trace successors. induction successors as [|successor rest IH];
+    simpl; [reflexivity|].
+  now rewrite trace_last_edge_extend, IH.
+Qed.
 
 Lemma last_snoc : forall (A : Type) (items : list A) value fallback,
   last (items ++ [value]) fallback = value.
@@ -333,6 +546,39 @@ Proof.
       inversion Hfire; subst. simpl. now rewrite (IH tail eq_refl).
 Qed.
 
+Theorem published_complete_roster_has_no_partial_prefix :
+  forall host_checked policy rules profile bounds trace roster live published,
+    publish_success live
+      (expand_one host_checked policy rules profile bounds trace
+        (CompleteRoster roster)) = Some published ->
+    canonically_ordered roster = true /\
+    length published = length roster /\
+    map trace_last_edge published = map Some roster.
+Proof.
+  intros host_checked policy rules profile bounds trace roster live published
+    Hpublished.
+  unfold publish_success in Hpublished.
+  unfold expand_one in Hpublished.
+  destruct (canonically_ordered roster) eqn:Horder; [|discriminate].
+  destruct (fire_roster host_checked policy rules profile bounds
+    (trace_current trace) roster) as [successors|] eqn:Hfire;
+    [|discriminate].
+  destruct (forallb (fun child => live (trace_current child))
+    (map (extend_trace trace) successors)) eqn:Hlive; [|discriminate].
+  inversion Hpublished; subst published.
+  split; [reflexivity|].
+  split.
+  - rewrite length_map.
+    exact (proj2 (every_complete_occurrence_gets_one_trace
+      host_checked policy rules profile bounds trace roster successors
+      Horder Hfire)).
+  - rewrite map_trace_last_edge_extend.
+    rewrite <- map_map.
+    now rewrite (fired_roster_retains_exact_occurrences
+      host_checked policy rules profile bounds (trace_current trace)
+      roster successors Hfire).
+Qed.
+
 Fixpoint host_only_roster_from (ordinal : nat)
     (hosts : list HostCommOccurrence) : list StepOccurrence :=
   match hosts with
@@ -341,6 +587,36 @@ Fixpoint host_only_roster_from (ordinal : nat)
       {| occurrence_order := ordinal; occurrence_form := HostComm host |} ::
       host_only_roster_from (S ordinal) rest
   end.
+
+Lemma host_only_roster_orders : forall ordinal hosts,
+  map occurrence_order (host_only_roster_from ordinal hosts) =
+    seq ordinal (length hosts).
+Proof.
+  intros ordinal hosts. revert ordinal.
+  induction hosts as [|host rest IH]; intro ordinal; simpl;
+    [reflexivity|].
+  now rewrite IH.
+Qed.
+
+Lemma increasing_seq : forall ordinal count,
+  increasing_orders (seq ordinal count) = true.
+Proof.
+  intros ordinal count. revert ordinal.
+  induction count as [|count IH]; intro ordinal.
+  - reflexivity.
+  - destruct count as [|count']; [reflexivity|].
+    cbn [seq increasing_orders].
+    apply andb_true_iff. split.
+    + apply Nat.ltb_lt. lia.
+    + apply IH.
+Qed.
+
+Theorem host_only_roster_is_canonical : forall ordinal hosts,
+  canonically_ordered (host_only_roster_from ordinal hosts) = true.
+Proof.
+  intros ordinal hosts. unfold canonically_ordered.
+  now rewrite host_only_roster_orders, increasing_seq.
+Qed.
 
 Theorem host_only_roster_refines_checked_host_successors :
   forall host_checked policy rules profile bounds configuration ordinal hosts,
@@ -358,6 +634,24 @@ Proof.
   destruct (host_checked configuration host) eqn:Hcheck; [|congruence].
   rewrite (IH (S ordinal) Hrest).
   unfold fire_occurrence. simpl. now rewrite Hcheck.
+Qed.
+
+Theorem host_only_expansion_refines_one_every_trace_level :
+  forall host_checked policy rules profile bounds trace ordinal hosts,
+    forallb (host_checked (trace_current trace)) hosts = true ->
+    expand_one host_checked policy rules profile bounds trace
+      (CompleteRoster (host_only_roster_from ordinal hosts)) =
+    StepComplete
+      (map (extend_trace trace)
+        (combine (host_only_roster_from ordinal hosts)
+          (map host_successor hosts))).
+Proof.
+  intros host_checked policy rules profile bounds trace ordinal hosts Hchecked.
+  unfold expand_one.
+  rewrite host_only_roster_is_canonical.
+  now rewrite (host_only_roster_refines_checked_host_successors
+    host_checked policy rules profile bounds (trace_current trace) ordinal hosts
+    Hchecked).
 Qed.
 
 Theorem mixed_host_guest_roster_keeps_two_occurrences :
@@ -392,6 +686,19 @@ Theorem zero_step_enabled_roster_is_truncated :
       StepTruncated [trace].
 Proof. intros. unfold at_zero. now rewrite H. Qed.
 
+Theorem zero_step_incomplete_cannot_succeed :
+  forall authorized trace reason,
+    authorized (trace_current trace) = true ->
+    at_zero authorized trace (IncompleteRoster reason) =
+      StepIncomplete reason.
+Proof. intros. unfold at_zero. now rewrite H. Qed.
+
+Theorem zero_step_revoked_is_refused :
+  forall authorized trace enumeration,
+    authorized (trace_current trace) = false ->
+    at_zero authorized trace enumeration = StepRefused.
+Proof. intros. unfold at_zero. now rewrite H. Qed.
+
 Theorem incomplete_roster_cannot_certify_success_or_no_successor :
   forall host_checked policy rules profile bounds trace reason live,
     expand_one host_checked policy rules profile bounds trace
@@ -400,6 +707,38 @@ Theorem incomplete_roster_cannot_certify_success_or_no_successor :
       (expand_one host_checked policy rules profile bounds trace
         (IncompleteRoster reason)) = None.
 Proof. intros. split; reflexivity. Qed.
+
+Theorem failed_roster_never_publishes_a_partial_prefix :
+  forall host_checked policy rules profile bounds trace roster live,
+    canonically_ordered roster = true ->
+    fire_roster host_checked policy rules profile bounds
+      (trace_current trace) roster = None ->
+    expand_one host_checked policy rules profile bounds trace
+      (CompleteRoster roster) = StepRefused /\
+    publish_success live
+      (expand_one host_checked policy rules profile bounds trace
+        (CompleteRoster roster)) = None.
+Proof.
+  intros host_checked policy rules profile bounds trace roster live
+    Horder Hfire.
+  unfold expand_one. now rewrite Horder, Hfire.
+Qed.
+
+Theorem published_traces_rechecked_live :
+  forall live decision traces,
+    publish_success live decision = Some traces ->
+    Forall (fun trace => live (trace_current trace) = true) traces.
+Proof.
+  intros live [completed | truncated | | reason] traces Hpublished;
+    simpl in Hpublished; try discriminate.
+  destruct (forallb (fun trace => live (trace_current trace)) completed)
+    eqn:Hall; [|discriminate].
+  inversion Hpublished; subst.
+  apply Forall_forall. intros trace Hin.
+  exact (proj1 (forallb_forall
+    (fun candidate => live (trace_current candidate)) traces)
+    Hall trace Hin).
+Qed.
 
 Theorem refusal_and_truncation_never_publish_success :
   forall live traces reason,
@@ -461,13 +800,27 @@ Example equal_target_different_rule_counterexample :
 Proof. split; reflexivity. Qed.
 
 Print Assumptions guest_fire_preserves_owner_sort_and_host.
+Print Assumptions guest_fire_requires_live_reduce_binding_and_pure_step.
+Print Assumptions guest_fire_preserves_authority_snapshot.
+Print Assumptions guest_fire_has_no_committable_effects.
+Print Assumptions fired_roster_retains_exact_occurrences.
+Print Assumptions fired_roster_receipts_and_work_are_exact.
+Print Assumptions fired_roster_has_no_guest_committable_effects.
+Print Assumptions guest_occurrence_has_positive_logical_work.
 Print Assumptions every_complete_occurrence_gets_one_trace.
+Print Assumptions published_complete_roster_has_no_partial_prefix.
 Print Assumptions selected_edge_appends_exactly_one_configuration.
 Print Assumptions host_only_roster_refines_checked_host_successors.
+Print Assumptions host_only_roster_is_canonical.
+Print Assumptions host_only_expansion_refines_one_every_trace_level.
 Print Assumptions mixed_host_guest_roster_keeps_two_occurrences.
 Print Assumptions zero_step_empty_roster_succeeds.
 Print Assumptions zero_step_enabled_roster_is_truncated.
+Print Assumptions zero_step_incomplete_cannot_succeed.
+Print Assumptions zero_step_revoked_is_refused.
 Print Assumptions incomplete_roster_cannot_certify_success_or_no_successor.
+Print Assumptions failed_roster_never_publishes_a_partial_prefix.
+Print Assumptions published_traces_rechecked_live.
 Print Assumptions refusal_and_truncation_never_publish_success.
 Print Assumptions revoked_at_publication_discards_complete_traces.
 Print Assumptions process_path_retains_every_successor.
