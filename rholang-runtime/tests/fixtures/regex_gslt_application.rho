@@ -44,6 +44,7 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
                   CallDerivative . c:Scalar, p:Pattern |- "derivative(" c "," p ")" : Computation;
                   DoneBool . b:Bool |- "doneBool(" b ")" : Computation;
                   ForkYes . |- "forkYes" : Computation;
+                  TwinYes . |- "twinYes" : Computation;
                   DonePattern . p:Pattern |- "donePattern(" p ")" : Computation;
                   CheckBooleanTerminal . x:Computation |- "terminalBool(" x ")" : TerminalQuery;
                   CheckPatternTerminal . x:Computation |- "terminalPattern(" x ")" : TerminalQuery;
@@ -195,6 +196,8 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
                   StartNullable : (CallNullable P) ~> (NullableSurface (EEval P (ENil)));
                   ForkYesDirect : (ForkYes) ~> (DoneBool (BTrue));
                   ForkYesThroughNullable : (ForkYes) ~> (CallNullable (POptional (PLiteral "a")));
+                  TwinYesFirst : (TwinYes) ~> (DoneBool (BTrue));
+                  TwinYesSecond : (TwinYes) ~> (DoneBool (BTrue));
                   StartDerivative : (CallDerivative C P) ~> (DerivativeScalar C P);
                   NullableSurfaceStep : if S ~> T then (NullableSurface S) ~> (NullableSurface T);
                   NullableSurfaceDone : (NullableSurface (EDone P)) ~> (NullableCore (NEval P (NNil)));
@@ -505,7 +508,7 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
       handlePipe!(installed.get("ok").get("exports_by_name").get("Regex"))
     } |
     for(regex <- handlePipe) {
-      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable, lookaheadChoices, lookaheadZero, lookaheadOne in {
+      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable, lookaheadChoices, lookaheadZero, lookaheadOne, lookaheadTwins in {
         for(@[judgment, term, reply] <= observeRegex) {
           observe!([2, *regex, "Computation", judgment, "TerminalVerdict", term, [], reply])
         } |
@@ -517,6 +520,7 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
         lookaheadChoices!(regex:Computation`forkYes`)[*] |
         lookaheadZero!(regex:Computation`forkYes`)[0] |
         lookaheadOne!(regex:Computation`forkYes`)[1] |
+        lookaheadTwins!(regex:Computation`twinYes`)[*] |
         for(@success, @failure <- lookaheadNullable) {
           stdout!(["lookahead-success-traces", success.readZipper().leafCount()]) |
           @"regex.lookahead.success"!(success) |
@@ -534,6 +538,10 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
         for(@success, @failure <- lookaheadOne) {
           @"regex.lookahead.one.success"!(success) |
           @"regex.lookahead.one.failure"!(failure)
+        } |
+        for(@success, @failure <- lookaheadTwins) {
+          @"regex.lookahead.twins.success"!(success) |
+          @"regex.lookahead.twins.failure"!(failure)
         } |
         observeRegex!(["CheckPatternTerminal", regex:Computation`derivative(a,a+)`, *derived]) |
         values!(["abcb", "éλλx", "aaba", "x"]) |

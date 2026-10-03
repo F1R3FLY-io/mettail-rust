@@ -31,6 +31,7 @@ Module RegexGSLT {
       CallDerivative . c:Scalar, p:Pattern |- "derivative(" c "," p ")" : Computation;
       DoneBool . b:Bool |- "doneBool(" b ")" : Computation;
       ForkYes . |- "forkYes" : Computation;
+      TwinYes . |- "twinYes" : Computation;
       DonePattern . p:Pattern |- "donePattern(" p ")" : Computation;
       CheckBooleanTerminal . x:Computation |- "terminalBool(" x ")" : TerminalQuery;
       CheckPatternTerminal . x:Computation |- "terminalPattern(" x ")" : TerminalQuery;
@@ -182,6 +183,8 @@ Module RegexGSLT {
       StartNullable : (CallNullable P) ~> (NullableSurface (EEval P (ENil)));
       ForkYesDirect : (ForkYes) ~> (DoneBool (BTrue));
       ForkYesThroughNullable : (ForkYes) ~> (CallNullable (POptional (PLiteral "a")));
+      TwinYesFirst : (TwinYes) ~> (DoneBool (BTrue));
+      TwinYesSecond : (TwinYes) ~> (DoneBool (BTrue));
       StartDerivative : (CallDerivative C P) ~> (DerivativeScalar C P);
       NullableSurfaceStep : if S ~> T then (NullableSurface S) ~> (NullableSurface T);
       NullableSurfaceDone : (NullableSurface (EDone P)) ~> (NullableCore (NEval P (NNil)));
