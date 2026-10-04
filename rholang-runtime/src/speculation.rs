@@ -2116,6 +2116,7 @@ pub(crate) mod publication_tests {
 mod reduction_trace_tests {
     use super::*;
     use models::rust::utils::new_gint_par;
+    use proptest::prelude::*;
     use prost::Message;
 
     fn name(index: usize) -> RendezvousName {
@@ -2206,6 +2207,110 @@ mod reduction_trace_tests {
             )
             .expect("matching boundary");
         assert_eq!(joined, first, "resumption retains the guest proof edge");
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        /// Executable extraction of the selected-edge and process-path laws
+        /// in InstalledLookaheadEveryTrace.v. Each generated edge extends the
+        /// immutable prefix by exactly its selected successor; a guest edge
+        /// also inserts exactly one proof marker before that successor.
+        #[test]
+        fn generated_mixed_trace_preserves_every_edge_and_terminal_state(
+            steps in proptest::collection::vec((any::<bool>(), any::<i16>()), 0..64),
+        ) {
+            let input = new_gint_par(0, Vec::new(), false);
+            let saturated = new_gint_par(1, Vec::new(), false);
+            let mut trace = ReductionTrace::from_input_and_configuration(input, saturated);
+            let mut guest_count = 0;
+
+            for (index, (is_guest, value)) in steps.iter().enumerate() {
+                let before_processes = trace.processes();
+                let before_public = trace.public_trace_nodes();
+                let successor = new_gint_par(i64::from(*value), Vec::new(), false);
+                if *is_guest {
+                    guest_count += 1;
+                    let proof = GuestRewriteIdentity::top_level_expr(
+                        0,
+                        [3; 32],
+                        [4; 32],
+                        index as u64,
+                        new_gint_par(index as i64, Vec::new(), false),
+                    );
+                    trace = trace.extend_guest(proof.clone(), successor.clone());
+                    let nodes = trace.public_trace_nodes();
+                    prop_assert_eq!(&nodes[..before_public.len()], before_public.as_slice());
+                    prop_assert_eq!(nodes.get(before_public.len()),
+                        Some(&PublicTraceNode::GuestProofMarker(proof)));
+                    prop_assert_eq!(nodes.last(),
+                        Some(&PublicTraceNode::Configuration(successor.clone())));
+                } else {
+                    trace = trace.extend(name(index), successor.clone());
+                    let nodes = trace.public_trace_nodes();
+                    prop_assert_eq!(&nodes[..before_public.len()], before_public.as_slice());
+                    prop_assert_eq!(nodes.last(),
+                        Some(&PublicTraceNode::Configuration(successor.clone())));
+                }
+                let processes = trace.processes();
+                prop_assert_eq!(&processes[..before_processes.len()], before_processes.as_slice());
+                prop_assert_eq!(processes.last(), Some(&successor));
+                prop_assert_eq!(processes.len(), 3 + index);
+            }
+
+            prop_assert_eq!(trace.len(), steps.len());
+            prop_assert_eq!(trace.processes().len(), 2 + steps.len());
+            prop_assert_eq!(trace.public_trace_nodes().len(), 2 + steps.len() + guest_count);
+        }
+
+        /// Host-only paths retain the exact legacy public process sequence.
+        #[test]
+        fn generated_host_only_trace_preserves_legacy_public_path(
+            values in proptest::collection::vec(any::<i16>(), 0..64),
+        ) {
+            let mut trace = ReductionTrace::from_input_and_configuration(
+                new_gint_par(0, Vec::new(), false),
+                new_gint_par(1, Vec::new(), false),
+            );
+            for (index, value) in values.iter().enumerate() {
+                trace = trace.extend(
+                    name(index),
+                    new_gint_par(i64::from(*value), Vec::new(), false),
+                );
+            }
+            prop_assert_eq!(trace.public_nodes(), trace.processes());
+        }
+
+        /// Equal terminal processes do not collapse two checked proof paths.
+        /// Digest uniqueness is a cryptographic assumption, so this property
+        /// asserts the exact typed and public nodes rather than hash inequality.
+        #[test]
+        fn generated_equal_target_proofs_remain_distinct(
+            ordinal in 0u64..1_000_000,
+            value in any::<i16>(),
+        ) {
+            let root = ReductionTrace::from_input_and_configuration(
+                new_gint_par(0, Vec::new(), false),
+                new_gint_par(1, Vec::new(), false),
+            );
+            let target = new_gint_par(i64::from(value), Vec::new(), false);
+            let receipt = new_gint_par(17, Vec::new(), false);
+            let first = root.extend_guest(
+                GuestRewriteIdentity::top_level_expr(
+                    0, [3; 32], [4; 32], ordinal, receipt.clone(),
+                ),
+                target.clone(),
+            );
+            let second = root.extend_guest(
+                GuestRewriteIdentity::top_level_expr(
+                    0, [3; 32], [4; 32], ordinal + 1, receipt,
+                ),
+                target,
+            );
+            prop_assert_eq!(first.processes(), second.processes());
+            prop_assert_ne!(first.public_trace_nodes(), second.public_trace_nodes());
+            prop_assert_ne!(first.public_nodes(), second.public_nodes());
+        }
     }
 
     #[test]
