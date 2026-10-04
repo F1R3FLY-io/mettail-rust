@@ -202,22 +202,16 @@ fn replacement_postorder_channel_priority_and_shared_flt_positions_are_exact() {
     )
     .expect("first original FLT occurrence");
     assert!(replaced);
-    let Proc::POutput(channel, payload) = &actual else {
-        panic!("core send")
+    let Proc::POutput2Plus(channel, first, rest) = &actual else {
+        panic!("arity-preserving polyadic send")
     };
     let Name::NQuote(channel) = channel.as_ref() else {
         panic!("quoted channel")
     };
     assert_eq!(channel.as_ref(), &integer(99));
-    let Proc::CastList(list) = payload.as_ref() else {
-        panic!("polyadic payload")
-    };
-    let List::ListLit(items) = list.as_ref() else {
-        panic!("list payload")
-    };
-    assert_eq!(items.len(), 2);
-    assert!(matches!(&items[0], Proc::PFlt(found) if Arc::ptr_eq(found, &node)));
-    assert!(matches!(&items[1], Proc::PFltBrace(found) if Arc::ptr_eq(found, &node)));
+    assert!(matches!(first.as_ref(), Proc::PFlt(found) if Arc::ptr_eq(found, &node)));
+    assert_eq!(rest.len(), 1);
+    assert!(matches!(&rest[0], Proc::PFltBrace(found) if Arc::ptr_eq(found, &node)));
 
     let source = Proc::Eq(Arc::new(integer(7)), Arc::new(integer(8)));
     let actual = replace_first_body_site_preparing(
@@ -230,6 +224,26 @@ fn replacement_postorder_channel_priority_and_shared_flt_positions_are_exact() {
     )
     .expect("postorder");
     assert_eq!(actual, Proc::Eq(Arc::new(integer(99)), Arc::new(integer(8))));
+}
+
+#[test]
+fn replacing_a_sibling_does_not_pack_a_polyadic_send() {
+    let send =
+        Proc::POutputShort2Plus(Arc::new(integer(1)), Arc::new(integer(2)), vec![integer(3)]);
+    let source = Proc::PParInfix(Arc::new(send), Arc::new(integer(7)));
+    let mut replaced = false;
+    let actual = checked(&source, &integer(99), &mut replaced, &mut |_, _| Ok(()))
+        .expect("checked source replacement");
+    assert!(replaced);
+    let Proc::PParInfix(send, replacement) = &actual else {
+        panic!("parallel source")
+    };
+    assert_eq!(replacement.as_ref(), &integer(99));
+    let Proc::POutput2Plus(_, first, rest) = send.as_ref() else {
+        panic!("polyadic send was packed into one list datum")
+    };
+    assert_eq!(first.as_ref(), &integer(2));
+    assert_eq!(rest, &vec![integer(3)]);
 }
 
 #[test]

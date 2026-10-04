@@ -288,7 +288,65 @@ impl<'a, 'r> SourceBuilder<'a, 'r> {
     }
 
     pub(super) fn desugar(&mut self, proc: &Proc) -> Result<Option<Proc>, RholangAstLowerError> {
+        // A source-replacement walk must not turn an n-argument send into a
+        // one-argument send whose datum happens to be a list. The lowering
+        // driver has distinct zero/one/polyadic arms; retain those arms while
+        // normalizing only the spelling of an @-quoted channel.
+        let rewritten = match proc {
+            Proc::POutputEmpty(_)
+            | Proc::PPersistOutputEmpty(_)
+            | Proc::POutput2Plus(_, _, _)
+            | Proc::PPersistOutput2Plus(_, _, _) => return Ok(None),
+            Proc::POutputNilEmpty => Some(Proc::POutputEmpty(self.quote_nil()?)),
+            Proc::PPersistOutputNilEmpty => Some(Proc::PPersistOutputEmpty(self.quote_nil()?)),
+            Proc::POutputQuotedEmpty(name) => Some(Proc::POutputEmpty(self.quote_name(name)?)),
+            Proc::POutputShortEmpty(channel) => Some(Proc::POutputEmpty(self.quote(channel)?)),
+            Proc::PPersistOutputShortEmpty(channel) => {
+                Some(Proc::PPersistOutputEmpty(self.quote(channel)?))
+            },
+            Proc::POutputNil2Plus(first, rest) => Some(Proc::POutput2Plus(
+                self.quote_nil()?,
+                self.share(first)?,
+                self.copy_proc_tail(rest)?,
+            )),
+            Proc::PPersistOutputNil2Plus(first, rest) => Some(Proc::PPersistOutput2Plus(
+                self.quote_nil()?,
+                self.share(first)?,
+                self.copy_proc_tail(rest)?,
+            )),
+            Proc::POutputQuoted2Plus(name, first, rest) => Some(Proc::POutput2Plus(
+                self.quote_name(name)?,
+                self.share(first)?,
+                self.copy_proc_tail(rest)?,
+            )),
+            Proc::POutputShort2Plus(channel, first, rest) => Some(Proc::POutput2Plus(
+                self.quote(channel)?,
+                self.share(first)?,
+                self.copy_proc_tail(rest)?,
+            )),
+            Proc::PPersistOutputShort2Plus(channel, first, rest) => {
+                Some(Proc::PPersistOutput2Plus(
+                    self.quote(channel)?,
+                    self.share(first)?,
+                    self.copy_proc_tail(rest)?,
+                ))
+            },
+            _ => None,
+        };
+        if rewritten.is_some() {
+            return Ok(rewritten);
+        }
         desugar_surface_sugar_node_preparing(proc, self.policy, self.reservation)
+    }
+
+    fn copy_proc_tail(&mut self, rest: &[Proc]) -> Result<Vec<Proc>, RholangAstLowerError> {
+        self.reserve(2, rest.len())?;
+        let mut copied = Vec::with_capacity(rest.len());
+        for item in rest {
+            self.reserve(2, 0)?;
+            copied.push(self.copy_proc(item)?);
+        }
+        Ok(copied)
     }
 
     pub(super) fn keep<'s>(
@@ -534,7 +592,7 @@ impl<'a, 'r> SourceBuilder<'a, 'r> {
     }
 }
 
-fn polyadic_count(rest: usize) -> Result<usize, RholangAstLowerError> {
+pub(super) fn polyadic_count(rest: usize) -> Result<usize, RholangAstLowerError> {
     rest.checked_add(1)
         .ok_or(RholangAstLowerError::PreparationSizeOverflow)
 }

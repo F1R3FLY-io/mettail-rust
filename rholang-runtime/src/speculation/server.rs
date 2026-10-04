@@ -1554,6 +1554,41 @@ mod tests {
         map.len()
     }
 
+    #[test]
+    fn authored_native_owner_request_matches_the_versioned_builder() {
+        use crate::lookahead::{spec_all_request_v2, LookaheadOwnerBinding};
+
+        let authored =
+            lower_plain(r#"@"^spec-all-v2"!([2, "a", [[[], "token", "Scalar", 0]]], "reply")"#);
+        let expected = spec_all_request_v2(
+            new_gstring_par("a".into(), Vec::new(), false),
+            vec![LookaheadOwnerBinding {
+                path: Vec::new(),
+                handle: new_gstring_par("token".into(), Vec::new(), false),
+                expected_category: "Scalar".into(),
+                context: 0,
+            }],
+            spec_channel_par("reply"),
+        );
+        assert_eq!(authored.sends.len(), 1);
+        assert_eq!(expected.sends.len(), 1);
+        assert_eq!(authored.sends[0].chan, expected.sends[0].chan);
+        assert_eq!(authored.sends[0].data.len(), expected.sends[0].data.len());
+        assert_eq!(authored.sends[0].data[0], expected.sends[0].data[0]);
+    }
+
+    #[test]
+    fn authored_native_owner_request_keeps_two_operands_under_new() {
+        let authored = lower_plain(
+            r#"new regex, lookaheadNative in {
+                @"^spec-all-v2"!([2, "a", [[[], *regex, "Scalar", 0]]], *lookaheadNative)
+            }"#,
+        );
+        let body = authored.news[0].p.as_ref().expect("new body");
+        assert_eq!(body.sends.len(), 1);
+        assert_eq!(body.sends[0].data.len(), 2, "v2 ABI has two operands");
+    }
+
     #[tokio::test]
     async fn versioned_reply_is_one_two_pathmap_datum() {
         use crate::lookahead::spec_all_request_v2;
@@ -1621,6 +1656,43 @@ mod tests {
         assert_eq!(fields.len(), 2);
         assert!(matches!(exact_expr(&fields[0]), Some(ExprInstance::GInt(2))));
         assert!(pathmap_length(&fields[1]) > 0, "the cut branch remains queryable");
+    }
+
+    #[tokio::test]
+    async fn native_scalar_root_admits_with_explicit_installed_owner() {
+        use crate::lookahead::{spec_envelope_v2, LookaheadOwnerBinding};
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let runtime = Arc::new(runtime);
+        let engine = LookaheadEngine::new().with_language_runtime(Arc::clone(&runtime));
+        let host = RuntimeBudget::new(Cost::create(10_000_000, "native lookahead test"));
+        let subject = new_gstring_par("a".into(), Vec::new(), false);
+        let envelope = spec_envelope_v2(
+            subject.clone(),
+            vec![LookaheadOwnerBinding {
+                path: Vec::new(),
+                handle: token,
+                expected_category: "Scalar".into(),
+                context: 0,
+            }],
+        );
+        let (admitted, bindings) = engine
+            .admit_subject(envelope, &host, true)
+            .expect("explicit Scalar owner admits the native root");
+        assert_eq!(admitted, subject);
+        assert_eq!(bindings.len(), 1);
+        let response = LookaheadService::serve(
+            LookaheadRequest::new(admitted, Lookahead::Unbounded)
+                .with_projection(LeafProjection::InstalledGuestRoot)
+                .with_installed_bindings(runtime, bindings),
+            Blake2b512Random::create_from_length(128),
+            &host,
+        )
+        .await
+        .expect("native Scalar search has a complete checked roster");
+        assert!(response.error.is_none());
+        assert!(response.failure.is_empty());
+        assert_eq!(response.reply, vec![subject]);
     }
 
     #[test]

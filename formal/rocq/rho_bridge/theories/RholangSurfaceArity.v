@@ -10,6 +10,30 @@ Import ListNotations.
 Definition lower_surface_send (persistent : bool) (channel : Value)
     (arguments : list Value) : Value := send persistent channel arguments.
 
+(** A source-preparation replacement may change an argument's term, but must
+    retain the argument vector's boundaries. In particular, it cannot replace
+    the vector with a singleton list datum. *)
+Definition prepare_surface_send (replace : Value -> Value) (persistent : bool)
+    (channel : Value) (arguments : list Value) : Value :=
+  send persistent channel (List.map replace arguments).
+
+Theorem preparation_preserves_send_arity : forall replace persistent channel arguments,
+  heads_of (prepare_surface_send replace persistent channel arguments) =
+    [MakeHead (SendHead persistent) (channel :: List.map replace arguments)] /\
+  List.length (List.map replace arguments) = List.length arguments.
+Proof. intros; split; [reflexivity | apply map_length]. Qed.
+
+Theorem preparation_does_not_pack_polyadic_arguments :
+  forall replace persistent channel first second,
+    prepare_surface_send replace persistent channel [list_value [first; second]] <>
+    prepare_surface_send replace persistent channel [first; second].
+Proof.
+  intros replace persistent channel first second H.
+  apply (f_equal heads_of) in H.
+  cbn [prepare_surface_send send ordinary heads_of] in H.
+  discriminate H.
+Qed.
+
 Definition lower_surface_bind (source : Value) (patterns : list Value)
     (capture_count : nat) : BindValue :=
   {| bind_source := source;
@@ -71,6 +95,8 @@ Theorem install_rejects_other_payload_cardinalities : forall a b c d,
 Proof. intros; repeat split; reflexivity. Qed.
 
 Print Assumptions surface_send_preserves_every_argument.
+Print Assumptions preparation_preserves_send_arity.
+Print Assumptions preparation_does_not_pack_polyadic_arguments.
 Print Assumptions surface_bind_preserves_every_pattern.
 Print Assumptions zero_one_and_polyadic_arities_are_distinct.
 Print Assumptions explicit_list_send_is_not_polyadic.

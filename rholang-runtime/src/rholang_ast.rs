@@ -4810,6 +4810,15 @@ fn find_first_body_site_preparing<T>(
                         build.push(&mut work, || Work::Proc(payload.as_ref()))?;
                         build.push(&mut work, || Work::Name(channel.as_ref()))?;
                     },
+                    Proc::POutputEmpty(channel) | Proc::PPersistOutputEmpty(channel) => {
+                        build.push(&mut work, || Work::Name(channel.as_ref()))?;
+                    },
+                    Proc::POutput2Plus(channel, first, rest)
+                    | Proc::PPersistOutput2Plus(channel, first, rest) => {
+                        build.push_slice_reversed(&mut work, rest, Work::Proc)?;
+                        build.push(&mut work, || Work::Proc(first.as_ref()))?;
+                        build.push(&mut work, || Work::Name(channel.as_ref()))?;
+                    },
                     Proc::POutputShort(channel, payload)
                     | Proc::PPersistOutputShort(channel, payload) => {
                         build.push(&mut work, || Work::Proc(payload.as_ref()))?;
@@ -5109,6 +5118,17 @@ fn replace_first_body_site_preparing(
                         build.push(&mut jobs, || Job::VisitProc(payload.as_ref()))?;
                         build.push(&mut jobs, || Job::VisitName(name.as_ref()))?;
                     },
+                    Proc::POutputEmpty(name) | Proc::PPersistOutputEmpty(name) => {
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push(&mut jobs, || Job::VisitName(name.as_ref()))?;
+                    },
+                    Proc::POutput2Plus(name, first, rest)
+                    | Proc::PPersistOutput2Plus(name, first, rest) => {
+                        build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
+                        build.push_slice_reversed(&mut jobs, rest, Job::VisitProc)?;
+                        build.push(&mut jobs, || Job::VisitProc(first.as_ref()))?;
+                        build.push(&mut jobs, || Job::VisitName(name.as_ref()))?;
+                    },
                     Proc::POutputShort(channel, payload)
                     | Proc::PPersistOutputShort(channel, payload) => {
                         build.push(&mut jobs, || Job::BuildProc { proc, proc_base, name_base })?;
@@ -5283,6 +5303,24 @@ fn replace_first_body_site_preparing(
                             .expect("one send channel");
                         Proc::POutput(Arc::new(name), Arc::new(payload))
                     },
+                    Proc::POutputEmpty(_) => {
+                        let name = build
+                            .take_children(&mut name_values, name_base, 1)?
+                            .pop()
+                            .expect("one empty-send channel");
+                        Proc::POutputEmpty(Arc::new(name))
+                    },
+                    Proc::POutput2Plus(_, _, rest) => {
+                        let count = preparation_source::polyadic_count(rest.len())?;
+                        let mut arguments =
+                            build.take_children(&mut proc_values, proc_base, count)?;
+                        let first = arguments.remove(0);
+                        let name = build
+                            .take_children(&mut name_values, name_base, 1)?
+                            .pop()
+                            .expect("one polyadic-send channel");
+                        Proc::POutput2Plus(Arc::new(name), Arc::new(first), arguments)
+                    },
                     Proc::PPersistOutput(_, _) => {
                         let payload = build
                             .take_children(&mut proc_values, proc_base, 1)?
@@ -5293,6 +5331,24 @@ fn replace_first_body_site_preparing(
                             .pop()
                             .expect("one persistent-send channel");
                         Proc::PPersistOutput(Arc::new(name), Arc::new(payload))
+                    },
+                    Proc::PPersistOutputEmpty(_) => {
+                        let name = build
+                            .take_children(&mut name_values, name_base, 1)?
+                            .pop()
+                            .expect("one empty persistent-send channel");
+                        Proc::PPersistOutputEmpty(Arc::new(name))
+                    },
+                    Proc::PPersistOutput2Plus(_, _, rest) => {
+                        let count = preparation_source::polyadic_count(rest.len())?;
+                        let mut arguments =
+                            build.take_children(&mut proc_values, proc_base, count)?;
+                        let first = arguments.remove(0);
+                        let name = build
+                            .take_children(&mut name_values, name_base, 1)?
+                            .pop()
+                            .expect("one polyadic persistent-send channel");
+                        Proc::PPersistOutput2Plus(Arc::new(name), Arc::new(first), arguments)
                     },
                     Proc::POutputShort(..) => {
                         let mut children = build
