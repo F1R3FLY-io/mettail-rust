@@ -690,6 +690,171 @@ mod tests {
         }
     }
 
+    #[test]
+    fn generated_one_slot_roster_matches_the_shared_kernel_occurrence_for_occurrence() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let (runtime, token, installed) =
+            crate::language_install::tests::installed_flt_adapter_fixture();
+        let runtime = Arc::new(runtime);
+        let handle = runtime
+            .resolve(&token, LanguageRight::Reduce)
+            .expect("live Reduce grant");
+        let policy = runtime.service().policy().semantic_service;
+        let limits = policy.effective(installed.language_core().theory.limits, policy);
+        let commitment = installed.commitment();
+        let mut runner = TestRunner::new(Config::with_cases(128));
+        runner
+            .run(&(any::<u8>(), 0u8..3), |(letter, form)| {
+                let suffix = match form {
+                    0 => "+",
+                    1 => "?",
+                    _ => "*",
+                };
+                let pattern = format!("{}{suffix}", char::from(b'a' + letter % 26));
+                let subject = runtime
+                    .construct_template(
+                        &token,
+                        &[RuntimeTemplatePiece::Text(pattern)],
+                        &[],
+                        Some("Pattern"),
+                        &BTreeMap::new(),
+                    )
+                    .map_err(|error| {
+                        TestCaseError::fail(format!(
+                            "generated Regex construction failed: {error:?}"
+                        ))
+                    })?;
+                let mut work = 0;
+                let mut cancelled = || false;
+                let mut codec = ReflectedCodecBudget::new(
+                    &mut work,
+                    10_000_000,
+                    limits.boundary_payload_bytes,
+                    &mut cancelled,
+                );
+                let adapter = InstalledFltAdapter::new(&installed, &mut codec)
+                    .map_err(|error| TestCaseError::fail(format!("adapter: {error:?}")))?;
+                let (category, sort) = adapter
+                    .select_category("Pattern", &mut codec)
+                    .map_err(|error| TestCaseError::fail(format!("Pattern sort: {error:?}")))?;
+                let admit = |codec: &mut ReflectedCodecBudget<'_, _>| {
+                    adapter.to_kernel(
+                        &subject,
+                        category,
+                        SemanticInputLimits {
+                            work: limits.execution.work,
+                            nodes: limits.execution.term_nodes,
+                            bytes: limits.execution.term_bytes,
+                        },
+                        codec,
+                    )
+                };
+                let binding_input = admit(&mut codec)
+                    .map_err(|error| TestCaseError::fail(format!("binding input: {error:?}")))?;
+                let expected_input = binding_input.exact_key().as_bytes().to_vec();
+                let kernel_input = admit(&mut codec)
+                    .map_err(|error| TestCaseError::fail(format!("kernel input: {error:?}")))?;
+                let prepared = InstalledSemanticBundle::prepare(
+                    runtime.service().table(),
+                    &handle,
+                    &[LanguageRight::Reduce],
+                    &mut codec,
+                )
+                .map_err(|error| TestCaseError::fail(format!("kernel preparation: {error:?}")))?;
+                let (decision, aggregate) = prepared
+                    .execute_step_roster_accounted(sort, kernel_input, limits.execution, || false)
+                    .map_err(|error| TestCaseError::fail(format!("kernel roster: {error:?}")))?;
+                let SemanticTransitionDecision::ProvenSteps(proven) = decision else {
+                    return Err(TestCaseError::fail("kernel did not prove complete step roster"));
+                };
+                prop_assert_eq!(proven.work, aggregate);
+                prop_assert_eq!(&proven.input, &expected_input);
+                prop_assert_eq!(proven.language_fingerprint, commitment.language_fingerprint);
+                prop_assert_eq!(proven.theory_fingerprint, commitment.theory_fingerprint);
+                prop_assert_eq!(proven.relation_sort, sort);
+                let reflected = adapter
+                    .reflect_rewrite_steps(&proven, sort, &mut codec)
+                    .map_err(|error| {
+                        TestCaseError::fail(format!("kernel reflection: {error:?}"))
+                    })?;
+                prop_assert_eq!(reflected.len(), proven.occurrences.len());
+                let image = proven.image_fingerprint;
+                let mut expected = Vec::new();
+                for (occurrence, output) in proven.occurrences.into_iter().zip(reflected) {
+                    let receipt =
+                        encode_normalization_step_v1(occurrence.receipt.clone(), &mut codec)
+                            .map_err(|error| {
+                                TestCaseError::fail(format!("proof receipt: {error:?}"))
+                            })?;
+                    expected.push((occurrence.ordinal, output, receipt, occurrence.receipt.after));
+                }
+                drop(codec);
+
+                let host = RuntimeBudget::new(Cost::create(10_000_000, "roster property"));
+                let mut provider = InstalledCheckedGuestProvider::new(
+                    Arc::clone(&runtime),
+                    vec![AdmittedLookaheadBinding {
+                        path: Vec::new(),
+                        top_level_expr: None,
+                        handle: handle.clone(),
+                        installed: Arc::clone(&installed),
+                        sort,
+                        category,
+                        context: 0,
+                        input: binding_input,
+                    }],
+                    host.clone(),
+                )
+                .map_err(|error| TestCaseError::fail(format!("provider: {error:?}")))?;
+                let empty = SpeculativeState::default();
+                let root = provider
+                    .initial(&subject, &empty)
+                    .map_err(|error| TestCaseError::fail(format!("provider root: {error:?}")))?;
+                let remaining_before_roster = host.remaining().value;
+                let prior_charges = host.get_log();
+                let edges = provider
+                    .complete_roster(&empty, &root)
+                    .map_err(|error| TestCaseError::fail(format!("provider roster: {error:?}")))?;
+                // Primitive work is a diagnostic cost in cost-accounted Rholang;
+                // only COMM consumes source-token units. Compare the exact
+                // additional primitive receipt, not remaining phlogiston.
+                prop_assert_eq!(host.remaining().value, remaining_before_roster);
+                let mut additional_charges = host.get_log();
+                for prior in prior_charges {
+                    let Some(position) = additional_charges.iter().position(|cost| cost == &prior)
+                    else {
+                        return Err(TestCaseError::fail("prior host cost receipt disappeared"));
+                    };
+                    additional_charges.remove(position);
+                }
+                prop_assert_eq!(additional_charges.len(), 1);
+                prop_assert_eq!(
+                    additional_charges[0].operation.as_ref(),
+                    "installed lookahead guest operation"
+                );
+                prop_assert!(
+                    additional_charges[0].value
+                        >= i64::try_from(aggregate).expect("bounded kernel aggregate")
+                );
+                prop_assert_eq!(edges.len(), expected.len());
+                for (edge, (ordinal, output, receipt, after)) in edges.iter().zip(&expected) {
+                    prop_assert_eq!(edge.identity.ordinal, *ordinal as u64);
+                    prop_assert_eq!(edge.identity.owner, commitment.language_fingerprint);
+                    prop_assert_eq!(edge.identity.image, image);
+                    prop_assert!(edge.identity.location.is_empty());
+                    prop_assert_eq!(edge.identity.top_level_expr, None);
+                    prop_assert_eq!(&edge.identity.receipt, receipt);
+                    prop_assert_eq!(&edge.successor.public_configuration, output);
+                    prop_assert_eq!(&edge.successor.slots[0].value, output);
+                    prop_assert_eq!(&edge.successor.slots[0].exact_key, after);
+                }
+                Ok(())
+            })
+            .expect("complete one-slot provider roster refines the shared kernel");
+    }
+
     #[tokio::test]
     async fn service_replies_with_a_real_installed_regex_rewrite_not_the_inert_root() {
         let (runtime, token, installed) =
