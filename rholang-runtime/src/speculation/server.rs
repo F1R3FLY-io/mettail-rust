@@ -2148,6 +2148,79 @@ mod tests {
     }
 
     #[test]
+    fn generated_request_channels_keep_legacy_host_and_installed_authority_disjoint() {
+        use crate::lookahead::{spec_envelope_v2, spec_envelope_v3, LookaheadTopLevelBinding};
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let guest = runtime
+            .construct_template(
+                &token,
+                &[mettail_grammar_core::RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &std::collections::BTreeMap::new(),
+            )
+            .expect("installed Pattern constructor");
+        let engine = LookaheadEngine::new().with_language_runtime(Arc::new(runtime));
+        let host = RuntimeBudget::new(Cost::create(100_000_000, "request channel property"));
+        let mut runner = TestRunner::new(Config::with_cases(128));
+        runner
+            .run(
+                &(proptest::collection::vec(any::<i16>(), 0..16), any::<usize>()),
+                |(values, placement)| {
+                    let mut ordinary = Par::default();
+                    ordinary.exprs = values
+                        .into_iter()
+                        .map(|value| {
+                            new_gint_par(i64::from(value), Vec::new(), false)
+                                .exprs
+                                .remove(0)
+                        })
+                        .collect();
+                    let (legacy_host, legacy_claims) = engine
+                        .admit_subject(ordinary.clone(), &host, false)
+                        .map_err(|error| {
+                            TestCaseError::fail(format!("ordinary legacy host refused: {error}"))
+                        })?;
+                    prop_assert_eq!(legacy_host, ordinary.clone());
+                    prop_assert!(legacy_claims.is_empty());
+
+                    let v2 = spec_envelope_v2(ordinary.clone(), Vec::new());
+                    prop_assert!(engine.admit_top_level_subject(v2.clone(), &host).is_err());
+                    let (v2_host, v2_claims) =
+                        engine.admit_subject(v2, &host, true).map_err(|error| {
+                            TestCaseError::fail(format!("ordinary v2 host refused: {error}"))
+                        })?;
+                    prop_assert_eq!(v2_host, ordinary.clone());
+                    prop_assert!(v2_claims.is_empty());
+
+                    let guest_index = placement % (ordinary.exprs.len() + 1);
+                    let mut mixed = ordinary;
+                    mixed.exprs.insert(guest_index, guest.exprs[0].clone());
+                    prop_assert!(engine.admit_subject(mixed.clone(), &host, false).is_err());
+                    prop_assert!(engine
+                        .admit_subject(spec_envelope_v2(mixed.clone(), Vec::new()), &host, true)
+                        .is_err());
+                    let v3 = spec_envelope_v3(
+                        mixed,
+                        LookaheadTopLevelBinding {
+                            expr_index: u32::try_from(guest_index).expect("small index"),
+                            handle: token.clone(),
+                            expected_category: "Pattern".into(),
+                            context: 0,
+                        },
+                    );
+                    prop_assert!(engine.admit_subject(v3.clone(), &host, true).is_err());
+                    prop_assert!(engine.admit_top_level_subject(v3, &host).is_ok());
+                    Ok(())
+                },
+            )
+            .expect("generated legacy/v2/v3 channel separation properties");
+    }
+
+    #[test]
     fn installed_publication_commits_once_only_while_every_owner_is_live() {
         use rspace_plus_plus::rspace::rspace_interface::commit_produce;
 
