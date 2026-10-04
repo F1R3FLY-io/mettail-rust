@@ -508,7 +508,7 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
       handlePipe!(installed.get("ok").get("exports_by_name").get("Regex"))
     } |
     for(regex <- handlePipe) {
-      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable, lookaheadChoices, lookaheadZero, lookaheadOne, lookaheadTwins, patternForLookahead, lookaheadHole, lookaheadNative in {
+      new observeRegex, displayRegex, values, nullable, derived, matched, searched, firstReplaced, replaced, lookaheadNullable, lookaheadChoices, lookaheadZero, lookaheadOne, lookaheadTwins, patternForLookahead, lookaheadHole, lookaheadReceived, lookaheadNative in {
         for(@[judgment, term, reply] <= observeRegex) {
           observe!([2, *regex, "Computation", judgment, "TerminalVerdict", term, [], reply])
         } |
@@ -524,7 +524,8 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
         @"^spec-all-v2"!([2, "a", [[[], *regex, "Scalar", 0]]], *lookaheadNative) |
         patternForLookahead!(regex:Pattern`a?`) |
         for(@pattern <- patternForLookahead) {
-          lookaheadHole!(regex:Computation`nullable(${pattern:Pattern})`)[*]
+          lookaheadHole!(regex:Computation`nullable(${pattern:Pattern})`)[*] |
+          @"^spec-all-v2"!([2, *pattern, [[[], *regex, "Pattern", 0]]], *lookaheadReceived)
         } |
         for(@success, @failure <- lookaheadNullable) {
           stdout!(["lookahead-success-traces", success.readZipper().leafCount()]) |
@@ -551,6 +552,10 @@ new install(`rho:mettail:install`), observe(`rho:mettail:flt:observe-relation`),
         for(@success, @failure <- lookaheadHole) {
           @"regex.lookahead.hole.success"!(success) |
           @"regex.lookahead.hole.failure"!(failure)
+        } |
+        for(@success, @failure <- lookaheadReceived) {
+          @"regex.lookahead.received.success"!(success) |
+          @"regex.lookahead.received.failure"!(failure)
         } |
         for(@success, @failure <- lookaheadNative) {
           @"regex.lookahead.native.success"!(success) |
