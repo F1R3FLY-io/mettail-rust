@@ -2039,6 +2039,115 @@ mod tests {
     }
 
     #[test]
+    fn generated_top_level_admission_requires_exact_live_owner_and_locator() {
+        use crate::lookahead::{spec_envelope_v3, LookaheadTopLevelBinding};
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let guest = runtime
+            .construct_template(
+                &token,
+                &[mettail_grammar_core::RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &std::collections::BTreeMap::new(),
+            )
+            .expect("installed Pattern constructor");
+        let runtime = Arc::new(runtime);
+        let engine = LookaheadEngine::new().with_language_runtime(Arc::clone(&runtime));
+        let host = RuntimeBudget::new(Cost::create(100_000_000, "generated v3 admission"));
+        let forged = models::rust::rholang::implicits::GPrivateBuilder::new_par_from_string(
+            "forged-generated-v3-owner".into(),
+        );
+
+        let mut runner = TestRunner::new(Config::with_cases(128));
+        runner
+            .run(
+                &(proptest::collection::vec(any::<i16>(), 0..16), any::<usize>()),
+                |(host_values, placement)| {
+                    let guest_index = placement % (host_values.len() + 1);
+                    let mut subject = Par::default();
+                    subject.exprs = host_values
+                        .into_iter()
+                        .map(|value| {
+                            new_gint_par(i64::from(value), Vec::new(), false)
+                                .exprs
+                                .remove(0)
+                        })
+                        .collect();
+                    subject.exprs.insert(guest_index, guest.exprs[0].clone());
+
+                    let claim = |handle: Par, expr_index: usize, category: &str, context| {
+                        LookaheadTopLevelBinding {
+                            expr_index: u32::try_from(expr_index).expect("small generated index"),
+                            handle,
+                            expected_category: category.into(),
+                            context,
+                        }
+                    };
+                    let admitted = engine.admit_top_level_subject(
+                        spec_envelope_v3(
+                            subject.clone(),
+                            claim(token.clone(), guest_index, "Pattern", 0),
+                        ),
+                        &host,
+                    );
+                    let (accepted, bindings) = admitted.map_err(|error| {
+                        TestCaseError::fail(format!("valid generated owner refused: {error}"))
+                    })?;
+                    prop_assert_eq!(accepted, subject.clone());
+                    prop_assert_eq!(bindings.len(), 1);
+                    prop_assert_eq!(bindings[0].top_level_expr, Some(guest_index));
+
+                    let wrong_index = if subject.exprs.len() == 1 {
+                        1
+                    } else {
+                        (guest_index + 1) % subject.exprs.len()
+                    };
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(
+                                subject.clone(),
+                                claim(token.clone(), wrong_index, "Pattern", 0),
+                            ),
+                            &host,
+                        )
+                        .is_err());
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(
+                                subject.clone(),
+                                claim(token.clone(), guest_index, "Scalar", 0),
+                            ),
+                            &host,
+                        )
+                        .is_err());
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(
+                                subject.clone(),
+                                claim(token.clone(), guest_index, "Pattern", 1),
+                            ),
+                            &host,
+                        )
+                        .is_err());
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(
+                                subject,
+                                claim(forged.clone(), guest_index, "Pattern", 0),
+                            ),
+                            &host,
+                        )
+                        .is_err());
+                    Ok(())
+                },
+            )
+            .expect("generated v3 authority and locator properties");
+    }
+
+    #[test]
     fn installed_publication_commits_once_only_while_every_owner_is_live() {
         use rspace_plus_plus::rspace::rspace_interface::commit_produce;
 
