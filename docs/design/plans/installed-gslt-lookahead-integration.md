@@ -22,7 +22,19 @@ The version 3 provider splits the one admitted expression before host saturation
 
 This is deliberately a restricted, fail-closed slice. Nested or transported FLTs, multiple active guest children, cross-owner morphisms, and provider-aware resumption of an installed guest are not inferred from tags or silently downgraded to host-only search. The current host-only resume API explicitly refuses a retained installed guest. These cases remain acceptance work under the broader contract below.
 
-Evidence: the feature-enabled public-node test `actual_regex_application_uses_shared_provider_public_route` passed with the inline Regex GSLT and application fixture; focused top-level scanner, authority, and mixed-order tests passed 3/3; and the host-only resume refusal test passed. The typed-locator disjointness and exact split/rejoin model is in [InstalledLookaheadEveryTrace.v](../../../formal/rocq/runtime_grammar/theories/InstalledLookaheadEveryTrace.v). Extracting every modeled invariant into a corresponding property-based implementation test remains a required verification gate. These checks establish this slice, not a blanket proof of all outstanding resource, replay, or cross-language requirements.
+### Resource settlement across refusals
+
+The sandbox and the live deploy have distinct budgets. The service returns a `LookaheadAttempt` containing the sandbox's consumed COMM count even when a provider refuses after earlier host COMMs. Its response or refusal is private until the public request handler calls `settle` against the live deploy budget. Settlement invokes the existing host charge operation once per consumed COMM before either outcome can be published. It does not treat a failed exploration as free work.
+
+| Exploration outcome | Host can pay the full receipt | Public behavior |
+|---|---|---|
+| Response | Yes | Publish the complete response. |
+| Refusal | Yes | Publish only the typed request error. |
+| Either | No | Report the unaffordable charged prefix and withhold the response. |
+
+The bounded [Rocq settlement model](../../../formal/rocq/runtime_grammar/theories/InstalledLookaheadEveryTrace.v) specifies the count-level law: an error and a response with the same consumed count owe the same charge; publication requires complete settlement. It abstracts the live budget as the number of `reserve_comm` calls affordable at the fixed speculation weight. The production correspondence must be checked against the actual charge loop and public request route; the model alone does not prove that correspondence.
+
+Evidence: the feature-enabled public-node test `actual_regex_application_uses_shared_provider_public_route` passed after the settlement change with the inline Regex GSLT and application fixture. The checked-guest search suite passed 6/6, including a provider refusal after a host COMM and a 128-case generated settlement property; the service wire-shape suite passed 5/5 and the public service ABI suite passed 6/6. The typed-locator, exact split/rejoin, and charge-settlement theorems in [InstalledLookaheadEveryTrace.v](../../../formal/rocq/runtime_grammar/theories/InstalledLookaheadEveryTrace.v) compile under a 4 GB memory limit. Extracting all other applicable modeled invariants into production properties remains a verification gate. These checks establish a restricted slice, not the full multi-guest, resource, replay, or cross-language correspondence.
 
 ## Semantic model
 

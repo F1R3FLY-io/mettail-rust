@@ -86,7 +86,7 @@ async fn probe(label: &str, source: &str) {
 
     let host = host_budget(40_000_000);
     let started = std::time::Instant::now();
-    let response = LookaheadService::serve(
+    let attempt = LookaheadService::serve(
         LookaheadRequest::new(subject, Lookahead::Unbounded)
             .with_prelude(prelude)
             .with_projection(LeafProjection::resting_on(LEAF))
@@ -94,8 +94,12 @@ async fn probe(label: &str, source: &str) {
         Blake2b512Random::create_from_length(128),
         &host,
     )
-    .await
-    .expect("the service must serve the λ request");
+    .await;
+    let consumed = attempt.consumed().value;
+    let response = attempt
+        .settle(&host, Cost::create(1, "x6 lookahead charge"))
+        .expect("the host can pay for the exploration")
+        .expect("the service must serve the λ request");
 
     let rendered: Vec<String> = response
         .reply
@@ -112,7 +116,7 @@ async fn probe(label: &str, source: &str) {
         response.truncated.len(),
         response.failure.len(),
         response.error.is_some(),
-        response.consumed.value,
+        consumed,
     );
     eprintln!("[{label}] stats={:?}", response.exploration.stats);
     for (index, value) in rendered.iter().enumerate() {

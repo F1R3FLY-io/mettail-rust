@@ -745,6 +745,8 @@ mod tests {
             &host,
         )
         .await
+        .settle(&host, Cost::create(1, "installed lookahead test charge"))
+        .expect("the host can pay for the exploration")
         .expect("bounded installed service request");
         assert!(response.error.is_none());
         assert!(response.failure.is_empty());
@@ -817,6 +819,8 @@ mod tests {
             &host,
         )
         .await
+        .settle(&host, Cost::create(1, "installed lookahead test charge"))
+        .expect("the host can pay for the exploration")
         .expect("mixed installed search is admitted");
         assert!(response.error.is_none());
         assert!(response.failure.is_empty());

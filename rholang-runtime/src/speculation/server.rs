@@ -191,7 +191,7 @@ use super::occurrences::{
     scan_installed_occurrences, scan_top_level_reflected_exprs, split_preflighted_top_level_expr,
     term_at_path, SubjectOccurrence, TopLevelExprOccurrence,
 };
-use super::search::{charge_host_comms, ErrorCode, Lookahead, QuiescentLeaf, TraceMode};
+use super::search::{ErrorCode, Lookahead, QuiescentLeaf, TraceMode};
 use super::service::{LeafProjection, LookaheadRequest, LookaheadResponse, LookaheadService};
 
 /// The ABI version the two `body_ref`s are derived from. Bumping it re-derives both, which is
@@ -1093,8 +1093,39 @@ impl LookaheadEngine {
         .with_trace_mode(self.trace_mode);
 
         // ── the exploration ──────────────────────────────────────────────
-        let response = match LookaheadService::serve(request, publisher.random.clone(), host).await
-        {
+        let attempt = LookaheadService::serve(request, publisher.random.clone(), host).await;
+
+        // ── the charge-back, BEFORE anything is delivered ────────────────
+        //
+        // An exploration the deploy cannot afford must not also hand back an answer: the
+        // failure is reported and the results are withheld, exactly as an over-budget
+        // program produces no output.
+        // The attempt carries the same receipt after a response or an error.
+        // A provider may refuse after earlier sandbox COMMs; settle those
+        // before publishing even the refusal datum.
+        let outcome = match attempt.settle(host, speculation_weight()) {
+            Ok(outcome) => outcome,
+            Err(failure) => {
+                // `{error}`, not `{error:?}`: this string becomes a `^spec-err` datum, and
+                // `InterpreterError`'s derived `Debug` is generated code — the same
+                // build-artifact-in-consensus-bytes hazard `SpeculationError`'s `Display` header
+                // spells out. `InterpreterError` has a hand-written `Display`.
+                let datum = request_error_datum(
+                    ErrorCode::OutOfPhlogistons,
+                    &format!(
+                        "the exploration committed {} COMM(s) the host could not pay for: \
+                     {charged} charged before {error}",
+                        failure.owed.value,
+                        charged = failure.charged,
+                        error = failure.error,
+                    ),
+                );
+                publisher.publish(datum, &spec(SPEC_ERR_CHANNEL)).await?;
+                return Err(InterpreterError::OutOfPhlogistonsError);
+            },
+        };
+
+        let response = match outcome {
             Ok(response) => response,
             Err(error) => {
                 let datum = request_error_datum(
@@ -1105,31 +1136,6 @@ impl LookaheadEngine {
                 return Ok(Vec::new());
             },
         };
-
-        // ── the charge-back, BEFORE anything is delivered ────────────────
-        //
-        // An exploration the deploy cannot afford must not also hand back an answer: the
-        // failure is reported and the results are withheld, exactly as an over-budget
-        // program produces no output.
-        let consumed = response.consumed.clone();
-        if let Err((charged, error)) =
-            charge_host_comms(host, consumed.clone(), speculation_weight())
-        {
-            // `{error}`, not `{error:?}`: this string becomes a `^spec-err` datum, and
-            // `InterpreterError`'s derived `Debug` is generated code — the same
-            // build-artifact-in-consensus-bytes hazard `SpeculationError`'s `Display` header
-            // spells out. `InterpreterError` has a hand-written `Display`.
-            let datum = request_error_datum(
-                ErrorCode::OutOfPhlogistons,
-                &format!(
-                    "the exploration committed {} COMM(s) the host could not pay for: \
-                     {charged} charged before {error}",
-                    consumed.value
-                ),
-            );
-            publisher.publish(datum, &spec(SPEC_ERR_CHANNEL)).await?;
-            return Err(InterpreterError::OutOfPhlogistonsError);
-        }
 
         self.publish_response(&mut publisher, response, guest, &reply, versioned)
             .await
@@ -1907,6 +1913,8 @@ mod tests {
             &host,
         )
         .await
+        .settle(&host, Cost::create(1, "server lookahead test charge"))
+        .expect("the host can pay for the exploration")
         .expect("native Scalar search has a complete checked roster");
         assert!(response.error.is_none());
         assert!(response.failure.is_empty());

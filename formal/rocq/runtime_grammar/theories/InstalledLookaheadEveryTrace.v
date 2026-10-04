@@ -13,10 +13,10 @@
     enabled-edge emptiness. The host-only refinement below applies to that
     search only when host_checked agrees with enabled/fire, enumeration is
     complete and stable, and TraceMode::EveryTrace disables pruning and
-    merging. The current Rust explorer does not yet enumerate installed guest
-    rewrites, so no theorem here asserts that dynamic lookahead is implemented.
-    The runtime must also prove that recorded work equals actual host charges,
-    and that the complete roster contains every enabled occurrence.
+    merging. The current Rust explorer admits a direct root or one exact
+    top-level reflected expression, not the general multi-slot state modeled
+    below. The runtime must also prove that recorded work equals actual host
+    charges, and that the complete roster contains every enabled occurrence.
 
     LookaheadTraceDelivery (RhoBridge) supplies the corresponding process-path
     wire shape. Importing RhoBridge here would invert the project dependency,
@@ -1496,5 +1496,82 @@ Module CompositeLocator.
   Print Assumptions locator_domains_disjoint.
   Print Assumptions exact_split_rejoin.
 End CompositeLocator.
+
+(** Settlement is independent of whether exploration produced a response or
+    refused. [capacity] is the number of calls to reserve_comm at the fixed
+    speculation weight that the host could still afford at settlement time;
+    it is not a raw phlogiston balance. [attempted_comms] is the count of
+    COMMs already committed in the isolated sandbox, including a prefix before
+    a later provider refusal. The actual Rust charge loop must refine this
+    accounting abstraction, including its partial-charge result. *)
+Module ChargeSettlement.
+  Inductive Outcome := Completed | Refused.
+
+  Record Attempt := {
+    attempted_comms : nat;
+    outcome : Outcome
+  }.
+
+  Record Settlement := {
+    charged_comms : nat;
+    fully_charged : bool;
+    may_publish : bool
+  }.
+
+  Definition settle (capacity : nat) (attempt : Attempt) : Settlement :=
+    let funded := Nat.leb (attempted_comms attempt) capacity in
+    {| charged_comms := Nat.min (attempted_comms attempt) capacity;
+       fully_charged := funded;
+       may_publish :=
+         match outcome attempt with
+         | Completed => funded
+         | Refused => false
+         end |}.
+
+  Theorem refusal_retains_identical_comm_charge :
+    forall capacity count,
+      charged_comms (settle capacity {| attempted_comms := count;
+                                      outcome := Refused |}) =
+      charged_comms (settle capacity {| attempted_comms := count;
+                                      outcome := Completed |}).
+  Proof. reflexivity. Qed.
+
+  Theorem completed_publication_requires_full_charge :
+    forall capacity attempt,
+      may_publish (settle capacity attempt) = true ->
+      outcome attempt = Completed /\
+      charged_comms (settle capacity attempt) = attempted_comms attempt.
+  Proof.
+    intros capacity [count [|]] H; simpl in *.
+    - split; auto. apply Nat.leb_le in H. now apply Nat.min_l.
+    - discriminate.
+  Qed.
+
+  Theorem refusal_never_publishes_but_retains_partial_charge :
+    forall capacity count,
+      let result := settle capacity
+        {| attempted_comms := count; outcome := Refused |} in
+      may_publish result = false /\
+      charged_comms result = Nat.min count capacity.
+  Proof. intros; split; reflexivity. Qed.
+
+  Theorem over_budget_never_publishes :
+    forall capacity attempt,
+      capacity < attempted_comms attempt ->
+      may_publish (settle capacity attempt) = false /\
+      charged_comms (settle capacity attempt) = capacity.
+  Proof.
+    intros capacity [count [|]] H; simpl in *; split.
+    - apply Nat.leb_gt. exact H.
+    - apply Nat.min_r. lia.
+    - reflexivity.
+    - apply Nat.min_r. lia.
+  Qed.
+
+  Print Assumptions refusal_retains_identical_comm_charge.
+  Print Assumptions completed_publication_requires_full_charge.
+  Print Assumptions refusal_never_publishes_but_retains_partial_charge.
+  Print Assumptions over_budget_never_publishes.
+End ChargeSettlement.
 
 End InstalledLookaheadEveryTrace.

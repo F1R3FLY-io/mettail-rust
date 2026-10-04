@@ -457,6 +457,8 @@ fn the_published_leaf_is_invariant_under_permuting_the_retained_store() {
             &host,
         )
         .await
+        .settle(&host, Cost::create(1, "x8 lookahead charge"))
+        .expect("the host can pay for the exploration")
         .expect("the service must serve the request")
         .exploration
     });

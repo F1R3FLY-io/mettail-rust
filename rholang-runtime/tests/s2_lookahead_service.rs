@@ -111,14 +111,18 @@ fn rand() -> Blake2b512Random {
 #[tokio::test]
 async fn the_reply_carries_one_bare_term_per_success_branch() {
     let host = host_budget(1_000_000);
-    let response = LookaheadService::serve(
+    let attempt = LookaheadService::serve(
         LookaheadRequest::new(racing_subject(), Lookahead::Unbounded)
             .with_projection(LeafProjection::resting_on(OUT)),
         rand(),
         &host,
     )
-    .await
-    .expect("the service must serve the request");
+    .await;
+    let consumed = attempt.consumed().value;
+    let response = attempt
+        .settle(&host, Cost::create(1, "s2 lookahead charge"))
+        .expect("the host can pay for the exploration")
+        .expect("the service must serve the request");
 
     let mut delivered: Vec<String> = response
         .reply
@@ -129,7 +133,7 @@ async fn the_reply_carries_one_bare_term_per_success_branch() {
         })
         .collect();
     delivered.sort();
-    eprintln!("[serve] reply={delivered:?} consumed={}", response.consumed.value);
+    eprintln!("[serve] reply={delivered:?} consumed={consumed}");
 
     assert_eq!(response.exploration.success.len(), 2, "two branches");
     assert_eq!(delivered.len(), 2, "one datum per branch: {delivered:?}");
@@ -142,10 +146,7 @@ async fn the_reply_carries_one_bare_term_per_success_branch() {
         2,
         "and the provenance channel carries one [trace, term] per branch"
     );
-    assert!(
-        response.consumed.value > 0,
-        "the exploration spent phlogiston the host must be charged for"
-    );
+    assert!(consumed > 0, "the exploration spent phlogiston the host must be charged for");
 }
 
 /// The provenance datum is `[trace, [term…]]` — an `EList` whose head is the complete
@@ -162,6 +163,8 @@ async fn the_provenance_datum_is_a_trace_and_a_term() {
         &host,
     )
     .await
+    .settle(&host, Cost::create(1, "s2 lookahead charge"))
+    .expect("the host can pay for the exploration")
     .expect("serve");
 
     use models::rhoapi::expr::ExprInstance;
@@ -224,6 +227,8 @@ async fn a_truncated_branch_is_published_with_a_resumable_handle() {
         &host,
     )
     .await
+    .settle(&host, Cost::create(1, "s2 lookahead charge"))
+    .expect("the host can pay for the exploration")
     .expect("serve `[1]`");
     assert_eq!(cut.truncated.len(), 1, "one truncated branch");
     assert!(cut.success.is_empty(), "…and it did not finish");
@@ -259,6 +264,8 @@ async fn a_truncated_branch_is_published_with_a_resumable_handle() {
         &host,
     )
     .await
+    .settle(&host, Cost::create(1, "s2 lookahead charge"))
+    .expect("the host can pay for the exploration")
     .expect("serve `[*]`");
 
     let handles: Vec<_> = cut
@@ -275,6 +282,8 @@ async fn a_truncated_branch_is_published_with_a_resumable_handle() {
         &host,
     )
     .await
+    .settle(&host, Cost::create(1, "s2 lookahead charge"))
+    .expect("the host can pay for the exploration")
     .expect("resume");
 
     let render = |values: &[Par]| -> Vec<String> {
@@ -310,6 +319,8 @@ async fn an_unaffordable_request_publishes_typed_branch_failures() {
         &host,
     )
     .await
+    .settle(&host, Cost::create(1, "s2 lookahead charge"))
+    .expect("the host can pay for the exploration")
     .expect("an unaffordable request is an ANSWER, not a fault");
     assert!(response.reply.is_empty(), "nothing was computed");
     assert!(!response.failure.is_empty(), "and the failure is REPORTED");
@@ -356,6 +367,8 @@ async fn the_configuration_projection_delivers_a_process() {
         &host,
     )
     .await
+    .settle(&host, Cost::create(1, "s2 lookahead charge"))
+    .expect("the host can pay for the exploration")
     .expect("serve");
     assert_eq!(response.reply.len(), 2, "one configuration per branch");
     assert!(

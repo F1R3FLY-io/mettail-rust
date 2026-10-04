@@ -48,15 +48,16 @@
 //!
 //! [`LookaheadService::serve`] funds its sandbox from the host deploy's
 //! remaining phlogiston, runs, and reports what it spent
-//! ([`LookaheadResponse::consumed`]) — a **COMM count**. The caller charges it
+//! ([`LookaheadAttempt::consumed`]) — a **COMM count** even if exploration
+//! later refuses. The caller charges it
 //! back with [`crate::speculation::search::Explorer::charge_host`], which is
 //! `consumed()` *calls* to f1r3node's own `reserve_comm`, not one call passing
 //! `consumed()`. Nothing here owns a budget; budgets are F1r3node's.
 //!
-//! The service does **not** charge the host itself, and that is not an omission:
-//! the charge has to happen against the live host budget at the call site, and a
-//! service that charged an argument it was handed would be a second place cost
-//! is decided.
+//! `serve` and `resume` do **not** charge the host themselves. The public
+//! handler consumes the attempt with [`LookaheadAttempt::settle`] against its
+//! live host budget before it can inspect either a response or a refusal. The
+//! charge amount remains the one defined by f1r3node's `reserve_comm`.
 
 use std::sync::Arc;
 
@@ -66,6 +67,7 @@ use models::rhoapi::Var;
 use models::rust::utils::{new_elist_par, new_gbytearray_par, new_gint_par, new_gstring_par};
 use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::RuntimeBudget;
+use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::system_processes::Definition;
 
 use crate::language_install::RholangLanguageRuntime;
@@ -73,8 +75,8 @@ use crate::language_install::RholangLanguageRuntime;
 use super::delivery::{reify, resting_on, trace_digest, ReificationError, SpeculationDelivery};
 use super::installed_provider::InstalledCheckedGuestProvider;
 use super::search::{
-    AbortedLeaf, ErrorCode, Exploration, Explorer, Lookahead, QuiescentLeaf, TraceMode,
-    TruncatedLeaf,
+    charge_host_comms, AbortedLeaf, ErrorCode, Exploration, Explorer, Lookahead, QuiescentLeaf,
+    TraceMode, TruncatedLeaf,
 };
 use super::server::AdmittedLookaheadBinding;
 #[cfg(test)]
@@ -273,9 +275,6 @@ pub struct LookaheadResponse {
     pub delivery: SpeculationDelivery,
     /// The exploration itself — counters, leaves, root.
     pub exploration: Exploration,
-    /// What the sandbox spent: a **COMM count**, to be charged back one
-    /// `reserve_comm` call at a time.
-    pub consumed: Cost,
 }
 
 impl LookaheadResponse {
@@ -285,6 +284,61 @@ impl LookaheadResponse {
             .iter()
             .find(|(digest, _)| digest.as_slice() == key)
             .map(|(_, branch)| branch)
+    }
+}
+
+/// The result and resource receipt of one complete service attempt. The
+/// receipt exists on both success and refusal, so a caller cannot lose COMMs
+/// already committed before a later provider or reification error. A failed
+/// sandbox bootstrap has a zero receipt.
+pub struct LookaheadAttempt {
+    outcome: Result<LookaheadResponse, SpeculationError>,
+    /// Sandbox COMMs to charge back one `reserve_comm` call at a time, before
+    /// publishing either a response or a request-level refusal.
+    consumed: Cost,
+}
+
+/// A host that could not pay for every COMM already committed in the isolated
+/// exploration. The caller reports this instead of publishing an answer.
+#[derive(Debug)]
+pub struct LookaheadChargeFailure {
+    pub owed: Cost,
+    pub charged: usize,
+    pub error: InterpreterError,
+}
+
+impl LookaheadAttempt {
+    /// Inspect the receipt without exposing an uncharged response.
+    pub fn consumed(&self) -> &Cost {
+        &self.consumed
+    }
+
+    /// Charge the live host for every sandbox COMM before revealing either a
+    /// response or a refusal. Failed explorations use the same receipt path.
+    pub fn settle(
+        self,
+        host: &RuntimeBudget,
+        weight: Cost,
+    ) -> Result<Result<LookaheadResponse, SpeculationError>, LookaheadChargeFailure> {
+        let owed = self.consumed;
+        match charge_host_comms(host, owed.clone(), weight) {
+            Ok(_) => Ok(self.outcome),
+            Err((charged, error)) => Err(LookaheadChargeFailure { owed, charged, error }),
+        }
+    }
+
+    fn before_sandbox(error: SpeculationError) -> Self {
+        Self {
+            outcome: Err(error),
+            consumed: Cost::create(0, "lookahead bootstrap"),
+        }
+    }
+
+    pub(super) fn after_sandbox(
+        sandbox: &SpeculativeSandbox,
+        outcome: Result<LookaheadResponse, SpeculationError>,
+    ) -> Self {
+        Self { outcome, consumed: sandbox.consumed() }
     }
 }
 
@@ -309,8 +363,9 @@ impl LookaheadService {
     /// validators speculating over the same deploy have to mint the same
     /// unforgeable names.
     ///
-    /// Returns `Err` only for an infrastructure failure (the sandbox could not
-    /// be built, a retained configuration could not be re-installed). Everything
+    /// Returns an error *inside the attempt* only for an infrastructure failure
+    /// (the sandbox could not be built, a retained configuration could not be
+    /// re-installed). Everything
     /// a *program* can do wrong — aborting, exhausting the budget, failing to
     /// reduce — arrives as branch failures inside the response, because those
     /// are answers, not faults.
@@ -318,7 +373,7 @@ impl LookaheadService {
         request: LookaheadRequest,
         rand: Blake2b512Random,
         host: &RuntimeBudget,
-    ) -> Result<LookaheadResponse, SpeculationError> {
+    ) -> LookaheadAttempt {
         // `Definition` is not `Clone` (it carries a boxed system-process fn), so
         // the request is destructured and its definitions MOVED into the
         // sandbox. Nothing else needs them.
@@ -332,23 +387,30 @@ impl LookaheadService {
             installed_bindings,
             installed_runtime,
         } = request;
-        let sandbox = SpeculativeSandbox::with_definitions(definitions).await?;
+        let sandbox = match SpeculativeSandbox::with_definitions(definitions).await {
+            Ok(sandbox) => sandbox,
+            Err(error) => return LookaheadAttempt::before_sandbox(error),
+        };
         sandbox.fund_from(host);
         let program = prelude.append(subject);
-        let mut explorer = if installed_bindings.is_empty() {
-            Explorer::with_mode(&sandbox, trace_mode)
-        } else {
-            let runtime = installed_runtime.ok_or_else(|| {
-                SpeculationError::Bootstrap(
-                    "installed lookahead bindings have no live authority directory".into(),
-                )
-            })?;
-            let provider =
-                InstalledCheckedGuestProvider::new(runtime, installed_bindings, host.clone())?;
-            Explorer::with_checked_guest_provider(&sandbox, provider)
-        };
-        let exploration = explorer.explore(program, rand, lookahead).await?;
-        Self::respond(&sandbox, exploration, &projection)
+        let outcome = async {
+            let mut explorer = if installed_bindings.is_empty() {
+                Explorer::with_mode(&sandbox, trace_mode)
+            } else {
+                let runtime = installed_runtime.ok_or_else(|| {
+                    SpeculationError::Bootstrap(
+                        "installed lookahead bindings have no live authority directory".into(),
+                    )
+                })?;
+                let provider =
+                    InstalledCheckedGuestProvider::new(runtime, installed_bindings, host.clone())?;
+                Explorer::with_checked_guest_provider(&sandbox, provider)
+            };
+            let exploration = explorer.explore(program, rand, lookahead).await?;
+            Self::respond(exploration, &projection)
+        }
+        .await;
+        LookaheadAttempt::after_sandbox(&sandbox, outcome)
     }
 
     /// **Beam search's second half** — continue from handles a previous response
@@ -364,22 +426,28 @@ impl LookaheadService {
         trace_mode: TraceMode,
         definitions: Vec<Definition>,
         host: &RuntimeBudget,
-    ) -> Result<LookaheadResponse, SpeculationError> {
+    ) -> LookaheadAttempt {
         if handles.iter().any(|handle| handle.guest.is_some()) {
-            return Err(SpeculationError::Bootstrap(
+            return LookaheadAttempt::before_sandbox(SpeculationError::Bootstrap(
                 "installed guest resumption requires a live checked provider and is not admitted by the host-only resume API".into(),
             ));
         }
-        let sandbox = SpeculativeSandbox::with_definitions(definitions).await?;
+        let sandbox = match SpeculativeSandbox::with_definitions(definitions).await {
+            Ok(sandbox) => sandbox,
+            Err(error) => return LookaheadAttempt::before_sandbox(error),
+        };
         sandbox.fund_from(host);
-        let mut explorer = Explorer::with_mode(&sandbox, trace_mode);
-        let exploration = explorer.resume(handles, lookahead).await?;
-        Self::respond(&sandbox, exploration, projection)
+        let outcome = async {
+            let mut explorer = Explorer::with_mode(&sandbox, trace_mode);
+            let exploration = explorer.resume(handles, lookahead).await?;
+            Self::respond(exploration, projection)
+        }
+        .await;
+        LookaheadAttempt::after_sandbox(&sandbox, outcome)
     }
 
     /// Assemble the wire values from a finished exploration.
     fn respond(
-        sandbox: &SpeculativeSandbox,
         exploration: Exploration,
         projection: &LeafProjection,
     ) -> Result<LookaheadResponse, SpeculationError> {
@@ -430,7 +498,6 @@ impl LookaheadService {
             handles,
             delivery,
             exploration,
-            consumed: sandbox.consumed(),
         })
     }
 
@@ -572,6 +639,7 @@ mod wire_shape_tests {
 
     #[tokio::test]
     async fn host_only_resume_refuses_a_retained_installed_guest() {
+        let host = RuntimeBudget::unmetered();
         let process = new_gint_par(7, Vec::new(), false);
         let handle = ResumableBranch {
             state: SpeculativeState::default(),
@@ -588,9 +656,11 @@ mod wire_shape_tests {
             &LeafProjection::Configuration,
             TraceMode::EveryTrace,
             Vec::new(),
-            &RuntimeBudget::unmetered(),
+            &host,
         )
         .await
+        .settle(&host, Cost::create(1, "resume refusal test charge"))
+        .expect("a pre-sandbox refusal has no charge")
         .err()
         .expect("host-only resume cannot silently discard installed authority");
         assert!(

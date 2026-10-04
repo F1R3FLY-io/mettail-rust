@@ -805,8 +805,8 @@ fn intersect_sleep(left: &SleepSet, right: &SleepSet) -> SleepSet {
 /// It is a free function because the charge-back has two callers with different
 /// lifetimes: the [`Explorer`], which still holds its sandbox, and the request
 /// server ([`crate::speculation::server`]), which holds only the
-/// [`LookaheadResponse::consumed`](crate::speculation::service::LookaheadResponse::consumed)
-/// a finished `serve` handed back. Two call sites reimplementing "one
+/// [`LookaheadAttempt::consumed`](crate::speculation::service::LookaheadAttempt::consumed)
+/// a finished `serve` handed back even on refusal. Two call sites reimplementing "one
 /// `reserve_comm` per committed COMM" is exactly how a metering path drifts, so
 /// there is one.
 ///
@@ -1458,11 +1458,13 @@ impl<'sandbox> Explorer<'sandbox> {
 #[cfg(test)]
 mod checked_guest_search_tests {
     use super::*;
+    use crate::speculation::service::LookaheadAttempt;
     use crate::speculation::{GuestSlotState, TraceStepIdentity};
     use models::rhoapi::{ReceiveBind, Send, Var};
     use models::rust::utils::{
         new_elist_par, new_freevar_par, new_gint_par, new_gstring_par, new_receive_par,
     };
+    use proptest::prelude::*;
     use rholang::rust::interpreter::accounting::cost_accounting::CostAccounting;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -1585,6 +1587,114 @@ mod checked_guest_search_tests {
 
     struct HostRevalidatingProvider {
         calls: Arc<AtomicUsize>,
+    }
+
+    struct RefuseAfterHostComm;
+
+    impl CheckedGuestProvider for RefuseAfterHostComm {
+        fn initial(
+            &mut self,
+            _submitted: &Par,
+            _host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            Ok(configuration(0))
+        }
+
+        fn complete_roster(
+            &mut self,
+            _host: &SpeculativeState,
+            _current: &CheckedGuestConfiguration,
+        ) -> Result<Vec<CheckedGuestEdge>, SpeculationError> {
+            Ok(Vec::new())
+        }
+
+        fn after_host_comm(
+            &mut self,
+            _previous: &CheckedGuestConfiguration,
+            _host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            Err(SpeculationError::Bootstrap("checked owner revoked after host COMM".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn refusal_after_host_comm_retains_and_settles_the_comm_receipt() {
+        let sandbox = sandbox().await;
+        let mut explorer = Explorer::with_checked_guest_provider(&sandbox, RefuseAfterHostComm);
+        let error = explorer
+            .explore(
+                one_host_comm(),
+                Blake2b512Random::create_from_length(128),
+                Lookahead::Steps(1),
+            )
+            .await
+            .err()
+            .expect("provider refusal follows the committed host COMM");
+        let attempt = LookaheadAttempt::after_sandbox(&sandbox, Err(error));
+        let owed = attempt.consumed().value;
+        assert!(owed > 0, "the earlier sandbox COMM must survive refusal");
+
+        let host = CostAccounting::empty_cost();
+        host.set(Cost::create(owed + 1, "refusal settlement host"));
+        let before = host.remaining().value;
+        let outcome = attempt
+            .settle(&host, Cost::create(1, "refusal settlement"))
+            .expect("the host can pay the complete refusal receipt");
+        assert!(matches!(outcome, Err(SpeculationError::Bootstrap(message))
+            if message == "checked owner revoked after host COMM"));
+        assert_eq!(before - host.remaining().value, owed);
+
+        let short_host = CostAccounting::empty_cost();
+        short_host.set(Cost::create(owed - 1, "unaffordable refusal host"));
+        let short_attempt = LookaheadAttempt::after_sandbox(
+            &sandbox,
+            Err(SpeculationError::Bootstrap("checked owner revoked after host COMM".into())),
+        );
+        let failure = match short_attempt
+            .settle(&short_host, Cost::create(1, "unaffordable refusal settlement"))
+        {
+            Err(failure) => failure,
+            Ok(_) => panic!("an unpaid attempt must not expose its refusal outcome"),
+        };
+        assert_eq!(failure.owed.value, owed);
+        assert_eq!(failure.charged as i64, owed - 1);
+        assert!(matches!(failure.error, InterpreterError::OutOfPhlogistonsError));
+        assert_eq!(short_host.remaining().value, 0);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        /// The executable settlement law extracted from
+        /// ChargeSettlement in InstalledLookaheadEveryTrace.v. A refusal and
+        /// a successful exploration with the same committed COMM count use
+        /// exactly the same charge-back path.
+        #[test]
+        fn comm_settlement_charges_exact_affordable_prefix(
+            owed in 0i64..64,
+            capacity in 0i64..64,
+        ) {
+            let host = CostAccounting::empty_cost();
+            host.set(Cost::create(capacity, "generated settlement capacity"));
+            let result = charge_host_comms(
+                &host,
+                Cost::create(owed, "generated committed COMMs"),
+                Cost::create(1, "generated settlement"),
+            );
+            let expected = owed.min(capacity);
+            prop_assert_eq!(capacity - host.remaining().value, expected);
+            match result {
+                Ok(charged) => {
+                    prop_assert!(owed <= capacity);
+                    prop_assert_eq!(charged as i64, owed);
+                },
+                Err((charged, InterpreterError::OutOfPhlogistonsError)) => {
+                    prop_assert!(owed > capacity);
+                    prop_assert_eq!(charged as i64, capacity);
+                },
+                Err((_, other)) => prop_assert!(false, "unexpected charge failure: {other}"),
+            }
+        }
     }
 
     impl HostRevalidatingProvider {
