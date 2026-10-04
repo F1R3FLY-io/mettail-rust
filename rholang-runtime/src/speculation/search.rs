@@ -699,6 +699,13 @@ pub(crate) struct CheckedGuestEdge {
 /// The provider owns live authority checks, bounded charges, exact input
 /// re-admission and canonical composite reification. Search owns branching.
 pub(crate) trait CheckedGuestProvider: Send {
+    /// Select the program admitted to the host tuplespace. A composite
+    /// provider removes its sealed guest slot before host saturation; the
+    /// submitted process remains intact as the first public trace node.
+    fn prepare_host_program(&mut self, submitted: &Par) -> Result<Par, SpeculationError> {
+        Ok(submitted.clone())
+    }
+
     fn initial(
         &mut self,
         submitted: &Par,
@@ -969,7 +976,11 @@ impl<'sandbox> Explorer<'sandbox> {
         // consumes its argument, so keep the original and give the sandbox the
         // stack-safe generated clone.
         let input = program;
-        if let Err(error) = self.sandbox.saturate(input.clone(), rand).await {
+        let host_program = match self.checked_guest.as_mut() {
+            Some(provider) => provider.prepare_host_program(&input)?,
+            None => input.clone(),
+        };
+        if let Err(error) = self.sandbox.saturate(host_program, rand).await {
             // ★ A root that cannot even be saturated is ONE aborted branch with
             // an EMPTY trace — not an `Err`. Out of phlogistons arrives here
             // when the deploy cannot afford the injection at all, and the FIPS

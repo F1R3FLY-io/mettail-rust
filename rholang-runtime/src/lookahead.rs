@@ -103,6 +103,11 @@ pub const SPEC_ALL_V2_CHANNEL: &str = "^spec-all-v2";
 /// Versioned bounded request channel, with the same outer arity as `^spec-n`.
 pub const SPEC_N_V2_CHANNEL: &str = "^spec-n-v2";
 
+/// Composite installed-language requests use a disjoint wire version because
+/// a top-level expression slot cannot be named by a v2 borrowed-`Par` path.
+pub const SPEC_ALL_V3_CHANNEL: &str = "^spec-all-v3";
+pub const SPEC_N_V3_CHANNEL: &str = "^spec-n-v3";
+
 /// Provenance for each branch that reached quiescence: `[trace, term]`.
 pub const SPEC_SUCCESS_CHANNEL: &str = "^spec-success";
 
@@ -153,8 +158,14 @@ pub const SPEC_DELIVERY_CHANNEL: &str = "^spec-delivery";
 pub const SPEC_LEAF_CHANNEL: &str = "^spec-leaf";
 
 /// Every channel a lookahead request can rest on unanswered — the fail-closed check's input.
-pub const SPEC_REQUEST_CHANNELS: &[&str] =
-    &[SPEC_ALL_CHANNEL, SPEC_N_CHANNEL, SPEC_ALL_V2_CHANNEL, SPEC_N_V2_CHANNEL];
+pub const SPEC_REQUEST_CHANNELS: &[&str] = &[
+    SPEC_ALL_CHANNEL,
+    SPEC_N_CHANNEL,
+    SPEC_ALL_V2_CHANNEL,
+    SPEC_N_V2_CHANNEL,
+    SPEC_ALL_V3_CHANNEL,
+    SPEC_N_V3_CHANNEL,
+];
 
 /// Every channel the engine reports on, in the order a transcript should show them.
 pub const SPEC_REPORT_CHANNELS: &[&str] = &[
@@ -201,6 +212,16 @@ pub fn spec_n_request(subject: Par, bound: i64, reply_channel: Par) -> Par {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LookaheadOwnerBinding {
     pub path: Vec<u32>,
+    pub handle: Par,
+    pub expected_category: String,
+    pub context: u32,
+}
+
+/// A v3 owner claim for an exact top-level expression in a parallel subject.
+/// Its index is in `subject.exprs`, not in the v2 borrowed-child path domain.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookaheadTopLevelBinding {
+    pub expr_index: u32,
     pub handle: Par,
     pub expected_category: String,
     pub context: u32,
@@ -253,6 +274,52 @@ pub fn spec_n_request_v2(
         SPEC_N_V2_CHANNEL,
         vec![
             spec_envelope_v2(subject, bindings),
+            crate::semantic_wire::encode_u64_literal(bound),
+            reply_channel,
+        ],
+    )
+}
+
+fn top_level_binding_datum(binding: LookaheadTopLevelBinding) -> Par {
+    wire_list(vec![
+        wire_list(vec![
+            new_gstring_par("expr".to_string(), Vec::new(), false),
+            new_gint_par(i64::from(binding.expr_index), Vec::new(), false),
+        ]),
+        binding.handle,
+        new_gstring_par(binding.expected_category, Vec::new(), false),
+        new_gint_par(i64::from(binding.context), Vec::new(), false),
+    ])
+}
+
+/// The v3 envelope is `[3, subject, [[ ["expr", index], owner, category, 0 ]]]`.
+/// Its typed locator is deliberately not interpreted as a v2 child path.
+pub fn spec_envelope_v3(subject: Par, binding: LookaheadTopLevelBinding) -> Par {
+    wire_list(vec![
+        new_gint_par(3, Vec::new(), false),
+        subject,
+        wire_list(vec![top_level_binding_datum(binding)]),
+    ])
+}
+
+pub fn spec_all_request_v3(
+    subject: Par,
+    binding: LookaheadTopLevelBinding,
+    reply_channel: Par,
+) -> Par {
+    send_to(SPEC_ALL_V3_CHANNEL, vec![spec_envelope_v3(subject, binding), reply_channel])
+}
+
+pub fn spec_n_request_v3(
+    subject: Par,
+    bound: u64,
+    binding: LookaheadTopLevelBinding,
+    reply_channel: Par,
+) -> Par {
+    send_to(
+        SPEC_N_V3_CHANNEL,
+        vec![
+            spec_envelope_v3(subject, binding),
             crate::semantic_wire::encode_u64_literal(bound),
             reply_channel,
         ],

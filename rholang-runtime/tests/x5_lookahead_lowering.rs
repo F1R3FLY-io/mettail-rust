@@ -26,7 +26,8 @@ use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{FltRegistry, FltResolve};
 use mettail_rholang_runtime::lookahead::{
     spec_all_request, spec_channel_par, spec_n_request, spec_n_request_v2, SPEC_ALL_CHANNEL,
-    SPEC_ALL_V2_CHANNEL, SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL, SPEC_REQUEST_CHANNELS,
+    SPEC_ALL_V2_CHANNEL, SPEC_ALL_V3_CHANNEL, SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL,
+    SPEC_REQUEST_CHANNELS,
 };
 use mettail_rholang_runtime::{
     lower_rholang_proc_with_resolver,
@@ -183,6 +184,30 @@ fn composite_payload_with_a_lexical_flt_keeps_v1() {
     assert_eq!(requests[0].len(), 2);
     let payload = list_items(&requests[0][0]);
     assert_eq!(payload, [new_boundvar_par(0, Vec::new(), false)]);
+}
+
+#[test]
+fn parallel_payload_with_one_direct_flt_carries_a_typed_expression_locator() {
+    let lowered = lower_ok(
+        r#"for(lambda <- @"HANDLE"){
+             @"results"!(lambda:Term`lam x. x` | @"host"!(1))[*]
+           }"#,
+    );
+    let requests = request_data(&lowered, SPEC_ALL_V3_CHANNEL);
+    assert_eq!(requests.len(), 1);
+    let envelope = list_items(&requests[0][0]);
+    assert_eq!(envelope[0], new_gint_par(3, Vec::new(), false));
+    let claims = list_items(&envelope[2]);
+    assert_eq!(claims.len(), 1);
+    let claim = list_items(&claims[0]);
+    assert_eq!(
+        list_items(&claim[0]),
+        [
+            new_gstring_par("expr".into(), Vec::new(), false),
+            new_gint_par(0, Vec::new(), false)
+        ]
+    );
+    assert_eq!(claim[2], new_gstring_par("Term".into(), Vec::new(), false));
 }
 
 #[test]

@@ -177,16 +177,20 @@ use crate::language_install::{
     exact_expr, exact_list, exact_string, grammar_fingerprint_label, RholangLanguageRuntime,
 };
 use crate::lookahead::{
-    spec_channel_par, SPEC_ALL_CHANNEL, SPEC_ALL_V2_CHANNEL, SPEC_DELIVERY_CHANNEL,
-    SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL, SPEC_LEAF_CHANNEL, SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL,
-    SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL, SPEC_TRUNCATED_V2_CHANNEL,
+    spec_channel_par, SPEC_ALL_CHANNEL, SPEC_ALL_V2_CHANNEL, SPEC_ALL_V3_CHANNEL,
+    SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL, SPEC_LEAF_CHANNEL,
+    SPEC_N_CHANNEL, SPEC_N_V2_CHANNEL, SPEC_N_V3_CHANNEL, SPEC_SUCCESS_CHANNEL,
+    SPEC_TRUNCATED_CHANNEL, SPEC_TRUNCATED_V2_CHANNEL,
 };
 use crate::native_contract::private_name_tag;
 use crate::observation::render_par_text;
 use crate::semantic_service::SemanticServiceLimits;
 
 use super::delivery::{resting_on_string, trace_digest};
-use super::occurrences::{scan_installed_occurrences, term_at_path, SubjectOccurrence};
+use super::occurrences::{
+    scan_installed_occurrences, scan_top_level_reflected_exprs, term_at_path, SubjectOccurrence,
+    TopLevelExprOccurrence,
+};
 use super::search::{charge_host_comms, ErrorCode, Lookahead, QuiescentLeaf, TraceMode};
 use super::service::{LeafProjection, LookaheadRequest, LookaheadResponse, LookaheadService};
 
@@ -195,6 +199,7 @@ use super::service::{LeafProjection, LookaheadRequest, LookaheadResponse, Lookah
 pub const LOOKAHEAD_ABI_VERSION: &str = "mettail-lookahead-v1";
 /// V2 handlers use new channels and body refs; v1 registrations stay exact.
 pub const LOOKAHEAD_ABI_VERSION_V2: &str = "mettail-lookahead-v2";
+pub const LOOKAHEAD_ABI_VERSION_V3: &str = "mettail-lookahead-v3";
 
 /// The lookahead band index of the unbounded request channel.
 const SPEC_ALL_INDEX: u8 = 0;
@@ -202,6 +207,8 @@ const SPEC_ALL_INDEX: u8 = 0;
 const SPEC_N_INDEX: u8 = 1;
 const SPEC_ALL_V2_INDEX: u8 = 2;
 const SPEC_N_V2_INDEX: u8 = 3;
+const SPEC_ALL_V3_INDEX: u8 = 4;
+const SPEC_N_V3_INDEX: u8 = 5;
 
 /// The diagnostic weight each charged-back COMM rides into the host's event log with. The
 /// *amount* charged is one COMM per call regardless (see [`charge_host_comms`]); this is the
@@ -475,6 +482,54 @@ impl LookaheadEngine {
         Ok((subject, admitted))
     }
 
+    fn admit_top_level_subject(
+        &self,
+        wire_subject: Par,
+        host: &RuntimeBudget,
+    ) -> Result<(Par, Vec<AdmittedLookaheadBinding>), String> {
+        let (subject, claim) = self
+            .parse_envelope_v3_and_charge(&wire_subject, host)?
+            .ok_or_else(|| "v3 request requires [3, subject, owner-bindings]".to_string())?;
+        if claim.context != 0 {
+            return Err("v3 top-level guest must be closed".into());
+        }
+        let occurrences = self.scan_top_level_and_charge(subject, host)?;
+        let [occurrence] = occurrences.as_slice() else {
+            return Err(
+                "v3 requires exactly one top-level reflected expression and no nested guest".into(),
+            );
+        };
+        if occurrence.index != claim.expr_index {
+            return Err("v3 owner locator does not name the exact installed occurrence".into());
+        }
+        let runtime = self
+            .installed_runtime
+            .as_ref()
+            .ok_or_else(|| "v3 installed language runtime is not bound".to_string())?;
+        // The preceding complete, bounded preflight funds this iterative Par
+        // clone. Move its named expression into an exact one-expression Par;
+        // never call the potentially recursive derived Expr clone.
+        let mut copied = subject.clone();
+        let mut guest = Par::default();
+        guest.exprs.push(copied.exprs.remove(occurrence.index));
+        let borrowed_claim = WireOwnerBinding {
+            path: Vec::new(),
+            token: claim.token,
+            category: claim.category,
+            context: claim.context,
+        };
+        let mut admitted = self.admit_binding(&borrowed_claim, &guest, runtime, host)?;
+        if grammar_fingerprint_label(admitted.installed.commitment().language_fingerprint)
+            != occurrence.fingerprint
+        {
+            return Err("v3 occurrence fingerprint differs from admitted owner".into());
+        }
+        admitted.top_level_expr = Some(occurrence.index);
+        let subject = take_envelope_subject(wire_subject)
+            .ok_or_else(|| "validated v3 envelope lost its subject".to_string())?;
+        Ok((subject, vec![admitted]))
+    }
+
     fn admit_binding(
         &self,
         binding: &WireOwnerBinding<'_>,
@@ -582,6 +637,7 @@ impl LookaheadEngine {
         let (category, sort, input) = checked?;
         let admitted = AdmittedLookaheadBinding {
             path: binding.path.clone(),
+            top_level_expr: None,
             handle,
             installed,
             sort,
@@ -673,6 +729,88 @@ impl LookaheadEngine {
         scanned.map_err(|error| error.to_string())
     }
 
+    fn scan_top_level_and_charge<'a>(
+        &self,
+        subject: &'a Par,
+        host: &RuntimeBudget,
+    ) -> Result<Vec<TopLevelExprOccurrence<'a>>, String> {
+        let policy = self
+            .installed_runtime
+            .as_ref()
+            .map(|runtime| runtime.service().policy().semantic_service)
+            .unwrap_or_else(SemanticServiceLimits::default);
+        let work_limit = policy
+            .execution
+            .work
+            .min(host.remaining().value.max(0) as u64);
+        if work_limit == 0 {
+            return Err("v3 top-level scan has no funded host work".into());
+        }
+        let mut used = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(
+            &mut used,
+            work_limit,
+            policy.boundary_payload_bytes,
+            &mut cancelled,
+        );
+        let scanned = scan_top_level_reflected_exprs(subject, &mut budget);
+        let spent = budget.work_used();
+        drop(budget);
+        // One proportional charge for the scan and one for the bounded
+        // iterative clone performed by the caller after successful preflight.
+        let charged = spent
+            .checked_mul(2)
+            .and_then(|work| i64::try_from(work).ok())
+            .ok_or_else(|| "v3 scan and clone work exceeds the host charge domain".to_string())?;
+        MeteredMachine::new(host.clone())
+            .reserve_primitive(Cost::create(charged, "lookahead v3 scan and clone"))
+            .map_err(|_| "v3 scan and clone exhausted host phlogiston".to_string())?;
+        scanned.map_err(|error| error.to_string())
+    }
+
+    fn parse_envelope_v3_and_charge<'a>(
+        &self,
+        subject: &'a Par,
+        host: &RuntimeBudget,
+    ) -> Result<Option<(&'a Par, WireTopLevelBinding<'a>)>, String> {
+        let policy = self
+            .installed_runtime
+            .as_ref()
+            .map(|runtime| runtime.service().policy().semantic_service)
+            .unwrap_or_else(SemanticServiceLimits::default);
+        let work_limit = policy
+            .execution
+            .work
+            .min(host.remaining().value.max(0) as u64);
+        if work_limit == 0 {
+            return Err("v3 envelope parsing has no funded host work".into());
+        }
+        let mut used = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(
+            &mut used,
+            work_limit,
+            policy.boundary_payload_bytes,
+            &mut cancelled,
+        );
+        let parsed = parse_envelope_v3_with_charge(subject, |work, bytes| {
+            budget
+                .charge(work, bytes)
+                .map_err(|_| "v3 envelope exceeds the funded request budget".to_string())
+        });
+        let spent = budget.work_used();
+        drop(budget);
+        if spent != 0 {
+            let charged = i64::try_from(spent)
+                .map_err(|_| "v3 envelope work exceeds the host charge domain".to_string())?;
+            MeteredMachine::new(host.clone())
+                .reserve_primitive(Cost::create(charged, "lookahead v3 envelope parsing"))
+                .map_err(|_| "v3 envelope parsing exhausted host phlogiston".to_string())?;
+        }
+        parsed
+    }
+
     fn parse_envelope_and_charge<'a>(
         &self,
         subject: &'a Par,
@@ -726,29 +864,44 @@ impl LookaheadEngine {
     /// and provably disjoint from f1r3node's own and from the two MeTTaIL contract bands.
     pub fn definitions(&self) -> Vec<Definition> {
         vec![
-            self.definition(false, false),
-            self.definition(true, false),
-            self.definition(false, true),
-            self.definition(true, true),
+            self.definition(false, false, false),
+            self.definition(true, false, false),
+            self.definition(false, true, false),
+            self.definition(true, true, false),
+            self.definition(false, true, true),
+            self.definition(true, true, true),
         ]
     }
 
-    fn definition(&self, bounded: bool, versioned: bool) -> Definition {
-        let (channel, arity, index, urn, abi) = match (bounded, versioned) {
-            (false, false) => {
+    fn definition(&self, bounded: bool, versioned: bool, composite: bool) -> Definition {
+        let (channel, arity, index, urn, abi) = match (bounded, versioned, composite) {
+            (false, false, false) => {
                 (SPEC_ALL_CHANNEL, 2, SPEC_ALL_INDEX, "mtl:spec:all", LOOKAHEAD_ABI_VERSION)
             },
-            (true, false) => (SPEC_N_CHANNEL, 3, SPEC_N_INDEX, "mtl:spec:n", LOOKAHEAD_ABI_VERSION),
-            (false, true) => (
+            (true, false, false) => {
+                (SPEC_N_CHANNEL, 3, SPEC_N_INDEX, "mtl:spec:n", LOOKAHEAD_ABI_VERSION)
+            },
+            (false, true, false) => (
                 SPEC_ALL_V2_CHANNEL,
                 2,
                 SPEC_ALL_V2_INDEX,
                 "mtl:spec:all:v2",
                 LOOKAHEAD_ABI_VERSION_V2,
             ),
-            (true, true) => {
+            (true, true, false) => {
                 (SPEC_N_V2_CHANNEL, 3, SPEC_N_V2_INDEX, "mtl:spec:n:v2", LOOKAHEAD_ABI_VERSION_V2)
             },
+            (false, true, true) => (
+                SPEC_ALL_V3_CHANNEL,
+                2,
+                SPEC_ALL_V3_INDEX,
+                "mtl:spec:all:v3",
+                LOOKAHEAD_ABI_VERSION_V3,
+            ),
+            (true, true, true) => {
+                (SPEC_N_V3_CHANNEL, 3, SPEC_N_V3_INDEX, "mtl:spec:n:v3", LOOKAHEAD_ABI_VERSION_V3)
+            },
+            (_, false, true) => unreachable!("composite requests are versioned"),
         };
         let engine = self.clone();
         Definition {
@@ -767,7 +920,11 @@ impl LookaheadEngine {
                         dispatcher: dispatcher.clone(),
                     };
                     let engine = engine.clone();
-                    Box::pin(async move { engine.serve(call, args, bounded, versioned).await })
+                    Box::pin(async move {
+                        engine
+                            .serve(call, args, bounded, versioned, composite)
+                            .await
+                    })
                         as Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
                 })
             }),
@@ -783,12 +940,16 @@ impl LookaheadEngine {
         args: (Vec<ListParWithRandom>, bool, Vec<Par>),
         bounded: bool,
         versioned: bool,
+        composite: bool,
     ) -> Result<Vec<Par>, InterpreterError> {
-        let urn = match (bounded, versioned) {
-            (false, false) => SPEC_ALL_CHANNEL,
-            (true, false) => SPEC_N_CHANNEL,
-            (false, true) => SPEC_ALL_V2_CHANNEL,
-            (true, true) => SPEC_N_V2_CHANNEL,
+        let urn = match (bounded, versioned, composite) {
+            (false, false, false) => SPEC_ALL_CHANNEL,
+            (true, false, false) => SPEC_N_CHANNEL,
+            (false, true, false) => SPEC_ALL_V2_CHANNEL,
+            (true, true, false) => SPEC_N_V2_CHANNEL,
+            (false, true, true) => SPEC_ALL_V3_CHANNEL,
+            (true, true, true) => SPEC_N_V3_CHANNEL,
+            (_, false, true) => unreachable!("composite requests are versioned"),
         };
         // The arriving datum's randomness IS the deploy's, split at the position the send
         // occupied — so every name a speculation mints is a function of the deploy and two
@@ -847,7 +1008,11 @@ impl LookaheadEngine {
             return Err(InterpreterError::SetupError(message));
         };
 
-        let (subject, installed_bindings) = match self.admit_subject(subject, host, versioned) {
+        let (subject, installed_bindings) = match if composite {
+            self.admit_top_level_subject(subject, host)
+        } else {
+            self.admit_subject(subject, host, versioned)
+        } {
             Ok(admitted) => admitted,
             Err(message) => {
                 publisher
@@ -899,12 +1064,14 @@ impl LookaheadEngine {
         // ★ `prelude | seed(⟦P⟧)` for a registered guest; the bare subject otherwise. This
         // is the line the module header's `prelude` warning is about.
         let request = if !installed_bindings.is_empty() {
-            let projection =
-                if installed_bindings.len() == 1 && installed_bindings[0].path.is_empty() {
-                    LeafProjection::InstalledGuestRoot
-                } else {
-                    LeafProjection::Configuration
-                };
+            let projection = if installed_bindings.len() == 1
+                && installed_bindings[0].path.is_empty()
+                && installed_bindings[0].top_level_expr.is_none()
+            {
+                LeafProjection::InstalledGuestRoot
+            } else {
+                LeafProjection::Configuration
+            };
             let runtime = self
                 .installed_runtime
                 .as_ref()
@@ -1270,6 +1437,10 @@ impl Publisher<'_> {
 /// publication must revalidate it under the table's commit guard.
 pub(crate) struct AdmittedLookaheadBinding {
     pub(crate) path: Vec<u32>,
+    /// `Some(index)` is the disjoint v3 top-level expression locator. Its
+    /// `path` is empty only for compatibility with the shared checked adapter;
+    /// it is never interpreted as a v2 root binding.
+    pub(crate) top_level_expr: Option<usize>,
     pub(crate) handle: InstalledLanguageHandle,
     pub(crate) installed: Arc<InstalledLanguage>,
     pub(crate) sort: TheorySortId,
@@ -1282,6 +1453,13 @@ pub(crate) struct AdmittedLookaheadBinding {
 
 struct WireOwnerBinding<'a> {
     path: Vec<u32>,
+    token: &'a Par,
+    category: &'a str,
+    context: u32,
+}
+
+struct WireTopLevelBinding<'a> {
+    expr_index: usize,
     token: &'a Par,
     category: &'a str,
     context: u32,
@@ -1362,6 +1540,48 @@ fn parse_envelope_v2_with_charge<'a>(
         return Err("v2 owner paths must be distinct and strictly ordered".into());
     }
     Ok(Some((actual, bindings)))
+}
+
+/// V3 retains the three-field envelope but uses a disjoint, typed locator.
+/// Exactly one closed top-level expression is supported; every other shape
+/// fails before any sandbox is constructed.
+fn parse_envelope_v3_with_charge<'a>(
+    envelope: &'a Par,
+    mut charge: impl FnMut(usize, usize) -> Result<(), String>,
+) -> Result<Option<(&'a Par, WireTopLevelBinding<'a>)>, String> {
+    charge(1, 0)?;
+    let Some([version, subject, claims]) = exact_list(envelope) else {
+        return Ok(None);
+    };
+    if ground_int(version) != Some(3) {
+        return Ok(None);
+    }
+    let claims =
+        exact_list(claims).ok_or_else(|| "v3 owner-bindings must be an exact list".to_string())?;
+    let [claim] = claims else {
+        return Err("v3 requires exactly one closed top-level owner binding".into());
+    };
+    charge(2, 64)?;
+    let Some([locator, token, category, context]) = exact_list(claim) else {
+        return Err("v3 owner binding must have four fields".into());
+    };
+    let Some([kind, index]) = exact_list(locator) else {
+        return Err("v3 owner locator must have a typed kind and index".into());
+    };
+    if exact_string(kind) != Some("expr") {
+        return Err("v3 only admits a top-level expression locator".into());
+    }
+    let expr_index = ground_int(index)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| "v3 expression index is not canonical".to_string())?;
+    let category = exact_string(category)
+        .filter(|category| !category.is_empty())
+        .ok_or_else(|| "v3 owner category must be a nonempty string".to_string())?;
+    charge(category.len(), category.len())?;
+    let context = ground_int(context)
+        .and_then(|context| u32::try_from(context).ok())
+        .ok_or_else(|| "v3 owner context must be a nonnegative coordinate".to_string())?;
+    Ok(Some((subject, WireTopLevelBinding { expr_index, token, category, context })))
 }
 
 #[cfg(test)]
@@ -1734,6 +1954,85 @@ mod tests {
     }
 
     #[test]
+    fn top_level_guest_admission_requires_exact_locator_and_live_owner() {
+        use crate::lookahead::{spec_envelope_v3, LookaheadTopLevelBinding};
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let guest = runtime
+            .construct_template(
+                &token,
+                &[mettail_grammar_core::RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &std::collections::BTreeMap::new(),
+            )
+            .expect("installed guest constructor");
+        assert_eq!(guest.exprs.len(), 1);
+        let subject = guest.clone().append(lower_plain(r#"@"tick"!(1)"#));
+        let runtime = Arc::new(runtime);
+        let engine = LookaheadEngine::new().with_language_runtime(Arc::clone(&runtime));
+        let host = RuntimeBudget::new(Cost::create(10_000_000, "v3 admission test"));
+        let claim = |handle, expr_index| LookaheadTopLevelBinding {
+            expr_index,
+            handle,
+            expected_category: "Pattern".into(),
+            context: 0,
+        };
+
+        let (admitted, bindings) = engine
+            .admit_top_level_subject(
+                spec_envelope_v3(subject.clone(), claim(token.clone(), 0)),
+                &host,
+            )
+            .expect("one exact top-level reflected guest admits");
+        assert_eq!(admitted, subject);
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].top_level_expr, Some(0));
+
+        let wrong_index = engine
+            .admit_top_level_subject(
+                spec_envelope_v3(subject.clone(), claim(token.clone(), 1)),
+                &host,
+            )
+            .err()
+            .expect("a host sibling cannot be selected as the guest");
+        assert!(wrong_index.contains("exact installed occurrence"));
+
+        let nested = models::rust::utils::new_elist_par(
+            vec![guest],
+            Vec::new(),
+            false,
+            None::<models::rhoapi::Var>,
+            Vec::new(),
+            false,
+        );
+        let nested_error = engine
+            .admit_top_level_subject(spec_envelope_v3(nested, claim(token.clone(), 0)), &host)
+            .err()
+            .expect("a transported guest has no top-level owner slot");
+        assert!(
+            nested_error.contains("reflected FLT is embedded in a composite Par"),
+            "{nested_error}"
+        );
+
+        let forged = models::rust::rholang::implicits::GPrivateBuilder::new_par_from_string(
+            "forged-v3-owner".into(),
+        );
+        let forged_error = engine
+            .admit_top_level_subject(spec_envelope_v3(subject.clone(), claim(forged, 0)), &host)
+            .err()
+            .expect("a forged owner cannot authorize the guest");
+        assert!(forged_error.contains("not authorized for Reduce"));
+
+        runtime.revoke(&token).expect("revoke installed owner");
+        let revoked_error = engine
+            .admit_top_level_subject(spec_envelope_v3(subject, claim(token, 0)), &host)
+            .err()
+            .expect("a revoked owner cannot authorize the guest");
+        assert!(revoked_error.contains("not authorized for Reduce"));
+    }
+
+    #[test]
     fn installed_publication_commits_once_only_while_every_owner_is_live() {
         use rspace_plus_plus::rspace::rspace_interface::commit_produce;
 
@@ -1759,25 +2058,26 @@ mod tests {
         assert_eq!(commits, 1, "a revoked owner cannot enter the commit closure");
     }
 
-    /// V1 IDs retain their exact original ABI label; the v2 channels get two
-    /// other IDs in the same reserved band.
+    /// Each wire version retains distinct deterministic IDs in the reserved band.
     #[test]
     fn request_definitions_occupy_distinct_reserved_body_refs() {
         let all = LOOKAHEAD_BAND.body_ref(SPEC_ALL_INDEX, LOOKAHEAD_ABI_VERSION);
         let bounded = LOOKAHEAD_BAND.body_ref(SPEC_N_INDEX, LOOKAHEAD_ABI_VERSION);
         let all_v2 = LOOKAHEAD_BAND.body_ref(SPEC_ALL_V2_INDEX, LOOKAHEAD_ABI_VERSION_V2);
         let bounded_v2 = LOOKAHEAD_BAND.body_ref(SPEC_N_V2_INDEX, LOOKAHEAD_ABI_VERSION_V2);
+        let all_v3 = LOOKAHEAD_BAND.body_ref(SPEC_ALL_V3_INDEX, LOOKAHEAD_ABI_VERSION_V3);
+        let bounded_v3 = LOOKAHEAD_BAND.body_ref(SPEC_N_V3_INDEX, LOOKAHEAD_ABI_VERSION_V3);
         assert_eq!(all, LOOKAHEAD_BAND.body_ref(0, "mettail-lookahead-v1"));
         assert_eq!(bounded, LOOKAHEAD_BAND.body_ref(1, "mettail-lookahead-v1"));
         assert_eq!(
-            [all, bounded, all_v2, bounded_v2]
+            [all, bounded, all_v2, bounded_v2, all_v3, bounded_v3]
                 .into_iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .len(),
-            4,
+            6,
         );
         let band = LOOKAHEAD_BAND.body_ref_range();
-        assert!([all, bounded, all_v2, bounded_v2]
+        assert!([all, bounded, all_v2, bounded_v2, all_v3, bounded_v3]
             .iter()
             .all(|body_ref| band.contains(body_ref)));
         assert!(*band.start() > 108, "above f1r3node's std and test-framework body_refs");
@@ -1789,7 +2089,7 @@ mod tests {
     fn the_definitions_install_on_the_wire_channels() {
         let engine = LookaheadEngine::new();
         let definitions = engine.definitions();
-        assert_eq!(definitions.len(), 4);
+        assert_eq!(definitions.len(), 6);
         assert_eq!(definitions[0].fixed_channel, spec_channel_par(SPEC_ALL_CHANNEL));
         assert_eq!(definitions[0].arity, 2, "(subject, replyChannel)");
         assert_eq!(definitions[1].fixed_channel, spec_channel_par(SPEC_N_CHANNEL));
@@ -1798,6 +2098,10 @@ mod tests {
         assert_eq!(definitions[2].arity, 2);
         assert_eq!(definitions[3].fixed_channel, spec_channel_par(SPEC_N_V2_CHANNEL));
         assert_eq!(definitions[3].arity, 3);
+        assert_eq!(definitions[4].fixed_channel, spec_channel_par(SPEC_ALL_V3_CHANNEL));
+        assert_eq!(definitions[4].arity, 2);
+        assert_eq!(definitions[5].fixed_channel, spec_channel_par(SPEC_N_V3_CHANNEL));
+        assert_eq!(definitions[5].arity, 3);
     }
 
     #[test]

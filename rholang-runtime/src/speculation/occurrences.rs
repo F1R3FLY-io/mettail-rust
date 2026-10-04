@@ -14,7 +14,7 @@ use mettail_rholang_codegen::{parse_reflected_tag, DynamicReflectionError, Refle
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
-use models::rhoapi::Par;
+use models::rhoapi::{Expr, Par};
 use prost::Message;
 
 const INSTALLED_FINGERPRINT_PREFIX: &str = "mettail-grammar-core-v1:";
@@ -34,6 +34,7 @@ pub(crate) enum ScanError {
     /// An installed reflected list is mixed with sibling process/expressions,
     /// so there is no borrowed `Par` node that a binding path can designate.
     CompositeReflectedRoot,
+    ReificationDepthExceeded,
 }
 
 impl fmt::Display for ScanError {
@@ -47,6 +48,9 @@ impl fmt::Display for ScanError {
             },
             Self::CompositeReflectedRoot => {
                 f.write_str("subject occurrence scan: reflected FLT is embedded in a composite Par")
+            },
+            Self::ReificationDepthExceeded => {
+                f.write_str("host configuration exceeds checked reification depth")
             },
         }
     }
@@ -64,6 +68,135 @@ pub(crate) struct SubjectOccurrence<'a> {
     pub(crate) path: Vec<u32>,
     pub(crate) term: &'a Par,
     pub(crate) fingerprint: String,
+}
+
+/// A reflected guest occupying one exact expression slot of the submitted
+/// top-level `Par`. Unlike a v2 child path, this locator names the `Expr`
+/// itself, including when ordinary host processes are parallel siblings.
+pub(crate) struct TopLevelExprOccurrence<'a> {
+    pub(crate) index: usize,
+    pub(crate) expr: &'a Expr,
+    pub(crate) fingerprint: String,
+}
+
+/// Discover the complete top-level product subset. Reflected top-level
+/// expressions are retained as guest candidates; every other child is walked
+/// with the ordinary fail-closed scanner, so a nested or transported FLT is
+/// never silently omitted from the owner roster.
+pub(crate) fn scan_top_level_reflected_exprs<'a, C: FnMut() -> bool>(
+    subject: &'a Par,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Vec<TopLevelExprOccurrence<'a>>, ScanError> {
+    budget.charge(1, 0)?;
+    charge_clone_footprint(subject, budget)?;
+    let mut found = Vec::new();
+    for (index, expr) in subject.exprs.iter().enumerate() {
+        budget.charge(1, CHILD_SLOT_BYTES)?;
+        if let Some(ExprInstance::EListBody(list)) = expr.expr_instance.as_ref() {
+            if let Some(fingerprint) = reflected_list_fingerprint(&list.ps, budget)? {
+                found
+                    .try_reserve(1)
+                    .map_err(|_| ScanError::AllocationFailed)?;
+                found.push(TopLevelExprOccurrence { index, expr, fingerprint });
+            }
+        }
+    }
+    let mut pending = direct_children_except_top_level_reflected(subject, budget)?;
+    while let Some(term) = pending.pop() {
+        budget.charge(1, 0)?;
+        charge_clone_footprint(term, budget)?;
+        if installed_root_fingerprint(term, budget)?.is_some() {
+            return Err(ScanError::CompositeReflectedRoot);
+        }
+        let children = direct_children(term, budget)?;
+        pending
+            .try_reserve(children.len())
+            .map_err(|_| ScanError::AllocationFailed)?;
+        pending.extend(children);
+    }
+    // The eventual iterative clone copies the reflected syntax too. Walk it
+    // separately for resource preflight, without treating nested constructor
+    // tags as independent owner claims inside the maximal guest root.
+    for occurrence in &found {
+        let Some(ExprInstance::EListBody(list)) = occurrence.expr.expr_instance.as_ref() else {
+            unreachable!("top-level occurrence was discovered as an exact list");
+        };
+        let mut guest_nodes = Vec::new();
+        guest_nodes
+            .try_reserve(list.ps.len())
+            .map_err(|_| ScanError::AllocationFailed)?;
+        guest_nodes.extend(list.ps.iter());
+        while let Some(term) = guest_nodes.pop() {
+            charge_clone_footprint(term, budget)?;
+            let children = direct_children(term, budget)?;
+            guest_nodes
+                .try_reserve(children.len())
+                .map_err(|_| ScanError::AllocationFailed)?;
+            guest_nodes.extend(children);
+        }
+    }
+    Ok(found)
+}
+
+fn charge_clone_footprint<C: FnMut() -> bool>(
+    term: &Par,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), ScanError> {
+    // The composite scanner is a preflight for one iterative `Par` clone.
+    // Charge fixed storage and flat scalar bytes before that allocation.
+    budget.charge(1, std::mem::size_of::<Par>())?;
+    for expr in &term.exprs {
+        let bytes = match expr.expr_instance.as_ref() {
+            Some(ExprInstance::GString(value) | ExprInstance::GUri(value)) => value.len(),
+            Some(ExprInstance::GByteArray(value) | ExprInstance::GBigInt(value)) => value.len(),
+            Some(ExprInstance::GBigRat(value)) => value
+                .numerator
+                .len()
+                .saturating_add(value.denominator.len()),
+            Some(ExprInstance::GFixedPoint(value)) => value.unscaled.len(),
+            _ => 0,
+        };
+        budget.charge(1, std::mem::size_of::<Expr>().saturating_add(bytes))?;
+    }
+    for unforgeable in &term.unforgeables {
+        let bytes = match unforgeable.unf_instance.as_ref() {
+            Some(UnfInstance::GPrivateBody(value)) => value.id.len(),
+            Some(UnfInstance::GDeployIdBody(value)) => value.sig.len(),
+            Some(UnfInstance::GDeployerIdBody(value)) => value.public_key.len(),
+            _ => 0,
+        };
+        budget.charge(1, std::mem::size_of_val(unforgeable).saturating_add(bytes))?;
+    }
+    Ok(())
+}
+
+/// Resource-check one borrowed host value before canonical reification. The
+/// current host reifier uses protobuf encoding for channel sort keys, so its
+/// recursion is bounded here before it can see a hostile deep channel. An
+/// installed FLT in the host side is never silently assigned to the retained
+/// guest slot.
+pub(crate) fn validate_reifiable_host_par<C: FnMut() -> bool>(
+    root: &Par,
+    max_depth: usize,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), ScanError> {
+    let mut pending = vec![(0usize, root)];
+    while let Some((depth, term)) = pending.pop() {
+        if depth > max_depth {
+            return Err(ScanError::ReificationDepthExceeded);
+        }
+        charge_clone_footprint(term, budget)?;
+        if installed_root_fingerprint(term, budget)?.is_some() {
+            return Err(ScanError::CompositeReflectedRoot);
+        }
+        let children = direct_children(term, budget)?;
+        pending
+            .try_reserve(children.len())
+            .map_err(|_| ScanError::AllocationFailed)?;
+        let next_depth = depth.checked_add(1).ok_or(ScanError::PathOverflow)?;
+        pending.extend(children.into_iter().map(|child| (next_depth, child)));
+    }
+    Ok(())
 }
 
 /// Enumerate installed reflected roots in strictly increasing path order.
@@ -205,6 +338,21 @@ fn direct_children<'a, C: FnMut() -> bool>(
     term: &'a Par,
     budget: &mut ReflectedCodecBudget<'_, C>,
 ) -> Result<Vec<&'a Par>, ScanError> {
+    direct_children_mode(term, budget, false)
+}
+
+fn direct_children_except_top_level_reflected<'a, C: FnMut() -> bool>(
+    term: &'a Par,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Vec<&'a Par>, ScanError> {
+    direct_children_mode(term, budget, true)
+}
+
+fn direct_children_mode<'a, C: FnMut() -> bool>(
+    term: &'a Par,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+    skip_reflected_exprs: bool,
+) -> Result<Vec<&'a Par>, ScanError> {
     // A `Par` may contain a reflected EList expression alongside other sends
     // or expressions. `exact_list(term)` then cannot identify the FLT, and the
     // list head is only a GPrivate child: ordinary child traversal would miss
@@ -213,7 +361,8 @@ fn direct_children<'a, C: FnMut() -> bool>(
     if crate::language_install::exact_list(term).is_none() {
         for expr in &term.exprs {
             if let Some(ExprInstance::EListBody(list)) = expr.expr_instance.as_ref() {
-                if reflected_list_fingerprint(&list.ps, budget)?.is_some() {
+                if !skip_reflected_exprs && reflected_list_fingerprint(&list.ps, budget)?.is_some()
+                {
                     return Err(ScanError::CompositeReflectedRoot);
                 }
             }
@@ -334,6 +483,9 @@ fn direct_children<'a, C: FnMut() -> bool>(
                 child!(op.pattern);
             },
             Some(EListBody(list)) => {
+                if skip_reflected_exprs && reflected_list_fingerprint(&list.ps, budget)?.is_some() {
+                    continue;
+                }
                 for item in &list.ps {
                     push_child(&mut children, item, budget)?;
                 }
@@ -411,7 +563,7 @@ fn direct_children<'a, C: FnMut() -> bool>(
 mod tests {
     use super::*;
     use mettail_rholang_codegen::reflected_tag_string;
-    use models::rhoapi::{EPathMap, Expr, New};
+    use models::rhoapi::{EPathMap, Expr, New, Send};
     use models::rust::rholang::implicits::GPrivateBuilder;
     use models::rust::utils::new_gint_par;
 
@@ -530,6 +682,36 @@ mod tests {
         let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 10_000, &mut cancelled);
         assert!(matches!(
             term_at_path(&subject, &[0], &mut budget),
+            Err(ScanError::CompositeReflectedRoot)
+        ));
+    }
+
+    #[test]
+    fn typed_top_level_scan_names_exact_expression_and_rejects_nested_guest() {
+        let mut subject = reflected("Embedded", vec![]);
+        subject.sends.push(Send::default());
+        subject
+            .exprs
+            .insert(0, new_gint_par(7, Vec::new(), false).exprs.remove(0));
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancelled);
+        let found = scan_top_level_reflected_exprs(&subject, &mut budget)
+            .expect("bounded top-level product scan");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].index, 1);
+        assert!(std::ptr::eq(found[0].expr, &subject.exprs[1]));
+        assert_eq!(found[0].fingerprint, fingerprint());
+
+        let mut nested = Par::default();
+        nested.news.push(New {
+            p: Some(reflected("Hidden", vec![])),
+            ..New::default()
+        });
+        let mut work = 0;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancelled);
+        assert!(matches!(
+            scan_top_level_reflected_exprs(&nested, &mut budget),
             Err(ScanError::CompositeReflectedRoot)
         ));
     }

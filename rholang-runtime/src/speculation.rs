@@ -600,6 +600,7 @@ struct TraceLink {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GuestRewriteIdentity {
     pub location: Vec<u32>,
+    pub top_level_expr: Option<u32>,
     pub owner: [u8; 32],
     pub image: [u8; 32],
     pub ordinal: u64,
@@ -614,7 +615,31 @@ impl GuestRewriteIdentity {
         ordinal: u64,
         receipt: Par,
     ) -> Self {
-        Self { location, owner, image, ordinal, receipt }
+        Self {
+            location,
+            top_level_expr: None,
+            owner,
+            image,
+            ordinal,
+            receipt,
+        }
+    }
+
+    pub fn top_level_expr(
+        index: u32,
+        owner: [u8; 32],
+        image: [u8; 32],
+        ordinal: u64,
+        receipt: Par,
+    ) -> Self {
+        Self {
+            location: Vec::new(),
+            top_level_expr: Some(index),
+            owner,
+            image,
+            ordinal,
+            receipt,
+        }
     }
 }
 
@@ -932,13 +957,19 @@ fn guest_proof_marker(proof: &GuestRewriteIdentity) -> Par {
         |nodes: Vec<Par>| new_elist_par(nodes, Vec::new(), false, None::<Var>, Vec::new(), false);
     list(vec![
         new_gstring_par(GUEST_PROOF_MARKER_DOMAIN.to_string(), Vec::new(), false),
-        list(
-            proof
-                .location
-                .iter()
-                .map(|index| new_gint_par(i64::from(*index), Vec::new(), false))
-                .collect(),
-        ),
+        match proof.top_level_expr {
+            Some(index) => list(vec![
+                new_gstring_par("expr".to_string(), Vec::new(), false),
+                new_gint_par(i64::from(index), Vec::new(), false),
+            ]),
+            None => list(
+                proof
+                    .location
+                    .iter()
+                    .map(|index| new_gint_par(i64::from(*index), Vec::new(), false))
+                    .collect(),
+            ),
+        },
         new_gbytearray_par(proof.owner.to_vec(), Vec::new(), false),
         new_gbytearray_par(proof.image.to_vec(), Vec::new(), false),
         new_gbytearray_par(proof.ordinal.to_le_bytes().to_vec(), Vec::new(), false),

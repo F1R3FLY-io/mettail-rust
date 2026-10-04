@@ -1,6 +1,6 @@
 # Installed GSLT lookahead in F1R3Lang
 
-Status: required design and implementation work for the Regex GSLT/FLT F1R3Lang demonstration. This document records the integration contract; it does not claim that the implementation is complete.
+Status: partial implementation, with the direct-root and single top-level mixed FLT routes verified through the public F1R3Lang evaluation path on 2026-10-04. The full contract below is not yet complete; unsupported nested or transported guest occurrences still refuse.
 
 ## Outcome and existing machinery
 
@@ -8,11 +8,21 @@ An ordinary Rholang application must be able to install a Theory/Module, constru
 
 Reuse the [lookahead request server](../../../rholang-runtime/src/speculation/server.rs), [breadth-first explorer](../../../rholang-runtime/src/speculation/search.rs), [service](../../../rholang-runtime/src/speculation/service.rs), and [delivery layer](../../../rholang-runtime/src/speculation/delivery.rs). The Rholang grammar and lowering already emit their request channels ([grammar](../../../languages/src/rholang.rs), [lowering](../../../rholang-runtime/src/rholang_ast.rs)). The current prototype registers a fixed, macro-generated Lambda guest with an in-Rholang prelude and seed. A dynamically installed GSLT instead has a checked semantic image and the [semantic transition kernel](../../../dovetail-runtime/src/semantic_transition_kernel.rs); it does not automatically have that prelude. Treating its reflected term as an inert, completed process would be an incorrect result, not a supported fallback.
 
-The public F1R3Lang composition currently installs the language, FLT, theorem, and semantic services but not the lookahead definitions or their host-budget binding (the isolated node branch's `node/src/rust/runtime/f1r3lang.rs`). The approved *Lookahead* FIPS and the *Foreign-Language Terms* FIPS also require two PathMap names on the reply channel and all possible traces; the prototype currently sends bare success terms there and delivers PathMaps separately. This public contract discrepancy is part of the required work.
+The isolated F1R3Lang node composition now installs the lookahead definitions beside the language, FLT, theorem, and semantic services and binds them to the evaluation host budget (`node/src/rust/runtime/f1r3lang.rs`). The public evaluation test exercises the reply-channel success and failure PathMaps, including proof-distinct and mixed host/guest traces. This evidence is for the tested public evaluation route, not yet a claim that every production route and adversarial boundary is verified.
 
 ![The F1R3Lang request server feeds both RSpace communications and checked one-step guest rewrites into the existing breadth-first explorer; the explorer returns complete trace-indexed PathMaps or a typed refusal.](figures/installed-gslt-lookahead-flow.svg)
 
 The diagram source is [PlantUML](figures/installed-gslt-lookahead-flow.puml).
+
+## Verified slice and current boundary
+
+The versioned internal request has two checked installed-guest forms. Version 2 binds a complete root FLT (including the explicitly admitted native text, integer, and Boolean forms) or a received root with an exact owner path. Version 3 binds one closed, directly staged FLT at a typed top-level expression coordinate, `["expr", index]`, while ordinary Rholang sends, receives, and expressions remain host siblings. The coordinate identifies the expression itself, not a fingerprint search result. The complete source scanner rejects another guest hidden in a host child, a missing or duplicate top-level guest, or a locator that names the wrong expression. Both forms resolve an opaque installed handle, check `Reduce`, retain the exact owner and semantic image, and revalidate authority before publication. A constructor tag alone never grants authority.
+
+The version 3 provider splits the one admitted expression before host saturation, then uses the existing breadth-first explorer for both host `COMM` edges and checked guest one-step rewrite edges. It rebuilds each public composite configuration from the host RSpace snapshot and the retained guest slot; it does not reparse theory source or run whole guest normalization as one edge. The root public trace begins with the submitted process and its saturated configuration. Each guest rewrite contributes a complete proof marker followed by its successor configuration; a host `COMM` contributes its successor configuration. Thus a host `COMM` independent of a guest proof can occur at every boundary of that proof path, and no equal-target rewrite proof is coalesced. The public Regex test derives the number of mixed schedules from the guest-only trace lengths and checks their queryable PathMap entries.
+
+This is deliberately a restricted, fail-closed slice. Nested or transported FLTs, multiple active guest children, cross-owner morphisms, and provider-aware resumption of an installed guest are not inferred from tags or silently downgraded to host-only search. The current host-only resume API explicitly refuses a retained installed guest. These cases remain acceptance work under the broader contract below.
+
+Evidence: the feature-enabled public-node test `actual_regex_application_uses_shared_provider_public_route` passed with the inline Regex GSLT and application fixture; focused top-level scanner, authority, and mixed-order tests passed 3/3; and the host-only resume refusal test passed. The typed-locator disjointness and exact split/rejoin model is in [InstalledLookaheadEveryTrace.v](../../../formal/rocq/runtime_grammar/theories/InstalledLookaheadEveryTrace.v). Extracting every modeled invariant into a corresponding property-based implementation test remains a required verification gate. These checks establish this slice, not a blanket proof of all outstanding resource, replay, or cross-language requirements.
 
 ## Semantic model
 

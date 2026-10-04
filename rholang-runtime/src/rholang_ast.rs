@@ -445,6 +445,9 @@ pub enum RholangAstLowerError {
     /// channel) would require the engine to reduce an expression to a number first. That is a
     /// named follow-on, not a silent coercion — an unusable bound fails closed here.
     LookaheadBoundNotAGroundNonNegativeInt(String),
+    /// A directly staged composite FLT could not be assigned one exact
+    /// top-level expression coordinate without guessing at provenance.
+    LookaheadCompositeBinding(&'static str),
 }
 
 /// Rholang language adapter for the AST-first Rho machine runtime path.
@@ -1434,6 +1437,14 @@ enum Job<'a> {
 }
 
 /// A continuation: the post-order half of one arm, plus whatever that arm needs to remember.
+enum DirectLookaheadBinding {
+    Root(crate::lookahead::LookaheadOwnerBinding),
+    TopLevel {
+        owner: crate::lookahead::LookaheadOwnerBinding,
+        placeholder: Par,
+    },
+}
+
 enum Kont<'a> {
     /// `parts.try_fold(Par::default(), append)` — the `PPar` bag.
     ParFold(usize),
@@ -1488,12 +1499,12 @@ enum Kont<'a> {
     },
     /// `x!(P)[*]` — an unbounded speculation request over `(channel, payload)`.
     SpecAll {
-        binding: Option<Box<crate::lookahead::LookaheadOwnerBinding>>,
+        binding: Option<Box<DirectLookaheadBinding>>,
     },
     /// `x!(P)[n]` — a bounded speculation request over `(channel, payload)`.
     SpecN {
         bound: u64,
-        binding: Option<Box<crate::lookahead::LookaheadOwnerBinding>>,
+        binding: Option<Box<DirectLookaheadBinding>>,
     },
     /// `lower_body_lifting_folds`' trampoline: `new(ret){ fold!(operand, ret) | for(r <- ret){ … } }`
     /// over `(operand, for_body)`.
@@ -2599,10 +2610,7 @@ impl<'a> Drive<'a> {
         &mut self,
         operand: &'a Proc,
         env: EnvId,
-    ) -> Result<
-        (Job<'a>, Job<'a>, Option<crate::lookahead::LookaheadOwnerBinding>),
-        RholangAstLowerError,
-    > {
+    ) -> Result<(Job<'a>, Job<'a>, Option<DirectLookaheadBinding>), RholangAstLowerError> {
         // A RECEIVE is diagnosed before expansion, not after. `desugar_surface_sugar_node`
         // rewrites a `!?`-carrying `for` into the `new`-scoped `send | receive` it denotes, and
         // that `new` would then be reported by the catch-all as "a non-send process" — true,
@@ -2614,11 +2622,11 @@ impl<'a> Drive<'a> {
         let operand = self.desugar_head(operand)?;
         match operand {
             Proc::POutput(channel, payload) => {
-                let binding = self.direct_flt_lookahead_binding(payload.as_ref(), env)?;
+                let binding = self.lookahead_payload_binding(payload.as_ref(), env)?;
                 Ok((Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env), binding))
             },
             Proc::POutputShort(channel_proc, payload) => {
-                let binding = self.direct_flt_lookahead_binding(payload.as_ref(), env)?;
+                let binding = self.lookahead_payload_binding(payload.as_ref(), env)?;
                 Ok((
                     Job::Proc(channel_proc.as_ref(), env),
                     Job::Proc(payload.as_ref(), env),
@@ -2666,6 +2674,59 @@ impl<'a> Drive<'a> {
                 .to_owned(),
             context: 0,
         }))
+    }
+
+    fn lookahead_payload_binding(
+        &self,
+        payload: &Proc,
+        env: EnvId,
+    ) -> Result<Option<DirectLookaheadBinding>, RholangAstLowerError> {
+        if let Some(owner) = self.direct_flt_lookahead_binding(payload, env)? {
+            return Ok(Some(DirectLookaheadBinding::Root(owner)));
+        }
+        if !matches!(payload, Proc::PPar(..) | Proc::PParInfix(..)) {
+            return Ok(None);
+        }
+        let mut pending = vec![payload];
+        let mut chosen = None;
+        while let Some(part) = pending.pop() {
+            match part {
+                Proc::PPar(parts) => {
+                    pending
+                        .try_reserve(parts.iter_elements().count())
+                        .map_err(|_| RholangAstLowerError::ScopeArenaAllocationFailed)?;
+                    pending.extend(parts.iter_elements());
+                },
+                Proc::PParInfix(left, right) => {
+                    pending
+                        .try_reserve(2)
+                        .map_err(|_| RholangAstLowerError::ScopeArenaAllocationFailed)?;
+                    pending.push(right.as_ref());
+                    pending.push(left.as_ref());
+                },
+                Proc::PDrop(name) => {
+                    let Some(owner) = self.direct_flt_lookahead_binding(part, env)? else {
+                        continue;
+                    };
+                    if chosen.is_some() {
+                        return Err(RholangAstLowerError::LookaheadCompositeBinding(
+                            "multiple directly staged FLTs require distinct owner bindings",
+                        ));
+                    }
+                    let Name::NVar(variable) = name.as_ref() else {
+                        return Err(RholangAstLowerError::LookaheadCompositeBinding(
+                            "direct FLT is not a variable drop",
+                        ));
+                    };
+                    chosen = Some(DirectLookaheadBinding::TopLevel {
+                        owner,
+                        placeholder: lower_name_var(variable, self.env(env))?,
+                    });
+                },
+                _ => {},
+            }
+        }
+        Ok(chosen)
     }
 
     /// `lower_name` / `lower_drop`.
@@ -3251,8 +3312,23 @@ impl<'a> Drive<'a> {
                 let payload = self.stacks.pop_value()?;
                 let channel = self.stacks.pop_value()?;
                 let request = match binding {
-                    Some(binding) => {
-                        crate::lookahead::spec_all_request_v2(payload, vec![*binding], channel)
+                    Some(binding) => match *binding {
+                        DirectLookaheadBinding::Root(owner) => {
+                            crate::lookahead::spec_all_request_v2(payload, vec![owner], channel)
+                        },
+                        DirectLookaheadBinding::TopLevel { owner, placeholder } => {
+                            let index = exact_composite_flt_index(&payload, &placeholder)?;
+                            crate::lookahead::spec_all_request_v3(
+                                payload,
+                                crate::lookahead::LookaheadTopLevelBinding {
+                                    expr_index: index,
+                                    handle: owner.handle,
+                                    expected_category: owner.expected_category,
+                                    context: owner.context,
+                                },
+                                channel,
+                            )
+                        },
                     },
                     None => crate::lookahead::spec_all_request(payload, channel),
                 };
@@ -3262,8 +3338,27 @@ impl<'a> Drive<'a> {
                 let payload = self.stacks.pop_value()?;
                 let channel = self.stacks.pop_value()?;
                 let request = match binding {
-                    Some(binding) => {
-                        crate::lookahead::spec_n_request_v2(payload, bound, vec![*binding], channel)
+                    Some(binding) => match *binding {
+                        DirectLookaheadBinding::Root(owner) => crate::lookahead::spec_n_request_v2(
+                            payload,
+                            bound,
+                            vec![owner],
+                            channel,
+                        ),
+                        DirectLookaheadBinding::TopLevel { owner, placeholder } => {
+                            let index = exact_composite_flt_index(&payload, &placeholder)?;
+                            crate::lookahead::spec_n_request_v3(
+                                payload,
+                                bound,
+                                crate::lookahead::LookaheadTopLevelBinding {
+                                    expr_index: index,
+                                    handle: owner.handle,
+                                    expected_category: owner.expected_category,
+                                    context: owner.context,
+                                },
+                                channel,
+                            )
+                        },
                     },
                     None => match i64::try_from(bound) {
                         Ok(signed_bound) => {
@@ -6130,6 +6225,32 @@ fn is_empty_bind(bind: &InputBind) -> bool {
 
 fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     scope::lower_reference(var, env, scope::ReferenceRole::Name)
+}
+
+fn exact_composite_flt_index(
+    payload: &Par,
+    placeholder: &Par,
+) -> Result<u32, RholangAstLowerError> {
+    if crate::language_install::exact_expr(placeholder).is_none() {
+        return Err(RholangAstLowerError::LookaheadCompositeBinding(
+            "direct FLT placeholder is not one exact expression",
+        ));
+    }
+    let mut found = None;
+    for (index, expr) in payload.exprs.iter().enumerate() {
+        if expr == &placeholder.exprs[0] {
+            if found.replace(index).is_some() {
+                return Err(RholangAstLowerError::LookaheadCompositeBinding(
+                    "direct FLT placeholder occurs more than once at top level",
+                ));
+            }
+        }
+    }
+    found.and_then(|index| u32::try_from(index).ok()).ok_or(
+        RholangAstLowerError::LookaheadCompositeBinding(
+            "direct FLT has no exact top-level expression coordinate",
+        ),
+    )
 }
 
 fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {

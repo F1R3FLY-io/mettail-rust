@@ -365,6 +365,11 @@ impl LookaheadService {
         definitions: Vec<Definition>,
         host: &RuntimeBudget,
     ) -> Result<LookaheadResponse, SpeculationError> {
+        if handles.iter().any(|handle| handle.guest.is_some()) {
+            return Err(SpeculationError::Bootstrap(
+                "installed guest resumption requires a live checked provider and is not admitted by the host-only resume API".into(),
+            ));
+        }
         let sandbox = SpeculativeSandbox::with_definitions(definitions).await?;
         sandbox.fund_from(host);
         let mut explorer = Explorer::with_mode(&sandbox, trace_mode);
@@ -505,7 +510,9 @@ fn request_error(code: ErrorCode, message: &str) -> Par {
 mod wire_shape_tests {
     use super::*;
     use crate::observation::RENDER_BUDGET_CHARS;
-    use crate::speculation::{CheckedGuestConfiguration, GuestRewriteIdentity, GuestSlotState};
+    use crate::speculation::{
+        CheckedGuestConfiguration, GuestRewriteIdentity, GuestSlotState, SpeculativeState,
+    };
     use models::rhoapi::expr::ExprInstance;
     use prost::Message;
     use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
@@ -560,6 +567,34 @@ mod wire_shape_tests {
         assert_eq!(
             LeafProjection::InstalledGuestRoot.apply(&ambiguous),
             Err(ReificationError::InvalidInstalledGuestRoot),
+        );
+    }
+
+    #[tokio::test]
+    async fn host_only_resume_refuses_a_retained_installed_guest() {
+        let process = new_gint_par(7, Vec::new(), false);
+        let handle = ResumableBranch {
+            state: SpeculativeState::default(),
+            guest: Some(CheckedGuestConfiguration {
+                slots: Vec::new(),
+                public_configuration: process.clone(),
+            }),
+            trace: ReductionTrace::from_process(process),
+            frontier: 1,
+        };
+        let error = LookaheadService::resume(
+            &[handle],
+            Lookahead::Steps(1),
+            &LeafProjection::Configuration,
+            TraceMode::EveryTrace,
+            Vec::new(),
+            &RuntimeBudget::unmetered(),
+        )
+        .await
+        .err()
+        .expect("host-only resume cannot silently discard installed authority");
+        assert!(
+            matches!(error, SpeculationError::Bootstrap(message) if message.contains("live checked provider"))
         );
     }
 

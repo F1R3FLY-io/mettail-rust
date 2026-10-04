@@ -63,6 +63,21 @@ fn migrated_regex_types_parser_paths_agree() {
 }
 
 #[test]
+fn regex_gslt_fixtures_do_not_require_parallel_semantics_tables() {
+    for (name, source) in [
+        ("standalone", include_str!("fixtures/regex_gslt.rho")),
+        ("application", include_str!("fixtures/regex_gslt_application.rho")),
+    ] {
+        for duplicate_builder in ["Data {", "Actions {", "Observations {"] {
+            assert!(
+                !source.contains(duplicate_builder),
+                "{name} Regex GSLT must author its semantics through Terms, Rewrites and Equations rather than a parallel {duplicate_builder} table"
+            );
+        }
+    }
+}
+
+#[test]
 fn rholang_concat_uses_the_existing_eplusplus_runtime_operator() {
     let source = r#""rho:lib:1.0.0:" ++ "owner""#;
     let parsed = Proc::parse_via_wpda(source).expect("generated Rholang parser accepts ++");
