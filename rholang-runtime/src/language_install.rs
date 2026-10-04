@@ -4283,9 +4283,15 @@ pub(crate) mod tests {
 
     pub(crate) fn installed_flt_adapter_fixture(
     ) -> (RholangLanguageRuntime, Par, Arc<mettail_grammar_core::InstalledLanguage>) {
+        installed_flt_adapter_fixture_with_policy(LanguageInstallPolicy::default())
+    }
+
+    pub(crate) fn installed_flt_adapter_fixture_with_policy(
+        policy: LanguageInstallPolicy,
+    ) -> (RholangLanguageRuntime, Par, Arc<mettail_grammar_core::InstalledLanguage>) {
         let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
             Arc::new(MemoryRegistry::default()),
-            LanguageInstallPolicy::default(),
+            policy,
         )));
         let batch = runtime
             .install_all(rholang_ddl_candidate(REGEX_EXTENSION_MODULE_SOURCE))

@@ -2064,8 +2064,13 @@ mod tests {
         let mut runner = TestRunner::new(Config::with_cases(128));
         runner
             .run(
-                &(proptest::collection::vec(any::<i16>(), 0..16), any::<usize>()),
-                |(host_values, placement)| {
+                &(
+                    proptest::collection::vec(any::<i16>(), 0..16),
+                    any::<usize>(),
+                    any::<u16>(),
+                    1usize..8,
+                ),
+                |(host_values, placement, salt, depth)| {
                     let guest_index = placement % (host_values.len() + 1);
                     let mut subject = Par::default();
                     subject.exprs = host_values
@@ -2099,6 +2104,49 @@ mod tests {
                     prop_assert_eq!(accepted, subject.clone());
                     prop_assert_eq!(bindings.len(), 1);
                     prop_assert_eq!(bindings[0].top_level_expr, Some(guest_index));
+
+                    let mut missing = subject.clone();
+                    missing.exprs.remove(guest_index);
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(
+                                missing,
+                                claim(token.clone(), guest_index, "Pattern", 0),
+                            ),
+                            &host,
+                        )
+                        .is_err());
+                    let mut duplicate = subject.clone();
+                    duplicate.exprs.push(guest.exprs[0].clone());
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(
+                                duplicate,
+                                claim(token.clone(), guest_index, "Pattern", 0),
+                            ),
+                            &host,
+                        )
+                        .is_err());
+                    let mut nested = guest.clone();
+                    for _ in 0..depth {
+                        nested = crate::language_install::wire_list(vec![nested]);
+                    }
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(nested, claim(token.clone(), 0, "Pattern", 0)),
+                            &host,
+                        )
+                        .is_err());
+                    let unfunded = RuntimeBudget::new(Cost::create(0, "unfunded v3 admission"));
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(
+                                subject.clone(),
+                                claim(token.clone(), guest_index, "Pattern", 0),
+                            ),
+                            &unfunded,
+                        )
+                        .is_err());
 
                     let wrong_index = if subject.exprs.len() == 1 {
                         1
@@ -2135,8 +2183,23 @@ mod tests {
                     prop_assert!(engine
                         .admit_top_level_subject(
                             spec_envelope_v3(
-                                subject,
+                                subject.clone(),
                                 claim(forged.clone(), guest_index, "Pattern", 0),
+                            ),
+                            &host,
+                        )
+                        .is_err());
+                    let foreign = mettail_rholang_codegen::reflect_ground_term_par(
+                        &mettail_rholang_codegen::GroundTerm::nullary("PFail"),
+                        &format!("mettail-langdef-v1:foreign-{salt}"),
+                    );
+                    let mut wrong_commitment = subject;
+                    wrong_commitment.exprs[guest_index] = foreign.exprs[0].clone();
+                    prop_assert!(engine
+                        .admit_top_level_subject(
+                            spec_envelope_v3(
+                                wrong_commitment,
+                                claim(token.clone(), guest_index, "Pattern", 0),
                             ),
                             &host,
                         )
@@ -2218,6 +2281,197 @@ mod tests {
                 },
             )
             .expect("generated legacy/v2/v3 channel separation properties");
+    }
+
+    #[test]
+    fn generated_native_owner_admission_requires_exact_handle_sort_path_and_context() {
+        use crate::lookahead::{spec_envelope_v2, LookaheadOwnerBinding};
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let engine = LookaheadEngine::new().with_language_runtime(Arc::new(runtime));
+        let host = RuntimeBudget::new(Cost::create(100_000_000, "native owner property"));
+        let mut runner = TestRunner::new(Config::with_cases(128));
+        runner
+            .run(&(any::<u8>(), any::<u16>()), |(letter, salt)| {
+                let subject =
+                    new_gstring_par(char::from(b'a' + letter % 26).to_string(), Vec::new(), false);
+                let claim =
+                    |handle: Par, path: Vec<u32>, category: &str, context| LookaheadOwnerBinding {
+                        path,
+                        handle,
+                        expected_category: category.into(),
+                        context,
+                    };
+                let admitted = engine.admit_subject(
+                    spec_envelope_v2(
+                        subject.clone(),
+                        vec![claim(token.clone(), Vec::new(), "Scalar", 0)],
+                    ),
+                    &host,
+                    true,
+                );
+                let (actual, bindings) = admitted.map_err(|error| {
+                    TestCaseError::fail(format!("valid native Scalar owner refused: {error}"))
+                })?;
+                prop_assert_eq!(actual, subject.clone());
+                prop_assert_eq!(bindings.len(), 1);
+                prop_assert!(bindings[0].path.is_empty());
+                prop_assert_eq!(bindings[0].top_level_expr, None);
+                let root_claim = claim(token.clone(), Vec::new(), "Scalar", 0);
+                prop_assert!(engine
+                    .admit_subject(
+                        spec_envelope_v2(
+                            subject.clone(),
+                            vec![root_claim.clone(), root_claim.clone()],
+                        ),
+                        &host,
+                        true,
+                    )
+                    .is_err());
+                prop_assert!(engine
+                    .admit_subject(
+                        spec_envelope_v2(
+                            subject.clone(),
+                            vec![root_claim.clone(), claim(token.clone(), vec![0], "Scalar", 0)],
+                        ),
+                        &host,
+                        true,
+                    )
+                    .is_err());
+                let unfunded = RuntimeBudget::new(Cost::create(0, "unfunded v2 admission"));
+                prop_assert!(engine
+                    .admit_subject(
+                        spec_envelope_v2(subject.clone(), vec![root_claim]),
+                        &unfunded,
+                        true,
+                    )
+                    .is_err());
+
+                let forged = models::rust::rholang::implicits::GPrivateBuilder::new_par_from_string(
+                    format!("forged-native-owner-{salt}"),
+                );
+                for bad_claim in [
+                    claim(forged, Vec::new(), "Scalar", 0),
+                    claim(token.clone(), vec![0], "Scalar", 0),
+                    claim(token.clone(), Vec::new(), "AbsentCategory", 0),
+                    claim(token.clone(), Vec::new(), "Scalar", 1),
+                ] {
+                    prop_assert!(engine
+                        .admit_subject(
+                            spec_envelope_v2(subject.clone(), vec![bad_claim]),
+                            &host,
+                            true,
+                        )
+                        .is_err());
+                }
+                prop_assert!(engine
+                    .admit_subject(
+                        spec_envelope_v2(
+                            new_gint_par(i64::from(letter), Vec::new(), false),
+                            vec![claim(token.clone(), Vec::new(), "Scalar", 0)],
+                        ),
+                        &host,
+                        true,
+                    )
+                    .is_err());
+                Ok(())
+            })
+            .expect("generated native-owner admission properties");
+    }
+
+    #[test]
+    fn generated_native_admission_rechecks_reduce_right_and_revocation_generation() {
+        use crate::language_install::{
+            tests::{installed_flt_adapter_fixture_with_policy, rholang_ddl_candidate},
+            LanguageInstallPolicy,
+        };
+        use crate::lookahead::{spec_envelope_v2, LookaheadOwnerBinding};
+        use mettail_grammar_core::LanguageRights;
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let subject = |letter: u8| {
+            new_gstring_par(char::from(b'a' + letter % 26).to_string(), Vec::new(), false)
+        };
+        let request = |letter, handle| {
+            spec_envelope_v2(
+                subject(letter),
+                vec![LookaheadOwnerBinding {
+                    path: Vec::new(),
+                    handle,
+                    expected_category: "Scalar".into(),
+                    context: 0,
+                }],
+            )
+        };
+        let mut policy = LanguageInstallPolicy::default();
+        policy.host_grants = LanguageRights::from_rights(
+            LanguageRights::all()
+                .iter()
+                .filter(|right| *right != LanguageRight::Reduce),
+        );
+        let (limited_runtime, limited_token, _) = installed_flt_adapter_fixture_with_policy(policy);
+        let limited_engine =
+            LookaheadEngine::new().with_language_runtime(Arc::new(limited_runtime));
+        let host = RuntimeBudget::new(Cost::create(100_000_000, "owner generation admission"));
+        let (runtime, old_token, _) =
+            crate::language_install::tests::installed_flt_adapter_fixture();
+        let runtime = Arc::new(runtime);
+        let engine = LookaheadEngine::new().with_language_runtime(Arc::clone(&runtime));
+        let mut runner = TestRunner::new(Config::with_cases(128));
+        runner
+            .run(&any::<u8>(), |letter| {
+                prop_assert!(matches!(
+                    limited_engine.admit_subject(
+                        request(letter, limited_token.clone()),
+                        &host,
+                        true,
+                    ),
+                    Err(error) if error.contains("not authorized for Reduce")
+                ));
+                let (actual, bindings) = engine
+                    .admit_subject(request(letter, old_token.clone()), &host, true)
+                    .map_err(|error| {
+                        TestCaseError::fail(format!("live initial owner refused: {error}"))
+                    })?;
+                prop_assert_eq!(actual, subject(letter));
+                prop_assert_eq!(bindings.len(), 1);
+                Ok(())
+            })
+            .expect("generated Reduce-right admission properties");
+        runtime
+            .revoke(&old_token)
+            .expect("revoke initial generation");
+        let batch = runtime
+            .install_all(rholang_ddl_candidate(include_str!(
+                "../../tests/fixtures/regex_extension.rho"
+            )))
+            .expect("same Regex grammar reinstalls in a fresh generation");
+        let fresh_token = batch
+            .exports
+            .into_iter()
+            .find(|export| export.name == "Regex")
+            .expect("Regex export")
+            .handle;
+        assert_ne!(old_token, fresh_token, "generation is part of the token");
+        runner
+            .run(&any::<u8>(), |letter| {
+                prop_assert!(matches!(
+                    engine.admit_subject(request(letter, old_token.clone()), &host, true),
+                    Err(error) if error.contains("not authorized for Reduce")
+                ));
+                let (actual, bindings) = engine
+                    .admit_subject(request(letter, fresh_token.clone()), &host, true)
+                    .map_err(|error| {
+                        TestCaseError::fail(format!("fresh generation refused: {error}"))
+                    })?;
+                prop_assert_eq!(actual, subject(letter));
+                prop_assert_eq!(bindings.len(), 1);
+                Ok(())
+            })
+            .expect("generated revocation-generation admission properties");
     }
 
     #[test]
