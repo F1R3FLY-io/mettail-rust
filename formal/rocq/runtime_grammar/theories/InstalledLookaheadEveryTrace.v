@@ -1418,4 +1418,83 @@ Print Assumptions forged_ambiguous_and_mismatched_bindings_refuse.
 Print Assumptions revoked_and_unfunded_rights_refuse.
 Print Assumptions rejected_current_authority_cannot_publish.
 
+(** The v2 [BindingPath] above names borrowed [Par] children.  A reflected
+    expression beside a host process has no such child.  The next wire format
+    therefore uses a disjoint constructor for an exact top-level expression
+    slot; treating its index as a v2 child path would let one coordinate have
+    two meanings.  This model covers the structural split, not Rust's resource
+    accounting or RSpace's implementation of a host COMM. *)
+Module CompositeLocator.
+  Inductive Locator :=
+  | ParChild (path : BindingPath)
+  | TopLevelExpr (index : nat).
+
+  Definition locator_eqb (left right : Locator) : bool :=
+    match left, right with
+    | ParChild x, ParChild y => path_eqb x y
+    | TopLevelExpr x, TopLevelExpr y => Nat.eqb x y
+    | _, _ => false
+    end.
+
+  Lemma path_eqb_refl : forall path, path_eqb path path = true.
+  Proof.
+    induction path as [|head tail IH]; simpl; auto.
+    rewrite Nat.eqb_refl, IH. reflexivity.
+  Qed.
+
+  Theorem locator_eqb_exact : forall left right,
+    locator_eqb left right = true <-> left = right.
+  Proof.
+    intros [path|index] [other|other]; simpl.
+    - split; intro H.
+      + apply path_eqb_eq in H. subst. reflexivity.
+      + inversion H; subst. apply path_eqb_refl.
+    - split; intro H; discriminate.
+    - split; intro H; discriminate.
+    - split; intro H.
+      + apply Nat.eqb_eq in H. subst. reflexivity.
+      + inversion H; subst. apply Nat.eqb_refl.
+  Qed.
+
+  Theorem locator_domains_disjoint : forall path index,
+    ParChild path <> TopLevelExpr index.
+  Proof. intros path index H; discriminate H. Qed.
+
+  Fixpoint remove_at {A : Type} (index : nat) (values : list A)
+      : option (A * list A) :=
+    match index, values with
+    | 0, value :: tail => Some (value, tail)
+    | S next, head :: tail =>
+        match remove_at next tail with
+        | Some (value, rest) => Some (value, head :: rest)
+        | None => None
+        end
+    | _, _ => None
+    end.
+
+  Fixpoint insert_at {A : Type} (index : nat) (value : A)
+      (values : list A) : list A :=
+    match index, values with
+    | 0, _ => value :: values
+    | S next, head :: tail => head :: insert_at next value tail
+    | S _, [] => values
+    end.
+
+  Theorem exact_split_rejoin : forall (A : Type) index (values rest : list A) value,
+    remove_at index values = Some (value, rest) ->
+    insert_at index value rest = values.
+  Proof.
+    intros A index. induction index as [|index IH]; intros values rest value H;
+      destruct values as [|head tail]; simpl in H; try discriminate.
+    - inversion H; reflexivity.
+    - destruct (remove_at index tail) as [[found remaining]|] eqn:Htail;
+        try discriminate.
+      inversion H; subst. simpl. f_equal. eapply IH; eassumption.
+  Qed.
+
+  Print Assumptions locator_eqb_exact.
+  Print Assumptions locator_domains_disjoint.
+  Print Assumptions exact_split_rejoin.
+End CompositeLocator.
+
 End InstalledLookaheadEveryTrace.
