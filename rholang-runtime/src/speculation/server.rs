@@ -1696,6 +1696,44 @@ mod tests {
     }
 
     #[test]
+    fn native_root_rejects_forged_and_revoked_installed_owner_handles() {
+        use crate::lookahead::{spec_envelope_v2, LookaheadOwnerBinding};
+
+        let (runtime, token, _) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let runtime = Arc::new(runtime);
+        let engine = LookaheadEngine::new().with_language_runtime(Arc::clone(&runtime));
+        let host = RuntimeBudget::new(Cost::create(10_000_000, "native owner refusal test"));
+        let subject = new_gstring_par("a".into(), Vec::new(), false);
+        let request = |handle| {
+            spec_envelope_v2(
+                subject.clone(),
+                vec![LookaheadOwnerBinding {
+                    path: Vec::new(),
+                    handle,
+                    expected_category: "Scalar".into(),
+                    context: 0,
+                }],
+            )
+        };
+
+        let forged = models::rust::rholang::implicits::GPrivateBuilder::new_par_from_string(
+            "forged-installed-owner".to_string(),
+        );
+        let forged_error = engine
+            .admit_subject(request(forged), &host, true)
+            .err()
+            .expect("an arbitrary private name is not an installed authority");
+        assert!(forged_error.contains("not authorized for Reduce"));
+
+        runtime.revoke(&token).expect("revoke installed owner");
+        let revoked_error = engine
+            .admit_subject(request(token), &host, true)
+            .err()
+            .expect("a revoked token cannot authorize a native literal");
+        assert!(revoked_error.contains("not authorized for Reduce"));
+    }
+
+    #[test]
     fn installed_publication_commits_once_only_while_every_owner_is_live() {
         use rspace_plus_plus::rspace::rspace_interface::commit_produce;
 
