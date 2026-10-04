@@ -138,6 +138,21 @@ pub(crate) fn scan_top_level_reflected_exprs<'a, C: FnMut() -> bool>(
     Ok(found)
 }
 
+/// Copy a fully preflighted subject and move one exact top-level expression
+/// into its guest slot. The caller must first run the bounded complete scan:
+/// that scan pays for the iterative `Par` clone and establishes that the
+/// selected expression is the sole admitted reflected guest. Returning `None`
+/// for an out-of-range coordinate keeps a caller-controlled locator fallible.
+pub(crate) fn split_preflighted_top_level_expr(subject: &Par, index: usize) -> Option<(Par, Par)> {
+    if index >= subject.exprs.len() {
+        return None;
+    }
+    let mut host = subject.clone();
+    let mut guest = Par::default();
+    guest.exprs.push(host.exprs.remove(index));
+    Some((host, guest))
+}
+
 fn charge_clone_footprint<C: FnMut() -> bool>(
     term: &Par,
     budget: &mut ReflectedCodecBudget<'_, C>,
@@ -566,6 +581,7 @@ mod tests {
     use models::rhoapi::{EPathMap, Expr, New, Send};
     use models::rust::rholang::implicits::GPrivateBuilder;
     use models::rust::utils::new_gint_par;
+    use proptest::prelude::*;
 
     fn fingerprint() -> String {
         format!("{INSTALLED_FINGERPRINT_PREFIX}{}", "a".repeat(64))
@@ -714,6 +730,64 @@ mod tests {
             scan_top_level_reflected_exprs(&nested, &mut budget),
             Err(ScanError::CompositeReflectedRoot)
         ));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        /// Rust extraction of the Rocq typed-locator and exact split/rejoin
+        /// laws over arbitrary host expression bags and guest coordinates.
+        #[test]
+        fn exact_top_level_locator_splits_and_rejoins(
+            host_values in proptest::collection::vec(any::<i64>(), 0..32),
+            placement in any::<usize>(),
+        ) {
+            let index = placement % (host_values.len() + 1);
+            let mut subject = Par::default();
+            subject.exprs = host_values
+                .into_iter()
+                .map(|value| new_gint_par(value, Vec::new(), false).exprs.remove(0))
+                .collect();
+            let guest = reflected("Guest", vec![]);
+            subject.exprs.insert(index, guest.exprs[0].clone());
+
+            let mut work = 0;
+            let mut cancelled = || false;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancelled);
+            let occurrences = scan_top_level_reflected_exprs(&subject, &mut budget)
+                .expect("small generated subject fits the fixed scan budget");
+            prop_assert_eq!(occurrences.len(), 1);
+            prop_assert_eq!(occurrences[0].index, index);
+            prop_assert!(std::ptr::eq(occurrences[0].expr, &subject.exprs[index]));
+            prop_assert_eq!(&occurrences[0].fingerprint, &fingerprint());
+
+            let (mut host, extracted) = split_preflighted_top_level_expr(&subject, index)
+                .expect("the scanned coordinate exists");
+            prop_assert_eq!(extracted.exprs.len(), 1);
+            prop_assert_eq!(&extracted.exprs[0], &subject.exprs[index]);
+            host.exprs.insert(index, extracted.exprs[0].clone());
+            prop_assert_eq!(host, subject.clone());
+            prop_assert!(split_preflighted_top_level_expr(&subject, subject.exprs.len()).is_none());
+        }
+
+        /// Unsupported nested transports are refused at every generated depth,
+        /// rather than being mistaken for an unowned host-only request.
+        #[test]
+        fn nested_reflected_guest_never_disappears_from_the_scan(depth in 1usize..64) {
+            let mut subject = reflected("Nested", vec![]);
+            for _ in 0..depth {
+                subject = crate::language_install::wire_list(vec![subject]);
+            }
+            let mut work = 0;
+            let mut cancelled = || false;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancelled);
+            prop_assert!(matches!(
+                scan_top_level_reflected_exprs(&subject, &mut budget),
+                Err(ScanError::CompositeReflectedRoot)
+            ));
+        }
     }
 
     #[test]

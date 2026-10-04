@@ -188,8 +188,8 @@ use crate::semantic_service::SemanticServiceLimits;
 
 use super::delivery::{resting_on_string, trace_digest};
 use super::occurrences::{
-    scan_installed_occurrences, scan_top_level_reflected_exprs, term_at_path, SubjectOccurrence,
-    TopLevelExprOccurrence,
+    scan_installed_occurrences, scan_top_level_reflected_exprs, split_preflighted_top_level_expr,
+    term_at_path, SubjectOccurrence, TopLevelExprOccurrence,
 };
 use super::search::{charge_host_comms, ErrorCode, Lookahead, QuiescentLeaf, TraceMode};
 use super::service::{LeafProjection, LookaheadRequest, LookaheadResponse, LookaheadService};
@@ -506,12 +506,10 @@ impl LookaheadEngine {
             .installed_runtime
             .as_ref()
             .ok_or_else(|| "v3 installed language runtime is not bound".to_string())?;
-        // The preceding complete, bounded preflight funds this iterative Par
-        // clone. Move its named expression into an exact one-expression Par;
-        // never call the potentially recursive derived Expr clone.
-        let mut copied = subject.clone();
-        let mut guest = Par::default();
-        guest.exprs.push(copied.exprs.remove(occurrence.index));
+        // The preceding complete, bounded preflight funds the shared
+        // iterative split and its single exact guest expression.
+        let (_, guest) = split_preflighted_top_level_expr(subject, occurrence.index)
+            .ok_or_else(|| "v3 owner locator disappeared after preflight".to_string())?;
         let borrowed_claim = WireOwnerBinding {
             path: Vec::new(),
             token: claim.token,

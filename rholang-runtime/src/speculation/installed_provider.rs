@@ -24,7 +24,9 @@ use crate::language_install::{exact_expr, grammar_fingerprint_label, RholangLang
 use crate::semantic_service::InstalledSemanticBundle;
 use crate::semantic_wire::encode_normalization_step_v1;
 
-use super::occurrences::{scan_top_level_reflected_exprs, validate_reifiable_host_par};
+use super::occurrences::{
+    scan_top_level_reflected_exprs, split_preflighted_top_level_expr, validate_reifiable_host_par,
+};
 use super::search::{CheckedGuestEdge, CheckedGuestProvider};
 use super::server::AdmittedLookaheadBinding;
 use super::{
@@ -279,12 +281,8 @@ impl CheckedGuestProvider for InstalledCheckedGuestProvider {
             if occurrence.fingerprint != fingerprint {
                 return Err(refuse("installed composite owner changed before saturation"));
             }
-            // `Par::clone` is iterative in the shared models crate. The
-            // complete scanner above charges the source tree before copying.
-            let mut host_program = submitted.clone();
-            let mut guest = Par::default();
-            guest.exprs.push(host_program.exprs.remove(index));
-            Ok((host_program, guest))
+            split_preflighted_top_level_expr(submitted, index)
+                .ok_or_else(|| refuse("installed composite locator disappeared after preflight"))
         })?;
         self.staged_guest = Some(guest);
         Ok(host_program)
