@@ -564,11 +564,11 @@ mod tests {
     use models::rhoapi::{ReceiveBind, Send};
     use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par, new_receive_par};
 
-    fn one_host_comm() -> Par {
+    fn one_host_comm(value: i64) -> Par {
         let channel = new_gstring_par("installed-composite-host".into(), Vec::new(), false);
         let send = Par::default().with_sends(vec![Send {
             chan: Some(channel.clone()),
-            data: vec![new_gint_par(1, Vec::new(), false)],
+            data: vec![new_gint_par(value, Vec::new(), false)],
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
@@ -964,7 +964,7 @@ mod tests {
             )
             .expect("checked guest term");
         drop(budget);
-        let subject = guest.append(one_host_comm());
+        let subject = guest.append(one_host_comm(1));
         let binding = AdmittedLookaheadBinding {
             path: Vec::new(),
             top_level_expr: Some(0),
@@ -1016,5 +1016,115 @@ mod tests {
             trace.as_slice(),
             [TraceStepIdentity::GuestRewrite(_), TraceStepIdentity::HostComm(_)]
         )));
+    }
+
+    #[test]
+    fn generated_installed_guest_and_host_comm_keep_both_bfs_interleavings() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let tokio = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("lookahead test runtime");
+        let (runtime, token, installed) =
+            crate::language_install::tests::installed_flt_adapter_fixture();
+        let runtime = Arc::new(runtime);
+        let handle = runtime
+            .resolve(&token, LanguageRight::Reduce)
+            .expect("live Reduce grant");
+        let commitment = installed.commitment();
+        let mut runner = TestRunner::new(Config::with_cases(128));
+        runner
+            .run(&(any::<u8>(), any::<bool>(), any::<i16>()), |(letter, optional, value)| {
+                let suffix = if optional { "?" } else { "+" };
+                let pattern = format!("{}{suffix}", char::from(b'a' + letter % 26));
+                let guest = runtime
+                    .construct_template(
+                        &token,
+                        &[RuntimeTemplatePiece::Text(pattern)],
+                        &[],
+                        Some("Pattern"),
+                        &BTreeMap::new(),
+                    )
+                    .map_err(|error| TestCaseError::fail(format!("guest: {error:?}")))?;
+                let mut work = 0;
+                let mut cancelled = || false;
+                let mut budget =
+                    ReflectedCodecBudget::new(&mut work, 10_000_000, 10_000_000, &mut cancelled);
+                let adapter = InstalledFltAdapter::new(&installed, &mut budget)
+                    .map_err(|error| TestCaseError::fail(format!("adapter: {error:?}")))?;
+                let (category, sort) = adapter
+                    .select_category("Pattern", &mut budget)
+                    .map_err(|error| TestCaseError::fail(format!("category: {error:?}")))?;
+                let input = adapter
+                    .to_kernel(
+                        &guest,
+                        category,
+                        SemanticInputLimits {
+                            work: 1_000_000,
+                            nodes: 10_000,
+                            bytes: 1_000_000,
+                        },
+                        &mut budget,
+                    )
+                    .map_err(|error| TestCaseError::fail(format!("guest input: {error:?}")))?;
+                drop(budget);
+
+                let subject = guest.append(one_host_comm(i64::from(value)));
+                let binding = AdmittedLookaheadBinding {
+                    path: Vec::new(),
+                    top_level_expr: Some(0),
+                    handle: handle.clone(),
+                    installed: Arc::clone(&installed),
+                    sort,
+                    category,
+                    context: 0,
+                    input,
+                };
+                let host = RuntimeBudget::new(Cost::create(10_000_000, "mixed trace property"));
+                let response = tokio
+                    .block_on(LookaheadService::serve(
+                        LookaheadRequest::new(subject, Lookahead::Steps(2))
+                            .with_projection(LeafProjection::Configuration)
+                            .with_installed_bindings(Arc::clone(&runtime), vec![binding]),
+                        Blake2b512Random::create_from_length(128),
+                        &host,
+                    ))
+                    .settle(&host, Cost::create(1, "mixed trace property COMM"))
+                    .map_err(|error| TestCaseError::fail(format!("settlement: {error:?}")))?
+                    .map_err(|error| TestCaseError::fail(format!("mixed search: {error:?}")))?;
+                prop_assert!(response.error.is_none());
+                prop_assert!(response.failure.is_empty());
+                prop_assert!(response.truncated.is_empty());
+                prop_assert_eq!(response.exploration.success.len(), 2);
+
+                let mut host_then_guest = None;
+                let mut guest_then_host = None;
+                for leaf in &response.exploration.success {
+                    let terminal = leaf.trace.public_nodes().last().cloned();
+                    match leaf.trace.step_identities().as_slice() {
+                        [TraceStepIdentity::HostComm(host_id), TraceStepIdentity::GuestRewrite(guest_id)] => {
+                            host_then_guest = Some((host_id.clone(), guest_id.clone(), terminal));
+                        },
+                        [TraceStepIdentity::GuestRewrite(guest_id), TraceStepIdentity::HostComm(host_id)] => {
+                            guest_then_host = Some((host_id.clone(), guest_id.clone(), terminal));
+                        },
+                        _ => return Err(TestCaseError::fail("mixed BFS omitted or added an edge")),
+                    }
+                }
+                let (Some(host_then_guest), Some(guest_then_host)) =
+                    (host_then_guest, guest_then_host)
+                else {
+                    return Err(TestCaseError::fail("mixed BFS lost one interleaving"));
+                };
+                prop_assert_eq!(&host_then_guest.0, &guest_then_host.0);
+                prop_assert_eq!(&host_then_guest.1, &guest_then_host.1);
+                prop_assert_eq!(&host_then_guest.2, &guest_then_host.2);
+                prop_assert_eq!(host_then_guest.1.owner, commitment.language_fingerprint);
+                prop_assert_eq!(host_then_guest.1.top_level_expr, Some(0));
+                Ok(())
+            })
+            .expect("generated installed Regex and host COMM preserve both BFS paths");
     }
 }
