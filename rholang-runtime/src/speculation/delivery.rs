@@ -953,6 +953,7 @@ mod publication_law {
 mod step_digest_tests {
     use super::*;
     use crate::speculation::GuestRewriteIdentity;
+    use proptest::prelude::*;
     use prost::Message;
 
     fn hash(byte: u8) -> Blake2b256Hash {
@@ -1000,6 +1001,54 @@ mod step_digest_tests {
         assert_ne!(both.encode_to_vec(), trace_pathmap([first_entry]).encode_to_vec());
         assert_ne!(both.encode_to_vec(), trace_pathmap([second_entry]).encode_to_vec());
         assert_eq!(trace_pars(&first).last(), Some(&Par::default()));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        /// The published set must retain both proof-marked paths even when
+        /// their process sequence and terminal configuration are identical.
+        /// Check trie membership, not only a difference between encodings.
+        #[test]
+        fn generated_equal_target_proof_ordinals_are_distinct_pathmap_members(
+            ordinal in 0u64..1_000_000,
+            target_value in any::<i16>(),
+        ) {
+            let root = ReductionTrace::from_input_and_configuration(
+                new_gint_par(0, Vec::new(), false),
+                new_gint_par(1, Vec::new(), false),
+            );
+            let target = new_gint_par(i64::from(target_value), Vec::new(), false);
+            let proof = |number| GuestRewriteIdentity::new(
+                vec![1],
+                [2; 32],
+                [3; 32],
+                number,
+                new_gint_par(17, Vec::new(), false),
+            );
+            let first = root.extend_guest(proof(ordinal), target.clone());
+            let second = root.extend_guest(proof(ordinal + 1), target.clone());
+            prop_assert_eq!(first.processes(), second.processes());
+
+            let first_entry = ground_list(trace_pars(&first));
+            let second_entry = ground_list(trace_pars(&second));
+            prop_assert_ne!(&first_entry, &second_entry);
+            let published = trace_pathmap([first_entry.clone(), second_entry.clone()]);
+            let Some(ExprInstance::EPathmapBody(pathmap)) = published
+                .exprs
+                .first()
+                .and_then(|expr| expr.expr_instance.as_ref())
+            else {
+                prop_assert!(false, "trace delivery must use EPathMap");
+                unreachable!();
+            };
+            prop_assert_eq!(pathmap.mode(), models::rust::epathmap_trie_codec::EPathMapMode::Set);
+            prop_assert_eq!(pathmap.len(), 2);
+            prop_assert!(pathmap.contains_entry(&first_entry));
+            prop_assert!(pathmap.contains_entry(&second_entry));
+            prop_assert_eq!(trace_pars(&first).last().cloned(), Some(target.clone()));
+            prop_assert_eq!(trace_pars(&second).last().cloned(), Some(target));
+        }
     }
 
     /// ★ THE INVARIANT, in one line and with no runtime: store positions do not name a

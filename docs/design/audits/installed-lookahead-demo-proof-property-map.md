@@ -54,7 +54,7 @@ Production seam: `Explorer::explore`, [service response assembly](../../../rhola
 
 Model declarations: `equal_target_different_rule_counterexample`, `equal_target_distinct_proofs_collide_in_process_path`, and `proof_markers_separate_equal_targets_and_leave_terminal_state_last`.
 
-Production seam: `ReductionTrace::extend_guest` and [PathMap delivery](../../../rholang-runtime/src/speculation/delivery.rs). The generated `generated_equal_target_proofs_remain_distinct` property checks exact typed/public nodes; `pathmap_retains_equal_terminal_guest_proofs_as_two_entries` is an example at delivery. Generate PathMap membership for arbitrary distinct proof ordinals with equal terminal processes. Do not claim mathematical digest injectivity: exact proof markers preserve identity, while the digest is a cryptographic commitment.
+Production seam: `ReductionTrace::extend_guest` and [PathMap delivery](../../../rholang-runtime/src/speculation/delivery.rs). The generated `generated_equal_target_proofs_remain_distinct` property checks exact typed/public nodes. At delivery, `generated_equal_target_proof_ordinals_are_distinct_pathmap_members` checks 128 generated neighboring proof ordinals and terminal values: despite equal process sequences, both proof-marked entries remain distinct members of the published set-mode PathMap. `pathmap_retains_equal_terminal_guest_proofs_as_two_entries` remains a fixed example. Do not claim mathematical digest injectivity: exact proof markers preserve identity, while the digest is a cryptographic commitment.
 
 ### Typed top-level locator
 
@@ -70,4 +70,4 @@ Production seam: `LookaheadAttempt::settle` and `charge_host_comms`. The generat
 
 ## Verification boundary
 
-The property names above are runnable tests, not declarations of campaign completion. The remaining generated properties are explicit M1 verification work for the admitted slice. The general multi-slot abstraction map, concrete enumeration completeness, host-store transport, full receipt/work refinement, and cross-language authority policy require the separate post-demo proof and implementation. No parser, matcher, automaton, or rewrite relation is re-derived to close a test gap.
+The property names above are runnable tests, not declarations of campaign completion. The remaining generated properties include finite-store host-roster/every-trace comparison and complete/incomplete/refusal/truncation/revoked publication boundaries for the admitted slice. The general multi-slot abstraction map, concrete enumeration completeness, host-store transport, full receipt/work refinement, and cross-language authority policy require the separate broader proof and implementation. No parser, matcher, automaton, or rewrite relation is re-derived to close a test gap.
