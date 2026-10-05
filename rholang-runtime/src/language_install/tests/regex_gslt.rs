@@ -27,6 +27,41 @@ fn embedded_regex_declaration(application: &str) -> String {
 }
 
 #[test]
+fn practical_regex_guest_boolean_uses_its_authored_where_projection() {
+    use mettail_prattail::algebra_tower::Sat3;
+
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(DATA_FREE_SOURCE))
+        .expect("complete Regex theory installs");
+    let token = &batch.exports[0].handle;
+    for (source, expected) in [("yes", Sat3::Sat), ("no", Sat3::Unsat)] {
+        let input = runtime
+            .construct_template(
+                token,
+                &[RuntimeTemplatePiece::Text(source.into())],
+                &[],
+                Some("Bool"),
+                &BTreeMap::new(),
+            )
+            .expect("declared Regex Boolean term");
+        let evidence = runtime.prepare_where_predicate(
+            token,
+            &input,
+            "Bool",
+            0,
+            0,
+            SemanticServiceLimits::default(),
+            || false,
+        );
+        assert_eq!(evidence.verdict(), expected, "{source}: {:?}", evidence.error());
+    }
+}
+
+#[test]
 fn practical_regex_default_mode_tokens_have_original_wpda_observations() {
     let service = LanguageInstallService::new(
         Arc::new(MemoryRegistry::default()),
@@ -303,6 +338,7 @@ fn practical_regex_declarations_group_tokens_first_and_projections_last() {
         assert_eq!(
             projection_headers,
             [
+                "projection GuestBoolean : Bool ~> host::Bool {",
                 "projection CompletedBoolean : Computation ~> host::Bool {",
                 "projection TerminalVerdict : TerminalQuery ~> host::Bool {",
             ],
