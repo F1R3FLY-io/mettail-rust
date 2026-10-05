@@ -1465,6 +1465,8 @@ mod checked_guest_search_tests {
         new_elist_par, new_freevar_par, new_gint_par, new_gstring_par, new_receive_par,
     };
     use proptest::prelude::*;
+    use proptest::strategy::{Strategy, ValueTree};
+    use proptest::test_runner::TestRunner;
     use rholang::rust::interpreter::accounting::cost_accounting::CostAccounting;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -1557,19 +1559,21 @@ mod checked_guest_search_tests {
         TwoProofProvider { revalidations, refuse_roster: false }
     }
 
-    fn one_host_comm() -> Par {
-        let channel = new_gstring_par("host c".to_string(), Vec::new(), false);
-        let send = Par::default().with_sends(vec![Send {
-            chan: Some(channel.clone()),
-            data: vec![par(1)],
+    fn host_send(channel: &str, payload: i64) -> Par {
+        Par::default().with_sends(vec![Send {
+            chan: Some(new_gstring_par(channel.to_string(), Vec::new(), false)),
+            data: vec![par(payload)],
             persistent: false,
             locally_free: Vec::new(),
             connective_used: false,
-        }]);
-        let receive = new_receive_par(
+        }])
+    }
+
+    fn host_receive(channel: &str) -> Par {
+        new_receive_par(
             vec![ReceiveBind {
                 patterns: vec![new_freevar_par(0, Vec::new())],
-                source: Some(channel),
+                source: Some(new_gstring_par(channel.to_string(), Vec::new(), false)),
                 remainder: None,
                 free_count: 1,
             }],
@@ -1581,8 +1585,105 @@ mod checked_guest_search_tests {
             false,
             Vec::new(),
             false,
-        );
-        send.append(receive)
+        )
+    }
+
+    fn one_host_comm() -> Par {
+        host_send("host c", 1).append(host_receive("host c"))
+    }
+
+    fn finite_host_store(choices: &[(bool, u8)]) -> Par {
+        let mut process = Par::default();
+        let mut channels_used = [false; 2];
+        for (index, (bucket, payload)) in choices.iter().enumerate() {
+            let channel = usize::from(*bucket);
+            channels_used[channel] = true;
+            process = process.append(host_send(
+                &format!("host c {channel}"),
+                (index as i64) * 256 + i64::from(*payload),
+            ));
+        }
+        for (channel, used) in channels_used.into_iter().enumerate() {
+            if used {
+                process = process.append(host_receive(&format!("host c {channel}")));
+            }
+        }
+        process
+    }
+
+    #[tokio::test]
+    async fn generated_host_roster_refines_every_trace_first_level_on_finite_stores() {
+        let mut runner = TestRunner::deterministic();
+        let strategy = proptest::collection::vec((any::<bool>(), any::<u8>()), 1..4);
+        for case in 0..64 {
+            let choices = strategy
+                .new_tree(&mut runner)
+                .expect("finite host store strategy")
+                .current();
+            let submitted = finite_host_store(&choices);
+            let seed = [case as u8; 128];
+
+            let direct = sandbox().await;
+            direct
+                .saturate(submitted.clone(), Blake2b512Random::create_from_bytes(&seed))
+                .await
+                .expect("host source saturates");
+            let root = direct.snapshot();
+            let enabled = direct.enabled();
+            assert_eq!(enabled.len(), choices.len(), "case {case}: complete host roster");
+
+            let search_sandbox = sandbox().await;
+            let mut explorer = Explorer::with_mode(&search_sandbox, TraceMode::EveryTrace);
+            let result = explorer
+                .explore(submitted, Blake2b512Random::create_from_bytes(&seed), Lookahead::Steps(1))
+                .await
+                .expect("finite host EveryTrace search");
+            assert!(result.failure.is_empty(), "case {case}: no failed host edge");
+            assert_eq!(result.leaves(), enabled.len(), "case {case}: one leaf per host edge");
+            assert_eq!(result.stats.edges_fired, enabled.len(), "case {case}: no host edge pruned");
+            assert_eq!(result.stats.merged_configurations, 0);
+            assert_eq!(result.stats.independence_pruned, 0);
+
+            for (index, rendezvous) in enabled.iter().enumerate() {
+                direct
+                    .load(root.clone())
+                    .await
+                    .expect("restore root before selected host edge");
+                let live = direct.enabled();
+                let expected = RendezvousName::of(&live[index]);
+                assert_eq!(expected, RendezvousName::of(rendezvous));
+                let fired = direct
+                    .fire(live[index].clone())
+                    .await
+                    .expect("selected host edge fires");
+                assert_eq!(fired.name, expected);
+                let successor = content_fingerprint_digest(&direct.snapshot());
+                let matches =
+                    result
+                        .success
+                        .iter()
+                        .map(|leaf| (&leaf.trace, &leaf.state, &leaf.guest))
+                        .chain(result.truncated.iter().map(|leaf| {
+                            (&leaf.branch.trace, &leaf.branch.state, &leaf.branch.guest)
+                        }))
+                        .filter(|(trace, state, guest)| {
+                            guest.is_none()
+                                && matches!(trace.step_identities().as_slice(),
+                                [TraceStepIdentity::HostComm(actual)] if actual == &expected)
+                                && content_fingerprint_digest(state) == successor
+                        })
+                        .count();
+                assert_eq!(matches, 1, "case {case}, edge {index}: exact host successor retained");
+            }
+            for trace in result
+                .success
+                .iter()
+                .map(|leaf| &leaf.trace)
+                .chain(result.truncated.iter().map(TruncatedLeaf::trace))
+            {
+                assert_eq!(trace.public_nodes(), trace.processes());
+            }
+        }
     }
 
     struct HostRevalidatingProvider {
