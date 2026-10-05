@@ -335,6 +335,21 @@ mod tests {
                 assert_eq!(value.receipt.owned.heads, 20_001);
                 assert_eq!(value.receipt.owned.descendant_pars, 20_000);
                 assert_eq!(value.receipt.owned.payload_bytes, 2);
+                let right = ConstructedValue::integer(7).expect("right scalar");
+                let left_debit = value
+                    .receipt
+                    .append_debit(&right.receipt)
+                    .expect("deep left");
+                let right_debit = right
+                    .receipt
+                    .append_debit(&value.receipt)
+                    .expect("deep right");
+                // The existing native value is deeply nested, but the receipt
+                // calculation is constant-space and keeps operand asymmetry.
+                assert_eq!(left_debit.records, 32 + 4 * 40_001 + 2);
+                assert_eq!(left_debit.bytes, 8);
+                assert_eq!(right_debit.records, 32 + 4 + 2 * 40_001);
+                assert_eq!(right_debit.bytes, 4);
                 drop(value);
             })
             .expect("small-stack worker")

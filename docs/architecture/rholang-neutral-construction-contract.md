@@ -855,8 +855,11 @@ physical stack frames or RSS. The
 checks arithmetic and reserves before the existing target append; the
 [checked-driver tests](../../rholang-runtime/src/rholang_ast/preparation_tests.rs)
 exercise refusal before consumption and source-order preservation. Public
-exact/one-under budget and protobuf-byte parity are checked separately in
-[session tests](../../rholang-runtime/src/rholang_ast/session_tests.rs).
+zero/exact/one-under budget and protobuf-byte parity are checked separately in
+[session tests](../../rholang-runtime/src/rholang_ast/session_tests.rs). The
+[constructed-value tests](../../rholang-runtime/src/rholang_ast/constructed_value.rs)
+check operand-asymmetric copy debits for a 20,000-level retained value without
+recursively traversing that value to calculate the debit.
 
 `ConstructionGraph` owns nodes and a checked root, including retained unreachable
 nodes. It is only the construction component, not `RholangFrontendArtifactV1`.

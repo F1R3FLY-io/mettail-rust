@@ -294,6 +294,7 @@ fn checked_scalar_parallel_composition_preserves_bytes_at_exact_resource_limits(
         assert!(exact_work > 0 && exact_units > 0);
 
         for (work_limit, unit_limit, should_succeed) in [
+            (0, 0, false),
             (exact_work - 1, exact_units, false),
             (exact_work, exact_units - 1, false),
             (exact_work, exact_units, true),

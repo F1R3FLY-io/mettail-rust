@@ -217,9 +217,10 @@ impl NativeReceipt {
     /// the temporary left and moved right vectors. The original left, the
     /// temporary left and the moved right are then dropped. Thus copying and
     /// cleanup each touch `2 * left + right` owned head content. The 32 fixed
-    /// records cover the root Par, ten vector fields and their concat/control
-    /// operations even when both operands are empty. Outer metadata is passed
-    /// through a clone/take/union and is separate from nested head metadata.
+    /// records conservatively cover the root Par, nine head vectors and their
+    /// concat/control operations even when both operands are empty. Outer
+    /// metadata passes through a separate `locally_free` clone/take/union and
+    /// is distinct from metadata nested inside a head.
     pub(crate) fn append_debit(&self, right: &Self) -> Result<NativeAppendDebit, ReceiptError> {
         let copied = self.append_copy_counts(right)?;
         let copy_and_cleanup = copied.checked_add(copied)?;
