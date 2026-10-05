@@ -1686,6 +1686,170 @@ mod checked_guest_search_tests {
         }
     }
 
+    struct BoundaryRosterProvider {
+        enabled: u8,
+        refuse_root: bool,
+        refuse_successor: Option<u8>,
+    }
+
+    impl CheckedGuestProvider for BoundaryRosterProvider {
+        fn initial(
+            &mut self,
+            _submitted: &Par,
+            _host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            Ok(configuration(0))
+        }
+
+        fn complete_roster(
+            &mut self,
+            _host: &SpeculativeState,
+            current: &CheckedGuestConfiguration,
+        ) -> Result<Vec<CheckedGuestEdge>, SpeculationError> {
+            let [slot] = current.slots.as_slice() else {
+                return Err(SpeculationError::Bootstrap("boundary fixture lost its slot".into()));
+            };
+            let Some(&value) = slot.exact_key.as_slice().first() else {
+                return Err(SpeculationError::Bootstrap("boundary fixture lost its key".into()));
+            };
+            if slot.value != par(i64::from(value)) || slot.exact_key.len() != 1 {
+                return Err(SpeculationError::Bootstrap("boundary fixture slot drift".into()));
+            }
+            if value == 0 {
+                if self.refuse_root {
+                    return Err(SpeculationError::Bootstrap(
+                        "boundary root roster incomplete".into(),
+                    ));
+                }
+                return Ok((1..=self.enabled)
+                    .map(|ordinal| CheckedGuestEdge {
+                        identity: GuestRewriteIdentity::new(
+                            vec![0],
+                            [2; 32],
+                            [3; 32],
+                            u64::from(ordinal),
+                            par(i64::from(ordinal)),
+                        ),
+                        successor: configuration(ordinal),
+                    })
+                    .collect());
+            }
+            if self.refuse_successor == Some(value) {
+                return Err(SpeculationError::Bootstrap(
+                    "boundary successor roster incomplete".into(),
+                ));
+            }
+            Ok(Vec::new())
+        }
+
+        fn after_host_comm(
+            &mut self,
+            previous: &CheckedGuestConfiguration,
+            _host: &SpeculativeState,
+        ) -> Result<CheckedGuestConfiguration, SpeculationError> {
+            Ok(previous.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn generated_zero_bound_requires_complete_guest_roster_before_classification() {
+        let mut runner = TestRunner::deterministic();
+        let strategy = (0u8..4, any::<bool>(), any::<bool>());
+        for case in 0..64 {
+            let (enabled, host_comm, refuse_root) = strategy
+                .new_tree(&mut runner)
+                .expect("zero-bound strategy")
+                .current();
+            let submitted = if host_comm {
+                one_host_comm()
+            } else {
+                Par::default()
+            };
+            let seed = [case as u8; 128];
+            let unfired = sandbox().await;
+            unfired
+                .load(SpeculativeState::default())
+                .await
+                .expect("reset unfired baseline");
+            unfired
+                .saturate(submitted.clone(), Blake2b512Random::create_from_bytes(&seed))
+                .await
+                .expect("administrative saturation");
+            let administrative_cost = unfired.consumed().value;
+            let sandbox = sandbox().await;
+            let mut explorer = Explorer::with_checked_guest_provider(
+                &sandbox,
+                BoundaryRosterProvider {
+                    enabled,
+                    refuse_root,
+                    refuse_successor: None,
+                },
+            );
+            let outcome = explorer
+                .explore(submitted, Blake2b512Random::create_from_bytes(&seed), Lookahead::Steps(0))
+                .await;
+            if refuse_root {
+                assert!(matches!(outcome,
+                    Err(SpeculationError::Bootstrap(message))
+                        if message == "boundary root roster incomplete"));
+            } else {
+                let result = outcome.expect("complete zero-step roster");
+                let expected_frontier = usize::from(enabled) + usize::from(host_comm);
+                assert!(result.failure.is_empty());
+                assert_eq!(result.stats.edges_fired, 0);
+                if expected_frontier == 0 {
+                    assert_eq!(result.success.len(), 1, "case {case}: empty roster succeeds");
+                    assert!(result.truncated.is_empty());
+                } else {
+                    assert!(result.success.is_empty(), "case {case}: enabled edge is not success");
+                    assert_eq!(result.truncated.len(), 1);
+                    assert_eq!(result.truncated[0].branch.frontier, expected_frontier);
+                }
+            }
+            assert_eq!(
+                sandbox.consumed().value,
+                administrative_cost,
+                "case {case}: zero bound must add no post-saturation cost"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn generated_incomplete_successor_roster_never_returns_a_partial_prefix() {
+        let mut runner = TestRunner::deterministic();
+        let strategy = (2u8..5, any::<u8>());
+        for case in 0..32 {
+            let (enabled, choice) = strategy
+                .new_tree(&mut runner)
+                .expect("incomplete-successor strategy")
+                .current();
+            let refuse_successor = 2 + choice % (enabled - 1);
+            let sandbox = sandbox().await;
+            let mut explorer = Explorer::with_checked_guest_provider(
+                &sandbox,
+                BoundaryRosterProvider {
+                    enabled,
+                    refuse_root: false,
+                    refuse_successor: Some(refuse_successor),
+                },
+            );
+            let outcome = explorer
+                .explore(
+                    Par::default(),
+                    Blake2b512Random::create_from_bytes(&[case as u8; 128]),
+                    Lookahead::Steps(1),
+                )
+                .await;
+            assert!(
+                matches!(outcome,
+                Err(SpeculationError::Bootstrap(message))
+                    if message == "boundary successor roster incomplete"),
+                "case {case}: an earlier complete leaf must not escape a later refusal"
+            );
+            assert_eq!(sandbox.consumed().value, 0, "guest-only edges fire no host COMM");
+        }
+    }
+
     struct HostRevalidatingProvider {
         calls: Arc<AtomicUsize>,
     }
