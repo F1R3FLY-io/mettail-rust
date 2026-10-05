@@ -65,6 +65,8 @@ use target::DirectNodeTarget as Target;
 
 pub(crate) mod constructed_value;
 pub(crate) mod construction_receipt;
+use constructed_value::ConstructedValue;
+use construction_receipt::{NativeAppendDebit, NativeReceipt};
 
 mod graph;
 pub use graph::{interpret_construction_graph, GraphInterpretationError};
@@ -1733,6 +1735,11 @@ pub(crate) fn kont_trace(
 /// The two stacks, plus the three incremental counters the deficit invariant needs.
 struct Stacks<'a> {
     inner: mettail_runtime::worklist::Worklist<Job<'a>, Par>,
+    /// Checked construction keeps each receipt at the same index as its
+    /// existing owned `Par`. `None` makes no retained-shape claim for a
+    /// constructor whose source adapter has not supplied one yet. The legacy
+    /// entrypoint allocates no annotation vector.
+    receipts: Option<Vec<Option<NativeReceipt>>>,
     reservation: &'a mut StorageReservation<'a>,
 }
 
@@ -1746,12 +1753,27 @@ impl<'a> Stacks<'a> {
         seed: Job<'a>,
         reservation: &'a mut StorageReservation<'a>,
     ) -> Result<Self, RholangAstLowerError> {
+        Self::new_preparing(seed, reservation, SourcePreparation::Original)
+    }
+
+    fn new_preparing(
+        seed: Job<'a>,
+        reservation: &'a mut StorageReservation<'a>,
+        source_preparation: SourcePreparation,
+    ) -> Result<Self, RholangAstLowerError> {
         // Preallocated: a term deep enough to matter will need these, and growing a `Vec` under
         // a hot post-order walk is pure waste. 64 covers every term in the test corpus without
         // a realloc; deeper terms grow amortised.
         reservation(1, 128 * 4)?;
+        let receipts = if source_preparation == SourcePreparation::Checked {
+            preparation_scope::reserve_parts(1, 64, 0, reservation)?;
+            Some(Vec::with_capacity(64))
+        } else {
+            None
+        };
         let mut stacks = Stacks {
             inner: mettail_runtime::worklist::Worklist::with_capacity(64, 64),
+            receipts,
             reservation,
         };
         stacks.push(seed)?;
@@ -1822,8 +1844,24 @@ impl<'a> Stacks<'a> {
     }
 
     fn value(&mut self, par: Par) -> Result<(), RholangAstLowerError> {
-        self.charge_storage(1, 1)?;
+        self.charge_storage(1, 1 + usize::from(self.receipts.is_some()))?;
         self.inner.value(par);
+        if let Some(receipts) = &mut self.receipts {
+            receipts.push(None);
+        }
+        Ok(())
+    }
+
+    fn value_tracked(&mut self, value: ConstructedValue) -> Result<(), RholangAstLowerError> {
+        if self.receipts.is_none() {
+            return self.value(value.par);
+        }
+        self.charge_storage(1, 2)?;
+        self.inner.value(value.par);
+        self.receipts
+            .as_mut()
+            .expect("checked receipt stack")
+            .push(Some(value.receipt));
         Ok(())
     }
 
@@ -1831,9 +1869,14 @@ impl<'a> Stacks<'a> {
     /// [`Kont::arity`], so an empty stack here is a machine bug, not an input error.
     fn pop_value(&mut self) -> Result<Par, RholangAstLowerError> {
         self.charge_storage(1, 0)?;
-        self.inner
+        let value = self
+            .inner
             .pop_value()
-            .map_err(RholangAstLowerError::Storage)
+            .map_err(RholangAstLowerError::Storage)?;
+        if let Some(receipts) = &mut self.receipts {
+            receipts.pop().expect("receipt/value stack alignment");
+        }
+        Ok(value)
     }
 
     /// Pop the last `n` values, LEFT TO RIGHT. Children are pushed in reverse and therefore
@@ -1844,9 +1887,14 @@ impl<'a> Stacks<'a> {
             .checked_add(1)
             .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
         self.charge_storage(work, n)?;
-        self.inner
+        let values = self
+            .inner
             .pop_values(n)
-            .map_err(RholangAstLowerError::Storage)
+            .map_err(RholangAstLowerError::Storage)?;
+        if let Some(receipts) = &mut self.receipts {
+            receipts.truncate(receipts.len() - n);
+        }
+        Ok(values)
     }
 
     /// Preserve the shared consuming reductions. Reserve their storage work
@@ -1859,13 +1907,24 @@ impl<'a> Stacks<'a> {
     where
         E: Into<RholangAstLowerError>,
     {
-        self.charge_storage(3, 1)?;
-        self.inner.reduce_pair(build).map_err(|error| match error {
+        self.charge_storage(3, 1 + usize::from(self.receipts.is_some()))?;
+        if self.inner.value_count() >= 2 {
+            if let Some(receipts) = &mut self.receipts {
+                receipts.truncate(receipts.len() - 2);
+            }
+        }
+        let result = self.inner.reduce_pair(build).map_err(|error| match error {
             mettail_runtime::worklist::ReductionError::Storage(error) => {
                 RholangAstLowerError::Storage(error)
             },
             mettail_runtime::worklist::ReductionError::Construction(error) => error.into(),
-        })
+        });
+        if result.is_ok() {
+            if let Some(receipts) = &mut self.receipts {
+                receipts.push(None);
+            }
+        }
+        result
     }
 
     fn reduce_values<E>(
@@ -1882,15 +1941,136 @@ impl<'a> Stacks<'a> {
         let work = n
             .checked_add(2)
             .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        let slots = slots
+            .checked_add(usize::from(self.receipts.is_some()))
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
         self.charge_storage(work, slots)?;
-        self.inner
+        if self.inner.value_count() >= n {
+            if let Some(receipts) = &mut self.receipts {
+                receipts.truncate(receipts.len() - n);
+            }
+        }
+        let result = self
+            .inner
             .reduce_values(n, build)
             .map_err(|error| match error {
                 mettail_runtime::worklist::ReductionError::Storage(error) => {
                     RholangAstLowerError::Storage(error)
                 },
                 mettail_runtime::worklist::ReductionError::Construction(error) => error.into(),
-            })
+            });
+        if result.is_ok() {
+            if let Some(receipts) = &mut self.receipts {
+                receipts.push(None);
+            }
+        }
+        result
+    }
+
+    /// Admit the actual native append copies and cleanup before the shared
+    /// consuming reduction calls the unchanged target adapter. A missing
+    /// receipt remains missing: later constructor-family owners must supply
+    /// it before their checked values can make an exact-resource claim.
+    fn append_pair(&mut self) -> Result<(), RholangAstLowerError> {
+        let planned = self.receipts.as_ref().and_then(|receipts| {
+            let len = receipts.len();
+            match receipts
+                .get(len.checked_sub(2)?)?
+                .as_ref()
+                .zip(receipts.last()?.as_ref())
+            {
+                Some((left, right)) => Some((*left, *right)),
+                None => None,
+            }
+        });
+        let output_receipt = if let Some((left, right)) = planned {
+            let output = left
+                .append(&right)
+                .map_err(constructed_value::receipt_error)?;
+            let debit = left
+                .append_debit(&right)
+                .map_err(constructed_value::receipt_error)?;
+            preparation_scope::reserve_parts(
+                debit.records,
+                debit.records,
+                debit.bytes,
+                self.reservation,
+            )?;
+            Some(output)
+        } else {
+            None
+        };
+        self.reduce_pair(|left, right| {
+            ValueTarget::append(&mut Target, left, right)
+                .map_err(RholangAstLowerError::ValueConstruction)
+        })?;
+        if let Some(receipts) = &mut self.receipts {
+            *receipts
+                .last_mut()
+                .expect("successful pair leaves one result") = output_receipt;
+        }
+        Ok(())
+    }
+
+    /// The existing `append_fold` starts with an empty Par and appends each
+    /// source-ordered child. Precompute its exact per-step receipt and native
+    /// copy/cleanup debit in one pass over annotations, before consuming any
+    /// owned Par or invoking the first append. No finished Par is rescanned.
+    fn append_fold(&mut self, count: usize) -> Result<(), RholangAstLowerError> {
+        let planned = if let Some(receipts) = &self.receipts {
+            let mut complete = true;
+            let mut accumulator = NativeReceipt::empty();
+            let mut total = NativeAppendDebit::default();
+            if let Some(start) = receipts.len().checked_sub(count) {
+                for child in &receipts[start..] {
+                    // This is a linear preflight over the existing annotation
+                    // suffix. Poll and debit each visit before inspecting it;
+                    // cancellation leaves every owned Par on the value stack.
+                    preparation_scope::reserve_parts(1, 0, 0, self.reservation)?;
+                    let Some(child) = child else {
+                        complete = false;
+                        break;
+                    };
+                    total = total
+                        .checked_add(
+                            accumulator
+                                .append_debit(child)
+                                .map_err(constructed_value::receipt_error)?,
+                        )
+                        .map_err(constructed_value::receipt_error)?;
+                    accumulator = accumulator
+                        .append(child)
+                        .map_err(constructed_value::receipt_error)?;
+                }
+            } else {
+                complete = false;
+            }
+            complete.then_some((accumulator, total))
+        } else {
+            None
+        };
+        let output_receipt = if let Some((output, total)) = planned {
+            if total != NativeAppendDebit::default() {
+                preparation_scope::reserve_parts(
+                    total.records,
+                    total.records,
+                    total.bytes,
+                    self.reservation,
+                )?;
+            }
+            Some(output)
+        } else {
+            None
+        };
+        self.reduce_values(count, |parts| {
+            append_fold(&mut Target, parts).map_err(RholangAstLowerError::ValueConstruction)
+        })?;
+        if let Some(receipts) = &mut self.receipts {
+            *receipts
+                .last_mut()
+                .expect("successful fold leaves one result") = output_receipt;
+        }
+        Ok(())
     }
 
     /// ★ **The deficit invariant**, asserted at the head of the drive loop.
@@ -1925,6 +2105,13 @@ impl<'a> Stacks<'a> {
     /// 4,096, and a rescan would make the debug build O(n²) on exactly the terms that matter.
     #[inline]
     fn check(&self) {
+        if let Some(receipts) = &self.receipts {
+            debug_assert_eq!(
+                receipts.len(),
+                self.inner.value_count(),
+                "receipt/value stack alignment"
+            );
+        }
         debug_assert!(
             self.inner.check().is_ok(),
             "rholang lowering: deficit invariant violated: {:?}",
@@ -2109,7 +2296,7 @@ fn drive_machine_preparing(
     let mut drive = Drive {
         arena: &arena,
         envs: EnvArena::new(root_env),
-        stacks: Stacks::new(seed_job, reservation)?,
+        stacks: Stacks::new_preparing(seed_job, reservation, source_preparation)?,
         pattern_states: Vec::new(),
         direct_flt_results: HashMap::new(),
         empty_env: None,
@@ -2173,7 +2360,14 @@ impl<'a> Drive<'a> {
         };
 
         match proc {
-            Proc::PZero => self.stacks.value(lower_arm_p_zero()?)?,
+            Proc::PZero => {
+                if self.source_preparation == SourcePreparation::Checked {
+                    preparation_scope::reserve_parts(1, 1, 0, self.stacks.reservation)?;
+                    self.stacks.value_tracked(ConstructedValue::empty())?;
+                } else {
+                    self.stacks.value(lower_arm_p_zero()?)?;
+                }
+            },
             Proc::PDrop(name) => self.stacks.push(Job::Name(name.as_ref(), env))?,
             // L9-6b CONSTRUCTION arm: a `PFlt*` in VALUE position elaborates to the reflected
             // foreign term via the guest reflector selected by its `tag`. No recursive child:
@@ -2377,13 +2571,67 @@ impl<'a> Drive<'a> {
             },
             // ── A-S4 cast purity: casts lower STRUCTURALLY ───────────────────────────────────
             Proc::CastInt(value) => {
+                let scalar_receipt = if self.source_preparation == SourcePreparation::Checked
+                    && matches!(value.as_ref(), Int::NumLit(_))
+                {
+                    preparation_scope::reserve_parts(2, 1, 0, self.stacks.reservation)?;
+                    Some(
+                        NativeReceipt::construct(construction_receipt::NativeHead::Plain, 0, [])
+                            .map_err(constructed_value::receipt_error)?,
+                    )
+                } else {
+                    None
+                };
                 let lowered = lower_int_value_preparing(
                     value.as_ref(),
                     self.envs.get(env),
                     self.source_preparation,
                     self.stacks.reservation,
                 )?;
-                self.stacks.value(lowered)?;
+                if let Some(receipt) = scalar_receipt {
+                    self.stacks
+                        .value_tracked(ConstructedValue { par: lowered, receipt })?;
+                } else {
+                    self.stacks.value(lowered)?;
+                }
+            },
+            Proc::CastBool(value) if self.source_preparation == SourcePreparation::Checked => {
+                let Bool::BoolLit(literal) = value.as_ref() else {
+                    return Err(RholangAstLowerError::UnsupportedProc(
+                        "non-literal boolean expression (Bool category)",
+                    ));
+                };
+                preparation_scope::reserve_parts(2, 1, 0, self.stacks.reservation)?;
+                self.stacks
+                    .value_tracked(ConstructedValue::boolean(*literal)?)?;
+            },
+            Proc::CastStr(value) if self.source_preparation == SourcePreparation::Checked => {
+                let Str::StringLit(literal) = value.as_ref() else {
+                    return Err(RholangAstLowerError::UnsupportedProc(
+                        "non-literal string expression (Str category)",
+                    ));
+                };
+                preparation_scope::reserve_parts(2, 1, literal.len(), self.stacks.reservation)?;
+                self.stacks
+                    .value_tracked(ConstructedValue::text(literal.clone())?)?;
+            },
+            Proc::CastFloat(value) if self.source_preparation == SourcePreparation::Checked => {
+                let Float::FloatLit(literal) = value.as_ref() else {
+                    return Err(RholangAstLowerError::UnsupportedProc(
+                        "non-literal float expression (Float category)",
+                    ));
+                };
+                preparation_scope::reserve_parts(2, 1, 0, self.stacks.reservation)?;
+                self.stacks
+                    .value_tracked(ConstructedValue::float_bits(literal.get().to_bits())?)?;
+            },
+            Proc::CastBytes(value) if self.source_preparation == SourcePreparation::Checked => {
+                let Bytes::BytesLit(bytes) = value.as_ref() else {
+                    return Err(RholangAstLowerError::UnsupportedProc("non-ground bytes process"));
+                };
+                preparation_scope::reserve_parts(2, 1, bytes.len(), self.stacks.reservation)?;
+                self.stacks
+                    .value_tracked(ConstructedValue::bytes(bytes.clone())?)?;
             },
             Proc::CastBool(value) => self.stacks.value(lower_arm_cast_bool(value)?)?,
             Proc::CastStr(value) => self.stacks.value(lower_arm_cast_str(value)?)?,
@@ -3081,15 +3329,10 @@ impl<'a> Drive<'a> {
     fn combine(&mut self, kont: Kont<'a>) -> Result<(), RholangAstLowerError> {
         match kont {
             Kont::ParFold(n) => {
-                self.stacks.reduce_values(n, |parts| {
-                    append_fold(&mut Target, parts).map_err(RholangAstLowerError::ValueConstruction)
-                })?;
+                self.stacks.append_fold(n)?;
             },
             Kont::ParPair => {
-                self.stacks.reduce_pair(|left, right| {
-                    ValueTarget::append(&mut Target, left, right)
-                        .map_err(RholangAstLowerError::ValueConstruction)
-                })?;
+                self.stacks.append_pair()?;
             },
             Kont::Send { persistent, data_len } => {
                 let payloads = self.stacks.pop_values(data_len)?;

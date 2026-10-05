@@ -65,6 +65,8 @@ macro_rules! rholang_source_profile_rows {
             Proc::CastBigInt => [Arc<BigInt> => I];
             Proc::CastBool => [Arc<Bool> => I];
             Proc::CastStr => [Arc<Str> => I];
+            Proc::CastFloat => [Arc<Float> => I];
+            Proc::CastBytes => [Arc<Bytes> => I];
             Proc::CastList => [Arc<List> => I];
             Proc::CastMap => [Arc<Map> => I];
             Int::NumLit => [i64 => Opaque];
@@ -72,6 +74,8 @@ macro_rules! rholang_source_profile_rows {
             Int::NegInt => [Arc<Int> => I];
             Bool::BoolLit => [bool => Opaque];
             Str::StringLit => [String => Opaque];
+            Float::FloatLit => [mettail_runtime::CanonicalFloat64 => Opaque];
+            Bytes::BytesLit => [Vec<u8> => Opaque];
             List::ListLit => [Vec<Proc> => I];
             Map::MapLit => [HashMapLit<Proc,Proc> => I];
             Proc::MethodCall => [Arc<Proc> => T, String => Opaque, Vec<Proc> => T];

@@ -41,6 +41,40 @@ impl NativeCounts {
             remainder_vars: add(self.remainder_vars, right.remainder_vars)?,
         })
     }
+
+    fn logical_records(self) -> Result<usize, ReceiptError> {
+        [
+            self.heads,
+            self.name_entries,
+            self.descendant_pars,
+            self.receive_binds,
+            self.map_pairs,
+            self.remainder_vars,
+        ]
+        .into_iter()
+        .try_fold(0usize, add)
+    }
+
+    fn variable_bytes(self) -> Result<usize, ReceiptError> {
+        add(self.payload_bytes, self.metadata_bytes)
+    }
+}
+
+/// Logical debit for the existing native append operation. It is not a claim
+/// about allocator capacity, physical RSS or semantic gas.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NativeAppendDebit {
+    pub(crate) records: usize,
+    pub(crate) bytes: usize,
+}
+
+impl NativeAppendDebit {
+    pub(crate) fn checked_add(self, right: Self) -> Result<Self, ReceiptError> {
+        Ok(Self {
+            records: add(self.records, right.records)?,
+            bytes: add(self.bytes, right.bytes)?,
+        })
+    }
 }
 
 /// Constructor-local retained fields, already supplied by their source owner.
@@ -178,11 +212,29 @@ impl NativeReceipt {
     pub(crate) fn append_copy_counts(&self, right: &Self) -> Result<NativeCounts, ReceiptError> {
         self.owned.checked_add(self.owned)?.checked_add(right.owned)
     }
+
+    /// `Par::append` clones the left head vectors, then `concat` clones both
+    /// the temporary left and moved right vectors. The original left, the
+    /// temporary left and the moved right are then dropped. Thus copying and
+    /// cleanup each touch `2 * left + right` owned head content. The 32 fixed
+    /// records cover the root Par, ten vector fields and their concat/control
+    /// operations even when both operands are empty. Outer metadata is passed
+    /// through a clone/take/union and is separate from nested head metadata.
+    pub(crate) fn append_debit(&self, right: &Self) -> Result<NativeAppendDebit, ReceiptError> {
+        let copied = self.append_copy_counts(right)?;
+        let copy_and_cleanup = copied.checked_add(copied)?;
+        let records = add(32, copy_and_cleanup.logical_records()?)?;
+        let outer_bytes = add(self.outer_metadata_bytes, right.outer_metadata_bytes)?;
+        let outer_copy_and_cleanup = add(outer_bytes, outer_bytes)?;
+        let bytes = add(copy_and_cleanup.variable_bytes()?, outer_copy_and_cleanup)?;
+        Ok(NativeAppendDebit { records, bytes })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn leaf(head: NativeHead, outer: usize) -> NativeReceipt {
         NativeReceipt::construct(head, outer, []).expect("finite leaf")
@@ -488,5 +540,95 @@ mod tests {
         assert_eq!(left.append_copy_counts(&right), Ok(NativeCounts::default()));
         assert_eq!(left.append(&NativeReceipt::empty()), Ok(left));
         assert_eq!(NativeReceipt::empty().append(&left), Ok(left));
+    }
+
+    #[test]
+    fn native_append_debit_covers_clone_cleanup_and_both_metadata_layers() {
+        let left = NativeReceipt {
+            outer_metadata_bytes: 2,
+            owned: NativeCounts {
+                heads: 1,
+                payload_bytes: 3,
+                ..NativeCounts::default()
+            },
+        };
+        let right = NativeReceipt {
+            outer_metadata_bytes: 4,
+            owned: NativeCounts {
+                heads: 1,
+                metadata_bytes: 5,
+                ..NativeCounts::default()
+            },
+        };
+        // Clone touches 2 * left + right; cleanup touches that same shape.
+        // The 32 fixed records cover root vector and concat control work.
+        assert_eq!(left.append_debit(&right), Ok(NativeAppendDebit { records: 38, bytes: 34 }));
+    }
+
+    #[test]
+    fn native_append_debit_checks_component_and_aggregate_overflow() {
+        let huge_head = NativeReceipt {
+            outer_metadata_bytes: 0,
+            owned: NativeCounts {
+                heads: usize::MAX,
+                ..NativeCounts::default()
+            },
+        };
+        assert_eq!(huge_head.append_debit(&NativeReceipt::empty()), Err(ReceiptError::Overflow));
+        let separately_finite = NativeCounts {
+            heads: usize::MAX - 1,
+            name_entries: 2,
+            ..NativeCounts::default()
+        };
+        assert_eq!(separately_finite.logical_records(), Err(ReceiptError::Overflow));
+        assert_eq!(
+            NativeAppendDebit { records: usize::MAX, bytes: 0 }
+                .checked_add(NativeAppendDebit { records: 1, bytes: 0 }),
+            Err(ReceiptError::Overflow)
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn append_debit_obeys_the_four_left_two_right_copy_cleanup_law(
+            left_heads in 0usize..1024,
+            right_heads in 0usize..1024,
+            left_payload in 0usize..1024,
+            right_payload in 0usize..1024,
+            left_metadata in 0usize..1024,
+            right_metadata in 0usize..1024,
+            left_outer in 0usize..1024,
+            right_outer in 0usize..1024,
+        ) {
+            let left = NativeReceipt {
+                outer_metadata_bytes: left_outer,
+                owned: NativeCounts {
+                    heads: left_heads,
+                    payload_bytes: left_payload,
+                    metadata_bytes: left_metadata,
+                    ..NativeCounts::default()
+                },
+            };
+            let right = NativeReceipt {
+                outer_metadata_bytes: right_outer,
+                owned: NativeCounts {
+                    heads: right_heads,
+                    payload_bytes: right_payload,
+                    metadata_bytes: right_metadata,
+                    ..NativeCounts::default()
+                },
+            };
+            let debit = left.append_debit(&right).expect("small finite components");
+            prop_assert_eq!(debit.records, 32 + 4 * left_heads + 2 * right_heads);
+            prop_assert_eq!(
+                debit.bytes,
+                4 * (left_payload + left_metadata)
+                    + 2 * (right_payload + right_metadata)
+                    + 2 * (left_outer + right_outer)
+            );
+            let retained = left.append(&right).expect("small retained output");
+            prop_assert_eq!(retained.owned.heads, left_heads + right_heads);
+            prop_assert_eq!(retained.outer_metadata_bytes, left_outer.max(right_outer));
+        }
     }
 }

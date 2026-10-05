@@ -61,6 +61,127 @@ fn cancellation_precedes_initial_storage_reservation() {
 }
 
 #[test]
+fn checked_append_pair_refuses_before_consuming_owned_values() {
+    let deny = Cell::new(false);
+    let last_charge = Cell::new((0, 0));
+    let mut reserve = |work, units| {
+        last_charge.set((work, units));
+        if deny.get() {
+            Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+    let source = Proc::PZero;
+    let mut stacks = Stacks::new_preparing(
+        Job::Proc(&source, ROOT_ENV),
+        &mut reserve,
+        SourcePreparation::Checked,
+    )
+    .expect("checked seed");
+    let left = ConstructedValue::text("left".into()).expect("left receipt");
+    let right = ConstructedValue::integer(7).expect("right receipt");
+    let expected = Target::append(left.par.clone(), right.par.clone());
+    let output_receipt = left.receipt.append(&right.receipt).expect("output receipt");
+    let debit = left
+        .receipt
+        .append_debit(&right.receipt)
+        .expect("append debit");
+    stacks.value_tracked(left).expect("left slot");
+    stacks.value_tracked(right).expect("right slot");
+
+    deny.set(true);
+    assert!(matches!(
+        stacks.append_pair(),
+        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+    ));
+    assert_eq!(
+        last_charge.get(),
+        (debit.records + debit.bytes, debit.records * 4 + debit.bytes)
+    );
+    assert_eq!(stacks.value_count(), 2, "admission precedes the consuming reduction");
+    assert_eq!(stacks.receipts.as_ref().expect("checked receipts").len(), 2);
+
+    deny.set(false);
+    stacks.append_pair().expect("paid append");
+    assert_eq!(stacks.receipts.as_ref().expect("checked receipts")[0], Some(output_receipt));
+    assert_eq!(stacks.pop_value().expect("appended value"), expected);
+    assert!(stacks
+        .receipts
+        .as_ref()
+        .expect("checked receipts")
+        .is_empty());
+}
+
+#[test]
+fn checked_parallel_fold_keeps_source_order_and_the_exact_incremental_receipt() {
+    let source = Proc::PZero;
+    let mut reserve = |_, _| Ok(());
+    let mut stacks = Stacks::new_preparing(
+        Job::Proc(&source, ROOT_ENV),
+        &mut reserve,
+        SourcePreparation::Checked,
+    )
+    .expect("checked seed");
+    let parts = [
+        ConstructedValue::text("left".into()).expect("text"),
+        ConstructedValue::integer(7).expect("integer"),
+        ConstructedValue::boolean(true).expect("boolean"),
+    ];
+    let expected = parts
+        .iter()
+        .fold(Target::empty(), |acc, part| Target::append(acc, part.par.clone()));
+    let expected_receipt = parts.iter().fold(NativeReceipt::empty(), |acc, part| {
+        acc.append(&part.receipt).expect("finite receipt")
+    });
+    for part in parts {
+        stacks.value_tracked(part).expect("paid part");
+    }
+    stacks.append_fold(3).expect("paid fold");
+    assert_eq!(stacks.receipts.as_ref().expect("checked receipts")[0], Some(expected_receipt));
+    assert_eq!(stacks.pop_value().expect("folded value"), expected);
+}
+
+#[test]
+fn checked_parallel_fold_polls_inside_preflight_without_consuming_values() {
+    let calls = Cell::new(0usize);
+    let refuse_at = Cell::new(usize::MAX);
+    let mut reserve = |_, _| {
+        let call = calls.get() + 1;
+        calls.set(call);
+        if call == refuse_at.get() {
+            Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+    let source = Proc::PZero;
+    let mut stacks = Stacks::new_preparing(
+        Job::Proc(&source, ROOT_ENV),
+        &mut reserve,
+        SourcePreparation::Checked,
+    )
+    .expect("checked seed");
+    for value in [1, 2, 3] {
+        stacks
+            .value_tracked(ConstructedValue::integer(value).expect("receipt"))
+            .expect("paid value slot");
+    }
+    refuse_at.set(calls.get() + 2);
+    assert!(matches!(
+        stacks.append_fold(3),
+        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+    ));
+    assert_eq!(stacks.value_count(), 3);
+    assert_eq!(stacks.receipts.as_ref().expect("checked receipts").len(), 3);
+    refuse_at.set(usize::MAX);
+    stacks
+        .append_fold(3)
+        .expect("retry after an unchanged refused preflight");
+    assert_eq!(stacks.value_count(), 1);
+}
+
+#[test]
 fn cancelled_storage_operations_preserve_pending_job_and_ordered_values() {
     let cancelled = Cell::new(false);
     let mut cancel = || cancelled.get();

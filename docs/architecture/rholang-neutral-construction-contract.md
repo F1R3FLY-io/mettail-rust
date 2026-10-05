@@ -797,6 +797,67 @@ These are shared production continuation transitions, not a claim that all
 `Drive` state is already target-generic. The remaining family migrations must
 reuse the same worker and preserve its staged scope/receive/session behavior.
 
+### Incremental receipts on the direct value stack
+
+A *receipt* is a finite, checked summary of one owned native `Par`: its head
+records, variable-length payloads, nested `Par` records, and metadata. It is
+not a second syntax tree, a permission to allocate, an allocator measurement,
+or semantic gas. The checked direct driver keeps an optional receipt at the
+same index as each value in the existing `Worklist<Job, Par>`; the unmetered
+driver allocates no receipt vector. A missing receipt asserts nothing about
+that value. It must never be treated as an empty or zero-cost receipt.
+
+For currently annotated scalar values, parallel composition computes an
+output receipt from the two operand receipts *before* calling the unchanged
+`Par::append`. An append with an unannotated operand keeps the output
+unannotated; it cannot acquire a fabricated exact-size claim. Other constructor
+families must supply their own source-derived receipts before the direct
+preparation budget can account for their append paths completely.
+The closed [Rholang source profile](../../languages/src/rholang/source_profile_policy.rs)
+admits the exact float and bytes literal constructors as term leaves; their
+canonical numeric bits and byte vectors remain typed values, not serialized
+strings or inferred forms.
+
+The installed native `Par::append` clones the left head vectors, then
+concatenates by cloning the temporary left and moved right vectors. The
+original left and those temporary vectors are released. For each owned-size
+axis, let `L` and `R` denote the left and right retained counts. The clone and
+cleanup visits admitted before append are:
+
+```math
+C(L,R)=2L+R,\qquad D(L,R)=2C(L,R)=4L+2R.
+```
+
+The logical debit also includes fixed root-vector/control records and outer
+metadata bytes; those are separate from metadata nested inside a head. A
+source-ordered parallel fold starts with an empty receipt and accumulates every
+step's debit in one pass over the receipt suffix. It does not rescan completed
+`Par`s, allocate a second child roster, or restart the budget at a fold edge.
+Each child visit polls the same preparation reservation before inspecting that
+receipt, so cancellation during preflight leaves the owned value stack intact.
+
+```text
+checked_parallel_pair(left, right):
+    if both retained-shape receipts exist:
+        output_receipt := checked_append_receipt(left, right)
+        debit := checked_native_append_debit(left, right)
+        reserve(debit)                 // before either owned value is consumed
+    output := existing_worklist_reduce_pair(existing_Par_append)
+    attach output_receipt only after a successful reduction
+```
+
+The [annotated-worklist proof](../../formal/rocq/rho_bridge/theories/RholangAnnotatedValueWorklist.v)
+shows that this optional annotation preserves the original ordered pair/fold
+results, that an exact receipt stays exact after append, and that a missing
+receipt stays missing. Its copy-and-cleanup law covers the retained axes, not
+physical stack frames or RSS. The
+[direct receipt implementation](../../rholang-runtime/src/rholang_ast/construction_receipt.rs)
+checks arithmetic and reserves before the existing target append; the
+[checked-driver tests](../../rholang-runtime/src/rholang_ast/preparation_tests.rs)
+exercise refusal before consumption and source-order preservation. Public
+exact/one-under budget and protobuf-byte parity are checked separately in
+[session tests](../../rholang-runtime/src/rholang_ast/session_tests.rs).
+
 `ConstructionGraph` owns nodes and a checked root, including retained unreachable
 nodes. It is only the construction component, not `RholangFrontendArtifactV1`.
 Owned FLT/session descriptors, source admission, occurrence maps, host emission,
