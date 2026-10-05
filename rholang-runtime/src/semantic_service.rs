@@ -400,13 +400,13 @@ impl RholangLanguageRuntime {
                     None
                 };
                 let authored_projection = match category_sort.as_ref() {
-                    Some((sort, false)) => {
+                    Some((sort, _)) => {
                         predicate::select_boolean_projection(&installed, *sort, &mut budget)?
                     },
                     _ => None,
                 };
                 let native_sort = match category_sort {
-                    Some((sort, true)) => Some(sort),
+                    Some((sort, true)) if authored_projection.is_none() => Some(sort),
                     Some((_, false)) if authored_projection.is_none() => {
                         return Err(InstalledSemanticError::InvalidSelection(
                             "predicate category has no installed Boolean projection",

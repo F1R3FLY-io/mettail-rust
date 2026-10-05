@@ -199,6 +199,57 @@ fn where_uses_authored_boolean_projection_without_an_action_descriptor() {
 }
 
 #[test]
+fn where_authored_projection_precedes_native_boolean_carrier_fallback() {
+    let source = r#"
+        Module BooleanGuestProjection {
+          Theory Predicate() {
+            Types { noadmit Flag = bool; }
+            Terms {
+              Yes . |- "yes" : Flag;
+              No . |- "no" : Flag;
+            }
+            Rewrites {
+              projection Invert : Flag ~> host::Bool {
+                YesIsFalse : (Yes) ~> false;
+                NoIsTrue : (No) ~> true;
+              }
+            }
+          }
+          theory Predicate()
+        }
+    "#;
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let module = mettail_elab::parse::parse_module(source).expect("Boolean guest DDL parses");
+    let token = runtime
+        .install(InstallCandidate::Ddl(ParsedDdl::Module(module)))
+        .expect("Boolean guest projection installs");
+    for (text, expected) in [("yes", Sat3::Unsat), ("no", Sat3::Sat)] {
+        let input = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text(text.into())],
+                &[],
+                Some("Flag"),
+                &BTreeMap::new(),
+            )
+            .expect("exact Boolean guest term");
+        let evidence = runtime.prepare_where_predicate(
+            &token,
+            &input,
+            "Flag",
+            0,
+            0,
+            SemanticServiceLimits::default(),
+            || false,
+        );
+        assert_eq!(evidence.verdict(), expected, "{text}: {:?}", evidence.error());
+    }
+}
+
+#[test]
 fn projected_guest_publication_is_refused_after_host_profile_revocation() {
     let source = r#"
         Module HostRevocation {

@@ -136,7 +136,8 @@ pub(super) fn select_projected_observation<C: FnMut() -> bool>(
 
 /// Resolve the exact structural FLT category, then classify whether its
 /// checked grammar and semantic-image carriers are both native Boolean.
-/// Non-Boolean categories may still have an authored Boolean projection.
+/// Either kind of category may also have an authored Boolean projection;
+/// carrier classification alone never overrides a selected relation.
 pub(super) fn predicate_category_sort<C: FnMut() -> bool>(
     installed: &InstalledLanguage,
     category: &str,
