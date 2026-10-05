@@ -318,6 +318,49 @@ fn checked_scalar_parallel_composition_preserves_bytes_at_exact_resource_limits(
 }
 
 #[test]
+fn checked_nested_list_construction_preserves_public_bytes_and_exact_limits() {
+    use mettail_rholang_codegen::ReflectedCodecBudget;
+
+    let source = Proc::CastList(Arc::new(List::ListLit(vec![
+        integer(7),
+        Proc::CastList(Arc::new(List::ListLit(vec![
+            Proc::CastStr(Arc::new(Str::StringLit("nested".into()))),
+            Proc::CastBool(Arc::new(Bool::BoolLit(false))),
+        ]))),
+    ])));
+    let reference = lower_public_body(&source, BoundEnv::new()).expect("existing lowering");
+    let mut work = 0;
+    let mut cancel = || false;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 10_000_000, &mut cancel);
+    let actual = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget)
+        .expect("checked nested list");
+    assert_eq!(actual.par.encode_to_vec(), reference.par.encode_to_vec());
+    let exact_work = budget.work_used();
+    let exact_units = 10_000_000 - budget.remaining_bytes();
+    assert!(exact_work > 0 && exact_units > 0);
+    for (work_limit, unit_limit, accepted) in [
+        (0, 0, false),
+        (exact_work - 1, exact_units, false),
+        (exact_work, exact_units - 1, false),
+        (exact_work, exact_units, true),
+    ] {
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, work_limit, unit_limit, &mut cancel);
+        let result = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget);
+        if accepted {
+            assert_eq!(
+                result.expect("exact list budget").par.encode_to_vec(),
+                reference.par.encode_to_vec()
+            );
+        } else {
+            assert!(result.is_err(), "insufficient list budget must not publish");
+        }
+        assert_idle();
+    }
+}
+
+#[test]
 fn public_whole_body_lifts_folds_and_returns_the_exact_direct_output() {
     let proc = fold(integer(5));
     let reference = with_owned_outputs(|owner| owner.drive(Seed::Body(&proc), &BoundEnv::new()))

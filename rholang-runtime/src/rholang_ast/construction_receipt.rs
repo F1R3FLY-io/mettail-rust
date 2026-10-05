@@ -77,6 +77,39 @@ impl NativeAppendDebit {
     }
 }
 
+/// Checked metadata debit for the existing left-to-right `locally_free_union`
+/// fold. `work` excludes `bytes`, because `reserve_parts` adds retained-byte
+/// work to the requested work dimension. Each step has the source-derived
+/// `child + 4 * max(current, child)` logical work and
+/// `child + max(current, child)` temporary byte units proved in
+/// RholangBoundMetadata.v. It does not walk any completed native `Par`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NativeMetadataFoldDebit {
+    pub(crate) maximum: usize,
+    pub(crate) work: usize,
+    pub(crate) bytes: usize,
+}
+
+impl NativeMetadataFoldDebit {
+    pub(crate) fn push(&mut self, child_bytes: usize) -> Result<(), ReceiptError> {
+        let next = self.maximum.max(child_bytes);
+        let step_work = next.checked_mul(3).ok_or(ReceiptError::Overflow)?;
+        let step_bytes = add(child_bytes, next)?;
+        self.work = add(self.work, step_work)?;
+        self.bytes = add(self.bytes, step_bytes)?;
+        self.maximum = next;
+        Ok(())
+    }
+
+    /// EList/EMap/EMethod preserve an inner metadata copy as well as the
+    /// enclosing Par summary. The last clone is admitted separately from the
+    /// fold's temporary union buffers.
+    pub(crate) fn copy_inner_summary(&mut self) -> Result<(), ReceiptError> {
+        self.bytes = add(self.bytes, self.maximum)?;
+        Ok(())
+    }
+}
+
 /// Constructor-local retained fields, already supplied by their source owner.
 /// Resource-equivalent constructors share a variant: Plain covers fixed-size
 /// scalar, Boolean, variable, unary/binary and connective heads; Payload covers text
@@ -564,6 +597,51 @@ mod tests {
         // Clone touches 2 * left + right; cleanup touches that same shape.
         // The 32 fixed records cover root vector and concat control work.
         assert_eq!(left.append_debit(&right), Ok(NativeAppendDebit { records: 38, bytes: 34 }));
+    }
+
+    #[test]
+    fn metadata_fold_debit_covers_ordered_union_passes_and_inner_copy() {
+        let mut fold = NativeMetadataFoldDebit::default();
+        for len in [2, 5, 1] {
+            fold.push(len).expect("finite metadata pass");
+        }
+        // The union lengths are 2, 5, 5. `reserve_parts` adds the byte units
+        // to work, yielding child + 4 * union length at each step.
+        assert_eq!(fold.maximum, 5);
+        assert_eq!(fold.work, 3 * (2 + 5 + 5));
+        assert_eq!(fold.bytes, (2 + 2) + (5 + 5) + (1 + 5));
+        fold.copy_inner_summary()
+            .expect("finite inner metadata copy");
+        assert_eq!(fold.bytes, 25);
+        assert_eq!(fold.work + fold.bytes, (2 + 8) + (5 + 20) + (1 + 20) + 5);
+    }
+
+    #[test]
+    fn metadata_fold_debit_rejects_arithmetic_overflow_without_changing_state() {
+        let mut fold = NativeMetadataFoldDebit::default();
+        assert_eq!(fold.push(usize::MAX), Err(ReceiptError::Overflow));
+        assert_eq!(fold, NativeMetadataFoldDebit::default());
+    }
+
+    proptest! {
+        #[test]
+        fn metadata_fold_matches_the_checked_collection_step_law(
+            lengths in proptest::collection::vec(0usize..1024, 0..64),
+        ) {
+            let mut fold = NativeMetadataFoldDebit::default();
+            let mut maximum = 0usize;
+            let mut expected_work = 0usize;
+            let mut expected_units = 0usize;
+            for child in lengths {
+                maximum = maximum.max(child);
+                expected_work += child + 4 * maximum;
+                expected_units += child + maximum;
+                fold.push(child).expect("bounded generated lengths");
+            }
+            prop_assert_eq!(fold.maximum, maximum);
+            prop_assert_eq!(fold.work + fold.bytes, expected_work);
+            prop_assert_eq!(fold.bytes, expected_units);
+        }
     }
 
     #[test]

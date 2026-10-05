@@ -182,6 +182,62 @@ fn checked_parallel_fold_polls_inside_preflight_without_consuming_values() {
 }
 
 #[test]
+fn checked_list_metadata_refuses_before_consumption_and_preserves_native_output() {
+    let calls = Cell::new(0usize);
+    let refuse_at = Cell::new(usize::MAX);
+    let last_charge = Cell::new((0usize, 0usize));
+    let mut reserve = |work, units| {
+        let call = calls.get() + 1;
+        calls.set(call);
+        last_charge.set((work, units));
+        if call == refuse_at.get() {
+            Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+    let source = Proc::PZero;
+    let mut stacks = Stacks::new_preparing(
+        Job::Proc(&source, ROOT_ENV),
+        &mut reserve,
+        SourcePreparation::Checked,
+    )
+    .expect("checked seed");
+    let left = ConstructedValue::bound(
+        mettail_rholang_frontend::construction::CheckedBoundReference::new(18, 17)
+            .expect("bound reference"),
+    )
+    .expect("left receipt");
+    let right = ConstructedValue::text("right".into()).expect("right receipt");
+    let children = vec![left.par.clone(), right.par.clone()];
+    let summary = locally_free_union(&children);
+    let expected = new_elist_par(children, summary.clone(), false, None, summary, false);
+    let expected_receipt = NativeReceipt::construct(
+        NativeHead::List { remainder: false },
+        18,
+        [&left.receipt, &right.receipt],
+    )
+    .expect("finite list receipt");
+    stacks.value_tracked(left).expect("left slot");
+    stacks.value_tracked(right).expect("right slot");
+
+    refuse_at.set(calls.get() + 4);
+    assert!(matches!(
+        stacks.list_like(2),
+        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+    ));
+    // Two metadata unions of maximum length 18 and the final inner copy.
+    assert_eq!(last_charge.get(), (108 + 72, 4 * 4 + 72));
+    assert_eq!(stacks.value_count(), 2);
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack").len(), 2);
+
+    refuse_at.set(usize::MAX);
+    stacks.list_like(2).expect("paid list construction");
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack")[0], Some(expected_receipt));
+    assert_eq!(stacks.pop_value().expect("list"), expected);
+}
+
+#[test]
 fn cancelled_storage_operations_preserve_pending_job_and_ordered_values() {
     let cancelled = Cell::new(false);
     let mut cancel = || cancelled.get();

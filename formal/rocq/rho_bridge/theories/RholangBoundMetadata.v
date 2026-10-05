@@ -100,6 +100,63 @@ Theorem append_pass_debits_cover_copy_initialization_fill_and_comparison : foral
   passes_units (append_passes lhs rhs) = lhs + Nat.max lhs rhs.
 Proof. intros; unfold append_passes, passes_work, passes_units; cbn; lia. Qed.
 
+(** A list/method metadata fold clones the next child's bytes, moves the
+    accumulator into [union], initializes and fills the result, then releases
+    the old accumulator and cloned child. The existing append-pass model pays
+    clone/union work; one further comparison-sized pass conservatively covers
+    both releases because each input length is at most the result maximum.
+    This is logical byte work, not physical allocator accounting. *)
+Definition collection_step_passes (current child : nat) :=
+  append_passes child current ++ [CompareExisting (Nat.max current child)].
+
+Theorem collection_step_passes_cover_metadata_clone_union_and_cleanup :
+  forall current child,
+  let next := Nat.max current child in
+  passes_work (collection_step_passes current child) = child + 4 * next /\
+  passes_units (collection_step_passes current child) = child + next /\
+  2 * child + 2 * next + current <= passes_work (collection_step_passes current child).
+Proof.
+  intros current child next.
+  unfold collection_step_passes, append_passes, passes_work, passes_units.
+  cbn [app fold_right pass_work pass_units].
+  assert (current <= Nat.max current child) by apply Nat.le_max_l.
+  assert (child <= Nat.max current child) by apply Nat.le_max_r.
+  subst next. repeat split; lia.
+Qed.
+
+(** Unary expression assembly copies only the operand's outer metadata.
+    Binary assembly clones both operand summaries before [union]; the extra
+    comparison-sized pass covers release of the two cloned inputs. The
+    method constructor uses the unary pass for its receiver, then the
+    collection step for each argument, followed by one inner-summary copy. *)
+Definition unary_constructor_passes (operand : nat) := [CopyAllocated operand].
+Definition binary_constructor_passes (lhs rhs : nat) :=
+  [CopyAllocated rhs] ++ append_passes lhs rhs ++
+  [CompareExisting (Nat.max lhs rhs)].
+
+Theorem unary_constructor_passes_cover_the_single_clone : forall operand,
+  passes_work (unary_constructor_passes operand) = operand /\
+  passes_units (unary_constructor_passes operand) = operand.
+Proof.
+  intros operand; unfold unary_constructor_passes, passes_work, passes_units.
+  cbn [fold_right pass_work pass_units]. split; lia.
+Qed.
+
+Theorem binary_constructor_passes_cover_both_clones_union_and_cleanup :
+  forall lhs rhs,
+  let result := Nat.max lhs rhs in
+  passes_work (binary_constructor_passes lhs rhs) = lhs + rhs + 4 * result /\
+  passes_units (binary_constructor_passes lhs rhs) = lhs + rhs + result /\
+  2 * (lhs + rhs) + 2 * result <= passes_work (binary_constructor_passes lhs rhs).
+Proof.
+  intros lhs rhs result.
+  unfold binary_constructor_passes, append_passes, passes_work, passes_units.
+  cbn [app fold_right pass_work pass_units].
+  assert (lhs <= Nat.max lhs rhs) by apply Nat.le_max_l.
+  assert (rhs <= Nat.max lhs rhs) by apply Nat.le_max_r.
+  subst result. repeat split; lia.
+Qed.
+
 Definition reserve_with_metadata available payload passes :=
   reserve available (payload_work payload + passes_work passes)
     (payload_units payload + passes_units passes).
@@ -132,6 +189,9 @@ Print Assumptions cached_metadata_length_is_exact.
 Print Assumptions graph_denotation_has_canonical_outer_metadata.
 Print Assumptions bound_pass_debits_cover_both_allocations_and_comparison.
 Print Assumptions append_pass_debits_cover_copy_initialization_fill_and_comparison.
+Print Assumptions collection_step_passes_cover_metadata_clone_union_and_cleanup.
+Print Assumptions unary_constructor_passes_cover_the_single_clone.
+Print Assumptions binary_constructor_passes_cover_both_clones_union_and_cleanup.
 Print Assumptions combined_payload_and_metadata_reservation_is_exact.
 Print Assumptions combined_reservation_requires_both_complete_dimensions.
 Print Assumptions reused_bound_metadata_does_not_double_the_retained_length.

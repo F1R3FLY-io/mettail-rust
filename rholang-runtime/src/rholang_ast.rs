@@ -66,7 +66,7 @@ use target::DirectNodeTarget as Target;
 pub(crate) mod constructed_value;
 pub(crate) mod construction_receipt;
 use constructed_value::ConstructedValue;
-use construction_receipt::{NativeAppendDebit, NativeReceipt};
+use construction_receipt::{NativeAppendDebit, NativeHead, NativeMetadataFoldDebit, NativeReceipt};
 
 mod graph;
 pub use graph::{interpret_construction_graph, GraphInterpretationError};
@@ -2073,6 +2073,72 @@ impl<'a> Stacks<'a> {
         Ok(())
     }
 
+    /// Reuse the existing consuming worklist transition and native EList
+    /// helper for both term and pattern lists. Checked preparation inspects
+    /// only the already-aligned receipt suffix, then admits metadata passes
+    /// and output records before `reduce_values` consumes any owned `Par`.
+    fn list_like(&mut self, count: usize) -> Result<(), RholangAstLowerError> {
+        let output_receipt = if let Some(receipts) = &self.receipts {
+            let start = receipts.len().checked_sub(count);
+            let mut fold = NativeMetadataFoldDebit::default();
+            let mut complete = true;
+            if let Some(start) = start {
+                for child in &receipts[start..] {
+                    preparation_scope::reserve_parts(1, 0, 0, self.reservation)?;
+                    match child {
+                        Some(child) => fold
+                            .push(child.outer_metadata_bytes)
+                            .map_err(constructed_value::receipt_error)?,
+                        None => complete = false,
+                    }
+                }
+            } else {
+                complete = false;
+            }
+            if complete {
+                // `NativeReceipt::construct` makes one more linear pass over
+                // the aligned annotations. Admit that pass before it runs.
+                preparation_scope::reserve_parts(count, 0, 0, self.reservation)?;
+                let output = NativeReceipt::construct(
+                    NativeHead::List { remainder: false },
+                    fold.maximum,
+                    receipts[start.expect("complete suffix")..]
+                        .iter()
+                        .map(|item| item.as_ref().expect("complete receipt suffix")),
+                )
+                .map_err(constructed_value::receipt_error)?;
+                fold.copy_inner_summary()
+                    .map_err(constructed_value::receipt_error)?;
+                // Root Par, Expr, EList and their control records are new;
+                // the child Pars themselves are moved by the unchanged helper.
+                preparation_scope::reserve_parts(fold.work, 4, fold.bytes, self.reservation)?;
+                Some(output)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.reduce_values(count, |items| {
+            let locally_free = locally_free_union(&items);
+            let connective_used = any_connective_used(&items);
+            Ok::<Par, RholangAstLowerError>(new_elist_par(
+                items,
+                locally_free.clone(),
+                connective_used,
+                None,
+                locally_free,
+                connective_used,
+            ))
+        })?;
+        if let Some(receipts) = &mut self.receipts {
+            *receipts
+                .last_mut()
+                .expect("successful list leaves one result") = output_receipt;
+        }
+        Ok(())
+    }
+
     /// ★ **The deficit invariant**, asserted at the head of the drive loop.
     ///
     /// ```math
@@ -3409,17 +3475,7 @@ impl<'a> Drive<'a> {
                 self.stacks.value(folded)?;
             },
             Kont::ListLit(n) => {
-                let items = self.stacks.pop_values(n)?;
-                let locally_free = locally_free_union(&items);
-                let connective_used = any_connective_used(&items);
-                self.stacks.value(new_elist_par(
-                    items,
-                    locally_free.clone(),
-                    connective_used,
-                    None,
-                    locally_free,
-                    connective_used,
-                ))?;
+                self.stacks.list_like(n)?;
             },
             Kont::Ddl(plan) => {
                 let process_values = self.stacks.pop_values(plan.process_jobs().len())?;
@@ -3679,17 +3735,7 @@ impl<'a> Drive<'a> {
                 return self.assemble_receive(state, Some(condition));
             },
             Kont::PatListLit(n) => {
-                let item_pars = self.stacks.pop_values(n)?;
-                let locally_free = locally_free_union(&item_pars);
-                let connective_used = item_pars.iter().any(|item| item.connective_used);
-                self.stacks.value(new_elist_par(
-                    item_pars,
-                    locally_free.clone(),
-                    connective_used,
-                    None,
-                    locally_free,
-                    connective_used,
-                ))?;
+                self.stacks.list_like(n)?;
             },
             Kont::PatSetLit(n) => {
                 let elements = self.stacks.pop_values(n)?;

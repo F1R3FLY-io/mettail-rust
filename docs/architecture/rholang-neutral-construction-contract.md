@@ -861,6 +861,32 @@ zero/exact/one-under budget and protobuf-byte parity are checked separately in
 check operand-asymmetric copy debits for a 20,000-level retained value without
 recursively traversing that value to calculate the debit.
 
+Term and pattern lists now share the existing consuming `Worklist` reduction
+and native `new_elist_par` constructor. On the checked path, the aligned child
+receipts supply the metadata lengths for a source-ordered preflight. If the
+current accumulator has `a` metadata bytes and the next child has `c`, the
+native `union` produces `m = max(a, c)` bytes. The
+[metadata-pass model](../../formal/rocq/rho_bridge/theories/RholangBoundMetadata.v)
+proves that the preflight's logical work and temporary byte units per child
+cover the clone, union and cleanup passes:
+
+```math
+m=\max(a,c),\qquad W=c+4m,\qquad U=c+m.
+```
+
+The final inner-list metadata clone costs another `m` work and byte units.
+The output receipt embeds the children in their original order and records
+both the inner metadata and enclosing `Par` summary. Its retained shape is
+exact when every child receipt is exact; if a child has only a conservative
+bound, the list receipt is likewise a bound. If a child has no receipt, no
+list receipt is fabricated. This is not a second list representation or a
+post-construction scan of child `Par`s. The
+[checked list tests](../../rholang-runtime/src/rholang_ast/preparation_tests.rs)
+exercise refusal before consumption; public tests cover nested-list wire-byte
+parity and zero/exact/one-under budgets. Set/Map canonicalization has a
+separate selection-and-normalization correspondence obligation and is not
+claimed by this list rule.
+
 `ConstructionGraph` owns nodes and a checked root, including retained unreachable
 nodes. It is only the construction component, not `RholangFrontendArtifactV1`.
 Owned FLT/session descriptors, source admission, occurrence maps, host emission,
