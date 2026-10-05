@@ -435,6 +435,70 @@ Proof.
   destruct (filter (host_request_matches request) registry); reflexivity.
 Qed.
 
+(** A where guard chooses from already checked guest-to-host Boolean relations.
+    The carrier flag records only whether the old direct-native route is
+    available; it cannot override an authored relation.  Admission, rights,
+    exhaustive normalization, and host-profile validity are independent
+    premises checked before the resulting route may publish evidence. *)
+Inductive GuardProjectionBody := GuardRules | GuardCarrier.
+
+Record GuardProjection := guard_projection {
+  guard_projection_id : nat;
+  guard_projection_body : GuardProjectionBody
+}.
+
+Inductive GuardBooleanRoute :=
+| UseGuardRules (projection_id : nat)
+| UseGuardCarrier (projection_id : nat)
+| UseLegacyNative
+| RefuseMissingRelation
+| RefuseAmbiguousRelation.
+
+Definition choose_guard_boolean_route (candidates : list GuardProjection)
+           (legacy_native_exact : bool) : GuardBooleanRoute :=
+  match candidates with
+  | [] => if legacy_native_exact then UseLegacyNative else RefuseMissingRelation
+  | [candidate] =>
+      match guard_projection_body candidate with
+      | GuardRules => UseGuardRules (guard_projection_id candidate)
+      | GuardCarrier => UseGuardCarrier (guard_projection_id candidate)
+      end
+  | _ :: _ :: _ => RefuseAmbiguousRelation
+  end.
+
+Theorem authored_rules_precede_legacy_native : forall id native_exact,
+  choose_guard_boolean_route [guard_projection id GuardRules] native_exact =
+  UseGuardRules id.
+Proof. reflexivity. Qed.
+
+Theorem authored_carrier_precedes_legacy_native : forall id native_exact,
+  choose_guard_boolean_route [guard_projection id GuardCarrier] native_exact =
+  UseGuardCarrier id.
+Proof. reflexivity. Qed.
+
+Theorem legacy_native_is_used_only_without_an_authored_relation :
+  forall candidates native_exact,
+    choose_guard_boolean_route candidates native_exact = UseLegacyNative ->
+    candidates = [] /\ native_exact = true.
+Proof.
+  intros candidates native_exact Selected.
+  destruct candidates as [|first [|second rest]]; simpl in Selected;
+    try discriminate.
+  - destruct native_exact; [now split|discriminate].
+  - destruct first as [id [|]]; discriminate.
+Qed.
+
+Theorem overlapping_authored_relations_never_fall_back :
+  forall first second rest native_exact,
+    choose_guard_boolean_route (first :: second :: rest) native_exact =
+    RefuseAmbiguousRelation.
+Proof. reflexivity. Qed.
+
+Print Assumptions authored_rules_precede_legacy_native.
+Print Assumptions authored_carrier_precedes_legacy_native.
+Print Assumptions legacy_native_is_used_only_without_an_authored_relation.
+Print Assumptions overlapping_authored_relations_never_fall_back.
+
 End TypedProjectionRelation.
 
 (** The generated DDL grammar admits a remainder only as the final direct
