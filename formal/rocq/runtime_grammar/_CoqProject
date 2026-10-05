@@ -139,6 +139,7 @@ theories/RegexGsltApplicationMachine.v
 theories/WherePredicateCommit.v
 theories/NativeBooleanPredicate.v
 theories/TypedProjectionRelation.v
+theories/IterativeDropDispatch.v
 theories/ExactStringCarrierProjection.v
 theories/DerivedSExprProjection.v
 theories/HostProfileLifecycle.v

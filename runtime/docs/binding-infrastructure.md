@@ -236,6 +236,31 @@ which constructors its productivity analysis selected, preserving dependency
 order and repeated fields. Resource projection must reuse the rendering choices;
 a resource calculation must not select a different, cheaper dummy.
 
+The outer destructor uses one heap worklist. Its category dispatcher selects a
+non-inlined helper for the value's constructor; that helper runs the original
+field-extraction body and pushes children in the same order. The worklist then
+pops tasks in reverse push order. In pseudocode, the changed boundary is:
+
+```text
+dispatch(value, pending):
+    constructor := discriminant(value)
+    extract_constructor[constructor](value, pending)
+```
+
+No helper recursively invokes another helper: the existing outer worklist
+performs the next step. The split is necessary even though that worklist was
+already iterative. For the generated Rholang `Proc` type, the former single
+match compiled into an approximately 109 KiB stack frame and overflowed a
+128 KiB thread when dropping a successfully opened wide scope. In the checked
+build, the new dispatcher uses a 24-byte frame; the exact deep and wide
+[small-stack regressions](../../rholang-runtime/src/rholang_ast/preparation_scope_tests.rs)
+both pass. The
+[dispatch model](../../formal/rocq/runtime_grammar/theories/IterativeDropDispatch.v)
+proves exact child-push order and invalid-tag behavior, plus a frame bound
+conditional on a bound for each separately compiled helper. It does not prove
+physical machine-code frame sizes; the generated-code inspection and runtime
+small-stack tests supply that separate evidence.
+
 The [replacement-receipt model](../../formal/rocq/rho_bridge/theories/GeneratedDummyCleanupReservation.v)
 separates five event counts for each selected finite recipe:
 

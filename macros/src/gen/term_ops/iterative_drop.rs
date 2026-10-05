@@ -41,8 +41,8 @@
 //! - `DROP_TASK_POOL`: thread-local `Cell<Vec<DropTask>>` for zero-allocation
 //!   steady-state operation
 //! - `dummy_Cat() -> Cat`: returns the cheapest possible leaf value per category
-//! - `push_drop_children_Cat(&mut Cat, &mut Vec<DropTask>)`: extracts boxed
-//!   children from a category value and pushes them as drop tasks
+//! - `push_drop_children_Cat(&mut Cat, &mut Vec<DropTask>)`: dispatches to a
+//!   non-inlined, per-constructor extractor that pushes children as drop tasks
 //! - `impl Drop for Cat`: orchestrates the iterative drop for each category
 
 use crate::gen::generate_var_label;
@@ -410,8 +410,36 @@ mod dummy_plan_tests {
             ("singleton", crate::gen::singleton_collection_language_for_tests()),
         ] {
             let expansion = generate_iterative_drop(&language);
-            syn::parse2::<syn::File>(expansion.clone())
+            let parsed = syn::parse2::<syn::File>(expansion.clone())
                 .expect("Drop expansion parses as Rust items");
+            for category in &language.types {
+                let prefix =
+                    format!("push_drop_children_{}_arm_", category.name.to_string().to_lowercase());
+                let helpers: Vec<_> = parsed
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        syn::Item::Fn(function)
+                            if function.sig.ident.to_string().starts_with(&prefix) =>
+                        {
+                            Some(function)
+                        },
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    helpers.len(),
+                    collect_category_variants(&category.name, &language)
+                        .iter()
+                        .filter(|variant| !matches!(variant, VariantKind::Refused { .. }))
+                        .count(),
+                    "{name}: every admitted constructor has one isolated drop helper"
+                );
+                assert!(helpers.iter().all(|helper| helper.attrs.iter().any(|attribute| {
+                    attribute.path().is_ident("inline")
+                        && matches!(&attribute.meta, syn::Meta::List(list) if list.tokens.to_string() == "never")
+                })));
+            }
             if let Ok(phase) = std::env::var("METTAIL_DROP_EXPANSION_PHASE") {
                 assert!(matches!(phase.as_str(), "before" | "after"));
                 let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -631,20 +659,50 @@ fn generate_push_children_functions(language: &LanguageDef) -> TokenStream {
 fn generate_push_children_fn(category: &Ident, language: &LanguageDef) -> TokenStream {
     let fn_name = format_ident!("push_drop_children_{}", category.to_string().to_lowercase());
     let variants = collect_category_variants(category, language);
-
-    let match_arms: Vec<TokenStream> = variants
-        .iter()
-        .map(|v| generate_push_children_arm(category, v, language))
-        .collect();
+    let mut helpers = Vec::with_capacity(variants.len());
+    let mut dispatch_arms = Vec::with_capacity(variants.len());
+    for (index, variant) in variants.iter().enumerate() {
+        let arm = generate_push_children_arm(category, variant, language);
+        if matches!(variant, VariantKind::Refused { .. }) {
+            dispatch_arms.push(arm);
+            continue;
+        }
+        let helper = format_ident!("{}_arm_{}", fn_name, index);
+        let label = variant.label();
+        helpers.push(quote! {
+            // Keep the constructor-local extraction frame separate from the
+            // category dispatcher. A single giant match made rustc reserve
+            // the combined frame for every constructor on each drop.
+            #[inline(never)]
+            #[allow(dead_code, unused_variables)]
+            fn #helper(value: &mut #category, stack: &mut Vec<DropTask>) {
+                match value {
+                    #arm,
+                    _ => unreachable!("iterative drop dispatched the wrong constructor"),
+                }
+            }
+        });
+        dispatch_arms.push(match variant {
+            VariantKind::Nullary { .. } => quote! {
+                #category::#label => #helper(value, stack),
+            },
+            _ => quote! {
+                #category::#label(..) => #helper(value, stack),
+            },
+        });
+    }
 
     quote! {
+        #(#helpers)*
+
         /// Extract `Box<T>` children from a category value, replacing them
-        /// with dummy values, and push the extracted children as `DropTask`s
-        /// onto the work stack.
+        /// with dummy values, and push them as `DropTask`s onto the work stack.
+        /// Per-constructor helpers keep compiled stack frames independent of
+        /// the number of constructors in a category.
         #[allow(dead_code, unused_variables)]
         fn #fn_name(value: &mut #category, stack: &mut Vec<DropTask>) {
             match value {
-                #(#match_arms)*
+                #(#dispatch_arms)*
             }
         }
     }
