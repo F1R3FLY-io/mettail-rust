@@ -1,9 +1,10 @@
 //! Checked installed one-step rewrites for lookahead's existing breadth-first search.
 //!
-//! The first supported slice is one closed FLT at the subject root.  Host and
-//! guest state remain separate: a rewrite changes only the checked guest slot,
-//! never a tuplespace snapshot.  Any mixed configuration is refused until an
-//! exact path-aware composite reifier can retain both halves without guessing.
+//! The admitted slice is one closed root FLT or one exact top-level FLT beside
+//! ordinary host processes. Host and guest state remain separate: a rewrite
+//! changes only the checked guest slot, never a tuplespace snapshot. Mixed
+//! states use the checked top-level split and composite reifier; nested guests
+//! and ambiguous locators are refused.
 
 use std::sync::Arc;
 
@@ -557,7 +558,7 @@ mod tests {
     use crypto::rust::hash::blake2b512_random::Blake2b512Random;
     use mettail_grammar_core::RuntimeTemplatePiece;
 
-    use crate::speculation::search::Lookahead;
+    use crate::speculation::search::{Explorer, Lookahead};
     use crate::speculation::service::{LeafProjection, LookaheadRequest, LookaheadService};
     use crate::speculation::TraceStepIdentity;
 
@@ -590,6 +591,59 @@ mod tests {
             false,
         );
         send.append(receive)
+    }
+
+    fn mixed_regex_fixture(
+        host_value: i64,
+    ) -> (Arc<RholangLanguageRuntime>, Par, Par, AdmittedLookaheadBinding) {
+        let (runtime, token, installed) =
+            crate::language_install::tests::installed_flt_adapter_fixture();
+        let runtime = Arc::new(runtime);
+        let guest = runtime
+            .construct_template(
+                &token,
+                &[RuntimeTemplatePiece::Text("a+".into())],
+                &[],
+                Some("Pattern"),
+                &BTreeMap::new(),
+            )
+            .expect("installed Regex FLT");
+        let handle = runtime
+            .resolve(&token, LanguageRight::Reduce)
+            .expect("Reduce grant");
+        let mut work = 0;
+        let mut cancelled = || false;
+        let mut budget =
+            ReflectedCodecBudget::new(&mut work, 10_000_000, 10_000_000, &mut cancelled);
+        let adapter = InstalledFltAdapter::new(&installed, &mut budget).expect("checked adapter");
+        let (category, sort) = adapter
+            .select_category("Pattern", &mut budget)
+            .expect("Pattern");
+        let input = adapter
+            .to_kernel(
+                &guest,
+                category,
+                SemanticInputLimits {
+                    work: 1_000_000,
+                    nodes: 10_000,
+                    bytes: 1_000_000,
+                },
+                &mut budget,
+            )
+            .expect("checked guest term");
+        drop(budget);
+        let subject = guest.append(one_host_comm(host_value));
+        let binding = AdmittedLookaheadBinding {
+            path: Vec::new(),
+            top_level_expr: Some(0),
+            handle,
+            installed,
+            sort,
+            category,
+            context: 0,
+            input,
+        };
+        (runtime, token, subject, binding)
     }
 
     #[test]
@@ -929,57 +983,12 @@ mod tests {
 
     #[tokio::test]
     async fn top_level_installed_guest_and_host_comm_share_one_every_trace_search() {
-        let (runtime, token, installed) =
-            crate::language_install::tests::installed_flt_adapter_fixture();
-        let guest = runtime
-            .construct_template(
-                &token,
-                &[RuntimeTemplatePiece::Text("a+".into())],
-                &[],
-                Some("Pattern"),
-                &BTreeMap::new(),
-            )
-            .expect("installed Regex FLT");
-        let handle = runtime
-            .resolve(&token, LanguageRight::Reduce)
-            .expect("Reduce grant");
-        let mut work = 0;
-        let mut cancelled = || false;
-        let mut budget =
-            ReflectedCodecBudget::new(&mut work, 10_000_000, 10_000_000, &mut cancelled);
-        let adapter = InstalledFltAdapter::new(&installed, &mut budget).expect("checked adapter");
-        let (category, sort) = adapter
-            .select_category("Pattern", &mut budget)
-            .expect("Pattern");
-        let input = adapter
-            .to_kernel(
-                &guest,
-                category,
-                SemanticInputLimits {
-                    work: 1_000_000,
-                    nodes: 10_000,
-                    bytes: 1_000_000,
-                },
-                &mut budget,
-            )
-            .expect("checked guest term");
-        drop(budget);
-        let subject = guest.append(one_host_comm(1));
-        let binding = AdmittedLookaheadBinding {
-            path: Vec::new(),
-            top_level_expr: Some(0),
-            handle,
-            installed,
-            sort,
-            category,
-            context: 0,
-            input,
-        };
+        let (runtime, _, subject, binding) = mixed_regex_fixture(1);
         let host = RuntimeBudget::new(Cost::create(10_000_000, "mixed lookahead test"));
         let response = LookaheadService::serve(
             LookaheadRequest::new(subject.clone(), Lookahead::Steps(2))
                 .with_projection(LeafProjection::Configuration)
-                .with_installed_bindings(Arc::new(runtime), vec![binding]),
+                .with_installed_bindings(runtime, vec![binding]),
             Blake2b512Random::create_from_length(128),
             &host,
         )
@@ -1016,6 +1025,50 @@ mod tests {
             trace.as_slice(),
             [TraceStepIdentity::GuestRewrite(_), TraceStepIdentity::HostComm(_)]
         )));
+    }
+
+    #[tokio::test]
+    async fn revoked_installed_owner_refuses_retained_host_comm_resume_before_firing() {
+        let (runtime, token, subject, binding) = mixed_regex_fixture(7);
+        let host = RuntimeBudget::new(Cost::create(10_000_000, "revoked mixed lookahead test"));
+        let sandbox = crate::speculation::SpeculativeSandbox::new()
+            .await
+            .expect("speculative sandbox");
+        sandbox.fund_from(&host);
+        let provider =
+            InstalledCheckedGuestProvider::new(Arc::clone(&runtime), vec![binding], host)
+                .expect("one checked top-level guest");
+        let mut explorer = Explorer::with_checked_guest_provider(&sandbox, provider);
+        let cut = explorer
+            .explore(subject, Blake2b512Random::create_from_bytes(&[41; 128]), Lookahead::Steps(1))
+            .await
+            .expect("one mixed search level");
+        let host_branch = cut
+            .truncated
+            .iter()
+            .find(|leaf| {
+                matches!(
+                    leaf.trace().step_identities().as_slice(),
+                    [TraceStepIdentity::HostComm(_)]
+                )
+            })
+            .expect("host-only first step retains the installed guest")
+            .branch
+            .clone();
+        assert!(host_branch.guest.is_some());
+        let committed_before = sandbox.consumed().value;
+        runtime
+            .revoke(&token)
+            .expect("revoke installed Reduce owner");
+        let resumed = explorer.resume(&[host_branch], Lookahead::Steps(1)).await;
+        assert!(matches!(resumed,
+            Err(SpeculationError::Bootstrap(message))
+                if message == "installed lookahead owner is revoked or lacks Reduce"));
+        assert_eq!(
+            sandbox.consumed().value,
+            committed_before,
+            "revoked resume cannot fire another host or guest edge"
+        );
     }
 
     #[test]
