@@ -126,8 +126,10 @@ fn where_uses_selected_gslt_projection_after_existing_observation_action() {
     }
 }
 
-#[test]
-fn where_uses_authored_boolean_projection_without_an_action_descriptor() {
+fn authored_boolean_fixture(
+    result: &str,
+    include_false_rule: bool,
+) -> (Arc<RholangLanguageRuntime>, Par, Par) {
     let source = r#"
         Module ActionlessPredicate {
           Theory Predicate() {
@@ -148,35 +150,41 @@ fn where_uses_authored_boolean_projection_without_an_action_descriptor() {
           theory Predicate()
         }
     "#;
+    let source =
+        source.replace("Match : (Call) ~> (Yes);", &format!("Match : (Call) ~> ({result});"));
+    let source = if include_false_rule {
+        source
+    } else {
+        source.replace("ToFalse : (No) ~> false;", "")
+    };
+    let runtime = Arc::new(RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    ))));
+    let module = mettail_elab::parse::parse_module(&source).unwrap();
+    let token = runtime
+        .install(InstallCandidate::Ddl(ParsedDdl::Module(module)))
+        .expect("actionless projected GSLT installs");
+    let input = runtime
+        .construct_template(
+            &token,
+            &[RuntimeTemplatePiece::Text("call".into())],
+            &[],
+            Some("Expr"),
+            &BTreeMap::new(),
+        )
+        .expect("exact guest call");
+    (runtime, token, input)
+}
+
+#[test]
+fn where_uses_authored_boolean_projection_without_an_action_descriptor() {
     for (result, include_false_rule, expected) in [
         ("Yes", true, Sat3::Sat),
         ("No", true, Sat3::Unsat),
         ("No", false, Sat3::DontKnow),
     ] {
-        let source =
-            source.replace("Match : (Call) ~> (Yes);", &format!("Match : (Call) ~> ({result});"));
-        let source = if include_false_rule {
-            source
-        } else {
-            source.replace("ToFalse : (No) ~> false;", "")
-        };
-        let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
-            Arc::new(MemoryRegistry::default()),
-            LanguageInstallPolicy::default(),
-        )));
-        let module = mettail_elab::parse::parse_module(&source).unwrap();
-        let token = runtime
-            .install(InstallCandidate::Ddl(ParsedDdl::Module(module)))
-            .expect("actionless projected GSLT installs");
-        let input = runtime
-            .construct_template(
-                &token,
-                &[RuntimeTemplatePiece::Text("call".into())],
-                &[],
-                Some("Expr"),
-                &BTreeMap::new(),
-            )
-            .expect("exact guest call");
+        let (runtime, token, input) = authored_boolean_fixture(result, include_false_rule);
         let evidence = runtime.prepare_where_predicate(
             &token,
             &input,
@@ -585,6 +593,91 @@ async fn where_native_boolean_actual_comm_requires_complete_true_evidence() {
                 .is_empty(),
             accepts
         );
+    }
+}
+
+#[tokio::test]
+async fn where_authored_projection_actual_comm_requires_complete_true_evidence() {
+    use models::rust::utils::new_freevar_par;
+    use rspace_plus_plus::rspace::shared::{
+        in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
+    };
+    for (result, include_false_rule, accepts, unknown) in [
+        ("Yes", true, true, false),
+        ("No", true, false, false),
+        ("No", false, false, true),
+    ] {
+        let (runtime, token, input) = authored_boolean_fixture(result, include_false_rule);
+        let matcher = SubstrateGuardMatcher::with_language_runtime(Arc::clone(&runtime));
+        let ledger = matcher.refusals();
+        let mut manager = InMemoryStoreManager::new();
+        let space = crate::speculation::Space::create(
+            manager.r_space_stores().await.expect("in-memory RSpace"),
+            Arc::new(Box::new(matcher)),
+        )
+        .expect("guarded RSpace");
+        let channel = new_gstring_par("authored-projection-comm".into(), vec![], false);
+        space
+            .consume(
+                vec![channel.clone()],
+                vec![BindPattern {
+                    patterns: vec![new_freevar_par(0, vec![])],
+                    remainder: None,
+                    free_count: 1,
+                }],
+                TaggedContinuation {
+                    tagged_cont: Some(TaggedCont::ScalaBodyRef(715)),
+                    guard: Some(descriptor(&token, "call")),
+                },
+                false,
+                std::collections::BTreeSet::new(),
+            )
+            .await
+            .expect("install guarded receive");
+        let data = ListParWithRandom {
+            pars: vec![new_gint_par(8, vec![], false)],
+            random_state: vec![3; 32],
+        };
+        let committed = space
+            .produce(channel.clone(), data, false)
+            .await
+            .expect("offer guarded datum");
+        assert_eq!(
+            committed.is_some(),
+            accepts,
+            "result {result}, false rule {include_false_rule}"
+        );
+        assert_eq!(space.get_data(&channel).await.is_empty(), accepts);
+        assert_eq!(
+            space
+                .get_waiting_continuations(vec![channel])
+                .await
+                .is_empty(),
+            accepts
+        );
+        assert_eq!(ledger.decider_gap_error().is_some(), unknown);
+
+        if accepts {
+            let evidence = runtime.prepare_where_predicate(
+                &token,
+                &input,
+                "Expr",
+                0,
+                0,
+                SemanticServiceLimits::default(),
+                || false,
+            );
+            assert_eq!(evidence.verdict(), Sat3::Sat);
+            let permit = PredicateCommit::new(vec![evidence], None)
+                .expect("authored projection yields checked true evidence");
+            runtime.revoke(&token).expect("revoke projection owner");
+            let mut mutations = 0;
+            assert_eq!(
+                permit.with_commit(Box::new(|| mutations += 1)),
+                Err(RSpaceError::ProduceCommitDenied)
+            );
+            assert_eq!(mutations, 0, "revocation must precede atomic mutation");
+        }
     }
 }
 
