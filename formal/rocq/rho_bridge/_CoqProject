@@ -180,6 +180,7 @@ theories/RuntimeBackendDispatch.v
 theories/SimulationReportBoundary.v
 theories/CommReductionCorrespondence.v
 theories/RhoCommScheduleFamily.v
+theories/RholangCostSurface.v
 theories/LinearCommCorrespondence.v
 theories/EndToEndCommCorrespondence.v
 theories/RhoGroundingAndNames.v
