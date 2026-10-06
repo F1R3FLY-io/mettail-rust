@@ -6,6 +6,8 @@
 //! diagnostic and stable; dense numeric identifiers are the executable links.
 
 use crate::{CanonicalValue, CollectionKind, PathMapModeV1};
+use num_bigint::BigInt;
+use num_integer::Integer;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -85,6 +87,88 @@ pub enum TheoryLiteralV1 {
     FloatBits(u64),
     Boolean(bool),
     Unit,
+    /// Minimal signed big-endian two's-complement representation.
+    BigInt(Vec<u8>),
+    /// Reduced numerator and strictly positive denominator, both minimal signed BE.
+    BigRat {
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+    },
+    /// Signed unscaled integer and an explicit decimal scale (including trailing zeros).
+    FixedPoint {
+        unscaled: Vec<u8>,
+        scale: u32,
+    },
+}
+
+/// A unique signed two's-complement representation, including zero as `[0]`.
+pub fn is_canonical_signed_big_endian(bytes: &[u8]) -> bool {
+    match bytes {
+        [] => false,
+        [first, second, ..] => {
+            !((*first == 0 && *second & 0x80 == 0) || (*first == 0xff && *second & 0x80 != 0))
+        },
+        [_] => true,
+    }
+}
+
+/// Check the exact representation before it can enter an image or runtime key.
+pub fn is_canonical_theory_literal(literal: &TheoryLiteralV1) -> bool {
+    match literal {
+        TheoryLiteralV1::BigInt(bytes) => is_canonical_signed_big_endian(bytes),
+        TheoryLiteralV1::BigRat { numerator, denominator } => {
+            is_canonical_big_rational(numerator, denominator)
+        },
+        TheoryLiteralV1::FixedPoint { unscaled, .. } => is_canonical_signed_big_endian(unscaled),
+        _ => true,
+    }
+}
+
+/// Exact reduced rational validation; a denominator of zero or negative is invalid.
+pub fn is_canonical_big_rational(numerator: &[u8], denominator: &[u8]) -> bool {
+    if !is_canonical_signed_big_endian(numerator)
+        || !is_canonical_signed_big_endian(denominator)
+        || denominator[0] & 0x80 != 0
+        || denominator == [0]
+    {
+        return false;
+    }
+    BigInt::from_signed_bytes_be(numerator).gcd(&BigInt::from_signed_bytes_be(denominator))
+        == BigInt::from(1)
+}
+
+#[cfg(test)]
+mod exact_literal_tests {
+    use super::*;
+
+    #[test]
+    fn signed_big_endian_bytes_have_one_representation_per_integer() {
+        for bytes in [&[0][..], &[0x7f], &[0, 0x80], &[0x80], &[0xff], &[0xff, 0x7f]] {
+            assert!(is_canonical_signed_big_endian(bytes), "{bytes:?}");
+        }
+        for bytes in [&[][..], &[0, 0], &[0, 0x7f], &[0xff, 0xff], &[0xff, 0x80]] {
+            assert!(!is_canonical_signed_big_endian(bytes), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn rational_requires_positive_reduced_denominator_and_fixed_preserves_scale() {
+        assert!(is_canonical_big_rational(&[0xff], &[2]));
+        assert!(is_canonical_big_rational(&[0], &[1]));
+        for (numerator, denominator) in [
+            (&[2][..], &[4][..]),
+            (&[0], &[2]),
+            (&[1], &[0]),
+            (&[1], &[0xff]),
+            (&[0, 1], &[2]),
+        ] {
+            assert!(!is_canonical_big_rational(numerator, denominator));
+        }
+        assert!(is_canonical_theory_literal(&TheoryLiteralV1::FixedPoint {
+            unscaled: vec![0],
+            scale: 7
+        }));
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

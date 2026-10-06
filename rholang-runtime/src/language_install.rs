@@ -1226,12 +1226,43 @@ pub fn par_to_canonical_value(
                     },
                     ExprInstance::GInt(value) => values.push(RhoValue::Integer((*value).into())),
                     ExprInstance::GBigInt(bytes) => {
-                        let value =
-                            signed_i128(bytes).ok_or_else(|| CanonicalValueError::Shape {
-                                path,
-                                message: "integer is outside the canonical signed-128 range".into(),
-                            })?;
-                        values.push(RhoValue::Integer(value));
+                        account_byte_array(bytes, &mut total_byte_array_bytes, limits)?;
+                        let value = RhoValue::BigInt(bytes.clone());
+                        mettail_elab::canonical::admit_canonical_value(&value).map_err(
+                            |error| CanonicalValueError::Shape { path, message: error.message },
+                        )?;
+                        values.push(value);
+                    },
+                    ExprInstance::GBigRat(rational) => {
+                        account_byte_array(
+                            &rational.numerator,
+                            &mut total_byte_array_bytes,
+                            limits,
+                        )?;
+                        account_byte_array(
+                            &rational.denominator,
+                            &mut total_byte_array_bytes,
+                            limits,
+                        )?;
+                        let value = RhoValue::BigRat {
+                            numerator: rational.numerator.clone(),
+                            denominator: rational.denominator.clone(),
+                        };
+                        mettail_elab::canonical::admit_canonical_value(&value).map_err(
+                            |error| CanonicalValueError::Shape { path, message: error.message },
+                        )?;
+                        values.push(value);
+                    },
+                    ExprInstance::GFixedPoint(fixed) => {
+                        account_byte_array(&fixed.unscaled, &mut total_byte_array_bytes, limits)?;
+                        let value = RhoValue::FixedPoint {
+                            unscaled: fixed.unscaled.clone(),
+                            scale: fixed.scale,
+                        };
+                        mettail_elab::canonical::admit_canonical_value(&value).map_err(
+                            |error| CanonicalValueError::Shape { path, message: error.message },
+                        )?;
+                        values.push(value);
                     },
                     ExprInstance::GDouble(bits) => values.push(RhoValue::FloatBits(*bits)),
                     ExprInstance::GBool(value) => values.push(RhoValue::Boolean(*value)),

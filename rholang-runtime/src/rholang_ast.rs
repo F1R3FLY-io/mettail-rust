@@ -66,7 +66,9 @@ use target::DirectNodeTarget as Target;
 pub(crate) mod constructed_value;
 pub(crate) mod construction_receipt;
 use constructed_value::ConstructedValue;
-use construction_receipt::{NativeAppendDebit, NativeHead, NativeMetadataFoldDebit, NativeReceipt};
+use construction_receipt::{
+    NativeAppendDebit, NativeExpressionDebit, NativeHead, NativeMetadataFoldDebit, NativeReceipt,
+};
 
 mod graph;
 pub use graph::{interpret_construction_graph, GraphInterpretationError};
@@ -2139,6 +2141,190 @@ impl<'a> Stacks<'a> {
         Ok(())
     }
 
+    /// Preflight the native unary assembler's outer-metadata clone, then use
+    /// the existing consuming reduction. The receipt describes the unchanged
+    /// `Par -> Expr -> operand` nesting, not an alternative expression AST.
+    fn unary_construct(
+        &mut self,
+        build: impl FnOnce(Par) -> Par,
+    ) -> Result<(), RholangAstLowerError> {
+        let output_receipt = if let Some(Some(child)) =
+            self.receipts.as_ref().and_then(|r| r.last())
+        {
+            preparation_scope::reserve_parts(1, 0, 0, self.reservation)?;
+            let debit = NativeExpressionDebit::unary(child.outer_metadata_bytes);
+            let output = NativeReceipt::construct(NativeHead::Plain, debit.output_bytes, [child])
+                .map_err(constructed_value::receipt_error)?;
+            preparation_scope::reserve_parts(debit.work, 2, debit.bytes, self.reservation)?;
+            Some(output)
+        } else {
+            None
+        };
+        self.reduce_values(1, |mut items| {
+            Ok::<Par, RholangAstLowerError>(build(items.pop().expect("one unary operand")))
+        })?;
+        if let Some(receipts) = &mut self.receipts {
+            *receipts
+                .last_mut()
+                .expect("successful unary reduction leaves one result") = output_receipt;
+        }
+        Ok(())
+    }
+
+    /// Admit both operand clones, the unchanged bit-vector union, and the
+    /// native output records before either operand is consumed. Every binary
+    /// expression family using this path retains its original assembler.
+    fn binary_construct(
+        &mut self,
+        build: impl FnOnce(Par, Par) -> Par,
+    ) -> Result<(), RholangAstLowerError> {
+        let output_receipt = if let Some(receipts) = &self.receipts {
+            let pair = receipts
+                .len()
+                .checked_sub(2)
+                .and_then(|start| receipts[start].as_ref().zip(receipts[start + 1].as_ref()));
+            if let Some((lhs, rhs)) = pair {
+                preparation_scope::reserve_parts(2, 0, 0, self.reservation)?;
+                let debit = NativeExpressionDebit::binary(
+                    lhs.outer_metadata_bytes,
+                    rhs.outer_metadata_bytes,
+                )
+                .map_err(constructed_value::receipt_error)?;
+                let output =
+                    NativeReceipt::construct(NativeHead::Plain, debit.output_bytes, [lhs, rhs])
+                        .map_err(constructed_value::receipt_error)?;
+                preparation_scope::reserve_parts(debit.work, 2, debit.bytes, self.reservation)?;
+                Some(output)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.reduce_pair(|lhs, rhs| Ok::<Par, RholangAstLowerError>(build(lhs, rhs)))?;
+        if let Some(receipts) = &mut self.receipts {
+            *receipts
+                .last_mut()
+                .expect("successful binary reduction leaves one result") = output_receipt;
+        }
+        Ok(())
+    }
+
+    /// Implication keeps the native two-assembler shape: the negated
+    /// antecedent is a real nested Par, not a Boolean rewrite shortcut.
+    fn implication(&mut self) -> Result<(), RholangAstLowerError> {
+        let output_receipt = if let Some(receipts) = &self.receipts {
+            let pair = receipts
+                .len()
+                .checked_sub(2)
+                .and_then(|start| receipts[start].as_ref().zip(receipts[start + 1].as_ref()));
+            if let Some((antecedent, consequent)) = pair {
+                preparation_scope::reserve_parts(3, 0, 0, self.reservation)?;
+                let lhs_bytes = antecedent.outer_metadata_bytes;
+                let rhs_bytes = consequent.outer_metadata_bytes;
+                let negated = NativeReceipt::construct(NativeHead::Plain, lhs_bytes, [antecedent])
+                    .map_err(constructed_value::receipt_error)?;
+                let debit = NativeExpressionDebit::implication(lhs_bytes, rhs_bytes)
+                    .map_err(constructed_value::receipt_error)?;
+                let output = NativeReceipt::construct(
+                    NativeHead::Plain,
+                    debit.output_bytes,
+                    [&negated, consequent],
+                )
+                .map_err(constructed_value::receipt_error)?;
+                preparation_scope::reserve_parts(debit.work, 4, debit.bytes, self.reservation)?;
+                Some(output)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.reduce_pair(|antecedent, consequent| {
+            let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
+            Ok::<Par, RholangAstLowerError>(binary_expr_par(negated, consequent, |p1, p2| {
+                ExprInstance::EOrBody(EOr { p1, p2 })
+            }))
+        })?;
+        if let Some(receipts) = &mut self.receipts {
+            *receipts
+                .last_mut()
+                .expect("successful implication leaves one result") = output_receipt;
+        }
+        Ok(())
+    }
+
+    /// Preserve receiver/argument order and the native `method_par` helper.
+    /// Preflight its first receiver clone, every argument union, the final
+    /// inner-metadata copy, method-name bytes and split argument roster.
+    fn method(&mut self, name: &str, argc: usize) -> Result<(), RholangAstLowerError> {
+        let count = argc
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        let output_receipt = if let Some(receipts) = &self.receipts {
+            let mut complete = true;
+            let mut fold = NativeMetadataFoldDebit::default();
+            let start = receipts.len().checked_sub(count);
+            if let Some(start) = start {
+                for (index, child) in receipts[start..].iter().enumerate() {
+                    preparation_scope::reserve_parts(1, 0, 0, self.reservation)?;
+                    match child {
+                        Some(child) if index == 0 => {
+                            fold = NativeMetadataFoldDebit::from_first(child.outer_metadata_bytes);
+                        },
+                        Some(child) => fold
+                            .push(child.outer_metadata_bytes)
+                            .map_err(constructed_value::receipt_error)?,
+                        None => complete = false,
+                    }
+                }
+            } else {
+                complete = false;
+            }
+            if complete {
+                preparation_scope::reserve_parts(count, 0, 0, self.reservation)?;
+                let output = NativeReceipt::construct(
+                    NativeHead::Method { name_bytes: name.len() },
+                    fold.maximum,
+                    receipts[start.expect("complete method suffix")..]
+                        .iter()
+                        .map(|item| item.as_ref().expect("complete method receipt suffix")),
+                )
+                .map_err(constructed_value::receipt_error)?;
+                fold.copy_inner_summary()
+                    .map_err(constructed_value::receipt_error)?;
+                let copied_bytes = fold
+                    .bytes
+                    .checked_add(name.len())
+                    .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                let records = argc
+                    .checked_add(3)
+                    .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                let work = fold
+                    .work
+                    .checked_add(argc)
+                    .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                preparation_scope::reserve_parts(work, records, copied_bytes, self.reservation)?;
+                Some(output)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.reduce_values(count, |mut children| {
+            let argument_pars = children.split_off(1);
+            let target_par = children.pop().expect("method always has a receiver");
+            Ok::<Par, RholangAstLowerError>(method_par(name, target_par, argument_pars))
+        })?;
+        if let Some(receipts) = &mut self.receipts {
+            *receipts
+                .last_mut()
+                .expect("successful method leaves one result") = output_receipt;
+        }
+        Ok(())
+    }
+
     /// ★ **The deficit invariant**, asserted at the head of the drive loop.
     ///
     /// ```math
@@ -3410,63 +3596,51 @@ impl<'a> Drive<'a> {
                 self.stacks.value(par)?;
             },
             Kont::BinExpr(op) => {
-                let rhs = self.stacks.pop_value()?;
-                let lhs = self.stacks.pop_value()?;
-                self.stacks
-                    .value(binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2)))?;
+                self.stacks.binary_construct(|lhs, rhs| {
+                    binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2))
+                })?;
             },
             Kont::UnExpr(op) => {
-                let operand = self.stacks.pop_value()?;
                 self.stacks
-                    .value(unary_expr_par(operand, |p| op.build(p)))?;
+                    .unary_construct(|operand| unary_expr_par(operand, |p| op.build(p)))?;
             },
             // String `+` is Rholang `++` (`EPlusPlus`): when BOTH operands lower to ground
             // string leaves the concat parity arm is chosen; `EPlus` has no GString algebra.
             Kont::AddParity => {
-                let rhs = self.stacks.pop_value()?;
-                let lhs = self.stacks.pop_value()?;
-                let op = match Target::observation(&lhs).single_string
-                    && Target::observation(&rhs).single_string
-                {
-                    true => BinOp::PlusPlus,
-                    false => BinOp::Plus,
-                };
-                self.stacks
-                    .value(binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2)))?;
+                self.stacks.binary_construct(|lhs, rhs| {
+                    let op = match Target::observation(&lhs).single_string
+                        && Target::observation(&rhs).single_string
+                    {
+                        true => BinOp::PlusPlus,
+                        false => BinOp::Plus,
+                    };
+                    binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2))
+                })?;
             },
             // Built from the two shared assemblers rather than one `binary_expr_par` because
             // the negation must wrap ONLY the antecedent: `unary_expr_par` propagates the
             // antecedent's `locally_free`/`connective_used` onto the `ENot`, and
             // `binary_expr_par` then unions that with the consequent's.
             Kont::Implies => {
-                let consequent = self.stacks.pop_value()?;
-                let antecedent = self.stacks.pop_value()?;
-                let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
-                self.stacks
-                    .value(binary_expr_par(negated, consequent, |p1, p2| {
-                        ExprInstance::EOrBody(EOr { p1, p2 })
-                    }))?;
+                self.stacks.implication()?;
             },
             Kont::Method { name, argc } => {
-                let mut children = self.stacks.pop_values(1 + argc)?;
-                let argument_pars = children.split_off(1);
-                let target_par = children.pop().expect("Kont::Method always has a receiver");
-                self.stacks
-                    .value(method_par(name, target_par, argument_pars))?;
+                self.stacks.method(name, argc)?;
             },
             Kont::Matches => {
-                let pattern = self.stacks.pop_value()?;
-                let target = self.stacks.pop_value()?;
-                let locally_free = union(target.locally_free.clone(), pattern.locally_free.clone());
-                let mut par = Par::default().with_exprs(vec![Expr {
-                    expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
-                        target: Some(target),
-                        pattern: Some(pattern),
-                    })),
-                }]);
-                par.locally_free = locally_free;
-                par.connective_used = false;
-                self.stacks.value(par)?;
+                self.stacks.binary_construct(|target, pattern| {
+                    let locally_free =
+                        union(target.locally_free.clone(), pattern.locally_free.clone());
+                    let mut par = Par::default().with_exprs(vec![Expr {
+                        expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
+                            target: Some(target),
+                            pattern: Some(pattern),
+                        })),
+                    }]);
+                    par.locally_free = locally_free;
+                    par.connective_used = false;
+                    par
+                })?;
             },
             Kont::MatchesStaticallyFalse => {
                 let mut target = self.stacks.pop_value()?;

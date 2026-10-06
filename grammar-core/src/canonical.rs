@@ -11,6 +11,18 @@ pub enum CanonicalValue {
     FloatBits(u64),
     Boolean(bool),
     Nil,
+    /// Minimal signed big-endian two's-complement bytes.
+    BigInt(Vec<u8>),
+    /// Reduced numerator and strictly positive denominator.
+    BigRat {
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+    },
+    /// Signed unscaled integer with an explicit decimal scale.
+    FixedPoint {
+        unscaled: Vec<u8>,
+        scale: u32,
+    },
 }
 
 impl CanonicalValue {
@@ -68,4 +80,26 @@ pub struct TierDirective {
     pub tier: EvaluationTier,
     pub bound: Option<u32>,
     pub force: bool,
+}
+
+#[cfg(test)]
+mod exact_value_tests {
+    use super::*;
+
+    #[test]
+    fn exact_values_round_trip_and_existing_serde_tags_stay_stable() {
+        assert_eq!(postcard::to_allocvec(&CanonicalValue::Nil).unwrap(), vec![7]);
+        for value in [
+            CanonicalValue::BigInt(vec![0, 0x80]),
+            CanonicalValue::BigRat {
+                numerator: vec![0xff],
+                denominator: vec![3],
+            },
+            CanonicalValue::FixedPoint { unscaled: vec![0], scale: 7 },
+        ] {
+            let encoded = postcard::to_allocvec(&value).unwrap();
+            let decoded: CanonicalValue = postcard::from_bytes(&encoded).unwrap();
+            assert_eq!(decoded, value);
+        }
+    }
 }

@@ -2838,6 +2838,9 @@ language! {
         DdlRuleAstBoolean . value:Bool |- value : DdlRuleAst;
         DdlRuleAstString . |- raw@StringLiteral : DdlRuleAst;
         DdlRuleAstInteger . value:Int |- value : DdlRuleAst;
+        DdlRuleAstBigInt . value:BigInt |- value : DdlRuleAst;
+        DdlRuleAstBigRat . value:BigRat |- value : DdlRuleAst;
+        DdlRuleAstFixed . value:Fixed |- value : DdlRuleAst;
         DdlRuleAstBytes . value:Bytes |- value : DdlRuleAst;
         DdlRuleAstFloat . value:Float |- value : DdlRuleAst;
         DdlRuleAstAbs . body:DdlRuleAst |- "^" binder@Ident "." body : DdlRuleAst;

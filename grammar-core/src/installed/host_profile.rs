@@ -358,6 +358,42 @@ impl InstalledLanguageTable {
         Ok(publish())
     }
 
+    /// Revalidate every guest and optional host capability for one prepared
+    /// multi-atom publication while holding a single registry read guard.
+    /// The callback moves prepared results; it must not run guest evaluation.
+    pub fn with_authorized_batch_and_hosts<'a, R>(
+        &self,
+        requests: impl IntoIterator<
+            Item = (
+                &'a InstalledLanguageHandle,
+                &'a [LanguageRight],
+                Option<(&'a InstalledHostProfileHandle, &'a [LanguageRight])>,
+            ),
+        >,
+        publish: impl FnOnce() -> R,
+    ) -> Result<R, LanguageAndHostAccessError> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| LanguageAndHostAccessError::Host(HostProfileAccessError::Poisoned))?;
+        for (language, language_rights, host) in requests {
+            self.valid_entry(&state, language)
+                .map_err(LanguageAndHostAccessError::Language)?;
+            for right in language_rights {
+                if !language.rights.contains(*right) {
+                    return Err(LanguageAndHostAccessError::Language(
+                        LanguageAccessError::MissingRight(*right),
+                    ));
+                }
+            }
+            if let Some((host, host_rights)) = host {
+                self.valid_host_profile_entry(&state, host, host_rights)
+                    .map_err(LanguageAndHostAccessError::Host)?;
+            }
+        }
+        Ok(publish())
+    }
+
     fn valid_host_profile_entry<'a>(
         &self,
         state: &'a InstalledState,
@@ -567,6 +603,54 @@ mod tests {
             Err(LanguageAndHostAccessError::Language(LanguageAccessError::StaleHandle))
         );
         assert_eq!(commits, 1);
+    }
+
+    #[test]
+    fn batch_publication_rechecks_optional_host_handles_atomically() {
+        let table = super::super::tests::runtime_test_table();
+        let guest = super::super::tests::install(
+            &table,
+            LanguageRights::from_rights([LanguageRight::Observe]),
+        );
+        let (bytes, provider) = fixture();
+        let host = table
+            .install_host_profile(&bytes, provider, bridge_rights())
+            .expect("checked host profile");
+        let host_handle = host.handle.clone();
+        let requests = || {
+            [
+                (&guest.handle, &[LanguageRight::Observe][..], None),
+                (
+                    &guest.handle,
+                    &[LanguageRight::Observe][..],
+                    Some((&host_handle, &[LanguageRight::Bridge][..])),
+                ),
+            ]
+        };
+        let mut commits = 0;
+        assert_eq!(table.with_authorized_batch_and_hosts(requests(), || commits += 1), Ok(()));
+        assert_eq!(commits, 1);
+        assert_eq!(
+            table.with_authorized_batch_and_hosts(
+                [
+                    (&guest.handle, &[LanguageRight::Observe][..], None),
+                    (&guest.handle, &[LanguageRight::Reduce][..], None),
+                ],
+                || commits += 1,
+            ),
+            Err(LanguageAndHostAccessError::Language(LanguageAccessError::MissingRight(
+                LanguageRight::Reduce
+            )))
+        );
+        assert_eq!(commits, 1);
+        table
+            .revoke_host_profile(host.revocation)
+            .expect("revoke selected host profile");
+        assert_eq!(
+            table.with_authorized_batch_and_hosts(requests(), || commits += 1),
+            Err(LanguageAndHostAccessError::Host(HostProfileAccessError::Revoked))
+        );
+        assert_eq!(commits, 1, "no prefix of a failed batch can publish");
     }
 
     #[test]

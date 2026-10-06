@@ -1123,8 +1123,8 @@ pub(crate) fn validate_projection_term(value: &RhoValue, path: &str) -> Result<(
         };
         let fields = &items[1..];
         let arity = match tag.as_str() {
-            "ast-var" | "ast-remainder" | "ast-string" | "ast-integer" | "ast-bytes"
-            | "ast-float" | "ast-collection" => 1,
+            "ast-var" | "ast-remainder" | "ast-string" | "ast-integer" | "ast-bigint"
+            | "ast-bigrat" | "ast-fixed" | "ast-bytes" | "ast-float" | "ast-collection" => 1,
             "ast-sexp" | "ast-host-sexp" | "ast-subst" | "ast-abs" => 2,
             "ast-boolean-true" | "ast-boolean-false" => 0,
             _ => return Err(wrong_tag(&path, tag, "a projection term")),
@@ -1146,12 +1146,27 @@ pub(crate) fn validate_projection_term(value: &RhoValue, path: &str) -> Result<(
                 }
             },
             "ast-integer" => {
-                if !matches!(fields[0], RhoValue::Integer(_)) {
+                if !matches!(fields[0], RhoValue::Integer(value) if i64::try_from(value).is_ok()) {
                     return Err(DdlValueError::new(
                         path,
-                        "projection integer requires integer content",
+                        "projection integer requires an i64 literal",
                     ));
                 }
+            },
+            "ast-bigint" | "ast-bigrat" | "ast-fixed" => {
+                let typed = matches!(
+                    (tag.as_str(), &fields[0]),
+                    ("ast-bigint", RhoValue::BigInt(_))
+                        | ("ast-bigrat", RhoValue::BigRat { .. })
+                        | ("ast-fixed", RhoValue::FixedPoint { .. })
+                );
+                if !typed {
+                    return Err(DdlValueError::new(
+                        path,
+                        "projection numeric literal has the wrong typed payload",
+                    ));
+                }
+                admit_canonical_value(&fields[0])?;
             },
             "ast-bytes" => {
                 if !matches!(fields[0], RhoValue::Bytes(_)) {
@@ -1956,6 +1971,23 @@ mod tests {
         let float = node("ast-float", vec![RhoValue::FloatBits(1.5f64.to_bits())]);
         validate_projection_term(&bytes, "$.bytes").expect("native bytes");
         validate_projection_term(&float, "$.float").expect("finite canonical float");
+        let bigint = node("ast-bigint", vec![RhoValue::BigInt(vec![0, 128])]);
+        let bigrat = node(
+            "ast-bigrat",
+            vec![RhoValue::BigRat {
+                numerator: vec![0xfd],
+                denominator: vec![4],
+            }],
+        );
+        let fixed = node("ast-fixed", vec![RhoValue::FixedPoint { unscaled: vec![125], scale: 2 }]);
+        for exact in [&bigint, &bigrat, &fixed] {
+            validate_projection_term(exact, "$.exact").expect("exact numeric leaf");
+        }
+        assert_ne!(
+            fixed,
+            node("ast-fixed", vec![RhoValue::FixedPoint { unscaled: vec![125], scale: 1 }]),
+            "declared Fixed scale is part of identity",
+        );
 
         for invalid in [
             node("ast-bytes", vec![RhoValue::String("00abff".into())]),
@@ -1963,6 +1995,17 @@ mod tests {
             node("ast-float", vec![RhoValue::FloatBits(f64::NAN.to_bits())]),
             node("ast-float", vec![RhoValue::FloatBits(f64::INFINITY.to_bits())]),
             node("ast-float", vec![RhoValue::FloatBits((-0.0f64).to_bits())]),
+            node("ast-bigint", vec![RhoValue::Integer(128)]),
+            node("ast-bigint", vec![RhoValue::BigInt(vec![0, 1])]),
+            node(
+                "ast-bigrat",
+                vec![RhoValue::BigRat { numerator: vec![2], denominator: vec![4] }],
+            ),
+            node(
+                "ast-bigrat",
+                vec![RhoValue::BigRat { numerator: vec![1], denominator: vec![0] }],
+            ),
+            node("ast-fixed", vec![RhoValue::FixedPoint { unscaled: vec![], scale: 2 }]),
         ] {
             assert!(validate_projection_term(&invalid, "$.invalid").is_err());
         }

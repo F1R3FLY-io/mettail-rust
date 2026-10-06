@@ -82,4 +82,55 @@ Proof. intros S [] [] [] mutation state H; cbn in *; intuition congruence. Qed.
 Lemma admitted_single_mutation : forall S mutation (state : S),
   commit Yes true true mutation state = mutation state.
 Proof. reflexivity. Qed.
+
+(** Each prepared atom may rely on a distinct host profile. The installation
+    table checks all guest and optional host handles under one read lock before
+    invoking the mutation callback; this model states the resulting Boolean
+    admission law independently of the Rust lock implementation. *)
+Record AuthorityCheck := authority_check {
+  guest_live : bool;
+  host_required : bool;
+  host_live : bool
+}.
+
+Definition atom_authorized (check : AuthorityCheck) : bool :=
+  guest_live check && (negb (host_required check) || host_live check).
+
+Definition batch_authorized (checks : list AuthorityCheck) : bool :=
+  forallb atom_authorized checks.
+
+Definition batch_commit {S : Type} (verdict : Verdict) (checks : list AuthorityCheck)
+    (funded : bool) (mutation : S -> S) (state : S) :=
+  commit verdict (batch_authorized checks) funded mutation state.
+
+Lemma revoked_required_host_refuses_atom : forall check,
+  host_required check = true -> host_live check = false ->
+  atom_authorized check = false.
+Proof.
+  intros check Required Revoked.
+  unfold atom_authorized. rewrite Required, Revoked.
+  now destruct (guest_live check).
+Qed.
+
+Lemma refused_atom_refuses_whole_batch : forall prefix check suffix,
+  atom_authorized check = false ->
+  batch_authorized (prefix ++ check :: suffix) = false.
+Proof.
+  intros prefix check suffix Refused.
+  unfold batch_authorized.
+  rewrite forallb_app. simpl. rewrite Refused.
+  now destruct (forallb atom_authorized prefix).
+Qed.
+
+Lemma revoked_required_host_preserves_comm : forall S verdict prefix check suffix funded
+    mutation (state : S),
+  host_required check = true -> host_live check = false ->
+  batch_commit verdict (prefix ++ check :: suffix) funded mutation state = state.
+Proof.
+  intros S verdict prefix check suffix funded mutation state Required Revoked.
+  unfold batch_commit.
+  rewrite (refused_atom_refuses_whole_batch prefix check suffix
+    (revoked_required_host_refuses_atom check Required Revoked)).
+  apply refusal_preserves_state. now right; left.
+Qed.
 End WherePredicateCommit.

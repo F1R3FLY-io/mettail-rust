@@ -768,6 +768,9 @@ pub enum LanguageCoreValidationError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TheoryValidationError {
+    InvalidLiteral {
+        owner: String,
+    },
     InvalidPredicateRole {
         observation: String,
         reason: &'static str,
@@ -1779,6 +1782,9 @@ fn validate_term_arena(
                 }
             },
             TheoryTermFormV1::Literal(literal) => {
+                if !crate::is_canonical_theory_literal(literal) {
+                    errors.push(TheoryValidationError::InvalidLiteral { owner: owner.to_string() });
+                }
                 let actual = literal_kind(literal);
                 let expected = sorts
                     .get(node.sort.as_str())
@@ -2649,6 +2655,8 @@ fn literal_kind(literal: &TheoryLiteralV1) -> &TheoryLiteralCarrierV1 {
     static STRING: TheoryLiteralCarrierV1 = TheoryLiteralCarrierV1::String;
     static BYTES: TheoryLiteralCarrierV1 = TheoryLiteralCarrierV1::Bytes;
     static INTEGER: TheoryLiteralCarrierV1 = TheoryLiteralCarrierV1::Integer;
+    static RATIONAL: TheoryLiteralCarrierV1 = TheoryLiteralCarrierV1::Rational;
+    static FIXED_POINT: TheoryLiteralCarrierV1 = TheoryLiteralCarrierV1::FixedPoint;
     static FLOAT: TheoryLiteralCarrierV1 = TheoryLiteralCarrierV1::Float;
     static BOOLEAN: TheoryLiteralCarrierV1 = TheoryLiteralCarrierV1::Boolean;
     static UNIT: TheoryLiteralCarrierV1 = TheoryLiteralCarrierV1::Unit;
@@ -2656,6 +2664,9 @@ fn literal_kind(literal: &TheoryLiteralV1) -> &TheoryLiteralCarrierV1 {
         TheoryLiteralV1::String(_) => &STRING,
         TheoryLiteralV1::Bytes(_) => &BYTES,
         TheoryLiteralV1::Integer(_) => &INTEGER,
+        TheoryLiteralV1::BigInt(_) => &INTEGER,
+        TheoryLiteralV1::BigRat { .. } => &RATIONAL,
+        TheoryLiteralV1::FixedPoint { .. } => &FIXED_POINT,
         TheoryLiteralV1::FloatBits(_) => &FLOAT,
         TheoryLiteralV1::Boolean(_) => &BOOLEAN,
         TheoryLiteralV1::Unit => &UNIT,

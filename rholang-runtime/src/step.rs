@@ -293,11 +293,11 @@ impl StepGate {
         while state.permits == 0 && !state.aborted {
             state = self.cvar.wait(state).expect("step gate condvar wait");
         }
-        if state.permits > 0 {
+        if state.aborted {
+            false
+        } else {
             state.permits -= 1;
             true
-        } else {
-            false
         }
     }
 }
@@ -316,7 +316,7 @@ impl StepObserver {
         channels: Vec<Par>,
         consumed: Vec<ListParWithRandom>,
         continuation: TaggedContinuation,
-    ) {
+    ) -> Result<(), RSpaceError> {
         let ordinal = self.ordinal.fetch_add(1, Ordering::Relaxed);
         let event = RawStepEvent::Comm(RawCommEvent {
             ordinal,
@@ -325,9 +325,15 @@ impl StepObserver {
             consumed,
             continuation: tagged_continuation_body(&continuation),
         });
-        if self.sender.send(event).is_err() || !self.gate.wait_for_release() {
-            panic!("rho stepper aborted");
+        if self.sender.send(event).is_err() {
+            return Err(RSpaceError::InterpreterError(
+                "rho stepper receiver disconnected".to_string(),
+            ));
         }
+        if !self.gate.wait_for_release() {
+            return Err(RSpaceError::InterpreterError("rho stepper session cancelled".to_string()));
+        }
+        Ok(())
     }
 
     /// Emit a terminal observable-output step — a value resting on the configured output channel at
@@ -353,7 +359,7 @@ impl SteppingSpace {
         &self,
         label: &'static str,
         result: &MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
-    ) {
+    ) -> Result<(), RSpaceError> {
         if let Some((continuation, matched)) = result {
             self.observer.emit_comm(
                 label,
@@ -363,8 +369,9 @@ impl SteppingSpace {
                     .map(|item| item.matched_datum.clone())
                     .collect(),
                 continuation.continuation.clone(),
-            );
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -455,7 +462,7 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
             .inner
             .consume(channels, patterns, continuation, persist, peeks)
             .await?;
-        self.emit_if_comm("comm.consume", &result);
+        self.emit_if_comm("comm.consume", &result)?;
         Ok(result)
     }
 
@@ -474,7 +481,7 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
             &result
                 .as_ref()
                 .map(|(continuation, matched, _)| (continuation.clone(), matched.clone())),
-        );
+        )?;
         Ok(result)
     }
 
@@ -497,7 +504,7 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Steppin
             &result
                 .as_ref()
                 .map(|(continuation, matched, _)| (continuation.clone(), matched.clone())),
-        );
+        )?;
         Ok(result)
     }
 
@@ -890,12 +897,39 @@ mod tests {
         assert!(receiver.try_recv().is_err());
     }
 
+    #[test]
+    fn observer_cancellation_and_disconnect_are_typed_errors() {
+        let (sender, receiver) = bounded(1);
+        let gate = Arc::new(StepGate::new());
+        let observer = StepObserver {
+            sender,
+            gate: gate.clone(),
+            ordinal: AtomicU64::new(0),
+        };
+        gate.abort();
+        let continuation = TaggedContinuation { tagged_cont: None, guard: None };
+        let error = observer
+            .emit_comm("comm.produce", Vec::new(), Vec::new(), continuation.clone())
+            .expect_err("an aborted gate must return a typed error");
+        assert!(matches!(error, RSpaceError::InterpreterError(message)
+            if message == "rho stepper session cancelled"));
+        assert!(matches!(receiver.try_recv(), Ok(RawStepEvent::Comm(_))));
+
+        drop(receiver);
+        let error = observer
+            .emit_comm("comm.produce", Vec::new(), Vec::new(), continuation)
+            .expect_err("a disconnected receiver must return a typed error");
+        assert!(matches!(error, RSpaceError::InterpreterError(message)
+            if message == "rho stepper receiver disconnected"));
+    }
+
     /// The flagship COMM term: a receive on `@"c"` and a matching send carrying the process
     /// `@"OUT"!("p")` — exactly one rendezvous fires.
     // Guarded-receive sugar `(@("c")?x).{p}` was superseded by main's `for(x <- c){p}`
     // (Rholang → Rholang 1.4 merge). `(c?x).{p} ≡ for(x <- c){p}`; the sibling oracle
     // `tests/rho_rholang_ast.rs` uses the same `for(...)` form.
-    const COMM_SRC: &str = r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#;
+    const COMM_SRC: &str = r#"{ for(x <- @("c")){*x} | @("c")!(@("OUT")!("p")) }"#;
+    const HELD_FOLD_SRC: &str = r#"{ for(x <- @("c")){ int(*x, 8) } | @("c")!(int(5,8)) }"#;
 
     fn lower(src: &str) -> Par {
         let term = RholangLanguage.parse_term(src).expect("parse rholang term");
@@ -926,7 +960,19 @@ mod tests {
         // Current f1r3node no longer exposes a separate structural-reduction hook. The stepper
         // records live COMM results at the RSpace boundary and the terminal `OUT` observation
         // produced by the continuation.
-        let steps = drive(lower(COMM_SRC));
+        let term = RholangLanguage
+            .parse_term(COMM_SRC)
+            .expect("parse COMM term");
+        let typed = term
+            .as_any()
+            .downcast_ref::<RholangTerm>()
+            .expect("typed Rholang term");
+        assert!(
+            matches!(&typed.0, RholangTermInner::Proc(_)),
+            "the one-COMM fixture must have exactly one Proc reading: {:?}",
+            typed.0,
+        );
+        let steps = drive(lower_rholang_term(term.as_ref()).expect("lower one COMM reading"));
         let kinds: Vec<RuntimeReductionKind> = steps.iter().map(|s| s.kind).collect();
         assert_eq!(
             kinds,
@@ -1006,14 +1052,21 @@ mod tests {
 
     #[test]
     fn held_fold_lowering_emits_one_fold_contract_spec() {
-        // A-S4 (lowering purity): EVERY fold lifts — the held `int(*(x),8)` AND the ground
+        // A-S4 (lowering purity): EVERY fold lifts — the held `int(*x,8)` AND the ground
         // send-side `int(5,8)` (which pre-A-S4 folded in place, host-side). Two folds ⇒ two
         // fold-contract specs, both Int width 8. The top level is now the ground fold's
         // trampoline scope (`new ret0 { @fold0!(5, ret0) | for(@r0 <- ret0){ … } }`), so the
         // original send/receive pair sits INSIDE that `new`.
-        let term = RholangLanguage
-            .parse_term(r#"{ for(x <- @("c")){ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
-            .expect("parse");
+        let term = RholangLanguage.parse_term(HELD_FOLD_SRC).expect("parse");
+        let typed = term
+            .as_any()
+            .downcast_ref::<RholangTerm>()
+            .expect("typed Rholang term");
+        assert!(
+            matches!(&typed.0, RholangTermInner::Proc(_)),
+            "the two-fold fixture must have exactly one Proc reading: {:?}",
+            typed.0,
+        );
         let (par, specs) = crate::rholang_ast::lower_rholang_term_with_folds(term.as_ref())
             .expect("both folds lift, so lowering succeeds");
         assert_eq!(specs.len(), 2, "held fold + ground fold ⇒ two fold-contract specs (A-S4)");
@@ -1026,14 +1079,14 @@ mod tests {
 
     #[test]
     fn held_fold_over_comm_received_value_reduces_via_trampoline() {
-        // Tier-3 flagship: `int(*(x), 8)` whose operand `x` is bound by the COMM `receive` — stuck
+        // Tier-3 flagship: `int(*x, 8)` whose operand `x` is bound by the COMM `receive` — stuck
         // on Dovetail. The lowering lifts it to a fold-contract trampoline; stepping must show the
         // receive/send COMM AND the fold-contract COMM(s), proving the held fold reduces on the Rho
         // machine.
         use crate::rholang_ast::dovetail_rho_backed_rholang;
         let language = dovetail_rho_backed_rholang("OUT").expect("build Rholang wrapper");
         let term = RholangLanguage
-            .parse_term(r#"{ for(x <- @("c")){ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
+            .parse_term(HELD_FOLD_SRC)
             .expect("parse held-fold term");
         let mut stepper = language
             .start_reduction_stepper(term.as_ref())
@@ -1089,11 +1142,21 @@ mod tests {
     #[test]
     fn dropping_a_session_mid_trace_aborts_cleanly() {
         // Start a session, take one step, then drop it: the gate aborts the paused worker and the
-        // Drop impl joins it without leaking a thread or panicking.
-        let mut session =
-            StepSession::start(lower(COMM_SRC), Vec::new(), Some("OUT".to_string()), None)
-                .expect("start");
-        let _first = session.next_step().expect("first step");
+        // Drop impl joins it without leaking a thread or panicking. Two copies of the verified
+        // single-COMM program ensure the worker has a second rendezvous to pause on.
+        let one_comm = lower(COMM_SRC);
+        let mut session = StepSession::start(
+            one_comm.clone().append(one_comm),
+            Vec::new(),
+            Some("OUT".to_string()),
+            None,
+        )
+        .expect("start");
+        let first = session
+            .next_step()
+            .expect("first step")
+            .expect("a COMM step");
+        assert_eq!(first.kind, RuntimeReductionKind::Comm);
         drop(session); // must not hang or panic
     }
 

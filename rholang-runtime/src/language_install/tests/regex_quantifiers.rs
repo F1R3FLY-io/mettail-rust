@@ -463,6 +463,9 @@ fn variable_free(value: &DynamicValue) -> bool {
             DynamicValue::TemplateHole { .. }
             | DynamicValue::Text(_)
             | DynamicValue::Integer(_)
+            | DynamicValue::BigInt(_)
+            | DynamicValue::BigRat { .. }
+            | DynamicValue::FixedPoint { .. }
             | DynamicValue::Boolean(_)
             | DynamicValue::Bytes(_)
             | DynamicValue::Unit => {},

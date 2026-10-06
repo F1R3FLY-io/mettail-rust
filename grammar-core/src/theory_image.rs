@@ -203,6 +203,20 @@ unsafe impl SemanticHash for TheoryImageOperatorV1 {
                         output.push(2);
                         output.extend_from_slice(&value.to_le_bytes());
                     },
+                    TheoryLiteralV1::BigInt(value) => {
+                        output.push(6);
+                        write_framed(output, value);
+                    },
+                    TheoryLiteralV1::BigRat { numerator, denominator } => {
+                        output.push(7);
+                        write_framed(output, numerator);
+                        write_framed(output, denominator);
+                    },
+                    TheoryLiteralV1::FixedPoint { unscaled, scale } => {
+                        output.push(8);
+                        write_framed(output, unscaled);
+                        output.extend_from_slice(&scale.to_le_bytes());
+                    },
                     TheoryLiteralV1::FloatBits(value) => {
                         output.push(3);
                         output.extend_from_slice(&value.to_le_bytes());
@@ -1209,6 +1223,7 @@ pub enum TheoryImageError {
     Allocation,
     InvalidMagic,
     InvalidTag(u8),
+    InvalidLiteral,
     InvalidUtf8,
     Truncated,
     TrailingBytes,
@@ -1872,6 +1887,41 @@ fn canonical_guard_footprint(
                 bytes =
                     checked_total(bytes, value.len(), limits.max_total_guard_bytes, "guard bytes")?;
             },
+            crate::CanonicalValue::BigInt(value) => {
+                if !crate::is_canonical_signed_big_endian(value) {
+                    return Err(TheoryImageError::InvalidLiteral);
+                }
+                bytes =
+                    checked_total(bytes, value.len(), limits.max_total_guard_bytes, "guard bytes")?;
+            },
+            crate::CanonicalValue::BigRat { numerator, denominator } => {
+                if !crate::is_canonical_big_rational(numerator, denominator) {
+                    return Err(TheoryImageError::InvalidLiteral);
+                }
+                bytes = checked_total(
+                    bytes,
+                    numerator.len(),
+                    limits.max_total_guard_bytes,
+                    "guard bytes",
+                )?;
+                bytes = checked_total(
+                    bytes,
+                    denominator.len(),
+                    limits.max_total_guard_bytes,
+                    "guard bytes",
+                )?;
+            },
+            crate::CanonicalValue::FixedPoint { unscaled, .. } => {
+                if !crate::is_canonical_signed_big_endian(unscaled) {
+                    return Err(TheoryImageError::InvalidLiteral);
+                }
+                bytes = checked_total(
+                    bytes,
+                    unscaled.len(),
+                    limits.max_total_guard_bytes,
+                    "guard bytes",
+                )?;
+            },
             crate::CanonicalValue::Integer(_)
             | crate::CanonicalValue::FloatBits(_)
             | crate::CanonicalValue::Boolean(_)
@@ -1885,6 +1935,11 @@ fn literal_bytes(literal: &TheoryLiteralV1) -> usize {
     match literal {
         TheoryLiteralV1::String(value) => value.len(),
         TheoryLiteralV1::Bytes(value) => value.len(),
+        TheoryLiteralV1::BigInt(value) => value.len(),
+        TheoryLiteralV1::BigRat { numerator, denominator } => {
+            numerator.len().saturating_add(denominator.len())
+        },
+        TheoryLiteralV1::FixedPoint { unscaled, .. } => unscaled.len(),
         TheoryLiteralV1::Integer(_)
         | TheoryLiteralV1::FloatBits(_)
         | TheoryLiteralV1::Boolean(_)
@@ -2468,6 +2523,29 @@ pub fn theory_guard_commitment_v1(
             Task::Value(crate::CanonicalValue::Integer(value)) => {
                 hasher.update(b"i");
                 hasher.update(&value.to_be_bytes());
+            },
+            Task::Value(crate::CanonicalValue::BigInt(value)) => {
+                if !crate::is_canonical_signed_big_endian(value) {
+                    return Err(TheoryImageError::InvalidLiteral);
+                }
+                hasher.update(b"I");
+                hash_guard_bytes(&mut hasher, value);
+            },
+            Task::Value(crate::CanonicalValue::BigRat { numerator, denominator }) => {
+                if !crate::is_canonical_big_rational(numerator, denominator) {
+                    return Err(TheoryImageError::InvalidLiteral);
+                }
+                hasher.update(b"R");
+                hash_guard_bytes(&mut hasher, numerator);
+                hash_guard_bytes(&mut hasher, denominator);
+            },
+            Task::Value(crate::CanonicalValue::FixedPoint { unscaled, scale }) => {
+                if !crate::is_canonical_signed_big_endian(unscaled) {
+                    return Err(TheoryImageError::InvalidLiteral);
+                }
+                hasher.update(b"P");
+                hash_guard_bytes(&mut hasher, unscaled);
+                hasher.update(&scale.to_be_bytes());
             },
             Task::Value(crate::CanonicalValue::FloatBits(value)) => {
                 hasher.update(b"d");
@@ -3640,6 +3718,25 @@ mod tests {
             },
             TheoryImageOperatorV1::Literal {
                 sort: TheorySortId(0),
+                value: TheoryLiteralV1::BigInt(vec![97]),
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::BigRat {
+                    numerator: vec![97],
+                    denominator: vec![1],
+                },
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::FixedPoint { unscaled: vec![97], scale: 0 },
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: TheoryLiteralV1::FixedPoint { unscaled: vec![97], scale: 1 },
+            },
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
                 value: TheoryLiteralV1::FloatBits(97),
             },
             TheoryImageOperatorV1::Literal {
@@ -3660,5 +3757,50 @@ mod tests {
             .enumerate()
             .all(|(index, key)| keys[..index].iter().all(|prior| prior != key)));
         assert_eq!(operators[0].content_key(), operators[0].clone().content_key());
+    }
+
+    #[test]
+    fn exact_guard_values_preserve_type_and_fixed_scale_in_commitments() {
+        let integer = crate::CanonicalValue::Integer(1);
+        let big_integer = crate::CanonicalValue::BigInt(vec![1]);
+        let rational = crate::CanonicalValue::BigRat { numerator: vec![1], denominator: vec![1] };
+        let fixed_zero = crate::CanonicalValue::FixedPoint { unscaled: vec![1], scale: 0 };
+        let fixed_one = crate::CanonicalValue::FixedPoint { unscaled: vec![1], scale: 1 };
+        let commitments = [integer, big_integer, rational, fixed_zero, fixed_one]
+            .iter()
+            .map(|value| theory_guard_commitment_v1(value).unwrap())
+            .collect::<Vec<_>>();
+        assert!(commitments
+            .iter()
+            .enumerate()
+            .all(|(index, commitment)| commitments[..index]
+                .iter()
+                .all(|prior| prior != commitment)));
+    }
+
+    #[test]
+    fn exact_guard_admission_checks_canonical_bytes_and_total_payload() {
+        let limits = TheoryImageAdmissionLimits::default();
+        let value = crate::CanonicalValue::BigRat {
+            numerator: vec![0xff],
+            denominator: vec![3],
+        };
+        assert_eq!(canonical_guard_footprint(&value, limits), Ok((1, 2)));
+        let bounded = TheoryImageAdmissionLimits { max_total_guard_bytes: 1, ..limits };
+        assert_eq!(
+            canonical_guard_footprint(&value, bounded),
+            Err(TheoryImageError::LimitExceeded("guard bytes"))
+        );
+        for invalid in [
+            crate::CanonicalValue::BigInt(vec![0, 1]),
+            crate::CanonicalValue::BigRat { numerator: vec![2], denominator: vec![4] },
+            crate::CanonicalValue::FixedPoint { unscaled: vec![], scale: 2 },
+        ] {
+            assert_eq!(
+                canonical_guard_footprint(&invalid, limits),
+                Err(TheoryImageError::InvalidLiteral)
+            );
+            assert_eq!(theory_guard_commitment_v1(&invalid), Err(TheoryImageError::InvalidLiteral));
+        }
     }
 }

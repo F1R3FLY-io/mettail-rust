@@ -1,8 +1,9 @@
 use mettail_languages::rholang::{
     lex, lex_dag, DdlEquation, DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem,
     DdlOptionSection, DdlParam, DdlPath, DdlPremise, DdlPremiseInput, DdlPremises,
-    DdlRegClassPiece, DdlRegPiece, DdlRewrite, DdlRewriteBinding, DdlRuleAst, DdlTermRule,
-    DdlTheoryExpr, Proc,
+    DdlProjectionBinding, DdlProjectionDirection, DdlProjectionPremise, DdlProjectionPremises,
+    DdlProjectionRowHead, DdlProjectionRule, DdlRegClassPiece, DdlRegPiece, DdlRewrite,
+    DdlRewriteBinding, DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
 };
 use mettail_prattail::automata::TokenKind;
 use mettail_runtime::Language;
@@ -33,6 +34,55 @@ fn projection_host_categories_are_the_generated_rholang_categories() {
             .is_some_and(|fingerprint| !fingerprint.is_empty()),
         "host category references need the generated grammar identity"
     );
+}
+
+#[test]
+fn generated_projection_rows_retain_typed_context_and_ordered_premises() {
+    let source = "projection Pair : Flag <~> host::Bool { \
+        First(x:Flag,h:host::Bool): if projection Basis(x,h), x ~> h then \
+            (Wrap x) <~> (host::CastBool true); \
+        Second : (Plain) <~> false; }";
+    let projection = DdlRewrite::parse_via_wpda(source).expect("generated projection syntax");
+    assert_eq!(
+        DdlRewrite::parse_via_wpda(&projection.to_string()).expect("projection round-trip"),
+        projection
+    );
+    let DdlRewrite::DdlRewriteProjection(name, guest, direction, host, rows) = &projection else {
+        panic!("projection must retain its own AST constructor");
+    };
+    assert_eq!((name.as_str(), guest.as_str(), host.as_str()), ("Pair", "Flag", "Bool"));
+    assert!(matches!(direction.as_ref(), DdlProjectionDirection::DdlProjectionBoth));
+    assert_eq!(rows.len(), 2, "both authored rows must survive parsing");
+    let DdlProjectionRule::DdlProjectionRuleConditional(head, premises, left, row_direction, right) =
+        &rows[0]
+    else {
+        panic!("first row must keep its context and premises");
+    };
+    let DdlProjectionRowHead::DdlProjectionHeadContext(first_name, bindings) = head.as_ref() else {
+        panic!("first row must keep its typed context");
+    };
+    assert_eq!(first_name, "First");
+    assert!(matches!(&bindings[..],
+        [DdlProjectionBinding::DdlProjectionBindingGuest(guest_name, guest_sort),
+         DdlProjectionBinding::DdlProjectionBindingHost(host_name, host_sort)]
+        if guest_name == "x" && guest_sort == "Flag"
+            && host_name == "h" && host_sort == "Bool"));
+    let DdlProjectionPremises::DdlProjectionPremisesList(clauses) = premises.as_ref();
+    assert!(matches!(&clauses[..],
+        [DdlProjectionPremise::DdlProjectionPremiseCall(name, guest_arg, host_arg),
+         DdlProjectionPremise::DdlProjectionPremiseTransition(left, right)]
+        if name == "Basis" && guest_arg == "x" && host_arg == "h"
+            && left == "x" && right == "h"));
+    assert!(matches!(left.as_ref(), DdlRuleAst::DdlRuleAstSExp(label, _) if label == "Wrap"));
+    assert!(
+        matches!(right.as_ref(), DdlRuleAst::DdlRuleAstHostSExp(label, _) if label == "CastBool")
+    );
+    assert!(matches!(row_direction.as_ref(), DdlProjectionDirection::DdlProjectionBoth));
+    assert!(matches!(&rows[1],
+        DdlProjectionRule::DdlProjectionRuleDirect(head, _, direction, right)
+        if matches!(head.as_ref(), DdlProjectionRowHead::DdlProjectionHeadPlain(name) if name == "Second")
+            && matches!(direction.as_ref(), DdlProjectionDirection::DdlProjectionBoth)
+            && matches!(right.as_ref(), DdlRuleAst::DdlRuleAstBoolean(_))));
 }
 
 fn run_ddl_sexp_action(

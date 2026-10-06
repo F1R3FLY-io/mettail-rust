@@ -831,6 +831,20 @@ fn encode_literal<S: ImageSink>(
             write_u8(sink, 2)?;
             sink.write(&value.to_le_bytes())
         },
+        TheoryLiteralV1::BigInt(value) => {
+            write_u8(sink, 6)?;
+            write_bytes(sink, value)
+        },
+        TheoryLiteralV1::BigRat { numerator, denominator } => {
+            write_u8(sink, 7)?;
+            write_bytes(sink, numerator)?;
+            write_bytes(sink, denominator)
+        },
+        TheoryLiteralV1::FixedPoint { unscaled, scale } => {
+            write_u8(sink, 8)?;
+            write_bytes(sink, unscaled)?;
+            write_u32(sink, *scale)
+        },
         TheoryLiteralV1::FloatBits(value) => {
             write_u8(sink, 3)?;
             sink.write(&value.to_le_bytes())
@@ -1259,7 +1273,7 @@ fn decode_literal(
     limits: TheoryImageAdmissionLimits,
     totals: &mut DecodeTotals,
 ) -> Result<TheoryLiteralV1, TheoryImageError> {
-    Ok(match reader.read_u8()? {
+    let literal = match reader.read_u8()? {
         0 => {
             let value = reader.read_string(limits.max_total_literal_bytes, "literal bytes")?;
             add_limit(
@@ -1284,8 +1298,49 @@ fn decode_literal(
         3 => TheoryLiteralV1::FloatBits(u64::from_le_bytes(reader.read_array()?)),
         4 => TheoryLiteralV1::Boolean(reader.read_bool()?),
         5 => TheoryLiteralV1::Unit,
+        6 => {
+            let value = reader.read_bytes(limits.max_total_literal_bytes, "literal bytes")?;
+            add_limit(
+                &mut totals.literals,
+                value.len(),
+                limits.max_total_literal_bytes,
+                "literal bytes",
+            )?;
+            TheoryLiteralV1::BigInt(value)
+        },
+        7 => {
+            let numerator = reader.read_bytes(limits.max_total_literal_bytes, "literal bytes")?;
+            add_limit(
+                &mut totals.literals,
+                numerator.len(),
+                limits.max_total_literal_bytes,
+                "literal bytes",
+            )?;
+            let denominator = reader.read_bytes(limits.max_total_literal_bytes, "literal bytes")?;
+            add_limit(
+                &mut totals.literals,
+                denominator.len(),
+                limits.max_total_literal_bytes,
+                "literal bytes",
+            )?;
+            TheoryLiteralV1::BigRat { numerator, denominator }
+        },
+        8 => {
+            let unscaled = reader.read_bytes(limits.max_total_literal_bytes, "literal bytes")?;
+            add_limit(
+                &mut totals.literals,
+                unscaled.len(),
+                limits.max_total_literal_bytes,
+                "literal bytes",
+            )?;
+            TheoryLiteralV1::FixedPoint { unscaled, scale: reader.read_u32()? }
+        },
         tag => return Err(TheoryImageError::InvalidTag(tag)),
-    })
+    };
+    if !crate::is_canonical_theory_literal(&literal) {
+        return Err(TheoryImageError::InvalidLiteral);
+    }
+    Ok(literal)
 }
 
 fn decode_premise(
@@ -1973,5 +2028,69 @@ impl<'a> ImageReader<'a> {
         kind: &'static str,
     ) -> Result<Vec<u32>, TheoryImageError> {
         read_ids_exact(self, expected, |value| value, kind)
+    }
+}
+
+#[cfg(test)]
+mod exact_literal_codec_tests {
+    use super::*;
+
+    #[test]
+    fn exact_literals_round_trip_without_decimal_or_i128_conversion() {
+        for literal in [
+            TheoryLiteralV1::BigInt(vec![0, 0x80]),
+            TheoryLiteralV1::BigInt(vec![0xff, 0x7f]),
+            TheoryLiteralV1::BigRat {
+                numerator: vec![0xff],
+                denominator: vec![3],
+            },
+            TheoryLiteralV1::FixedPoint { unscaled: vec![0, 0x80], scale: 7 },
+        ] {
+            let mut encoded = Vec::new();
+            encode_literal(&mut VecSink(&mut encoded), &literal).unwrap();
+            let mut reader = ImageReader::new(&encoded);
+            let decoded = decode_literal(
+                &mut reader,
+                TheoryImageAdmissionLimits::default(),
+                &mut DecodeTotals::default(),
+            )
+            .unwrap();
+            assert_eq!(decoded, literal);
+            assert_eq!(reader.remaining(), 0);
+        }
+    }
+
+    #[test]
+    fn decoder_rejects_noncanonical_exact_values_and_combined_byte_overflow() {
+        for literal in [
+            TheoryLiteralV1::BigInt(vec![0, 0]),
+            TheoryLiteralV1::BigRat { numerator: vec![2], denominator: vec![4] },
+            TheoryLiteralV1::FixedPoint { unscaled: vec![], scale: 1 },
+        ] {
+            let mut encoded = Vec::new();
+            encode_literal(&mut VecSink(&mut encoded), &literal).unwrap();
+            assert_eq!(
+                decode_literal(
+                    &mut ImageReader::new(&encoded),
+                    TheoryImageAdmissionLimits::default(),
+                    &mut DecodeTotals::default(),
+                ),
+                Err(TheoryImageError::InvalidLiteral)
+            );
+        }
+        let mut encoded = Vec::new();
+        encode_literal(
+            &mut VecSink(&mut encoded),
+            &TheoryLiteralV1::BigRat { numerator: vec![1], denominator: vec![2] },
+        )
+        .unwrap();
+        let limits = TheoryImageAdmissionLimits {
+            max_total_literal_bytes: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            decode_literal(&mut ImageReader::new(&encoded), limits, &mut DecodeTotals::default()),
+            Err(TheoryImageError::LimitExceeded("literal bytes"))
+        );
     }
 }

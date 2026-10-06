@@ -646,6 +646,17 @@ fn observation_predicate_keys<C: FnMut() -> bool>(
                         TheoryTermFormV1::Literal(value) => match value {
                             mettail_grammar_core::TheoryLiteralV1::String(s) => s.len(),
                             mettail_grammar_core::TheoryLiteralV1::Bytes(b) => b.len(),
+                            mettail_grammar_core::TheoryLiteralV1::BigInt(b) => b.len(),
+                            mettail_grammar_core::TheoryLiteralV1::BigRat {
+                                numerator,
+                                denominator,
+                            } => numerator
+                                .len()
+                                .checked_add(denominator.len())
+                                .ok_or(TheoryImageCompileError::LengthOverflow)?,
+                            mettail_grammar_core::TheoryLiteralV1::FixedPoint {
+                                unscaled, ..
+                            } => unscaled.len(),
                             _ => 16,
                         },
                     };

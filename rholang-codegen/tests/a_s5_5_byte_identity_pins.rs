@@ -17,7 +17,9 @@
 //!
 //! These goldens are FINGERPRINT-SENSITIVE: they legitimately move when
 //! `languages/src/lambda.rs` / `languages/src/ambient.rs` (or the reflection ABI)
-//! changes — re-capture then, with the diff explained in the commit.
+//! changes — re-capture then, with the diff explained in the commit. The current
+//! tuples were re-captured after the c387f4cc v2 language/fragment identity change;
+//! the original captures above remain the historical A-S5.5 baseline.
 
 use std::hash::{Hash, Hasher};
 
@@ -80,9 +82,11 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_5_golden() {
         // are unchanged.
         // ACCOUNTING: 4357 → 4429 = +72 = 2 scope insertions × 36, exactly (no name
         // crossed prost's 127-byte varint length-prefix boundary).
-        (4429, 0x0cfebce014446d5d),
-        "the Lambda ^drive receiver family must be byte-identical to the pre-A-S5.5 \
-         golden (captured at ee1514da)"
+        // v2 RE-CAPTURE (c387f4cc): 4429 → 6429. The language fingerprint and
+        // RhoNet fragment digests now carry 64 rather than 16 hex digits in
+        // generated names; protobuf length prefixes can grow with those names.
+        (6429, 0xbef07b595baddc0c),
+        "the Lambda ^drive receiver family must match the reviewed v2 byte golden"
     );
     let installed = plan
         .installed_rho_net_program_par()
@@ -107,9 +111,10 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_5_golden() {
         // byte delta is fully accounted below. Nothing else moved — the receive counts
         // are unchanged.
         // ACCOUNTING: 12824 → 12932 = +108 = 3 × 36, exactly.
-        (12932, 0x87c0768a017c399d),
-        "the full Lambda installed program must be byte-identical to the pre-A-S5.5 \
-         golden (captured at ee1514da; RE-CAPTURED at #36 S3, diff explained above)"
+        // v2 RE-CAPTURE (c387f4cc): 12932 → 18554, for the same identity
+        // migration; the structural gate above still requires seven receives.
+        (18554, 0x1c20e2739423e4ac),
+        "the full Lambda installed program must match the reviewed v2 byte golden"
     );
 }
 
@@ -129,22 +134,28 @@ fn ambient_legacy_ac_receivers_are_byte_identical_to_the_pre_a_s5_5_goldens() {
         //   InRule    610 → 791  (+181 = 180 + 1)
         //   OutRule   627 → 810  (+183 = 180 + 3)
         //   OpenRule  533 → 716  (+183 = 180 + 3)
-        ("rule:rewrite:0:InRule", (791, 0xc98308695f97287b)),
-        ("rule:rewrite:1:OutRule", (810, 0xee3b373df2352123)),
-        ("rule:rewrite:2:OpenRule", (716, 0xedd385091b46233c)),
+        // v2 RE-CAPTURE (c387f4cc): 791 → 1235, 810 → 1248, 716 → 1109.
+        // The same widened language and fragment identities occur in the
+        // legacy channels; the three rule IDs and receiver inventory persist.
+        ("rule:rewrite:0:InRule", (1235, 0x5b9426c7b797bd71)),
+        ("rule:rewrite:1:OutRule", (1248, 0xde1184e72bfbcdd1)),
+        ("rule:rewrite:2:OpenRule", (1109, 0xf3d51e5dc9a44c33)),
     ];
-    for (rule_id, expected) in goldens {
-        let par = lowered
-            .rules()
-            .iter()
-            .find(|rule| rule.rule_id() == *rule_id)
-            .and_then(|rule| rule.par())
-            .unwrap_or_else(|| panic!("Ambient must materialize {rule_id}"));
-        assert_eq!(
-            &par_fingerprint(par),
-            expected,
-            "the legacy {rule_id} σ-receiver must be byte-identical to the pre-A-S5.5 \
-             golden (captured at ee1514da)"
-        );
-    }
+    let actual = goldens
+        .iter()
+        .map(|(rule_id, _)| {
+            let par = lowered
+                .rules()
+                .iter()
+                .find(|rule| rule.rule_id() == *rule_id)
+                .and_then(|rule| rule.par())
+                .unwrap_or_else(|| panic!("Ambient must materialize {rule_id}"));
+            (*rule_id, par_fingerprint(par))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual.as_slice(),
+        goldens,
+        "the three legacy AC σ-receivers must match the reviewed byte goldens"
+    );
 }

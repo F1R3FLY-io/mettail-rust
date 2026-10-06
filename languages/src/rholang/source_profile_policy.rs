@@ -80,6 +80,12 @@ macro_rules! rholang_source_profile_rows {
             Map::MapLit => [HashMapLit<Proc,Proc> => I];
             Proc::MethodCall => [Arc<Proc> => T, String => Opaque, Vec<Proc> => T];
             Proc::Concat => [Arc<Proc> => T, Arc<Proc> => T];
+            Proc::Add => [Arc<Proc> => T, Arc<Proc> => T];
+            Proc::Sub => [Arc<Proc> => T, Arc<Proc> => T];
+            Proc::Mul => [Arc<Proc> => T, Arc<Proc> => T];
+            Proc::Div => [Arc<Proc> => T, Arc<Proc> => T];
+            Proc::Mod => [Arc<Proc> => T, Arc<Proc> => T];
+            Proc::NegProc => [Arc<Proc> => T];
             Proc::Eq => [Arc<Proc> => T, Arc<Proc> => T];
             Proc::Ne => [Arc<Proc> => T, Arc<Proc> => T];
             Proc::Lt => [Arc<Proc> => T, Arc<Proc> => T];
@@ -90,6 +96,7 @@ macro_rules! rholang_source_profile_rows {
             Proc::Or => [Arc<Proc> => B, Arc<Proc> => B];
             Proc::Implies => [Arc<Proc> => B, Arc<Proc> => B];
             Proc::Not => [Arc<Proc> => B];
+            Proc::Matches => [Arc<Proc> => T, Arc<Proc> => P];
             Proc::PFlt => [Arc<FltNode> => Opaque];
             Proc::PFltFence => [Arc<FltNode> => Opaque];
             Proc::PFltBrace => [Arc<FltNode> => Opaque];

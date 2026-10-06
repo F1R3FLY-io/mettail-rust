@@ -24,6 +24,9 @@ pub enum Tok {
     Str(String),
     Bytes(Vec<u8>),
     Integer(i128),
+    BigInt(Vec<u8>),
+    BigRat { numerator: Vec<u8>, denominator: Vec<u8> },
+    FixedPoint { unscaled: Vec<u8>, scale: u32 },
     FloatBits(u64),
 
     // keywords
@@ -88,6 +91,9 @@ impl Tok {
             Tok::Str(s) => format!("string {s:?}"),
             Tok::Bytes(bytes) => format!("byte array literal ({} bytes)", bytes.len()),
             Tok::Integer(value) => format!("integer `{value}`"),
+            Tok::BigInt(_) => "BigInt literal".into(),
+            Tok::BigRat { .. } => "BigRat literal".into(),
+            Tok::FixedPoint { .. } => "Fixed literal".into(),
             Tok::FloatBits(bits) => format!("float `{}`", f64::from_bits(*bits)),
             Tok::Eof => "end of input".into(),
             t => format!("`{}`", t.spelling()),
@@ -99,6 +105,9 @@ impl Tok {
             Tok::Ident(s) | Tok::Str(s) => s,
             Tok::Bytes(_) => "<bytes>",
             Tok::Integer(_) => "<integer>",
+            Tok::BigInt(_) => "<BigInt>",
+            Tok::BigRat { .. } => "<BigRat>",
+            Tok::FixedPoint { .. } => "<Fixed>",
             Tok::FloatBits(_) => "<float>",
             Tok::KwModule => "Module",
             Tok::KwTheoryUpper => "Theory",
@@ -358,58 +367,183 @@ pub fn lex(src: &str) -> Result<Vec<Lexeme>, String> {
             continue;
         }
 
-        // Canonical values use signed decimal integers and IEEE-754 decimal
-        // floats. A leading `--` was already consumed as a comment above, so
-        // `-` is unambiguous here.
-        if c.is_ascii_digit() || (c == '-' && i + 1 < b.len() && b[i + 1].is_ascii_digit()) {
+        // The generated Rholang Float category also admits leading-dot
+        // decimals, digit separators, and the explicit `f64` suffix. A
+        // leading `--` was already consumed as a comment above.
+        let leading_dot = c == '.' && i + 1 < b.len() && b[i + 1].is_ascii_digit();
+        let negative_number = c == '-'
+            && (i + 1 < b.len() && b[i + 1].is_ascii_digit()
+                || i + 2 < b.len() && b[i + 1] == '.' && b[i + 2].is_ascii_digit());
+        if c.is_ascii_digit() || leading_dot || negative_number {
             let start = i;
             if c == '-' {
                 bump!(1);
             }
-            while i < b.len() && b[i].is_ascii_digit() {
+            let radix = if i + 1 < b.len() && b[i] == '0' {
+                match b[i + 1] {
+                    'b' => 2,
+                    'o' => 8,
+                    'x' => 16,
+                    _ => 10,
+                }
+            } else {
+                10
+            };
+            if radix != 10 {
+                bump!(2);
+            }
+            let digit = |ch: char| match radix {
+                2 => matches!(ch, '0' | '1'),
+                8 => matches!(ch, '0'..='7'),
+                16 => ch.is_ascii_hexdigit(),
+                _ => ch.is_ascii_digit(),
+            };
+            let digits_start = i;
+            while i < b.len() && (digit(b[i]) || b[i] == '_' && i + 1 < b.len() && digit(b[i + 1]))
+            {
                 bump!(1);
             }
+            if radix != 10 && i == digits_start {
+                return Err(format!("{span}: radix integer has no digits"));
+            }
             let mut is_float = false;
-            if i + 1 < b.len() && b[i] == '.' && b[i + 1].is_ascii_digit() {
+            if radix == 10 && i + 1 < b.len() && b[i] == '.' && b[i + 1].is_ascii_digit() {
                 is_float = true;
                 bump!(1);
-                while i < b.len() && b[i].is_ascii_digit() {
+                while i < b.len()
+                    && (b[i].is_ascii_digit()
+                        || b[i] == '_' && i + 1 < b.len() && b[i + 1].is_ascii_digit())
+                {
                     bump!(1);
                 }
             }
-            if i < b.len() && matches!(b[i], 'e' | 'E') {
+            let mut has_exponent = false;
+            if radix == 10 && i < b.len() && matches!(b[i], 'e' | 'E') {
                 is_float = true;
+                has_exponent = true;
                 bump!(1);
                 if i < b.len() && matches!(b[i], '+' | '-') {
                     bump!(1);
                 }
                 let exponent_start = i;
-                while i < b.len() && b[i].is_ascii_digit() {
+                while i < b.len()
+                    && (b[i].is_ascii_digit()
+                        || b[i] == '_' && i + 1 < b.len() && b[i + 1].is_ascii_digit())
+                {
                     bump!(1);
                 }
                 if i == exponent_start {
                     return Err(format!("{span}: float exponent has no digits"));
                 }
             }
-            if !is_float && i < b.len() && b[i] == 'n' {
+            if !is_float && i < b.len() && b[i] == 'r' {
                 bump!(1);
+                if i < b.len() && b[i] == '/' {
+                    let mut end = i + 1;
+                    let denominator_radix = if end + 1 < b.len() && b[end] == '0' {
+                        match b[end + 1] {
+                            'b' => 2,
+                            'o' => 8,
+                            'x' => 16,
+                            _ => 10,
+                        }
+                    } else {
+                        10
+                    };
+                    if denominator_radix != 10 {
+                        end += 2;
+                    }
+                    let denominator_start = end;
+                    while end < b.len()
+                        && (match denominator_radix {
+                            2 => matches!(b[end], '0' | '1'),
+                            8 => matches!(b[end], '0'..='7'),
+                            16 => b[end].is_ascii_hexdigit(),
+                            _ => b[end].is_ascii_digit(),
+                        } || b[end] == '_'
+                            && end + 1 < b.len()
+                            && match denominator_radix {
+                                2 => matches!(b[end + 1], '0' | '1'),
+                                8 => matches!(b[end + 1], '0'..='7'),
+                                16 => b[end + 1].is_ascii_hexdigit(),
+                                _ => b[end + 1].is_ascii_digit(),
+                            })
+                    {
+                        end += 1;
+                    }
+                    if end > denominator_start && end < b.len() && b[end] == 'r' {
+                        bump!(end + 1 - i);
+                    }
+                }
+                let raw: String = b[start..i].iter().collect();
+                let ratio = mettail_prattail::parse_rational_lit(&raw)
+                    .map_err(|_| format!("{span}: invalid BigRat literal"))?;
+                out.push(Lexeme {
+                    tok: Tok::BigRat {
+                        numerator: ratio.ratio().numer().to_signed_bytes_be(),
+                        denominator: ratio.ratio().denom().to_signed_bytes_be(),
+                    },
+                    span,
+                });
+                continue;
+            }
+            if radix == 10 && !has_exponent && i < b.len() && b[i] == 'p' {
+                bump!(1);
+                let scale_start = i;
+                while i < b.len()
+                    && (b[i].is_ascii_digit()
+                        || b[i] == '_' && i + 1 < b.len() && b[i + 1].is_ascii_digit())
+                {
+                    bump!(1);
+                }
+                if i == scale_start {
+                    return Err(format!("{span}: fixed-point scale has no digits"));
+                }
+                let raw: String = b[start..i].iter().collect();
+                let fixed = mettail_runtime::parse_fixed_lit(&raw)
+                    .map_err(|_| format!("{span}: invalid Fixed literal"))?;
+                out.push(Lexeme {
+                    tok: Tok::FixedPoint {
+                        unscaled: fixed.unscaled().to_signed_bytes_be(),
+                        scale: fixed.places(),
+                    },
+                    span,
+                });
+                continue;
+            }
+            if is_float && i + 3 <= b.len() && b[i..i + 3] == ['f', '6', '4'] {
+                bump!(3);
+            }
+            if !is_float {
+                if i + 3 <= b.len()
+                    && (b[i..i + 3] == ['i', '3', '2']
+                        || b[i..i + 3] == ['i', '6', '4']
+                        || b[i..i + 3] == ['u', '3', '2'])
+                {
+                    bump!(3);
+                } else if i < b.len() && b[i] == 'n' {
+                    bump!(1);
+                }
             }
             let raw: String = b[start..i].iter().collect();
             let tok = if is_float {
-                let value = raw
-                    .parse::<f64>()
-                    .map_err(|_| format!("{span}: invalid IEEE-754 float"))?;
-                if !value.is_finite() {
+                let value = mettail_runtime::parse_float_lit(&raw)
+                    .map_err(|_| format!("{span}: invalid finite IEEE-754 float"))?;
+                if !value.get().is_finite() {
                     return Err(format!("{span}: float must be finite"));
                 }
-                Tok::FloatBits(value.to_bits())
+                Tok::FloatBits(value.get().to_bits())
             } else {
-                let decimal = raw.strip_suffix('n').unwrap_or(&raw);
-                Tok::Integer(
-                    decimal
-                        .parse::<i128>()
-                        .map_err(|_| format!("{span}: integer is outside the i128 range"))?,
-                )
+                let value = mettail_prattail::parse_int_lit(&raw, None)
+                    .map_err(|_| format!("{span}: invalid integer literal"))?;
+                if raw.ends_with('n') || value.as_i64().is_none() {
+                    let integer = value
+                        .to_bigint()
+                        .ok_or_else(|| format!("{span}: invalid BigInt literal"))?;
+                    Tok::BigInt(integer.to_signed_bytes_be())
+                } else {
+                    Tok::Integer(value.as_i128().expect("i64 literal fits i128"))
+                }
             };
             out.push(Lexeme { tok, span });
             continue;
@@ -533,12 +667,59 @@ mod tests {
         assert_eq!(tokens[1].tok, Tok::FloatBits(2.0f64.to_bits()));
         assert_eq!(tokens[2].tok, Tok::FloatBits((-125.0f64).to_bits()));
         assert_eq!(tokens[3].tok, Tok::FloatBits(0.4f64.to_bits()));
-        assert_eq!(tokens[4].tok, Tok::Integer(i64::MAX as i128 + 1));
-        assert_eq!(tokens[5].tok, Tok::Integer(-1));
+        assert_eq!(
+            tokens[4].tok,
+            Tok::BigInt((num_bigint::BigInt::from(i64::MAX) + 1u32).to_signed_bytes_be())
+        );
+        assert_eq!(tokens[5].tok, Tok::BigInt(vec![0xff]));
+    }
+
+    #[test]
+    fn generated_float_spellings_keep_exact_finite_values() {
+        let tokens = lex(".5 -.5f64 1_000.25f64 1e+2 1_024")
+            .expect("generated Rholang float and decimal spellings lex");
+        assert_eq!(tokens[0].tok, Tok::FloatBits(0.5f64.to_bits()));
+        assert_eq!(tokens[1].tok, Tok::FloatBits((-0.5f64).to_bits()));
+        assert_eq!(tokens[2].tok, Tok::FloatBits(1000.25f64.to_bits()));
+        assert_eq!(tokens[3].tok, Tok::FloatBits(100.0f64.to_bits()));
+        assert_eq!(tokens[4].tok, Tok::Integer(1024));
+    }
+
+    #[test]
+    fn generated_integer_radices_and_width_suffixes_keep_values() {
+        let tokens = lex("0xFF 0b1010_0101 -0o17i32 5u32 0x2an")
+            .expect("generated Rholang integer spellings lex");
+        assert_eq!(tokens[0].tok, Tok::Integer(255));
+        assert_eq!(tokens[1].tok, Tok::Integer(165));
+        assert_eq!(tokens[2].tok, Tok::Integer(-15));
+        assert_eq!(tokens[3].tok, Tok::Integer(5));
+        assert_eq!(tokens[4].tok, Tok::BigInt(vec![42]));
+    }
+
+    #[test]
+    fn generated_exact_numeric_spellings_keep_carrier_components() {
+        let tokens = lex("340282366920938463463374607431768211457n -3r/4r 1.25p2 1.2p1")
+            .expect("exact numeric spellings lex");
+        assert_eq!(
+            tokens[0].tok,
+            Tok::BigInt((num_bigint::BigInt::from(u128::MAX) + 2u32).to_signed_bytes_be()),
+        );
+        assert_eq!(
+            tokens[1].tok,
+            Tok::BigRat {
+                numerator: vec![0xfd],
+                denominator: vec![4]
+            },
+        );
+        assert_eq!(tokens[2].tok, Tok::FixedPoint { unscaled: vec![125], scale: 2 },);
+        assert_eq!(tokens[3].tok, Tok::FixedPoint { unscaled: vec![12], scale: 1 },);
     }
 
     #[test]
     fn malformed_float_exponents_are_rejected() {
         assert!(lex("1e+").expect_err("bad exponent").contains("no digits"));
+        assert!(lex("1e999")
+            .expect_err("non-finite float")
+            .contains("finite"));
     }
 }

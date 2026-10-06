@@ -648,6 +648,26 @@ impl Parser {
                         self.bump();
                         output.push(self.parsed(RhoValue::Integer(value), 1, "canonical value")?);
                     },
+                    Tok::BigInt(value) => {
+                        self.bump();
+                        output.push(self.parsed(RhoValue::BigInt(value), 1, "canonical value")?);
+                    },
+                    Tok::BigRat { numerator, denominator } => {
+                        self.bump();
+                        output.push(self.parsed(
+                            RhoValue::BigRat { numerator, denominator },
+                            1,
+                            "canonical value",
+                        )?);
+                    },
+                    Tok::FixedPoint { unscaled, scale } => {
+                        self.bump();
+                        output.push(self.parsed(
+                            RhoValue::FixedPoint { unscaled, scale },
+                            1,
+                            "canonical value",
+                        )?);
+                    },
                     Tok::FloatBits(bits) => {
                         self.bump();
                         output.push(self.parsed(
@@ -1186,6 +1206,36 @@ impl Parser {
                             "projection term",
                         )?);
                     },
+                    Tok::BigInt(value) => {
+                        self.bump();
+                        values.push(self.parsed(
+                            Self::projection_node("ast-bigint", vec![RhoValue::BigInt(value)]),
+                            1,
+                            "projection term",
+                        )?);
+                    },
+                    Tok::BigRat { numerator, denominator } => {
+                        self.bump();
+                        values.push(self.parsed(
+                            Self::projection_node(
+                                "ast-bigrat",
+                                vec![RhoValue::BigRat { numerator, denominator }],
+                            ),
+                            1,
+                            "projection term",
+                        )?);
+                    },
+                    Tok::FixedPoint { unscaled, scale } => {
+                        self.bump();
+                        values.push(self.parsed(
+                            Self::projection_node(
+                                "ast-fixed",
+                                vec![RhoValue::FixedPoint { unscaled, scale }],
+                            ),
+                            1,
+                            "projection term",
+                        )?);
+                    },
                     Tok::Bytes(value) => {
                         self.bump();
                         values.push(self.parsed(
@@ -1424,6 +1474,33 @@ impl Parser {
                             self.bump();
                             values.push(self.parsed(Ast::Var(name, span), 1, "rule AST")?);
                         },
+                        Tok::KwTrue | Tok::KwFalse => {
+                            let value = self.eat(&Tok::KwTrue);
+                            if !value {
+                                self.expect(Tok::KwFalse)?;
+                            }
+                            values.push(self.parsed(
+                                Ast::Literal(NativeLiteral::Boolean(value), span),
+                                1,
+                                "rule AST",
+                            )?);
+                        },
+                        Tok::Str(value) => {
+                            self.bump();
+                            values.push(self.parsed(
+                                Ast::Literal(NativeLiteral::String(value), span),
+                                1,
+                                "rule AST",
+                            )?);
+                        },
+                        Tok::Integer(value) => {
+                            self.bump();
+                            values.push(self.parsed(
+                                Ast::Literal(NativeLiteral::Integer(value), span),
+                                1,
+                                "rule AST",
+                            )?);
+                        },
                         other => {
                             return self.err(format!("expected a term, found {}", other.describe()))
                         },
@@ -1532,6 +1609,8 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::rholang_literal::render_rholang_value_literal;
+    use num_integer::Integer;
+    use proptest::prelude::*;
     use std::collections::BTreeMap;
 
     fn projection_entries(source: &str) -> Vec<RewriteEntry> {
@@ -1647,6 +1726,46 @@ mod tests {
         assert!(result.is_err(), "overdeep projection term must be refused");
     }
 
+    #[test]
+    fn standalone_projection_numeric_rows_preserve_exact_carriers_and_scale() {
+        let cases = [
+            (
+                "BigInt",
+                "340282366920938463463374607431768211457n",
+                "ast-bigint",
+                RhoValue::BigInt((num_bigint::BigInt::from(u128::MAX) + 2u32).to_signed_bytes_be()),
+            ),
+            (
+                "BigRat",
+                "-3r/4r",
+                "ast-bigrat",
+                RhoValue::BigRat {
+                    numerator: vec![0xfd],
+                    denominator: vec![4],
+                },
+            ),
+            (
+                "Fixed",
+                "1.25p2",
+                "ast-fixed",
+                RhoValue::FixedPoint { unscaled: vec![125], scale: 2 },
+            ),
+        ];
+        for (category, literal, tag, payload) in cases {
+            let source = format!(
+                "Theory T() {{ Rewrites {{ projection P : A ~> host::{category} {{ R : (A) ~> {literal}; }} }} }}"
+            );
+            let entries = projection_entries(&source);
+            let RewriteEntry::Projection(group) = &entries[0] else {
+                panic!("projection group")
+            };
+            let ProjectionBody::Rules(rows) = &group.body else {
+                panic!("projection rows")
+            };
+            assert_eq!(rows[0].host, Parser::projection_node(tag, vec![payload]));
+        }
+    }
+
     fn run_on_small_stack(source: String) -> Result<ModuleFile, Diag> {
         std::thread::Builder::new()
             .name("mettail-parser-small-stack".into())
@@ -1758,8 +1877,10 @@ mod tests {
                 (
                     "nested".into(),
                     RhoValue::List(vec![
-                        RhoValue::Integer(i64::MAX as i128 + 1),
-                        RhoValue::FloatBits((-0.0f64).to_bits()),
+                        RhoValue::BigInt(
+                            num_bigint::BigInt::from(i64::MAX as i128 + 1).to_signed_bytes_be(),
+                        ),
+                        RhoValue::FloatBits(0.0f64.to_bits()),
                         RhoValue::String("quote \" slash \\".into()),
                         RhoValue::Boolean(true),
                         RhoValue::Nil,
@@ -1777,6 +1898,81 @@ mod tests {
                 .expect(Tok::Eof)
                 .expect("reader consumes the value exactly");
             assert_eq!(actual, expected, "canonical literal {literal}");
+        }
+    }
+
+    fn read_rendered_native_value(value: &RhoValue) -> RhoValue {
+        let literal = render_rholang_value_literal(value).expect("native value renders");
+        let mut parser = Parser {
+            toks: lex(&literal).expect("native value lexes"),
+            pos: 0,
+        };
+        let parsed = parser.rho_value().expect("native value parses");
+        parser
+            .expect(Tok::Eof)
+            .expect("literal is consumed exactly");
+        parsed
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn native_int_literal_round_trip_keeps_its_carrier(value in any::<i64>()) {
+            let original = RhoValue::Integer(i128::from(value));
+            prop_assert_eq!(read_rendered_native_value(&original), original);
+        }
+
+        #[test]
+        fn exact_bigint_literal_round_trip_keeps_signed_bytes(
+            seed in prop::collection::vec(any::<u8>(), 1..33),
+        ) {
+            let canonical = num_bigint::BigInt::from_signed_bytes_be(&seed).to_signed_bytes_be();
+            let original = RhoValue::BigInt(canonical);
+            prop_assert_eq!(read_rendered_native_value(&original), original);
+        }
+
+        #[test]
+        fn exact_bigrat_literal_round_trip_keeps_reduced_components(
+            numerator in any::<i64>(), denominator in 1u64..=u64::MAX,
+        ) {
+            let numerator = num_bigint::BigInt::from(numerator);
+            let denominator = num_bigint::BigInt::from(denominator);
+            let gcd = numerator.gcd(&denominator);
+            let original = RhoValue::BigRat {
+                numerator: (numerator / &gcd).to_signed_bytes_be(),
+                denominator: (denominator / gcd).to_signed_bytes_be(),
+            };
+            prop_assert_eq!(read_rendered_native_value(&original), original);
+        }
+
+        #[test]
+        fn exact_fixed_literal_round_trip_keeps_unscaled_and_scale(
+            unscaled in any::<i64>(), scale in 0u32..=12,
+        ) {
+            let original = RhoValue::FixedPoint {
+                unscaled: num_bigint::BigInt::from(unscaled).to_signed_bytes_be(),
+                scale,
+            };
+            prop_assert_eq!(read_rendered_native_value(&original), original);
+        }
+
+        #[test]
+        fn out_of_width_int_is_refused_instead_of_retyped(value in any::<i128>()) {
+            prop_assume!(i64::try_from(value).is_err());
+            prop_assert_eq!(
+                render_rholang_value_literal(&RhoValue::Integer(value)),
+                Err(crate::rholang_literal::RholangLiteralError::IntegerOutsideNativeCarrier(value)),
+            );
+        }
+
+        #[test]
+        fn canonical_finite_float_literal_round_trip_keeps_bits(bits in any::<u64>()) {
+            let value = f64::from_bits(bits);
+            prop_assume!(value.is_finite());
+            let canonical = mettail_runtime::CanonicalFloat64::from(value).get().to_bits();
+            let original = RhoValue::FloatBits(canonical);
+            prop_assert_eq!(read_rendered_native_value(&original), original);
         }
     }
 

@@ -2642,6 +2642,121 @@ mod tests {
     }
 
     #[test]
+    fn generated_unsigned_lookahead_bounds_round_trip_through_the_request_wire() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let subject = spec_channel_par("subject");
+        let reply = spec_channel_par("results");
+        let mut runner = TestRunner::new(Config::with_cases(256));
+        runner
+            .run(&any::<u64>(), |expected| {
+                let wire = crate::semantic_wire::encode_u64_literal(expected);
+                if expected <= i64::MAX as u64 {
+                    prop_assert!(matches!(exact_expr(&wire), Some(ExprInstance::GInt(_))));
+                } else {
+                    prop_assert!(matches!(exact_expr(&wire), Some(ExprInstance::GBigInt(_))));
+                }
+                let (actual_subject, actual_bound, actual_reply) =
+                    parse_request(&[subject.clone(), wire, reply.clone()], true)
+                        .map_err(TestCaseError::fail)?;
+                prop_assert_eq!(actual_subject, subject.clone());
+                prop_assert_eq!(actual_bound, Lookahead::Steps(expected));
+                prop_assert_eq!(actual_reply, reply.clone());
+                Ok(())
+            })
+            .expect("generated unsigned request bounds retain their exact value and carrier");
+    }
+
+    #[test]
+    fn generated_v3_locator_decodes_only_canonical_single_expression_claims() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let mut runner = TestRunner::new(Config::with_cases(128));
+        runner
+            .run(&(any::<u32>(), any::<i16>()), |(index, value)| {
+                let subject = new_gint_par(i64::from(value), Vec::new(), false);
+                let owner = spec_channel_par("owner");
+                let locator = |kind: Par, index: Par| ground_list(vec![kind, index]);
+                let claim = |locator: Par, category: Par, context: Par| {
+                    ground_list(vec![locator, owner.clone(), category, context])
+                };
+                let envelope = |claims: Vec<Par>| {
+                    ground_list(vec![
+                        new_gint_par(3, Vec::new(), false),
+                        subject.clone(),
+                        ground_list(claims),
+                    ])
+                };
+                let kind = new_gstring_par("expr".into(), Vec::new(), false);
+                let coordinate = new_gint_par(i64::from(index), Vec::new(), false);
+                let category = new_gstring_par("Pattern".into(), Vec::new(), false);
+                let context = new_gint_par(0, Vec::new(), false);
+                let valid = claim(
+                    locator(kind.clone(), coordinate.clone()),
+                    category.clone(),
+                    context.clone(),
+                );
+                let canonical = envelope(vec![valid.clone()]);
+                let (actual_subject, actual_claim) =
+                    parse_envelope_v3_with_charge(&canonical, |_, _| Ok(()))
+                        .map_err(TestCaseError::fail)?
+                        .ok_or_else(|| TestCaseError::fail("canonical v3 envelope was missed"))?;
+                prop_assert_eq!(actual_subject, &subject);
+                prop_assert_eq!(actual_claim.expr_index, index as usize);
+                prop_assert_eq!(actual_claim.token, &owner);
+                prop_assert_eq!(actual_claim.category, "Pattern");
+                prop_assert_eq!(actual_claim.context, 0);
+
+                let malformed = [
+                    envelope(Vec::new()),
+                    envelope(vec![valid.clone(), valid]),
+                    envelope(vec![claim(
+                        locator(
+                            new_gstring_par("path".into(), Vec::new(), false),
+                            coordinate.clone(),
+                        ),
+                        category.clone(),
+                        context.clone(),
+                    )]),
+                    envelope(vec![claim(
+                        ground_list(vec![kind.clone()]),
+                        category.clone(),
+                        context.clone(),
+                    )]),
+                    envelope(vec![claim(
+                        locator(kind.clone(), new_gint_par(-1, Vec::new(), false)),
+                        category.clone(),
+                        context.clone(),
+                    )]),
+                    envelope(vec![claim(
+                        locator(kind.clone(), spec_channel_par("not-an-index")),
+                        category.clone(),
+                        context.clone(),
+                    )]),
+                    envelope(vec![claim(
+                        locator(kind.clone(), coordinate.clone()),
+                        new_gstring_par(String::new(), Vec::new(), false),
+                        context.clone(),
+                    )]),
+                    envelope(vec![claim(
+                        locator(kind, coordinate),
+                        category,
+                        new_gint_par(i64::from(u32::MAX) + 1, Vec::new(), false),
+                    )]),
+                ];
+                for malformed_envelope in &malformed {
+                    prop_assert!(
+                        parse_envelope_v3_with_charge(malformed_envelope, |_, _| Ok(())).is_err()
+                    );
+                }
+                Ok(())
+            })
+            .expect("generated v3 claims reject malformed cardinality, locator and fields");
+    }
+
+    #[test]
     fn versioned_request_enforces_exact_ordered_binding_paths() {
         use crate::language_install::wire_list;
         use crate::lookahead::{spec_envelope_v2, LookaheadOwnerBinding};

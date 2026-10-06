@@ -8,7 +8,10 @@ use super::construction_receipt::{NativeHead, NativeReceipt, ReceiptError};
 use super::{preparation_scope, RholangAstLowerError, StorageReservation, Target};
 use mettail_rholang_frontend::construction::CheckedBoundReference;
 use models::rhoapi::Par;
-use models::rust::utils::{new_elist_par, new_gbytearray_par, new_gdouble_expr};
+use models::rust::utils::{
+    new_elist_par, new_gbigint_expr, new_gbigrat_expr, new_gbytearray_par, new_gdouble_expr,
+    new_gfixedpoint_expr,
+};
 
 pub(crate) struct ConstructedValue {
     pub(crate) par: Par,
@@ -50,6 +53,44 @@ impl ConstructedValue {
         let receipt = NativeReceipt::construct(NativeHead::Plain, 0, []).map_err(receipt_error)?;
         Ok(Self {
             par: super::expr_par(new_gdouble_expr(f64::from_bits(bits))),
+            receipt,
+        })
+    }
+
+    /// Preserve the native signed-byte payload; no i128 narrowing or text
+    /// serialization occurs between a DDL projection literal and its Par.
+    pub(crate) fn big_int(bytes: Vec<u8>) -> Result<Self, RholangAstLowerError> {
+        let receipt = NativeReceipt::construct(NativeHead::Payload { bytes: bytes.len() }, 0, [])
+            .map_err(receipt_error)?;
+        Ok(Self {
+            par: super::expr_par(new_gbigint_expr(bytes)),
+            receipt,
+        })
+    }
+
+    pub(crate) fn big_rat(
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+    ) -> Result<Self, RholangAstLowerError> {
+        let bytes = numerator
+            .len()
+            .checked_add(denominator.len())
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        let receipt = NativeReceipt::construct(NativeHead::Payload { bytes }, 0, [])
+            .map_err(receipt_error)?;
+        Ok(Self {
+            par: super::expr_par(new_gbigrat_expr(numerator, denominator)),
+            receipt,
+        })
+    }
+
+    pub(crate) fn fixed_point(unscaled: Vec<u8>, scale: u32) -> Result<Self, RholangAstLowerError> {
+        // The scale is a fixed-width scalar field, not a second owned buffer.
+        let receipt =
+            NativeReceipt::construct(NativeHead::Payload { bytes: unscaled.len() }, 0, [])
+                .map_err(receipt_error)?;
+        Ok(Self {
+            par: super::expr_par(new_gfixedpoint_expr(unscaled, scale)),
             receipt,
         })
     }
@@ -155,6 +196,27 @@ mod tests {
                 super::super::expr_par(new_gdouble_expr(1.5)),
                 1,
                 0,
+                0,
+            ),
+            (
+                ConstructedValue::big_int(vec![1, 0]).expect("big integer"),
+                super::super::expr_par(new_gbigint_expr(vec![1, 0])),
+                1,
+                2,
+                0,
+            ),
+            (
+                ConstructedValue::big_rat(vec![1], vec![3]).expect("big rational"),
+                super::super::expr_par(new_gbigrat_expr(vec![1], vec![3])),
+                1,
+                2,
+                0,
+            ),
+            (
+                ConstructedValue::fixed_point(vec![123], 2).expect("fixed point"),
+                super::super::expr_par(new_gfixedpoint_expr(vec![123], 2)),
+                1,
+                1,
                 0,
             ),
             (

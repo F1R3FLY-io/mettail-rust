@@ -17,6 +17,8 @@ moniker = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 blake3 = "1"
+num-bigint = "0.4"
+num-integer = "0.1"
 regex-automata = "0.4"
 regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }
 rigail = { path = "../rigail" }

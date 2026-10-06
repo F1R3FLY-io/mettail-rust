@@ -157,6 +157,102 @@ Proof.
   subst result. repeat split; lia.
 Qed.
 
+(** Implication is the existing unary negation of the antecedent followed by
+    the existing binary disjunction; its intermediate Par is retained as the
+    left child, so neither the extra clone nor its two records may disappear. *)
+Definition implication_constructor_passes (antecedent consequent : nat) :=
+  unary_constructor_passes antecedent ++
+  binary_constructor_passes antecedent consequent.
+
+Theorem implication_constructor_passes_cover_both_assemblers :
+  forall antecedent consequent,
+  let result := Nat.max antecedent consequent in
+  passes_work (implication_constructor_passes antecedent consequent) =
+    antecedent + antecedent + consequent + 4 * result /\
+  passes_units (implication_constructor_passes antecedent consequent) =
+    antecedent + antecedent + consequent + result.
+Proof.
+  intros antecedent consequent result.
+  unfold implication_constructor_passes, unary_constructor_passes,
+    binary_constructor_passes, append_passes, passes_work, passes_units.
+  cbn [app fold_right pass_work pass_units]. subst result. split; lia.
+Qed.
+
+(** Method assembly starts by cloning the receiver summary, applies the
+    existing left-to-right collection fold to each argument, then clones the
+    final summary for the inner EMethod field. Its name copy and output records
+    are charged independently by the source-level constructor admission. *)
+Fixpoint method_argument_passes (current : nat) (arguments : list nat) :=
+  match arguments with
+  | [] => []
+  | child :: rest =>
+    collection_step_passes current child ++
+    method_argument_passes (Nat.max current child) rest
+  end.
+Fixpoint method_argument_work (current : nat) (arguments : list nat) :=
+  match arguments with
+  | [] => 0
+  | child :: rest =>
+    child + 4 * Nat.max current child +
+    method_argument_work (Nat.max current child) rest
+  end.
+Fixpoint method_argument_units (current : nat) (arguments : list nat) :=
+  match arguments with
+  | [] => 0
+  | child :: rest =>
+    child + Nat.max current child +
+    method_argument_units (Nat.max current child) rest
+  end.
+Definition method_constructor_passes (receiver : nat) (arguments : list nat) :=
+  [CopyAllocated receiver] ++ method_argument_passes receiver arguments ++
+  [CopyAllocated (fold_left Nat.max arguments receiver)].
+
+Lemma passes_work_app : forall first second,
+  passes_work (first ++ second) = passes_work first + passes_work second.
+Proof.
+  induction first as [|pass rest IH]; intros second; unfold passes_work in *;
+    simpl; try lia. rewrite IH. lia.
+Qed.
+Lemma passes_units_app : forall first second,
+  passes_units (first ++ second) = passes_units first + passes_units second.
+Proof.
+  induction first as [|pass rest IH]; intros second; unfold passes_units in *;
+    simpl; try lia. rewrite IH. lia.
+Qed.
+Lemma method_argument_passes_have_checked_debits : forall current arguments,
+  passes_work (method_argument_passes current arguments) =
+    method_argument_work current arguments /\
+  passes_units (method_argument_passes current arguments) =
+    method_argument_units current arguments.
+Proof.
+  intros current arguments; revert current.
+  induction arguments as [|child rest IH]; intros current;
+    cbn [method_argument_passes method_argument_work method_argument_units].
+  - split; reflexivity.
+  - rewrite passes_work_app, passes_units_app.
+    destruct (collection_step_passes_cover_metadata_clone_union_and_cleanup
+      current child) as [HW [HU _]].
+    destruct (IH (Nat.max current child)) as [IW IU].
+    rewrite HW, HU, IW, IU. split; lia.
+Qed.
+Theorem method_constructor_passes_cover_receiver_fold_and_inner_copy :
+  forall receiver arguments,
+  let result := fold_left Nat.max arguments receiver in
+  passes_work (method_constructor_passes receiver arguments) =
+    receiver + method_argument_work receiver arguments + result /\
+  passes_units (method_constructor_passes receiver arguments) =
+    receiver + method_argument_units receiver arguments + result.
+Proof.
+  intros receiver arguments result.
+  unfold method_constructor_passes.
+  repeat rewrite passes_work_app.
+  repeat rewrite passes_units_app.
+  destruct (method_argument_passes_have_checked_debits receiver arguments)
+    as [HW HU].
+  rewrite HW, HU. subst result. cbn [passes_work passes_units fold_right pass_work pass_units].
+  split; lia.
+Qed.
+
 Definition reserve_with_metadata available payload passes :=
   reserve available (payload_work payload + passes_work passes)
     (payload_units payload + passes_units passes).
@@ -192,6 +288,8 @@ Print Assumptions append_pass_debits_cover_copy_initialization_fill_and_comparis
 Print Assumptions collection_step_passes_cover_metadata_clone_union_and_cleanup.
 Print Assumptions unary_constructor_passes_cover_the_single_clone.
 Print Assumptions binary_constructor_passes_cover_both_clones_union_and_cleanup.
+Print Assumptions implication_constructor_passes_cover_both_assemblers.
+Print Assumptions method_constructor_passes_cover_receiver_fold_and_inner_copy.
 Print Assumptions combined_payload_and_metadata_reservation_is_exact.
 Print Assumptions combined_reservation_requires_both_complete_dimensions.
 Print Assumptions reused_bound_metadata_does_not_double_the_retained_length.

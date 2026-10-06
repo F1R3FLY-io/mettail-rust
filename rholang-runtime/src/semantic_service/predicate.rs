@@ -246,6 +246,7 @@ pub(super) struct SelectedBooleanProjection {
     pub projection: u32,
     pub input_sort: TheorySortId,
     pub output_sort: TheorySortId,
+    pub carrier: bool,
     pub required: Vec<LanguageRight>,
 }
 
@@ -334,20 +335,46 @@ fn select_boolean_projection_inner<C: FnMut() -> bool>(
                 "selected host endpoint is not the checked Boolean carrier",
             ));
         }
-        if !matches!(relation.body, ProjectionRelationBodyImageV1::Rules(_)) {
-            return Err(InstalledSemanticError::InvalidSelection(
-                "where requires an executable Boolean projection rule",
+        if descriptor.host.signature_fingerprint != projected.host_signature_fingerprint
+            || descriptor.host.codec_profile_fingerprint != projected.host_codec_profile_fingerprint
+        {
+            return Err(InstalledSemanticError::InvalidEvidence(
+                "selected projection host profile differs from its installed image",
             ));
         }
-        let action = relation
-            .dispatch_action
-            .and_then(|id| projected.execution.actions.get(id.0 as usize))
-            .ok_or(InstalledSemanticError::InvalidEvidence("projection dispatch action"))?;
-        let required = action.required_rights.iter().collect();
+        let (carrier, required) = match &relation.body {
+            ProjectionRelationBodyImageV1::Rules(_) => {
+                let action = relation
+                    .dispatch_action
+                    .and_then(|id| projected.execution.actions.get(id.0 as usize))
+                    .ok_or(InstalledSemanticError::InvalidEvidence("projection dispatch action"))?;
+                (false, action.required_rights.iter().collect())
+            },
+            ProjectionRelationBodyImageV1::Carrier => {
+                if relation.dispatch_action.is_some() {
+                    return Err(InstalledSemanticError::InvalidEvidence(
+                        "carrier projection has an executable action",
+                    ));
+                }
+                // A carrier transports a checked native Boolean value. It
+                // cannot assign Boolean meaning to arbitrary guest syntax.
+                let (_, native) = predicate_category_sort(installed, &guest_sort.name, budget)?;
+                if !native {
+                    return Err(InstalledSemanticError::InvalidSelection(
+                        "carrier projection requires a native Boolean guest category",
+                    ));
+                }
+                (
+                    true,
+                    vec![LanguageRight::Match, LanguageRight::Construct, LanguageRight::Bridge],
+                )
+            },
+        };
         selected = Some(SelectedBooleanProjection {
             projection: relation.projection,
             input_sort: relation.input_sort,
             output_sort: relation.output_sort,
+            carrier,
             required,
         });
     }
@@ -431,14 +458,21 @@ impl ProduceCommitGuard for PredicateCommit {
             return Err(RSpaceError::ProduceCommitDenied);
         }
         self.table
-            .with_authorized_batch(
+            .with_authorized_batch_and_hosts(
                 self.evidence.iter().map(|item| {
                     let publication = item
                         .0
                         .publication
                         .as_ref()
                         .expect("private checked evidence");
-                    (&publication.handle, publication.required.as_slice())
+                    (
+                        &publication.handle,
+                        publication.required.as_slice(),
+                        publication
+                            .host_profile
+                            .as_ref()
+                            .map(|host| (host, &[LanguageRight::Bridge][..])),
+                    )
                 }),
                 commit,
             )

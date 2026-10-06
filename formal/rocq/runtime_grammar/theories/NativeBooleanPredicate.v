@@ -22,6 +22,36 @@ Module NativeBooleanPredicate.
 Module Guard := WherePredicateCommit.WherePredicateCommit.
 Module Kernel := SemanticTransitionKernel.SemanticTransitionKernel.
 
+(** The installed guest/host relation is selected before the legacy native
+    carrier path.  An ambiguous authored endpoint cannot silently fall back to
+    the carrier, even when that carrier is Boolean. *)
+Inductive BooleanRoute := Authored (id : nat) | Native | Refuse.
+
+Definition select_boolean_route (native : bool) (authored : list nat)
+  : BooleanRoute :=
+  match authored with
+  | [id] => Authored id
+  | [] => if native then Native else Refuse
+  | _ => Refuse
+  end.
+
+Lemma unique_authored_precedes_native : forall native id,
+  select_boolean_route native [id] = Authored id.
+Proof. reflexivity. Qed.
+
+Lemma ambiguous_authored_refuses_native : forall native first second rest,
+  select_boolean_route native (first :: second :: rest) = Refuse.
+Proof. reflexivity. Qed.
+
+Lemma native_requires_absent_authored : forall native authored,
+  select_boolean_route native authored = Native ->
+  native = true /\ authored = [].
+Proof.
+  intros native [|first [|second rest]] H; simpl in H;
+    try discriminate.
+  destruct native; simpl in H; [split; reflexivity|discriminate].
+Qed.
+
 Record Context := context {
   installed_owner : nat;
   boolean_sort : nat

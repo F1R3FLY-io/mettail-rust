@@ -8,6 +8,8 @@ use crate::ast::{
 use crate::lex::Span;
 use crate::pres::{CatEntry, ElemId, EqEntry, Presentation, RwEntry, TermEntry};
 use mettail_grammar_core as core;
+use num_bigint::{BigInt, Sign};
+use num_integer::Integer;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
@@ -18,6 +20,18 @@ pub enum RhoValue {
     String(String),
     Bytes(Vec<u8>),
     Integer(i128),
+    /// Minimal signed big-endian two's-complement bytes, as in `GBigInt`.
+    BigInt(Vec<u8>),
+    /// Reduced numerator and positive denominator, using `GBigRational` bytes.
+    BigRat {
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+    },
+    /// `GFixedPoint`'s unscaled signed integer and declared scale.
+    FixedPoint {
+        unscaled: Vec<u8>,
+        scale: u32,
+    },
     FloatBits(u64),
     Boolean(bool),
     Nil,
@@ -49,6 +63,21 @@ impl Clone for RhoValue {
                 },
                 Task::Visit(RhoValue::Bytes(value)) => values.push(RhoValue::Bytes(value.clone())),
                 Task::Visit(RhoValue::Integer(value)) => values.push(RhoValue::Integer(*value)),
+                Task::Visit(RhoValue::BigInt(value)) => {
+                    values.push(RhoValue::BigInt(value.clone()))
+                },
+                Task::Visit(RhoValue::BigRat { numerator, denominator }) => {
+                    values.push(RhoValue::BigRat {
+                        numerator: numerator.clone(),
+                        denominator: denominator.clone(),
+                    })
+                },
+                Task::Visit(RhoValue::FixedPoint { unscaled, scale }) => {
+                    values.push(RhoValue::FixedPoint {
+                        unscaled: unscaled.clone(),
+                        scale: *scale,
+                    })
+                },
                 Task::Visit(RhoValue::FloatBits(bits)) => values.push(RhoValue::FloatBits(*bits)),
                 Task::Visit(RhoValue::Boolean(value)) => values.push(RhoValue::Boolean(*value)),
                 Task::Visit(RhoValue::Nil) => values.push(RhoValue::Nil),
@@ -99,6 +128,15 @@ impl PartialEq for RhoValue {
                 (RhoValue::String(left), RhoValue::String(right)) if left == right => {},
                 (RhoValue::Bytes(left), RhoValue::Bytes(right)) if left == right => {},
                 (RhoValue::Integer(left), RhoValue::Integer(right)) if left == right => {},
+                (RhoValue::BigInt(left), RhoValue::BigInt(right)) if left == right => {},
+                (
+                    RhoValue::BigRat { numerator: ln, denominator: ld },
+                    RhoValue::BigRat { numerator: rn, denominator: rd },
+                ) if ln == rn && ld == rd => {},
+                (
+                    RhoValue::FixedPoint { unscaled: lu, scale: ls },
+                    RhoValue::FixedPoint { unscaled: ru, scale: rs },
+                ) if lu == ru && ls == rs => {},
                 (RhoValue::FloatBits(left), RhoValue::FloatBits(right)) if left == right => {},
                 (RhoValue::Boolean(left), RhoValue::Boolean(right)) if left == right => {},
                 (RhoValue::Nil, RhoValue::Nil) => {},
@@ -167,6 +205,24 @@ impl fmt::Debug for RhoValue {
                 Task::Value(RhoValue::Integer(value)) => {
                     write!(formatter, "Integer({value:?})")?;
                 },
+                Task::Value(RhoValue::BigInt(value)) => {
+                    write!(formatter, "BigInt({:?})", BigInt::from_signed_bytes_be(value))?;
+                },
+                Task::Value(RhoValue::BigRat { numerator, denominator }) => {
+                    write!(
+                        formatter,
+                        "BigRat({:?}/{:?})",
+                        BigInt::from_signed_bytes_be(numerator),
+                        BigInt::from_signed_bytes_be(denominator)
+                    )?;
+                },
+                Task::Value(RhoValue::FixedPoint { unscaled, scale }) => {
+                    write!(
+                        formatter,
+                        "FixedPoint({:?}, {scale})",
+                        BigInt::from_signed_bytes_be(unscaled)
+                    )?;
+                },
                 Task::Value(RhoValue::FloatBits(value)) => {
                     write!(formatter, "FloatBits({value:?})")?;
                 },
@@ -199,6 +255,9 @@ fn detach_rho_children(value: &mut RhoValue, work: &mut Vec<RhoValue>) {
         RhoValue::String(_)
         | RhoValue::Bytes(_)
         | RhoValue::Integer(_)
+        | RhoValue::BigInt(_)
+        | RhoValue::BigRat { .. }
+        | RhoValue::FixedPoint { .. }
         | RhoValue::FloatBits(_)
         | RhoValue::Boolean(_)
         | RhoValue::Nil => {},
@@ -259,6 +318,24 @@ fn encode_value(value: &RhoValue, output: &mut Vec<u8>) {
             Task::Value(RhoValue::Integer(value)) => {
                 output.push(b'i');
                 output.extend_from_slice(&value.to_be_bytes());
+            },
+            Task::Value(RhoValue::BigInt(value)) => {
+                output.push(b'I');
+                put_len(value.len(), output);
+                output.extend_from_slice(value);
+            },
+            Task::Value(RhoValue::BigRat { numerator, denominator }) => {
+                output.push(b'R');
+                put_len(numerator.len(), output);
+                output.extend_from_slice(numerator);
+                put_len(denominator.len(), output);
+                output.extend_from_slice(denominator);
+            },
+            Task::Value(RhoValue::FixedPoint { unscaled, scale }) => {
+                output.push(b'F');
+                put_len(unscaled.len(), output);
+                output.extend_from_slice(unscaled);
+                output.extend_from_slice(&scale.to_be_bytes());
             },
             Task::Value(RhoValue::FloatBits(bits)) => {
                 output.push(b'd');
@@ -345,6 +422,28 @@ fn admit_canonical_value_impl(
             RhoValue::Bytes(value) => {
                 account_canonical_bytes(value, &mut total_byte_array_bytes)?;
             },
+            RhoValue::BigInt(value) => {
+                admit_signed_big_endian(value)?;
+                account_canonical_bytes(value, &mut total_byte_array_bytes)?;
+            },
+            RhoValue::BigRat { numerator, denominator } => {
+                admit_signed_big_endian(numerator)?;
+                admit_signed_big_endian(denominator)?;
+                account_canonical_bytes(numerator, &mut total_byte_array_bytes)?;
+                account_canonical_bytes(denominator, &mut total_byte_array_bytes)?;
+                let n = BigInt::from_signed_bytes_be(numerator);
+                let d = BigInt::from_signed_bytes_be(denominator);
+                if d.sign() != Sign::Plus || n.gcd(&d) != BigInt::from(1) {
+                    return Err(ValueDecodeError::new(
+                        "$",
+                        "rational must be reduced with positive denominator",
+                    ));
+                }
+            },
+            RhoValue::FixedPoint { unscaled, .. } => {
+                admit_signed_big_endian(unscaled)?;
+                account_canonical_bytes(unscaled, &mut total_byte_array_bytes)?;
+            },
             RhoValue::Integer(_)
             | RhoValue::FloatBits(_)
             | RhoValue::Boolean(_)
@@ -358,6 +457,18 @@ fn admit_canonical_value_impl(
                 ),
             ));
         }
+    }
+    Ok(())
+}
+
+/// The host numeric leaves use signed, minimal, big-endian two's-complement bytes.
+/// Admission makes their byte equality identical to numerical equality.
+pub(crate) fn admit_signed_big_endian(bytes: &[u8]) -> Result<(), ValueDecodeError> {
+    if bytes.is_empty()
+        || bytes.len() > 1
+            && (bytes[0] == 0 && bytes[1] & 0x80 == 0 || bytes[0] == 0xff && bytes[1] & 0x80 != 0)
+    {
+        return Err(ValueDecodeError::new("$", "noncanonical signed big-endian integer"));
     }
     Ok(())
 }

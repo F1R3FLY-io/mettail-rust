@@ -6,9 +6,9 @@
 //! (the pre-flip HEAD, `scratchpad/as56_byte_pin_capture.log`):
 //!
 //! * production **Lambda**'s `^drive` receiver family `Par` and its full installed
-//!   program (β seed + 5 TRS receivers + driver, 7 receives) — STILL the `a9193914`
-//!   values (the A-S5.8 no-regression half: a non-float language's emissions are
-//!   byte-identical);
+//!   program (β seed + 5 TRS receivers + driver, 7 receives) — originally the
+//!   `a9193914` values (the A-S5.8 no-regression half: a non-float language's
+//!   emissions were byte-identical);
 //! * production **Ambient**'s `^drive` receiver family `Par` (the A-S5.5 bag/nested-AC
 //!   driver + the three per-rule AC-carrier receivers) and its full installed program —
 //!   RE-CAPTURED at A-S5.8 (float-routed firing emissions + the 8-receiver `^float`
@@ -20,7 +20,8 @@
 //!
 //! These goldens are FINGERPRINT-SENSITIVE: they legitimately move when
 //! `languages/src/lambda.rs` / `languages/src/ambient.rs` (or the reflection ABI)
-//! changes — re-capture then, with the diff explained in the commit.
+//! changes — re-capture then, with the diff explained in the commit. The current
+//! tuples were re-captured after the c387f4cc v2 language/fragment identity change.
 
 use std::hash::{Hash, Hasher};
 
@@ -109,9 +110,11 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
         // byte delta is fully accounted below. Nothing else moved — the receive counts
         // are unchanged.
         // ACCOUNTING: 4357 → 4429 = +72 = 2 × 36, exactly.
-        (4429, 0x0cfebce014446d5d),
-        "the Lambda ^drive receiver family must be byte-identical to the pre-A-S5.6 \
-         golden (captured at a9193914)"
+        // v2 RE-CAPTURE (c387f4cc): 4429 → 6429. Language and RhoNet fragment
+        // identities now carry 64 rather than 16 hex digits in generated names;
+        // protobuf length prefixes can grow with those names.
+        (6429, 0xbef07b595baddc0c),
+        "the Lambda ^drive receiver family must match the reviewed v2 byte golden"
     );
     let installed = plan
         .installed_rho_net_program_par()
@@ -132,9 +135,10 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
         // byte delta is fully accounted below. Nothing else moved — the receive counts
         // are unchanged.
         // ACCOUNTING: 12824 → 12932 = +108 = 3 × 36, exactly.
-        (12932, 0x87c0768a017c399d),
-        "the full Lambda installed program must be byte-identical to the pre-A-S5.6 \
-         golden (captured at a9193914; RE-CAPTURED at #36 S3, diff explained above)"
+        // v2 RE-CAPTURE (c387f4cc): 12932 → 18554, for the same identity
+        // migration; the structural gate above still requires seven receives.
+        (18554, 0x1c20e2739423e4ac),
+        "the full Lambda installed program must match the reviewed v2 byte golden"
     );
 }
 
@@ -167,9 +171,10 @@ fn ambient_driver_par_is_byte_identical_to_the_a_s5_8_golden() {
         // are unchanged.
         // ACCOUNTING: 36836 → 39223 = +2387 = 66 × 36 + 11, where the 11 is the extra
         // prost varint length-prefix byte of the 11 names that crossed 127 bytes.
-        (39223, 0x3f9161ce0bfe0793),
-        "the Ambient ^drive receiver family must be byte-identical to the A-S5.8 golden \
-         (float-routed firing emissions; captured at the A-S5.8 leg-1 tree)"
+        // v2 RE-CAPTURE (c387f4cc): 39223 → 54598. The BLAKE3-256 language and
+        // fragment identities widen generated names and some protobuf prefixes.
+        (54598, 0xcd46c65d8cc28237),
+        "the Ambient ^drive receiver family must match the reviewed v2 byte golden"
     );
     let installed = plan
         .installed_rho_net_program_par()
@@ -196,9 +201,9 @@ fn ambient_driver_par_is_byte_identical_to_the_a_s5_8_golden() {
         // byte delta is fully accounted below. Nothing else moved — the receive counts
         // are unchanged.
         // ACCOUNTING: 56328 → 59442 = +3114 = 86 × 36 + 18 (18 names crossed 127 bytes).
-        (59442, 0xa8ae1dcbd6979830),
-        "the full Ambient installed program must be byte-identical to the A-S5.8 golden \
-         (the ^float family appended; captured at the A-S5.8 leg-1 tree; RE-CAPTURED at \
-         #36 S3, diff explained above)"
+        // v2 RE-CAPTURE (c387f4cc): 59442 → 83034, for the same identity
+        // migration; the receive inventory remains at 15.
+        (83034, 0x608ce9f0454a7bb7),
+        "the full Ambient installed program must match the reviewed v2 byte golden"
     );
 }

@@ -8,13 +8,19 @@
 
 use crate::rho_net_lower::{GroundTerm, FREE_VAR_REFLECT_LABEL};
 use mettail_ast::types::CollectionType;
-use mettail_grammar_core::{CollectionKind, DynamicValue, GrammarCoreV1};
+use mettail_grammar_core::{
+    is_canonical_big_rational, is_canonical_signed_big_endian, CollectionKind, DynamicValue,
+    GrammarCoreV1,
+};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 pub(crate) const TEXT_LABEL: &str = "^dynamic-text:";
 pub(crate) const INTEGER_LABEL: &str = "^dynamic-integer:";
 pub(crate) const BOOLEAN_LABEL: &str = "^dynamic-boolean:";
+pub(crate) const BIGINT_LABEL: &str = "^dynamic-bigint:";
+pub(crate) const BIGRAT_LABEL: &str = "^dynamic-bigrat:";
+pub(crate) const FIXED_POINT_LABEL: &str = "^dynamic-fixed-point:";
 pub(crate) const UNIT_LABEL: &str = "^dynamic-unit";
 pub(crate) const SEQUENCE_LABEL: &str = "^dynamic-sequence";
 pub(crate) const LIST_LABEL: &str = "^dynamic-list";
@@ -26,6 +32,7 @@ pub(crate) const PATHMAP_LABEL: &str = "^dynamic-pathmap";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DynamicReflectionError {
     NativeVariablePublication,
+    InvalidNativeLiteral,
     UnknownConstructor(u32),
     ConflictingConstructorLabel {
         constructor: u32,
@@ -50,6 +57,7 @@ impl std::fmt::Display for DynamicReflectionError {
             Self::NativeVariablePublication => {
                 formatter.write_str("native variable has no portable identity projection")
             },
+            Self::InvalidNativeLiteral => formatter.write_str("noncanonical exact native literal"),
             Self::UnknownConstructor(id) => {
                 write!(formatter, "recognition witness names unknown constructor {id}")
             },
@@ -93,6 +101,15 @@ pub enum DynamicNativeRef<'a> {
     Text(&'a str),
     Integer(i128),
     Boolean(bool),
+    BigInt(&'a [u8]),
+    BigRat {
+        numerator: &'a [u8],
+        denominator: &'a [u8],
+    },
+    FixedPoint {
+        unscaled: &'a [u8],
+        scale: u32,
+    },
 }
 
 /// Recover the category inferred for every structural template-hole id.
@@ -132,6 +149,16 @@ pub fn dynamic_template_hole_categories(
             | DynamicValue::Boolean(_)
             | DynamicValue::Bytes(_)
             | DynamicValue::Unit => {},
+            DynamicValue::BigInt(bytes) if is_canonical_signed_big_endian(bytes) => {},
+            DynamicValue::BigRat { numerator, denominator }
+                if is_canonical_big_rational(numerator, denominator) => {},
+            DynamicValue::FixedPoint { unscaled, .. }
+                if is_canonical_signed_big_endian(unscaled) => {},
+            DynamicValue::BigInt(_)
+            | DynamicValue::BigRat { .. }
+            | DynamicValue::FixedPoint { .. } => {
+                return Err(DynamicReflectionError::InvalidNativeLiteral)
+            },
         }
     }
     categories
@@ -225,6 +252,30 @@ pub fn dynamic_syntax_to_ground_term(
                     values.push(GroundTerm::nullary(native_label(DynamicNativeRef::Boolean(
                         *boolean,
                     ))));
+                },
+                DynamicValue::BigInt(bytes) => {
+                    if !is_canonical_signed_big_endian(bytes) {
+                        return Err(DynamicReflectionError::InvalidNativeLiteral);
+                    }
+                    values.push(GroundTerm::nullary(native_label(DynamicNativeRef::BigInt(bytes))));
+                },
+                DynamicValue::BigRat { numerator, denominator } => {
+                    if !is_canonical_big_rational(numerator, denominator) {
+                        return Err(DynamicReflectionError::InvalidNativeLiteral);
+                    }
+                    values.push(GroundTerm::nullary(native_label(DynamicNativeRef::BigRat {
+                        numerator,
+                        denominator,
+                    })));
+                },
+                DynamicValue::FixedPoint { unscaled, scale } => {
+                    if !is_canonical_signed_big_endian(unscaled) {
+                        return Err(DynamicReflectionError::InvalidNativeLiteral);
+                    }
+                    values.push(GroundTerm::nullary(native_label(DynamicNativeRef::FixedPoint {
+                        unscaled,
+                        scale: *scale,
+                    })));
                 },
                 DynamicValue::Bytes(bytes) => {
                     values.push(GroundTerm::bytes(bytes));
@@ -322,6 +373,16 @@ pub(crate) fn write_dynamic_native_label(label: &mut String, value: DynamicNativ
         },
         DynamicNativeRef::Boolean(value) => {
             write!(label, "{BOOLEAN_LABEL}{value}").expect("String writes are infallible")
+        },
+        DynamicNativeRef::BigInt(bytes) => write_atom_label(label, BIGINT_LABEL, bytes),
+        DynamicNativeRef::BigRat { numerator, denominator } => {
+            write_atom_label(label, BIGRAT_LABEL, numerator);
+            label.push(':');
+            write_atom_label(label, "", denominator);
+        },
+        DynamicNativeRef::FixedPoint { unscaled, scale } => {
+            write!(label, "{FIXED_POINT_LABEL}{scale:08x}:").expect("String writes are infallible");
+            write_atom_label(label, "", unscaled);
         },
     }
 }

@@ -76,6 +76,9 @@ pub(super) fn expansion(
         | Task::QuotedText(_)
         | Task::Number(_)
         | Task::Integer(_)
+        | Task::BigInt(_)
+        | Task::BigRat(_)
+        | Task::Fixed(_)
         | Task::Bytes(_)
         | Task::Float(_)
         | Task::FinishNode { .. } => {
@@ -233,6 +236,9 @@ pub(super) fn expansion(
             DdlRuleAst::DdlRuleAstBoolean(_) => (1, 0),
             DdlRuleAst::DdlRuleAstString(_)
             | DdlRuleAst::DdlRuleAstInteger(_)
+            | DdlRuleAst::DdlRuleAstBigInt(_)
+            | DdlRuleAst::DdlRuleAstBigRat(_)
+            | DdlRuleAst::DdlRuleAstFixed(_)
             | DdlRuleAst::DdlRuleAstBytes(_)
             | DdlRuleAst::DdlRuleAstFloat(_) => (1, 1),
             DdlRuleAst::DdlRuleAstCollectionEmpty => (2, 1),

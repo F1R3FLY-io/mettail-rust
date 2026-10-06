@@ -7,18 +7,19 @@
 
 use crate::rholang_ast::RholangAstLowerError;
 use mettail_languages::rholang::{
-    Bool, Bytes, DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport, DdlFreshness,
-    DdlFreshnesses, DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem, DdlOptionSection,
-    DdlParam, DdlPath, DdlPremise, DdlPremiseInput, DdlPremises, DdlProjectionBinding,
-    DdlProjectionDirection, DdlProjectionPremise, DdlProjectionPremises, DdlProjectionRowHead,
-    DdlProjectionRule, DdlRegClassPiece, DdlRegPiece, DdlReplacement, DdlRewrite,
-    DdlRewriteBinding, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderName,
+    BigInt, BigRat, Bool, Bytes, DdlBinding, DdlCarrier, DdlCatDecl, DdlEquation, DdlExport,
+    DdlFreshness, DdlFreshnesses, DdlImport, DdlImports, DdlLimitEntry, DdlModuleItem,
+    DdlOptionSection, DdlParam, DdlPath, DdlPremise, DdlPremiseInput, DdlPremises,
+    DdlProjectionBinding, DdlProjectionDirection, DdlProjectionPremise, DdlProjectionPremises,
+    DdlProjectionRowHead, DdlProjectionRule, DdlRegClassPiece, DdlRegPiece, DdlReplacement,
+    DdlRewrite, DdlRewriteBinding, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderName,
     DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr,
-    Float, Int, Proc,
+    Fixed, Float, Int, Proc,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{
-    new_elist_par, new_gbytearray_par, new_gdouble_expr, new_gint_par, new_gstring_par,
+    new_elist_par, new_gbigint_expr, new_gbigrat_expr, new_gbytearray_par, new_gdouble_expr,
+    new_gfixedpoint_expr, new_gint_par, new_gstring_par,
 };
 
 mod admission;
@@ -30,6 +31,18 @@ type Reservation<'a> = dyn FnMut(usize, usize) -> Result<(), RholangAstLowerErro
 pub(crate) trait DdlWireValue: Sized {
     fn text(value: String, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
     fn integer(value: i64, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
+    fn big_int(value: Vec<u8>, reserve: &mut Reservation<'_>)
+        -> Result<Self, RholangAstLowerError>;
+    fn big_rat(
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+        reserve: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError>;
+    fn fixed_point(
+        unscaled: Vec<u8>,
+        scale: u32,
+        reserve: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError>;
     fn bytes(value: Vec<u8>, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
     fn float_bits(bits: u64, reserve: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError>;
     fn closed_list(
@@ -45,6 +58,26 @@ impl DdlWireValue for Par {
 
     fn integer(value: i64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
         Ok(new_gint_par(value, Vec::new(), false))
+    }
+
+    fn big_int(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(crate::rholang_ast::expr_par(new_gbigint_expr(value)))
+    }
+
+    fn big_rat(
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+        _: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Ok(crate::rholang_ast::expr_par(new_gbigrat_expr(numerator, denominator)))
+    }
+
+    fn fixed_point(
+        unscaled: Vec<u8>,
+        scale: u32,
+        _: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Ok(crate::rholang_ast::expr_par(new_gfixedpoint_expr(unscaled, scale)))
     }
 
     fn bytes(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
@@ -70,6 +103,26 @@ impl DdlWireValue for crate::rholang_ast::constructed_value::ConstructedValue {
 
     fn integer(value: i64, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
         Self::integer(value)
+    }
+
+    fn big_int(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Self::big_int(value)
+    }
+
+    fn big_rat(
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+        _: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Self::big_rat(numerator, denominator)
+    }
+
+    fn fixed_point(
+        unscaled: Vec<u8>,
+        scale: u32,
+        _: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Self::fixed_point(unscaled, scale)
     }
 
     fn bytes(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
@@ -113,6 +166,9 @@ enum WireOp<'a> {
     QuotedText(&'a str),
     Number(&'a Int),
     Integer(&'a Int),
+    BigInt(&'a BigInt),
+    BigRat(&'a BigRat),
+    Fixed(&'a Fixed),
     Bytes(&'a Bytes),
     Float(&'a Float),
     Process(usize),
@@ -161,6 +217,9 @@ impl<'a> DdlLowerPlan<'a> {
                 | Task::QuotedText(_)
                 | Task::Number(_)
                 | Task::Integer(_)
+                | Task::BigInt(_)
+                | Task::BigRat(_)
+                | Task::Fixed(_)
                 | Task::Bytes(_)
                 | Task::Float(_)
                 | Task::FinishNode { .. } => (0, 1, 0),
@@ -192,6 +251,9 @@ impl<'a> DdlLowerPlan<'a> {
                 Task::QuotedText(value) => operations.push(WireOp::QuotedText(value)),
                 Task::Number(value) => operations.push(WireOp::Number(value)),
                 Task::Integer(value) => operations.push(WireOp::Integer(value)),
+                Task::BigInt(value) => operations.push(WireOp::BigInt(value)),
+                Task::BigRat(value) => operations.push(WireOp::BigRat(value)),
+                Task::Fixed(value) => operations.push(WireOp::Fixed(value)),
                 Task::Bytes(value) => operations.push(WireOp::Bytes(value)),
                 Task::Float(value) => operations.push(WireOp::Float(value)),
                 Task::Process(process) => {
@@ -757,6 +819,45 @@ impl<'a> DdlLowerPlan<'a> {
                     admission::parts(8, 2, 0, reserve)?;
                     values.push(V::integer(value, reserve)?);
                 },
+                WireOp::BigInt(value) => {
+                    let BigInt::NumLit(number) = value else {
+                        return Err(RholangAstLowerError::DdlWire(
+                            "DDL projection BigInt must be a native literal".into(),
+                        ));
+                    };
+                    let bytes = number.get().to_signed_bytes_be();
+                    admission::parts(8, 2, bytes.len(), reserve)?;
+                    values.push(V::big_int(bytes, reserve)?);
+                },
+                WireOp::BigRat(value) => {
+                    let BigRat::RatLit(rational) = value else {
+                        return Err(RholangAstLowerError::DdlWire(
+                            "DDL projection BigRat must be a native literal".into(),
+                        ));
+                    };
+                    let numerator = rational.get().numer().to_signed_bytes_be();
+                    let denominator = rational.get().denom().to_signed_bytes_be();
+                    let bytes = numerator
+                        .len()
+                        .checked_add(denominator.len())
+                        .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                    admission::parts(8, 2, bytes, reserve)?;
+                    values.push(V::big_rat(numerator, denominator, reserve)?);
+                },
+                WireOp::Fixed(value) => {
+                    let Fixed::FixedLit(value) = value else {
+                        return Err(RholangAstLowerError::DdlWire(
+                            "DDL projection Fixed must be a native literal".into(),
+                        ));
+                    };
+                    let bytes = value.unscaled().to_signed_bytes_be();
+                    let charged = bytes
+                        .len()
+                        .checked_add(4)
+                        .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+                    admission::parts(8, 2, charged, reserve)?;
+                    values.push(V::fixed_point(bytes, value.places(), reserve)?);
+                },
                 WireOp::Bytes(value) => {
                     let Bytes::BytesLit(bytes) = value else {
                         let message = "DDL projection bytes must be a byte-array literal";
@@ -1122,6 +1223,18 @@ fn rule_ast_task<'a>(ast: &'a DdlRuleAst) -> Result<Task<'a>, RholangAstLowerErr
             tag: "ast-integer",
             children: vec![Task::Integer(value.as_ref())],
         },
+        DdlRuleAst::DdlRuleAstBigInt(value) => Task::Node {
+            tag: "ast-bigint",
+            children: vec![Task::BigInt(value.as_ref())],
+        },
+        DdlRuleAst::DdlRuleAstBigRat(value) => Task::Node {
+            tag: "ast-bigrat",
+            children: vec![Task::BigRat(value.as_ref())],
+        },
+        DdlRuleAst::DdlRuleAstFixed(value) => Task::Node {
+            tag: "ast-fixed",
+            children: vec![Task::Fixed(value.as_ref())],
+        },
         DdlRuleAst::DdlRuleAstBytes(value) => Task::Node {
             tag: "ast-bytes",
             children: vec![Task::Bytes(value.as_ref())],
@@ -1245,6 +1358,9 @@ enum Task<'a> {
     QuotedText(&'a str),
     Number(&'a Int),
     Integer(&'a Int),
+    BigInt(&'a BigInt),
+    BigRat(&'a BigRat),
+    Fixed(&'a Fixed),
     Bytes(&'a Bytes),
     Float(&'a Float),
     Process(&'a Proc),

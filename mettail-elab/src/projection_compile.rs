@@ -149,6 +149,25 @@ fn canonical_rule_term(value: &RhoValue, path: &str) -> Result<RhoValue, ValueDe
                             fields[0].clone(),
                         ]));
                     },
+                    "ast-bigint" | "ast-bigrat" | "ast-fixed" => {
+                        let [payload] = fields else {
+                            return error(&path, "numeric literal has wrong arity");
+                        };
+                        let (carrier, valid) = match (tag, payload) {
+                            ("ast-bigint", RhoValue::BigInt(_)) => ("BigInt", true),
+                            ("ast-bigrat", RhoValue::BigRat { .. }) => ("BigRat", true),
+                            ("ast-fixed", RhoValue::FixedPoint { .. }) => ("Fixed", true),
+                            _ => ("", false),
+                        };
+                        if !valid {
+                            return error(&path, "numeric literal has wrong typed payload");
+                        }
+                        values.push(RhoValue::List(vec![
+                            string("lit"),
+                            string(carrier),
+                            payload.clone(),
+                        ]));
+                    },
                     "ast-bytes" => {
                         if fields.len() != 1 || !matches!(fields[0], RhoValue::Bytes(_)) {
                             return error(&path, "byte literal has wrong payload");

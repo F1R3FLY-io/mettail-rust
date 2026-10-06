@@ -2120,21 +2120,36 @@ fn decode_context_sort(value: &RhoValue, path: &str) -> Result<String, ValueDeco
 }
 
 fn scalar_literal(value: &RhoValue, path: &str) -> Result<core::TheoryLiteralV1, ValueDecodeError> {
-    Ok(match value {
+    let literal = match value {
         RhoValue::String(value) => core::TheoryLiteralV1::String(value.clone()),
         RhoValue::Bytes(value) => core::TheoryLiteralV1::Bytes(value.clone()),
         RhoValue::Integer(value) => core::TheoryLiteralV1::Integer(*value),
+        RhoValue::BigInt(value) => core::TheoryLiteralV1::BigInt(value.clone()),
+        RhoValue::BigRat { numerator, denominator } => core::TheoryLiteralV1::BigRat {
+            numerator: numerator.clone(),
+            denominator: denominator.clone(),
+        },
+        RhoValue::FixedPoint { unscaled, scale } => core::TheoryLiteralV1::FixedPoint {
+            unscaled: unscaled.clone(),
+            scale: *scale,
+        },
         RhoValue::FloatBits(value) => core::TheoryLiteralV1::FloatBits(*value),
         RhoValue::Boolean(value) => core::TheoryLiteralV1::Boolean(*value),
         RhoValue::Nil => core::TheoryLiteralV1::Unit,
         _ => return error(path, "theory literal must be scalar"),
-    })
+    };
+    if !core::is_canonical_theory_literal(&literal) {
+        return error(path, "theory literal is not canonically encoded");
+    }
+    Ok(literal)
 }
 
 fn literal_carrier(literal: &core::TheoryLiteralV1) -> &core::TheoryLiteralCarrierV1 {
     static STRING: core::TheoryLiteralCarrierV1 = core::TheoryLiteralCarrierV1::String;
     static BYTES: core::TheoryLiteralCarrierV1 = core::TheoryLiteralCarrierV1::Bytes;
     static INTEGER: core::TheoryLiteralCarrierV1 = core::TheoryLiteralCarrierV1::Integer;
+    static RATIONAL: core::TheoryLiteralCarrierV1 = core::TheoryLiteralCarrierV1::Rational;
+    static FIXED_POINT: core::TheoryLiteralCarrierV1 = core::TheoryLiteralCarrierV1::FixedPoint;
     static FLOAT: core::TheoryLiteralCarrierV1 = core::TheoryLiteralCarrierV1::Float;
     static BOOLEAN: core::TheoryLiteralCarrierV1 = core::TheoryLiteralCarrierV1::Boolean;
     static UNIT: core::TheoryLiteralCarrierV1 = core::TheoryLiteralCarrierV1::Unit;
@@ -2142,6 +2157,9 @@ fn literal_carrier(literal: &core::TheoryLiteralV1) -> &core::TheoryLiteralCarri
         core::TheoryLiteralV1::String(_) => &STRING,
         core::TheoryLiteralV1::Bytes(_) => &BYTES,
         core::TheoryLiteralV1::Integer(_) => &INTEGER,
+        core::TheoryLiteralV1::BigInt(_) => &INTEGER,
+        core::TheoryLiteralV1::BigRat { .. } => &RATIONAL,
+        core::TheoryLiteralV1::FixedPoint { .. } => &FIXED_POINT,
         core::TheoryLiteralV1::FloatBits(_) => &FLOAT,
         core::TheoryLiteralV1::Boolean(_) => &BOOLEAN,
         core::TheoryLiteralV1::Unit => &UNIT,
@@ -2246,6 +2264,46 @@ mod tests {
     mod intrinsic_shape;
 
     use super::*;
+
+    #[test]
+    fn exact_scalar_literals_compile_without_narrowing_or_scale_loss() {
+        let huge = RhoValue::BigInt(vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let integer = scalar_literal(&huge, "integer").unwrap();
+        assert_eq!(
+            integer,
+            core::TheoryLiteralV1::BigInt(vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        );
+        assert_eq!(literal_carrier(&integer), &core::TheoryLiteralCarrierV1::Integer);
+
+        let rational = scalar_literal(
+            &RhoValue::BigRat {
+                numerator: vec![0xff],
+                denominator: vec![3],
+            },
+            "rational",
+        )
+        .unwrap();
+        assert_eq!(
+            rational,
+            core::TheoryLiteralV1::BigRat {
+                numerator: vec![0xff],
+                denominator: vec![3]
+            }
+        );
+        assert_eq!(literal_carrier(&rational), &core::TheoryLiteralCarrierV1::Rational);
+
+        let fixed =
+            scalar_literal(&RhoValue::FixedPoint { unscaled: vec![0], scale: 7 }, "fixed").unwrap();
+        assert_eq!(fixed, core::TheoryLiteralV1::FixedPoint { unscaled: vec![0], scale: 7 });
+        assert_eq!(literal_carrier(&fixed), &core::TheoryLiteralCarrierV1::FixedPoint);
+
+        assert!(scalar_literal(&RhoValue::BigInt(vec![0, 1]), "integer").is_err());
+        assert!(scalar_literal(
+            &RhoValue::BigRat { numerator: vec![2], denominator: vec![4] },
+            "rational"
+        )
+        .is_err());
+    }
 
     fn string(value: &str) -> RhoValue {
         RhoValue::String(value.to_string())

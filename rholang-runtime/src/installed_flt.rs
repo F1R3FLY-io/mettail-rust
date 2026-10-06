@@ -8,10 +8,9 @@ use dovetail::key::FramedSemanticOperator;
 use mettail_ast::validation::is_reserved_reflect_label;
 use mettail_dovetail_runtime::{
     theory_positional_native_view, ProvenSemanticRelationNormalForms, ProvenSemanticRewriteSteps,
-    ProvenSemanticTransitions,
-    RuntimeLiteralRef, SemanticInputDecision, SemanticInputLimits, SemanticMatchRefutation,
-    SemanticMatchUndetermined, SemanticTransitionInput, TheoryPositionalNativeEncoding,
-    TheoryPositionalNativeView,
+    ProvenSemanticTransitions, RuntimeLiteralRef, SemanticInputDecision, SemanticInputLimits,
+    SemanticMatchRefutation, SemanticMatchUndetermined, SemanticTransitionInput,
+    TheoryPositionalNativeEncoding, TheoryPositionalNativeView,
 };
 use mettail_grammar_core::{
     Category, CategoryId, ConstructorId, DynamicValue, InstalledLanguage, Production,
@@ -719,6 +718,30 @@ impl<'a> InstalledFltAdapter<'a> {
                                     budget,
                                 )?;
                             },
+                            RuntimeLiteralRef::BigInt(bytes) => {
+                                append_sexpr(&mut rendered, "(BigInt ", output_limit, budget)?;
+                                append_sexpr_hex(&mut rendered, bytes, output_limit, budget)?;
+                                append_sexpr(&mut rendered, ")", output_limit, budget)?;
+                            },
+                            RuntimeLiteralRef::BigRat { numerator, denominator } => {
+                                append_sexpr(&mut rendered, "(BigRat ", output_limit, budget)?;
+                                append_sexpr_hex(&mut rendered, numerator, output_limit, budget)?;
+                                append_sexpr(&mut rendered, " ", output_limit, budget)?;
+                                append_sexpr_hex(&mut rendered, denominator, output_limit, budget)?;
+                                append_sexpr(&mut rendered, ")", output_limit, budget)?;
+                            },
+                            RuntimeLiteralRef::FixedPoint { unscaled, scale } => {
+                                append_sexpr(&mut rendered, "(FixedPoint ", output_limit, budget)?;
+                                append_sexpr_hex(&mut rendered, unscaled, output_limit, budget)?;
+                                append_sexpr(&mut rendered, " ", output_limit, budget)?;
+                                append_sexpr(
+                                    &mut rendered,
+                                    &scale.to_string(),
+                                    output_limit,
+                                    budget,
+                                )?;
+                                append_sexpr(&mut rendered, ")", output_limit, budget)?;
+                            },
                         },
                     }
                 },
@@ -878,6 +901,15 @@ impl<'a> InstalledFltAdapter<'a> {
                                     RuntimeLiteralRef::Boolean(value) => {
                                         DynamicNativeRef::Boolean(value)
                                     },
+                                    RuntimeLiteralRef::BigInt(bytes) => {
+                                        DynamicNativeRef::BigInt(bytes)
+                                    },
+                                    RuntimeLiteralRef::BigRat { numerator, denominator } => {
+                                        DynamicNativeRef::BigRat { numerator, denominator }
+                                    },
+                                    RuntimeLiteralRef::FixedPoint { unscaled, scale } => {
+                                        DynamicNativeRef::FixedPoint { unscaled, scale }
+                                    },
                                 };
                                 let label = encode_dynamic_native_label(native, budget)?;
                                 let value = context.assemble(&label, Vec::new(), budget)?;
@@ -998,6 +1030,24 @@ fn append_sexpr<C: FnMut() -> bool>(
         .try_reserve(fragment.len())
         .map_err(|_| DynamicReflectionError::AllocationFailed)?;
     output.push_str(fragment);
+    Ok(())
+}
+
+/// The display form uses the exact canonical signed-byte carrier, not a
+/// narrowing integer conversion or a guest-language string coercion.
+fn append_sexpr_hex<C: FnMut() -> bool>(
+    output: &mut String,
+    bytes: &[u8],
+    output_limit: usize,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<(), InstalledFltError> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    append_sexpr(output, "0x", output_limit, budget)?;
+    for byte in bytes {
+        let digits = [HEX[(byte >> 4) as usize], HEX[(byte & 0x0f) as usize]];
+        let pair = std::str::from_utf8(&digits).expect("hex digits are ASCII");
+        append_sexpr(output, pair, output_limit, budget)?;
+    }
     Ok(())
 }
 

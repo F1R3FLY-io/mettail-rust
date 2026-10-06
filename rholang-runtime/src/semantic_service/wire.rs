@@ -348,6 +348,7 @@ fn boundary_diagnostic(error: DynamicReflectionError) -> ReplyBody {
         AllocationFailed => return ReplyBody::Undetermined(DiagnosticDomain::Boundary, 10),
         InvalidFingerprint => 11,
         NativeVariablePublication => 12,
+        InvalidNativeLiteral => 13,
     };
     ReplyBody::Error(DiagnosticDomain::Boundary, code)
 }

@@ -2155,6 +2155,19 @@ fn decode_theory_term(
                             RhoValue::String(value) => core::TheoryLiteralV1::String(value.clone()),
                             RhoValue::Bytes(value) => core::TheoryLiteralV1::Bytes(value.clone()),
                             RhoValue::Integer(value) => core::TheoryLiteralV1::Integer(*value),
+                            RhoValue::BigInt(value) => core::TheoryLiteralV1::BigInt(value.clone()),
+                            RhoValue::BigRat { numerator, denominator } => {
+                                core::TheoryLiteralV1::BigRat {
+                                    numerator: numerator.clone(),
+                                    denominator: denominator.clone(),
+                                }
+                            },
+                            RhoValue::FixedPoint { unscaled, scale } => {
+                                core::TheoryLiteralV1::FixedPoint {
+                                    unscaled: unscaled.clone(),
+                                    scale: *scale,
+                                }
+                            },
                             RhoValue::FloatBits(value) => core::TheoryLiteralV1::FloatBits(*value),
                             RhoValue::Boolean(value) => core::TheoryLiteralV1::Boolean(*value),
                             RhoValue::Nil => core::TheoryLiteralV1::Unit,
@@ -4234,6 +4247,9 @@ fn validate_rule_term(value: &RhoValue, path: &str) -> Result<(), ValueDecodeErr
             RhoValue::String(_)
             | RhoValue::Bytes(_)
             | RhoValue::Integer(_)
+            | RhoValue::BigInt(_)
+            | RhoValue::BigRat { .. }
+            | RhoValue::FixedPoint { .. }
             | RhoValue::FloatBits(_)
             | RhoValue::Boolean(_)
             | RhoValue::Nil => {},
@@ -4578,6 +4594,9 @@ fn validate_scalar(value: &RhoValue, path: &str) -> Result<(), ValueDecodeError>
     match value {
         RhoValue::String(_)
         | RhoValue::Integer(_)
+        | RhoValue::BigInt(_)
+        | RhoValue::BigRat { .. }
+        | RhoValue::FixedPoint { .. }
         | RhoValue::FloatBits(_)
         | RhoValue::Boolean(_)
         | RhoValue::Nil => Ok(()),
@@ -4652,6 +4671,21 @@ pub(crate) fn to_core_value(value: &RhoValue) -> core::CanonicalValue {
             },
             Task::Visit(RhoValue::Integer(value)) => {
                 output.push(core::CanonicalValue::Integer(*value));
+            },
+            Task::Visit(RhoValue::BigInt(value)) => {
+                output.push(core::CanonicalValue::BigInt(value.clone()));
+            },
+            Task::Visit(RhoValue::BigRat { numerator, denominator }) => {
+                output.push(core::CanonicalValue::BigRat {
+                    numerator: numerator.clone(),
+                    denominator: denominator.clone(),
+                });
+            },
+            Task::Visit(RhoValue::FixedPoint { unscaled, scale }) => {
+                output.push(core::CanonicalValue::FixedPoint {
+                    unscaled: unscaled.clone(),
+                    scale: *scale,
+                });
             },
             Task::Visit(RhoValue::FloatBits(bits)) => {
                 output.push(core::CanonicalValue::FloatBits(*bits));

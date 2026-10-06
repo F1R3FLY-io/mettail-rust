@@ -14,6 +14,26 @@ impl DdlWireValue for mettail_elab::canonical::RhoValue {
         Ok(Self::Integer(i128::from(value)))
     }
 
+    fn big_int(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
+        Ok(Self::BigInt(value))
+    }
+
+    fn big_rat(
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+        _: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Ok(Self::BigRat { numerator, denominator })
+    }
+
+    fn fixed_point(
+        unscaled: Vec<u8>,
+        scale: u32,
+        _: &mut Reservation<'_>,
+    ) -> Result<Self, RholangAstLowerError> {
+        Ok(Self::FixedPoint { unscaled, scale })
+    }
+
     fn bytes(value: Vec<u8>, _: &mut Reservation<'_>) -> Result<Self, RholangAstLowerError> {
         Ok(Self::Bytes(value))
     }
@@ -70,8 +90,12 @@ fn generated_and_standalone_projection_frontends_agree_on_typed_native_rows() {
 
     let body_source = r#"Rewrites {
         projection Scalar : Number <~> host::Int {
-            One(n:Number,h:host::Int): if n ~> h then (Number n) <~> 1;
-            Two : (Number 2) <~> (host::CastInt 2);
+            One(n:Number,h:host::Int): if projection Lookup(n,h), n ~> h then (Number n) <~> 1;
+            Two : (Number 0x2a) <~> (host::CastInt 42u32);
+        }
+        projection Boolean : Flag <~> host::Bool {
+            Yes : (FlagTrue) <~> true;
+            No : (FlagFalse) <~> false;
         }
         projection TextValue : Text <~> host::Str via carrier;
         projection TextLiteral : Text ~> host::Str {
@@ -84,8 +108,17 @@ fn generated_and_standalone_projection_frontends_agree_on_typed_native_rows() {
             Binary : (Blob) ~> b"00aB";
         }
         projection Real : Real ~> host::Float {
-            Half : (Real) ~> 0.5;
+            Half : (Real) ~> .5f64;
             Zero : (Real) ~> -0.0;
+        }
+        projection Wide : Wide ~> host::BigInt {
+            Huge : (Wide) ~> 340282366920938463463374607431768211457n;
+        }
+        projection Fraction : Fraction ~> host::BigRat {
+            Quarter : (Fraction) ~> -3r/4r;
+        }
+        projection Decimal : Decimal ~> host::Fixed {
+            Scaled : (Decimal) ~> 1.25p2;
         }
     }"#;
     let generated = DdlTheoryExpr::parse(body_source).expect("generated DDL syntax");
@@ -116,6 +149,15 @@ fn generated_and_standalone_projection_frontends_agree_on_typed_native_rows() {
         panic!("standalone theory has Rewrites");
     };
     assert_eq!(generated_entries.len(), standalone_entries.len());
+    assert_eq!(generated_entries.len(), 10, "every authored group must survive lowering");
+    let RewriteEntry::Projection(boolean) = &generated_entries[1] else {
+        panic!("second authored group must remain Boolean");
+    };
+    let ProjectionBody::Rules(boolean_rows) = &boolean.body else {
+        panic!("Boolean group must retain both authored rows");
+    };
+    assert_eq!(boolean_rows.len(), 2);
+    assert_eq!((boolean_rows[0].name.as_str(), boolean_rows[1].name.as_str()), ("Yes", "No"));
     for (generated, standalone) in generated_entries.iter().zip(&standalone_entries) {
         let (RewriteEntry::Projection(generated), RewriteEntry::Projection(standalone)) =
             (generated, standalone)
@@ -154,6 +196,77 @@ proptest! {
         };
         let expected = new_gint_par(value, Vec::new(), false);
         prop_assert_eq!(plan.finish(Vec::new()).expect("native integer wire"), expected);
+    }
+
+    #[test]
+    fn projection_bigint_wire_preserves_canonical_signed_bytes(
+        seed in proptest::collection::vec(any::<u8>(), 1..33),
+    ) {
+        let number = num_bigint::BigInt::from_signed_bytes_be(&seed);
+        let bytes = number.to_signed_bytes_be();
+        let literal = BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(number));
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::BigInt(&literal)],
+            processes: Vec::new(),
+        };
+        let expected = crate::rholang_ast::expr_par(new_gbigint_expr(bytes.clone()));
+        prop_assert_eq!(plan.finish(Vec::new()).expect("native BigInt wire"), expected);
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::BigInt(&literal)],
+            processes: Vec::new(),
+        };
+        prop_assert_eq!(
+            plan.try_finish_with::<mettail_elab::canonical::RhoValue>(Vec::new(), &mut |_, _| Ok(())).unwrap(),
+            mettail_elab::canonical::RhoValue::BigInt(bytes),
+        );
+    }
+
+    #[test]
+    fn projection_bigrat_wire_preserves_reduced_numerator_and_denominator(
+        numerator in any::<i64>(), denominator in 1u32..=u32::MAX,
+    ) {
+        let rational = mettail_prattail::parse_rational_lit(&format!("{numerator}r/{denominator}r"))
+            .expect("generated rational literal");
+        let n = rational.ratio().numer().to_signed_bytes_be();
+        let d = rational.ratio().denom().to_signed_bytes_be();
+        let literal = BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(rational.ratio().clone()));
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::BigRat(&literal)],
+            processes: Vec::new(),
+        };
+        let expected = crate::rholang_ast::expr_par(new_gbigrat_expr(n.clone(), d.clone()));
+        prop_assert_eq!(plan.finish(Vec::new()).expect("native BigRat wire"), expected);
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::BigRat(&literal)],
+            processes: Vec::new(),
+        };
+        prop_assert_eq!(
+            plan.try_finish_with::<mettail_elab::canonical::RhoValue>(Vec::new(), &mut |_, _| Ok(())).unwrap(),
+            mettail_elab::canonical::RhoValue::BigRat { numerator: n, denominator: d },
+        );
+    }
+
+    #[test]
+    fn projection_fixed_wire_preserves_unscaled_and_declared_scale(
+        unscaled in any::<i64>(), scale in 0u32..=12,
+    ) {
+        let number = num_bigint::BigInt::from(unscaled);
+        let bytes = number.to_signed_bytes_be();
+        let literal = Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(number, scale));
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::Fixed(&literal)],
+            processes: Vec::new(),
+        };
+        let expected = crate::rholang_ast::expr_par(new_gfixedpoint_expr(bytes.clone(), scale));
+        prop_assert_eq!(plan.finish(Vec::new()).expect("native Fixed wire"), expected);
+        let plan = DdlLowerPlan {
+            operations: vec![WireOp::Fixed(&literal)],
+            processes: Vec::new(),
+        };
+        prop_assert_eq!(
+            plan.try_finish_with::<mettail_elab::canonical::RhoValue>(Vec::new(), &mut |_, _| Ok(())).unwrap(),
+            mettail_elab::canonical::RhoValue::FixedPoint { unscaled: bytes, scale },
+        );
     }
 
     #[test]

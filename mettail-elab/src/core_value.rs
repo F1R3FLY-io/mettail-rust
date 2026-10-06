@@ -221,6 +221,9 @@ fn admit_language_core_value(value: &RhoValue) -> Result<(), ValueDecodeError> {
             RhoValue::String(_)
             | RhoValue::Bytes(_)
             | RhoValue::Integer(_)
+            | RhoValue::BigInt(_)
+            | RhoValue::BigRat { .. }
+            | RhoValue::FixedPoint { .. }
             | RhoValue::FloatBits(_)
             | RhoValue::Boolean(_)
             | RhoValue::Nil => {},
@@ -262,12 +265,20 @@ fn json_to_rho(root: JsonValue) -> Result<RhoValue, ValueDecodeError> {
             Job::Visit(JsonValue::String(value)) => values.push(RhoValue::String(value)),
             Job::Visit(JsonValue::Number(value)) => {
                 if let Some(value) = value.as_i128() {
-                    values.push(RhoValue::Integer(value));
+                    values.push(if i64::try_from(value).is_ok() {
+                        RhoValue::Integer(value)
+                    } else {
+                        RhoValue::BigInt(num_bigint::BigInt::from(value).to_signed_bytes_be())
+                    });
                 } else if let Some(value) = value.as_u128() {
                     let value = i128::try_from(value).map_err(|_| {
                         ValueDecodeError::new("$.core", "unsigned integer exceeds i128")
                     })?;
-                    values.push(RhoValue::Integer(value));
+                    values.push(if i64::try_from(value).is_ok() {
+                        RhoValue::Integer(value)
+                    } else {
+                        RhoValue::BigInt(num_bigint::BigInt::from(value).to_signed_bytes_be())
+                    });
                 } else {
                     let value = value
                         .as_f64()
@@ -275,7 +286,11 @@ fn json_to_rho(root: JsonValue) -> Result<RhoValue, ValueDecodeError> {
                         .ok_or_else(|| {
                             ValueDecodeError::new("$.core", "non-finite or invalid numeric value")
                         })?;
-                    values.push(RhoValue::FloatBits(value.to_bits()));
+                    values.push(RhoValue::FloatBits(
+                        mettail_runtime::CanonicalFloat64::from(value)
+                            .get()
+                            .to_bits(),
+                    ));
                 }
             },
             Job::Visit(JsonValue::Array(items)) => {
@@ -358,6 +373,28 @@ fn rho_to_json(root: &RhoValue) -> Result<JsonValue, ValueDecodeError> {
                         .iter()
                         .map(|value| JsonValue::Number(JsonNumber::from(*value)))
                         .collect(),
+                ));
+            },
+            Job::Visit(RhoValue::BigInt(bytes)) => {
+                if !core::is_canonical_signed_big_endian(bytes) || bytes.len() > 16 {
+                    return Err(ValueDecodeError::new(
+                        "$.core",
+                        "BigInt is noncanonical or outside the structural core's i128 JSON range",
+                    ));
+                }
+                let fill = if bytes[0] & 0x80 == 0 { 0 } else { 0xff };
+                let mut padded = [fill; 16];
+                padded[16 - bytes.len()..].copy_from_slice(bytes);
+                let value = i128::from_be_bytes(padded);
+                let number = JsonNumber::from_i128(value).ok_or_else(|| {
+                    ValueDecodeError::new("$.core", "BigInt is not representable by the core codec")
+                })?;
+                values.push(JsonValue::Number(number));
+            },
+            Job::Visit(RhoValue::BigRat { .. } | RhoValue::FixedPoint { .. }) => {
+                return Err(ValueDecodeError::new(
+                    "$.core",
+                    "BigRat and Fixed literals are not members of the structural LanguageCore schema",
                 ));
             },
             Job::Visit(RhoValue::List(items)) => {
@@ -590,6 +627,21 @@ mod tests {
         let language = core::LanguageCoreV1::structural(grammar);
         language.validate().expect("fixture is valid");
         language
+    }
+
+    #[test]
+    fn structural_integer_codec_uses_native_int_or_exact_bigint_without_retyping() {
+        for value in [i64::MIN as i128, i64::MAX as i128, i64::MAX as i128 + 1] {
+            let source = JsonValue::Number(JsonNumber::from_i128(value).expect("JSON integer"));
+            let rho = json_to_rho(source.clone()).expect("structural integer");
+            assert_eq!(matches!(rho, RhoValue::BigInt(_)), i64::try_from(value).is_err());
+            assert_eq!(rho_to_json(&rho).expect("exact numeric inverse"), source);
+        }
+        let negative_zero = JsonValue::Number(JsonNumber::from_f64(-0.0).unwrap());
+        assert_eq!(
+            json_to_rho(negative_zero).expect("canonical zero"),
+            RhoValue::FloatBits(0.0f64.to_bits()),
+        );
     }
 
     #[test]

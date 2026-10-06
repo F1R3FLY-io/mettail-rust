@@ -255,6 +255,94 @@ Proof.
     eapply selected_receipts_do_not_increase_counts; exact HSelection.
 Qed.
 
+(** The production sorter is a post-order, stack-safe rebuilding machine. A
+    selected child may therefore be normalized internally before it appears in
+    the outer Set/Map's sorted roster. The earlier selection/permutation laws
+    alone do not justify using the input receipt for that rebuilt child. This
+    additional premise states precisely the source-correspondence obligation:
+    every rebuilt native size axis, including the outer summary, is no larger
+    than the corresponding selected input's axis. It must be checked against
+    the actual [sort_drive]/[sort_combine] constructors, not inferred merely
+    from equality of printed terms or wire bytes. *)
+Definition native_normalization_nonexpanding
+    (input output : NativeValueImage) : Prop :=
+  forall axis, embedded_native_size axis output <= embedded_native_size axis input.
+
+Lemma normalized_children_preserve_selected_bounds : forall axis selected normalized,
+  Forall2 native_normalization_nonexpanding selected normalized ->
+  sum_sizes (embedded_native_size axis) normalized <=
+  sum_sizes (embedded_native_size axis) selected.
+Proof.
+  intros axis selected normalized Hnormalized.
+  induction Hnormalized as [|input output selected normalized Hnode _ IH].
+  - reflexivity.
+  - change (embedded_native_size axis output +
+      sum_sizes (embedded_native_size axis) normalized <=
+      embedded_native_size axis input +
+      sum_sizes (embedded_native_size axis) selected).
+    apply Nat.add_le_mono; [apply Hnode|exact IH].
+Qed.
+
+Theorem canonicalized_set_children_preserve_input_bounds :
+  forall axis retained normalized selected input,
+  ReceiptSelection selected input ->
+  Forall2 native_normalization_nonexpanding selected normalized ->
+  Permutation retained normalized ->
+  sum_sizes (embedded_native_size axis) retained <=
+  sum_sizes (embedded_native_size axis) input.
+Proof.
+  intros axis retained normalized selected input Hselection Hnormal Horder.
+  rewrite (reordered_receipts_preserve_counts _ _ retained normalized Horder).
+  eapply Nat.le_trans.
+  - exact (normalized_children_preserve_selected_bounds axis selected normalized Hnormal).
+  - eapply selected_receipts_do_not_increase_counts; exact Hselection.
+Qed.
+
+Definition native_pair_normalization_nonexpanding
+    (input output : NativeValueImage * NativeValueImage) : Prop :=
+  native_normalization_nonexpanding (fst input) (fst output) /\
+  native_normalization_nonexpanding (snd input) (snd output).
+
+Lemma normalized_pairs_preserve_selected_bounds : forall axis selected normalized,
+  Forall2 native_pair_normalization_nonexpanding selected normalized ->
+  sum_sizes (embedded_pair_size axis) normalized <=
+  sum_sizes (embedded_pair_size axis) selected.
+Proof.
+  intros axis selected normalized Hnormalized.
+  induction Hnormalized as [|input output selected normalized Hpair _ IH].
+  - reflexivity.
+  - change (embedded_pair_size axis output +
+      sum_sizes (embedded_pair_size axis) normalized <=
+      embedded_pair_size axis input +
+      sum_sizes (embedded_pair_size axis) selected).
+    destruct Hpair as [Hkey Hvalue].
+    specialize (Hkey axis). specialize (Hvalue axis).
+    apply Nat.add_le_mono; [unfold embedded_pair_size; lia|exact IH].
+Qed.
+
+Theorem canonicalized_map_pairs_preserve_input_bounds_and_pair_count :
+  forall axis retained normalized selected input,
+  ReceiptSelection selected input ->
+  Forall2 native_pair_normalization_nonexpanding selected normalized ->
+  Permutation retained normalized ->
+  sum_sizes (embedded_pair_size axis) retained <=
+  sum_sizes (embedded_pair_size axis) input /\
+  length retained <= length input.
+Proof.
+  intros axis retained normalized selected input Hselection Hnormal Horder.
+  split.
+  - rewrite (reordered_receipts_preserve_counts _ _ retained normalized Horder).
+    eapply Nat.le_trans.
+    + exact (normalized_pairs_preserve_selected_bounds axis selected normalized Hnormal).
+    + eapply selected_receipts_do_not_increase_counts; exact Hselection.
+  - rewrite (Permutation_length Horder).
+    pose proof (@Forall2_length _ _ _ _ _ Hnormal) as Hlength.
+    symmetry in Hlength.
+    rewrite Hlength.
+    rewrite <- !constant_one_sum_is_length.
+    eapply selected_receipts_do_not_increase_counts; exact Hselection.
+Qed.
+
 Print Assumptions append_slot_erases_to_existing_append.
 Print Assumptions append_slot_keeps_exact_receipt.
 Print Assumptions exact_receipt_is_a_bound.
@@ -268,5 +356,7 @@ Print Assumptions append_fold_preserves_exact_receipts.
 Print Assumptions append_fold_preserves_bounded_receipts.
 Print Assumptions canonical_children_preserve_input_size_bound.
 Print Assumptions canonical_map_pairs_preserve_input_size_and_record_bounds.
+Print Assumptions canonicalized_set_children_preserve_input_bounds.
+Print Assumptions canonicalized_map_pairs_preserve_input_bounds_and_pair_count.
 
 End AnnotatedValueWorklist.

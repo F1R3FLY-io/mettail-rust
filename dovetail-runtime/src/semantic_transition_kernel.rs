@@ -15,16 +15,16 @@ use dovetail::set_automaton::{
 };
 use dovetail::{egraph::EClassId, egraph::EGraph, egraph::EGraphConfig, egraph::ENode};
 use mettail_grammar_core::{
-    CollectionKind, LanguageRight, LanguageRights, PROJECTED_THEORY_IMAGE_ABI_V1, PathMapModeV1,
-    ProjectedTheorySemanticImageV1, ProjectionDirectionV1, ProjectionRelationBodyImageV1,
-    SemanticEffectClassV1, SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1,
-    TheoryActionId, TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId,
-    TheoryImageError, TheoryImageIntrinsicV1, TheoryImageOperatorV1, TheoryImageTermFormV1,
-    TheoryJudgmentId, TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId,
-    TheoryLimitsV1, TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1,
-    TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1,
-    TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1,
-    TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1, TheoryVariableId,
+    CollectionKind, LanguageRight, LanguageRights, PathMapModeV1, ProjectedTheorySemanticImageV1,
+    ProjectionDirectionV1, ProjectionRelationBodyImageV1, SemanticEffectClassV1,
+    SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1, TheoryActionId,
+    TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryImageError,
+    TheoryImageIntrinsicV1, TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
+    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId, TheoryLimitsV1,
+    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1, TheoryPatternStateFormV1,
+    TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1,
+    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheorySemanticImageV1,
+    TheorySortId, TheorySortKindImageV1, TheoryVariableId, PROJECTED_THEORY_IMAGE_ABI_V1,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -74,6 +74,27 @@ impl<'a> TheoryPositionalNativeEncoding<'a> {
                 .checked_add(14)
                 .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?,
             TheoryImageOperatorV1::Literal { value: TheoryLiteralV1::Integer(_), .. } => 22,
+            TheoryImageOperatorV1::Literal {
+                value: TheoryLiteralV1::BigInt(bytes), ..
+            } => bytes
+                .len()
+                .checked_add(14)
+                .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?,
+            TheoryImageOperatorV1::Literal {
+                value: TheoryLiteralV1::BigRat { numerator, denominator },
+                ..
+            } => numerator
+                .len()
+                .checked_add(denominator.len())
+                .and_then(|length| length.checked_add(22))
+                .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?,
+            TheoryImageOperatorV1::Literal {
+                value: TheoryLiteralV1::FixedPoint { unscaled, .. },
+                ..
+            } => unscaled
+                .len()
+                .checked_add(18)
+                .ok_or(SemanticMatchUndetermined::InputLimitExceeded)?,
             TheoryImageOperatorV1::Literal { value: TheoryLiteralV1::Boolean(_), .. } => 7,
             _ => return Ok(None),
         };
@@ -8153,24 +8174,37 @@ fn theory_literal_matches_carrier(
     literal: &mettail_grammar_core::TheoryLiteralV1,
     carrier: &TheoryLiteralCarrierV1,
 ) -> bool {
-    matches!(
-        (literal, carrier),
-        (mettail_grammar_core::TheoryLiteralV1::String(_), TheoryLiteralCarrierV1::String)
-            | (mettail_grammar_core::TheoryLiteralV1::Bytes(_), TheoryLiteralCarrierV1::Bytes)
-            | (
-                mettail_grammar_core::TheoryLiteralV1::Integer(_),
-                TheoryLiteralCarrierV1::Integer
-            )
-            | (
-                mettail_grammar_core::TheoryLiteralV1::FloatBits(_),
-                TheoryLiteralCarrierV1::Float
-            )
-            | (
-                mettail_grammar_core::TheoryLiteralV1::Boolean(_),
-                TheoryLiteralCarrierV1::Boolean
-            )
-            | (mettail_grammar_core::TheoryLiteralV1::Unit, TheoryLiteralCarrierV1::Unit)
-    )
+    mettail_grammar_core::is_canonical_theory_literal(literal)
+        && matches!(
+            (literal, carrier),
+            (mettail_grammar_core::TheoryLiteralV1::String(_), TheoryLiteralCarrierV1::String)
+                | (mettail_grammar_core::TheoryLiteralV1::Bytes(_), TheoryLiteralCarrierV1::Bytes)
+                | (
+                    mettail_grammar_core::TheoryLiteralV1::Integer(_),
+                    TheoryLiteralCarrierV1::Integer
+                )
+                | (
+                    mettail_grammar_core::TheoryLiteralV1::BigInt(_),
+                    TheoryLiteralCarrierV1::Integer
+                )
+                | (
+                    mettail_grammar_core::TheoryLiteralV1::BigRat { .. },
+                    TheoryLiteralCarrierV1::Rational
+                )
+                | (
+                    mettail_grammar_core::TheoryLiteralV1::FixedPoint { .. },
+                    TheoryLiteralCarrierV1::FixedPoint
+                )
+                | (
+                    mettail_grammar_core::TheoryLiteralV1::FloatBits(_),
+                    TheoryLiteralCarrierV1::Float
+                )
+                | (
+                    mettail_grammar_core::TheoryLiteralV1::Boolean(_),
+                    TheoryLiteralCarrierV1::Boolean
+                )
+                | (mettail_grammar_core::TheoryLiteralV1::Unit, TheoryLiteralCarrierV1::Unit)
+        )
 }
 
 fn decode_runtime_collection_kind(tag: u8) -> Result<CollectionKind, SemanticMatchUndetermined> {
@@ -8213,6 +8247,21 @@ fn literal_payload_matches_carrier(payload: &[u8], carrier: &TheoryLiteralCarrie
         3 => value.len() == 8,
         4 => value.len() == 1 && value[0] <= 1,
         5 => value.is_empty(),
+        6 => read_framed_literal_bytes(value).is_some_and(|(bytes, rest)| {
+            rest.is_empty() && mettail_grammar_core::is_canonical_signed_big_endian(bytes)
+        }),
+        7 => read_framed_literal_bytes(value)
+            .and_then(|(numerator, rest)| {
+                read_framed_literal_bytes(rest)
+                    .map(|(denominator, tail)| (numerator, denominator, tail))
+            })
+            .is_some_and(|(numerator, denominator, tail)| {
+                tail.is_empty()
+                    && mettail_grammar_core::is_canonical_big_rational(numerator, denominator)
+            }),
+        8 => read_framed_literal_bytes(value).is_some_and(|(unscaled, rest)| {
+            rest.len() == 4 && mettail_grammar_core::is_canonical_signed_big_endian(unscaled)
+        }),
         _ => false,
     };
     canonical
@@ -8224,7 +8273,17 @@ fn literal_payload_matches_carrier(payload: &[u8], carrier: &TheoryLiteralCarrie
                 | (3, TheoryLiteralCarrierV1::Float)
                 | (4, TheoryLiteralCarrierV1::Boolean)
                 | (5, TheoryLiteralCarrierV1::Unit)
+                | (6, TheoryLiteralCarrierV1::Integer)
+                | (7, TheoryLiteralCarrierV1::Rational)
+                | (8, TheoryLiteralCarrierV1::FixedPoint)
         )
+}
+
+fn read_framed_literal_bytes(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
+    let length = u64::from_le_bytes(bytes.get(..8)?.try_into().ok()?);
+    let length = usize::try_from(length).ok()?;
+    let end = 8usize.checked_add(length)?;
+    Some((bytes.get(8..end)?, bytes.get(end..)?))
 }
 
 fn clone_copy_slice<T: Copy>(source: &[T]) -> Result<Vec<T>, SemanticMatchUndetermined> {
@@ -8932,6 +8991,15 @@ struct ProvenIntrinsic {
 pub enum RuntimeLiteralRef<'a> {
     String(&'a str),
     Integer(i128),
+    BigInt(&'a [u8]),
+    BigRat {
+        numerator: &'a [u8],
+        denominator: &'a [u8],
+    },
+    FixedPoint {
+        unscaled: &'a [u8],
+        scale: u32,
+    },
     Boolean(bool),
 }
 
@@ -9102,6 +9170,43 @@ where
             let mut bytes = [0u8; 16];
             bytes.copy_from_slice(payload);
             Ok(Some(RuntimeLiteralRef::Integer(i128::from_le_bytes(bytes))))
+        },
+        (6, TheoryLiteralCarrierV1::Integer) => {
+            let (bytes, rest) = read_framed_literal_bytes(payload)
+                .filter(|(_, rest)| rest.is_empty())
+                .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+            if !mettail_grammar_core::is_canonical_signed_big_endian(bytes) {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            }
+            charge_work_units(work, work_limit, bytes.len(), is_cancelled)?;
+            Ok(Some(RuntimeLiteralRef::BigInt(bytes)))
+        },
+        (7, TheoryLiteralCarrierV1::Rational) => {
+            let (numerator, rest) = read_framed_literal_bytes(payload)
+                .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+            let (denominator, tail) = read_framed_literal_bytes(rest)
+                .filter(|(_, tail)| tail.is_empty())
+                .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+            charge_work_units(
+                work,
+                work_limit,
+                numerator.len().saturating_add(denominator.len()),
+                is_cancelled,
+            )?;
+            if !mettail_grammar_core::is_canonical_big_rational(numerator, denominator) {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            }
+            Ok(Some(RuntimeLiteralRef::BigRat { numerator, denominator }))
+        },
+        (8, TheoryLiteralCarrierV1::FixedPoint) => {
+            let (unscaled, rest) = read_framed_literal_bytes(payload)
+                .filter(|(_, rest)| rest.len() == 4)
+                .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+            if !mettail_grammar_core::is_canonical_signed_big_endian(unscaled) {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            }
+            charge_work_units(work, work_limit, unscaled.len(), is_cancelled)?;
+            Ok(Some(RuntimeLiteralRef::FixedPoint { unscaled, scale: read_u32(rest) }))
         },
         (4, TheoryLiteralCarrierV1::Boolean) if matches!(payload, [0] | [1]) => {
             Ok(Some(RuntimeLiteralRef::Boolean(payload[0] == 1)))
@@ -10922,10 +11027,10 @@ where
 mod tests {
     use super::*;
     use mettail_grammar_core::{
+        TheoryConstructorId, TheoryConstructorImageV1, TheoryJudgmentPatternAutomatonV1,
+        TheoryLiteralV1, TheoryPatternAutomatonV1, TheorySortImageV1,
         THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT,
-        THEORY_SEMANTIC_IMAGE_ABI_CURRENT, TheoryConstructorId, TheoryConstructorImageV1,
-        TheoryJudgmentPatternAutomatonV1, TheoryLiteralV1, TheoryPatternAutomatonV1,
-        TheorySortImageV1,
+        THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
     };
 
     #[test]
@@ -10966,6 +11071,12 @@ mod tests {
             TheoryLiteralV1::Integer(i128::MIN),
             TheoryLiteralV1::Integer(i128::MAX),
             TheoryLiteralV1::Integer(0),
+            TheoryLiteralV1::BigInt(vec![0, 0x80]),
+            TheoryLiteralV1::BigRat {
+                numerator: vec![0xff],
+                denominator: vec![3],
+            },
+            TheoryLiteralV1::FixedPoint { unscaled: vec![0], scale: 4 },
             TheoryLiteralV1::Boolean(false),
             TheoryLiteralV1::Boolean(true),
         ] {
@@ -10985,6 +11096,59 @@ mod tests {
             let encoded = plan.encode().expect("reserved encoder");
             assert_eq!(encoded, expected);
             assert_eq!(encoded.payload_segments()[1], original_inner);
+        }
+    }
+
+    #[test]
+    fn exact_literal_payloads_enforce_carrier_and_canonical_value() {
+        for (value, carrier) in [
+            (TheoryLiteralV1::BigInt(vec![0, 0x80]), TheoryLiteralCarrierV1::Integer),
+            (
+                TheoryLiteralV1::BigRat {
+                    numerator: vec![0xff],
+                    denominator: vec![3],
+                },
+                TheoryLiteralCarrierV1::Rational,
+            ),
+            (
+                TheoryLiteralV1::FixedPoint { unscaled: vec![0], scale: 4 },
+                TheoryLiteralCarrierV1::FixedPoint,
+            ),
+        ] {
+            let mut encoded = Vec::new();
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: value.clone(),
+            }
+            .write_content(&mut encoded);
+            assert!(literal_payload_matches_carrier(&encoded[5..], &carrier));
+            assert!(theory_literal_matches_carrier(&value, &carrier));
+            assert!(!literal_payload_matches_carrier(
+                &encoded[5..],
+                &TheoryLiteralCarrierV1::String
+            ));
+            encoded.push(0);
+            assert!(!literal_payload_matches_carrier(&encoded[5..], &carrier));
+        }
+        for value in [
+            TheoryLiteralV1::BigInt(vec![0, 0]),
+            TheoryLiteralV1::BigRat { numerator: vec![2], denominator: vec![4] },
+            TheoryLiteralV1::FixedPoint { unscaled: vec![0xff, 0xff], scale: 3 },
+        ] {
+            let mut encoded = Vec::new();
+            TheoryImageOperatorV1::Literal {
+                sort: TheorySortId(0),
+                value: value.clone(),
+            }
+            .write_content(&mut encoded);
+            let carrier = match value {
+                TheoryLiteralV1::BigInt(_) => TheoryLiteralCarrierV1::Integer,
+                TheoryLiteralV1::BigRat { .. } => TheoryLiteralCarrierV1::Rational,
+                TheoryLiteralV1::FixedPoint { .. } => TheoryLiteralCarrierV1::FixedPoint,
+                _ => unreachable!(),
+            };
+            assert!(!literal_payload_matches_carrier(&encoded[5..], &carrier));
+            assert!(!theory_literal_matches_carrier(&value, &carrier));
         }
     }
 
@@ -11095,11 +11259,9 @@ mod tests {
                 value: TheoryLiteralV1::Unit,
             },
         ] {
-            assert!(
-                TheoryPositionalNativeEncoding::new(&operator)
-                    .expect("unsupported is distinct from overflow")
-                    .is_none()
-            );
+            assert!(TheoryPositionalNativeEncoding::new(&operator)
+                .expect("unsupported is distinct from overflow")
+                .is_none());
         }
     }
 
@@ -11515,13 +11677,46 @@ mod tests {
 
     #[test]
     fn positional_native_view_decodes_exact_native_values_and_work() {
-        let image = signature_image();
+        let mut image = signature_image();
+        image.sorts.push(sort(
+            16,
+            TheorySortKindImageV1::Syntax {
+                literal: Some(TheoryLiteralCarrierV1::Rational),
+            },
+        ));
+        image.sorts.push(sort(
+            17,
+            TheorySortKindImageV1::Syntax {
+                literal: Some(TheoryLiteralCarrierV1::FixedPoint),
+            },
+        ));
         let mut egraph = EGraph::new();
         for (sort, value, expected, units) in [
             (0, TheoryLiteralV1::String("a💡z".into()), RuntimeLiteralRef::String("a💡z"), 7),
             (0, TheoryLiteralV1::String(String::new()), RuntimeLiteralRef::String(""), 1),
             (1, TheoryLiteralV1::Integer(i128::MIN), RuntimeLiteralRef::Integer(i128::MIN), 1),
             (1, TheoryLiteralV1::Integer(i128::MAX), RuntimeLiteralRef::Integer(i128::MAX), 1),
+            (
+                1,
+                TheoryLiteralV1::BigInt(vec![0, 0x80]),
+                RuntimeLiteralRef::BigInt(&[0, 0x80]),
+                3,
+            ),
+            (
+                16,
+                TheoryLiteralV1::BigRat {
+                    numerator: vec![0xff],
+                    denominator: vec![3],
+                },
+                RuntimeLiteralRef::BigRat { numerator: &[0xff], denominator: &[3] },
+                3,
+            ),
+            (
+                17,
+                TheoryLiteralV1::FixedPoint { unscaled: vec![0], scale: 4 },
+                RuntimeLiteralRef::FixedPoint { unscaled: &[0], scale: 4 },
+                2,
+            ),
             (14, TheoryLiteralV1::Boolean(false), RuntimeLiteralRef::Boolean(false), 1),
             (14, TheoryLiteralV1::Boolean(true), RuntimeLiteralRef::Boolean(true), 1),
         ] {
@@ -12347,47 +12542,43 @@ mod tests {
         let scalar_substitution =
             vec![(TheoryVariableId(0), text), (TheoryVariableId(1), inside_scalar)];
         let mut work = 0;
-        assert!(
-            execute_intrinsic(
-                &image,
-                &rule,
-                &TheoryImageIntrinsicV1::Utf8ScalarAt {
-                    text: TheoryVariableId(0),
-                    cursor: TheoryVariableId(1),
-                    scalar: TheoryVariableId(5),
-                    next_cursor: TheoryVariableId(6),
-                },
-                &scalar_substitution,
-                &mut egraph,
-                &mut work,
-                semantic_limits(),
-                &mut || false,
-            )
-            .expect("an interior byte is a complete semantic refutation")
-            .is_none()
-        );
+        assert!(execute_intrinsic(
+            &image,
+            &rule,
+            &TheoryImageIntrinsicV1::Utf8ScalarAt {
+                text: TheoryVariableId(0),
+                cursor: TheoryVariableId(1),
+                scalar: TheoryVariableId(5),
+                next_cursor: TheoryVariableId(6),
+            },
+            &scalar_substitution,
+            &mut egraph,
+            &mut work,
+            semantic_limits(),
+            &mut || false,
+        )
+        .expect("an interior byte is a complete semantic refutation")
+        .is_none());
 
         let addition_substitution =
             vec![(TheoryVariableId(1), negative), (TheoryVariableId(13), one)];
         let mut work = 0;
-        assert!(
-            execute_intrinsic(
-                &image,
-                &rule,
-                &TheoryImageIntrinsicV1::CheckedNatAdd {
-                    left: TheoryVariableId(1),
-                    right: TheoryVariableId(13),
-                    output: TheoryVariableId(9),
-                },
-                &addition_substitution,
-                &mut egraph,
-                &mut work,
-                semantic_limits(),
-                &mut || false,
-            )
-            .expect("negative integers are outside the natural-number relation")
-            .is_none()
-        );
+        assert!(execute_intrinsic(
+            &image,
+            &rule,
+            &TheoryImageIntrinsicV1::CheckedNatAdd {
+                left: TheoryVariableId(1),
+                right: TheoryVariableId(13),
+                output: TheoryVariableId(9),
+            },
+            &addition_substitution,
+            &mut egraph,
+            &mut work,
+            semantic_limits(),
+            &mut || false,
+        )
+        .expect("negative integers are outside the natural-number relation")
+        .is_none());
 
         let pieces_substitution = vec![(TheoryVariableId(4), pieces)];
         let mut bounded = semantic_limits();
@@ -13115,15 +13306,11 @@ mod tests {
         );
 
         let mut work = 0;
-        assert!(
-            freshness_holds(&egraph, needle, bound, &mut work, 64, &mut || false)
-                .expect("bound occurrences are shielded")
-        );
+        assert!(freshness_holds(&egraph, needle, bound, &mut work, 64, &mut || false)
+            .expect("bound occurrences are shielded"));
         let mut work = 0;
-        assert!(
-            !freshness_holds(&egraph, needle, free, &mut work, 64, &mut || false)
-                .expect("an unshielded occurrence is free")
-        );
+        assert!(!freshness_holds(&egraph, needle, free, &mut work, 64, &mut || false)
+            .expect("an unshielded occurrence is free"));
         let mut work = 0;
         assert_eq!(
             freshness_holds(&egraph, needle, free, &mut work, 64, &mut || true),

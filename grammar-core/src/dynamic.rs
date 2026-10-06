@@ -1,5 +1,6 @@
 use crate::{
-    CategoryId, CollectionKind, ConstructorId, EvaluationMode, NativeEvaluation, TierDirective,
+    is_canonical_big_rational, is_canonical_signed_big_endian, CategoryId, CollectionKind,
+    ConstructorId, EvaluationMode, NativeEvaluation, TierDirective,
 };
 use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
@@ -37,11 +38,24 @@ pub enum DynamicValue {
     Boolean(bool),
     Bytes(Vec<u8>),
     Unit,
+    /// Minimal signed big-endian two's-complement bytes.
+    BigInt(Vec<u8>),
+    /// Reduced numerator and positive denominator in minimal signed BE.
+    BigRat {
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+    },
+    /// Minimal signed BE unscaled integer and an exact decimal scale.
+    FixedPoint {
+        unscaled: Vec<u8>,
+        scale: u32,
+    },
 }
 
 #[derive(Debug)]
 pub enum DynamicValueEncodingError {
     NativeVariable,
+    InvalidNativeLiteral,
     Encode(postcard::Error),
 }
 
@@ -51,6 +65,7 @@ impl fmt::Display for DynamicValueEncodingError {
             Self::NativeVariable => {
                 formatter.write_str("native variable has no portable identity projection")
             },
+            Self::InvalidNativeLiteral => formatter.write_str("noncanonical exact native literal"),
             Self::Encode(error) => error.fmt(formatter),
         }
     }
@@ -62,6 +77,7 @@ impl std::error::Error for DynamicValueEncodingError {}
 pub enum DynamicCollectionError {
     Encode(postcard::Error),
     NativeVariable,
+    InvalidNativeLiteral,
     InvalidMapEntry,
     DuplicateMapKey,
     KindMismatch,
@@ -71,6 +87,7 @@ impl From<DynamicValueEncodingError> for DynamicCollectionError {
     fn from(error: DynamicValueEncodingError) -> Self {
         match error {
             DynamicValueEncodingError::NativeVariable => Self::NativeVariable,
+            DynamicValueEncodingError::InvalidNativeLiteral => Self::InvalidNativeLiteral,
             DynamicValueEncodingError::Encode(error) => Self::Encode(error),
         }
     }
@@ -118,6 +135,15 @@ impl DynamicValue {
                     }
                 },
                 Self::Bytes(bytes) => weight = weight.saturating_add(bytes.capacity()),
+                Self::BigInt(bytes) => weight = weight.saturating_add(bytes.capacity()),
+                Self::BigRat { numerator, denominator } => {
+                    weight = weight
+                        .saturating_add(numerator.capacity())
+                        .saturating_add(denominator.capacity());
+                },
+                Self::FixedPoint { unscaled, .. } => {
+                    weight = weight.saturating_add(unscaled.capacity())
+                },
                 Self::TemplateHole { .. } | Self::Integer(_) | Self::Boolean(_) | Self::Unit => {},
             }
         }
@@ -211,6 +237,9 @@ impl DynamicValue {
             | Self::Integer(_)
             | Self::Boolean(_)
             | Self::Bytes(_)
+            | Self::BigInt(_)
+            | Self::BigRat { .. }
+            | Self::FixedPoint { .. }
             | Self::Unit => {},
         }
     }
@@ -280,6 +309,15 @@ impl Clone for DynamicValue {
                     Self::Integer(value) => values.push(Self::Integer(*value)),
                     Self::Boolean(value) => values.push(Self::Boolean(*value)),
                     Self::Bytes(value) => values.push(Self::Bytes(value.clone())),
+                    Self::BigInt(value) => values.push(Self::BigInt(value.clone())),
+                    Self::BigRat { numerator, denominator } => values.push(Self::BigRat {
+                        numerator: numerator.clone(),
+                        denominator: denominator.clone(),
+                    }),
+                    Self::FixedPoint { unscaled, scale } => values.push(Self::FixedPoint {
+                        unscaled: unscaled.clone(),
+                        scale: *scale,
+                    }),
                     Self::Unit => values.push(Self::Unit),
                 },
                 Task::Term { category, constructor, span, children } => {
@@ -365,6 +403,15 @@ impl PartialEq for DynamicValue {
                 (Self::Integer(left), Self::Integer(right)) if left == right => {},
                 (Self::Boolean(left), Self::Boolean(right)) if left == right => {},
                 (Self::Bytes(left), Self::Bytes(right)) if left == right => {},
+                (Self::BigInt(left), Self::BigInt(right)) if left == right => {},
+                (
+                    Self::BigRat { numerator: ln, denominator: ld },
+                    Self::BigRat { numerator: rn, denominator: rd },
+                ) if ln == rn && ld == rd => {},
+                (
+                    Self::FixedPoint { unscaled: lu, scale: ls },
+                    Self::FixedPoint { unscaled: ru, scale: rs },
+                ) if lu == ru && ls == rs => {},
                 (Self::Unit, Self::Unit) => {},
                 _ => return false,
             }
@@ -425,6 +472,20 @@ impl Hash for DynamicValue {
                     9u8.hash(state);
                     category.hash(state);
                     variable.hash(state);
+                },
+                Self::BigInt(value) => {
+                    10u8.hash(state);
+                    value.hash(state);
+                },
+                Self::BigRat { numerator, denominator } => {
+                    11u8.hash(state);
+                    numerator.hash(state);
+                    denominator.hash(state);
+                },
+                Self::FixedPoint { unscaled, scale } => {
+                    12u8.hash(state);
+                    unscaled.hash(state);
+                    scale.hash(state);
                 },
             }
         }
@@ -487,6 +548,13 @@ impl fmt::Debug for DynamicValue {
                     Self::Integer(value) => write!(formatter, "Integer({value:?})")?,
                     Self::Boolean(value) => write!(formatter, "Boolean({value:?})")?,
                     Self::Bytes(value) => write!(formatter, "Bytes({value:?})")?,
+                    Self::BigInt(value) => write!(formatter, "BigInt({value:?})")?,
+                    Self::BigRat { numerator, denominator } => {
+                        write!(formatter, "BigRat({numerator:?}, {denominator:?})")?
+                    },
+                    Self::FixedPoint { unscaled, scale } => {
+                        write!(formatter, "FixedPoint({unscaled:?}, {scale})")?
+                    },
                     Self::Unit => formatter.write_str("Unit")?,
                 },
             }
@@ -525,6 +593,15 @@ enum FlatDynamicNodeV1 {
     Boolean(bool),
     Bytes(Vec<u8>),
     Unit,
+    BigInt(Vec<u8>),
+    BigRat {
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+    },
+    FixedPoint {
+        unscaled: Vec<u8>,
+        scale: u32,
+    },
 }
 
 impl FlatDynamicValueV1 {
@@ -561,6 +638,30 @@ impl FlatDynamicValueV1 {
                 DynamicValue::Boolean(value) => FlatDynamicNodeV1::Boolean(*value),
                 DynamicValue::Bytes(value) => FlatDynamicNodeV1::Bytes(value.clone()),
                 DynamicValue::Unit => FlatDynamicNodeV1::Unit,
+                DynamicValue::BigInt(value) => {
+                    if !is_canonical_signed_big_endian(value) {
+                        return Err(DynamicValueEncodingError::InvalidNativeLiteral);
+                    }
+                    FlatDynamicNodeV1::BigInt(value.clone())
+                },
+                DynamicValue::BigRat { numerator, denominator } => {
+                    if !is_canonical_big_rational(numerator, denominator) {
+                        return Err(DynamicValueEncodingError::InvalidNativeLiteral);
+                    }
+                    FlatDynamicNodeV1::BigRat {
+                        numerator: numerator.clone(),
+                        denominator: denominator.clone(),
+                    }
+                },
+                DynamicValue::FixedPoint { unscaled, scale } => {
+                    if !is_canonical_signed_big_endian(unscaled) {
+                        return Err(DynamicValueEncodingError::InvalidNativeLiteral);
+                    }
+                    FlatDynamicNodeV1::FixedPoint {
+                        unscaled: unscaled.clone(),
+                        scale: *scale,
+                    }
+                },
                 DynamicValue::NativeVariable { .. } => {
                     return Err(DynamicValueEncodingError::NativeVariable)
                 },
@@ -607,6 +708,24 @@ impl FlatDynamicValueV1 {
                 FlatDynamicNodeV1::Boolean(value) => DynamicValue::Boolean(value),
                 FlatDynamicNodeV1::Bytes(value) => DynamicValue::Bytes(value),
                 FlatDynamicNodeV1::Unit => DynamicValue::Unit,
+                FlatDynamicNodeV1::BigInt(value) => {
+                    if !is_canonical_signed_big_endian(&value) {
+                        return Err("noncanonical exact native literal");
+                    }
+                    DynamicValue::BigInt(value)
+                },
+                FlatDynamicNodeV1::BigRat { numerator, denominator } => {
+                    if !is_canonical_big_rational(&numerator, &denominator) {
+                        return Err("noncanonical exact native literal");
+                    }
+                    DynamicValue::BigRat { numerator, denominator }
+                },
+                FlatDynamicNodeV1::FixedPoint { unscaled, scale } => {
+                    if !is_canonical_signed_big_endian(&unscaled) {
+                        return Err("noncanonical exact native literal");
+                    }
+                    DynamicValue::FixedPoint { unscaled, scale }
+                },
             };
             values.push(value);
         }
@@ -672,6 +791,15 @@ enum SemanticFlatNodeV1 {
     Boolean(bool),
     Bytes(Vec<u8>),
     Unit,
+    BigInt(Vec<u8>),
+    BigRat {
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+    },
+    FixedPoint {
+        unscaled: Vec<u8>,
+        scale: u32,
+    },
 }
 
 impl SemanticFlatValueV1 {
@@ -707,6 +835,30 @@ impl SemanticFlatValueV1 {
                 DynamicValue::Boolean(value) => SemanticFlatNodeV1::Boolean(*value),
                 DynamicValue::Bytes(value) => SemanticFlatNodeV1::Bytes(value.clone()),
                 DynamicValue::Unit => SemanticFlatNodeV1::Unit,
+                DynamicValue::BigInt(value) => {
+                    if !is_canonical_signed_big_endian(value) {
+                        return Err(DynamicValueEncodingError::InvalidNativeLiteral);
+                    }
+                    SemanticFlatNodeV1::BigInt(value.clone())
+                },
+                DynamicValue::BigRat { numerator, denominator } => {
+                    if !is_canonical_big_rational(numerator, denominator) {
+                        return Err(DynamicValueEncodingError::InvalidNativeLiteral);
+                    }
+                    SemanticFlatNodeV1::BigRat {
+                        numerator: numerator.clone(),
+                        denominator: denominator.clone(),
+                    }
+                },
+                DynamicValue::FixedPoint { unscaled, scale } => {
+                    if !is_canonical_signed_big_endian(unscaled) {
+                        return Err(DynamicValueEncodingError::InvalidNativeLiteral);
+                    }
+                    SemanticFlatNodeV1::FixedPoint {
+                        unscaled: unscaled.clone(),
+                        scale: *scale,
+                    }
+                },
                 DynamicValue::NativeVariable { .. } => {
                     return Err(DynamicValueEncodingError::NativeVariable)
                 },

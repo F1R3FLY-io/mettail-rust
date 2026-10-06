@@ -63,6 +63,7 @@ fn where_uses_selected_gslt_projection_after_existing_observation_action() {
               }
             }
             Data({
+              "rights": ["Parse", "Construct", "Match", "Observe", "ReflectAst", "Reduce", "Bridge"],
               "oslf": {
                 "effects": [{"name":"pure"}],
                 "actions": [{
@@ -146,6 +147,7 @@ fn authored_boolean_fixture(
                 ToFalse : (No) ~> false;
               }
             }
+            Data({"rights":["Parse","Construct","Match","Observe","ReflectAst","Reduce","Bridge"]})
           }
           theory Predicate()
         }
@@ -214,6 +216,7 @@ fn where_authored_projection_precedes_native_boolean_carrier_fallback() {
                 NoIsTrue : (No) ~> true;
               }
             }
+            Data({"rights":["Parse","Construct","Match","Observe","ReflectAst","Reduce","Bridge"]})
           }
           theory Predicate()
         }
@@ -246,6 +249,229 @@ fn where_authored_projection_precedes_native_boolean_carrier_fallback() {
             || false,
         );
         assert_eq!(evidence.verdict(), expected, "{text}: {:?}", evidence.error());
+    }
+}
+
+fn carrier_projection_fixture(
+    rewrites: &str,
+    projections: &str,
+) -> (RholangLanguageRuntime, Par, Par) {
+    let source = format!(
+        r#"
+        Module CarrierPredicate {{
+          Theory Predicate() {{
+            Types {{ noadmit Flag = bool; }}
+            Terms {{ Call . |- "call" : Flag; }}
+            Rewrites {{ {rewrites} {projections} }}
+            Data({{"rights":["Parse","Construct","Match","Observe","ReflectAst","Reduce","Bridge"],"oslf":{{}}}})
+          }}
+          theory Predicate()
+        }}
+        "#
+    );
+    let runtime = RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    )));
+    let module = mettail_elab::parse::parse_module(&source).expect("carrier projection DDL");
+    let token = runtime
+        .install(InstallCandidate::Ddl(ParsedDdl::Module(module)))
+        .expect("carrier projection installs");
+    let input = runtime
+        .construct_template(
+            &token,
+            &[RuntimeTemplatePiece::Text("call".into())],
+            &[],
+            Some("Flag"),
+            &BTreeMap::new(),
+        )
+        .expect("carrier predicate input");
+    (runtime, token, input)
+}
+
+fn carrier_descriptor(token: &Par) -> Par {
+    crate::guard_predicate::encode_flt_predicate_descriptor(
+        token.clone(),
+        &[RuntimeTemplatePiece::Text("call".into())],
+        &[],
+        "Flag",
+        &BTreeMap::new(),
+    )
+}
+
+#[test]
+fn where_carrier_relation_uses_complete_checked_native_roster() {
+    let projection = "projection Boolean : Flag ~> host::Bool via carrier;";
+    for (rewrites, expected) in [
+        ("ToTrue : (Call) ~> true;", Sat3::Sat),
+        ("ToFalse : (Call) ~> false;", Sat3::Unsat),
+        ("ToTrue : (Call) ~> true; AlsoTrue : (Call) ~> true;", Sat3::Sat),
+        ("ToTrue : (Call) ~> true; ToFalse : (Call) ~> false;", Sat3::DontKnow),
+        ("", Sat3::DontKnow),
+    ] {
+        let (runtime, token, input) = carrier_projection_fixture(rewrites, projection);
+        let evidence = runtime.prepare_where_predicate(
+            &token,
+            &input,
+            "Flag",
+            0,
+            0,
+            SemanticServiceLimits::default(),
+            || false,
+        );
+        assert_eq!(evidence.verdict(), expected, "{rewrites}: {:?}", evidence.error());
+    }
+}
+
+#[test]
+fn where_native_carrier_fallback_requires_no_applicable_authored_relation() {
+    let (runtime, token, input) = carrier_projection_fixture("ToTrue : (Call) ~> true;", "");
+    let evidence = runtime.prepare_where_predicate(
+        &token,
+        &input,
+        "Flag",
+        0,
+        0,
+        SemanticServiceLimits::default(),
+        || false,
+    );
+    assert_eq!(evidence.verdict(), Sat3::Sat, "{:?}", evidence.error());
+}
+
+#[test]
+fn where_native_fallback_rechecks_exact_host_profile_at_comm() {
+    let (mut runtime, token, input) = carrier_projection_fixture("ToTrue : (Call) ~> true;", "");
+    let evidence = runtime.prepare_where_predicate(
+        &token,
+        &input,
+        "Flag",
+        0,
+        0,
+        SemanticServiceLimits::default(),
+        || false,
+    );
+    assert_eq!(evidence.verdict(), Sat3::Sat, "{:?}", evidence.error());
+    let permit = PredicateCommit::new(vec![evidence], None).expect("native Boolean evidence");
+    let service = Arc::get_mut(&mut runtime.service).expect("sole service owner");
+    let grant = std::mem::replace(
+        &mut service.builtin_host_profile,
+        Err(crate::host_profile::RholangHostProfileError::UnsupportedGeneratedFragment(
+            "test authority consumed",
+        )),
+    )
+    .expect("exact built-in host profile");
+    service
+        .table()
+        .revoke_host_profile(grant.revocation)
+        .expect("revoke selected host profile");
+    let mut mutations = 0;
+    assert_eq!(
+        permit.with_commit(Box::new(|| mutations += 1)),
+        Err(RSpaceError::ProduceCommitDenied)
+    );
+    assert_eq!(mutations, 0);
+}
+
+#[test]
+fn where_carrier_relation_refuses_ambiguous_endpoint_and_rechecks_revocation() {
+    let (runtime, token, input) = carrier_projection_fixture(
+        "ToTrue : (Call) ~> true;",
+        "projection First : Flag ~> host::Bool via carrier; projection Second : Flag ~> host::Bool via carrier;",
+    );
+    let evidence = runtime.prepare_where_predicate(
+        &token,
+        &input,
+        "Flag",
+        0,
+        0,
+        SemanticServiceLimits::default(),
+        || false,
+    );
+    assert_eq!(evidence.verdict(), Sat3::DontKnow);
+    assert!(matches!(evidence.error(), Some(InstalledSemanticError::InvalidSelection(_))));
+
+    let (runtime, token, input) = carrier_projection_fixture(
+        "ToTrue : (Call) ~> true;",
+        "projection Boolean : Flag ~> host::Bool via carrier;",
+    );
+    let evidence = runtime.prepare_where_predicate(
+        &token,
+        &input,
+        "Flag",
+        0,
+        0,
+        SemanticServiceLimits::default(),
+        || false,
+    );
+    assert_eq!(evidence.verdict(), Sat3::Sat, "{:?}", evidence.error());
+    let permit = PredicateCommit::new(vec![evidence], None).expect("checked carrier evidence");
+    runtime.revoke(&token).expect("revoke installed guest");
+    let mut mutations = 0;
+    assert_eq!(
+        permit.with_commit(Box::new(|| mutations += 1)),
+        Err(RSpaceError::ProduceCommitDenied)
+    );
+    assert_eq!(mutations, 0);
+}
+
+#[tokio::test]
+async fn where_carrier_relation_guards_actual_rspace_comm() {
+    use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
+    use rspace_plus_plus::rspace::shared::{
+        in_mem_store_manager::InMemoryStoreManager, key_value_store_manager::KeyValueStoreManager,
+    };
+    for (rewrites, accepts) in [
+        ("ToTrue : (Call) ~> true;", true),
+        ("ToFalse : (Call) ~> false;", false),
+        ("ToTrue : (Call) ~> true; ToFalse : (Call) ~> false;", false),
+        ("", false),
+    ] {
+        let (runtime, token, _) = carrier_projection_fixture(
+            rewrites,
+            "projection Boolean : Flag ~> host::Bool via carrier;",
+        );
+        let matcher = SubstrateGuardMatcher::with_language_runtime(Arc::new(runtime));
+        let mut manager = InMemoryStoreManager::new();
+        let space = crate::speculation::Space::create(
+            manager.r_space_stores().await.expect("in-memory RSpace"),
+            Arc::new(Box::new(matcher)),
+        )
+        .expect("guarded RSpace");
+        let channel = new_gstring_par("carrier-projection-comm".into(), vec![], false);
+        space
+            .consume(
+                vec![channel.clone()],
+                vec![BindPattern {
+                    patterns: vec![new_freevar_par(0, vec![])],
+                    remainder: None,
+                    free_count: 1,
+                }],
+                TaggedContinuation {
+                    tagged_cont: Some(TaggedCont::ScalaBodyRef(716)),
+                    guard: Some(carrier_descriptor(&token)),
+                },
+                false,
+                std::collections::BTreeSet::new(),
+            )
+            .await
+            .expect("install carrier guarded receive");
+        let datum = ListParWithRandom {
+            pars: vec![new_gint_par(8, vec![], false)],
+            random_state: vec![4; 32],
+        };
+        let committed = space
+            .produce(channel.clone(), datum, false)
+            .await
+            .expect("offer guarded datum");
+        assert_eq!(committed.is_some(), accepts, "{rewrites}");
+        assert_eq!(space.get_data(&channel).await.is_empty(), accepts);
+        assert_eq!(
+            space
+                .get_waiting_continuations(vec![channel])
+                .await
+                .is_empty(),
+            accepts
+        );
     }
 }
 

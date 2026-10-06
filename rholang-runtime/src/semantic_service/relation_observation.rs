@@ -134,6 +134,11 @@ fn select_relation_query<C: FnMut() -> bool>(
         budget,
     )?
     .ok_or(InstalledSemanticError::InvalidSelection("terminal projection not found"))?;
+    if projection.carrier {
+        return Err(InstalledSemanticError::InvalidSelection(
+            "relation observation requires projection receipts from executable rules",
+        ));
+    }
     let count = 3usize
         .checked_add(projection.required.len())
         .ok_or(DynamicReflectionError::WorkLimit)?;
@@ -226,6 +231,7 @@ impl RholangLanguageRuntime {
                     table: Arc::clone(table),
                     handle,
                     required,
+                    host_profile: None,
                 });
                 if !Arc::ptr_eq(&authorized, &installed) {
                     return Err(InstalledSemanticError::InvalidEvidence("installed owner changed"));
@@ -378,6 +384,19 @@ pub(super) fn prepare_authored_predicate_results<C: FnMut() -> bool>(
         return Err(InstalledSemanticError::InvalidEvidence(
             "authored predicate category/projection sort mismatch",
         ));
+    }
+    if projection.carrier {
+        // The selected installed relation and pinned host profile authorize
+        // transport of this guest carrier. The existing native path supplies
+        // the complete checked normal-form roster and original receipts.
+        return prepare_native_predicate_results(
+            prepared,
+            sort,
+            source,
+            limits,
+            budget,
+            kernel_work,
+        );
     }
     let adapter = InstalledFltAdapter::new(prepared.installed(), budget)?;
     let category = adapter.input_category(sort, budget)?;

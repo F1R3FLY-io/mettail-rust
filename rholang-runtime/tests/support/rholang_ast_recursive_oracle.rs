@@ -39,15 +39,55 @@ pub fn lower_proc_in_env(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstL
     lower_proc(proc, env)
 }
 
+/// The test oracle retains the original recursive traversal, but its surface
+/// normalization must respect the target ABI's argument-vector cardinality.
+/// The ordinary fold-image helper intentionally packs zero/polyadic sends into
+/// lists; that fold image is not the runtime lowering of those sends.
+fn desugar_oracle_head(proc: &Proc) -> Option<Proc> {
+    let nil = || Arc::new(Name::NQuote(Arc::new(Proc::PZero)));
+    let quoted = |process: &Arc<Proc>| Arc::new(Name::NQuote(process.clone()));
+    match proc {
+        Proc::POutputEmpty(..)
+        | Proc::PPersistOutputEmpty(..)
+        | Proc::POutput2Plus(..)
+        | Proc::PPersistOutput2Plus(..) => None,
+        Proc::POutputNilEmpty => Some(Proc::POutputEmpty(nil())),
+        Proc::PPersistOutputNilEmpty => Some(Proc::PPersistOutputEmpty(nil())),
+        Proc::POutputNil2Plus(first, rest) => {
+            Some(Proc::POutput2Plus(nil(), first.clone(), rest.clone()))
+        },
+        Proc::PPersistOutputNil2Plus(first, rest) => {
+            Some(Proc::PPersistOutput2Plus(nil(), first.clone(), rest.clone()))
+        },
+        Proc::POutputQuotedEmpty(name) => Some(Proc::POutputEmpty(name.clone())),
+        Proc::POutputQuoted2Plus(name, first, rest) => {
+            Some(Proc::POutput2Plus(name.clone(), first.clone(), rest.clone()))
+        },
+        Proc::POutputShortEmpty(channel) => Some(Proc::POutputEmpty(quoted(channel))),
+        Proc::PPersistOutputShortEmpty(channel) => Some(Proc::PPersistOutputEmpty(quoted(channel))),
+        Proc::POutputShort2Plus(channel, first, rest) => {
+            Some(Proc::POutput2Plus(quoted(channel), first.clone(), rest.clone()))
+        },
+        Proc::PPersistOutputShort2Plus(channel, first, rest) => {
+            Some(Proc::PPersistOutput2Plus(quoted(channel), first.clone(), rest.clone()))
+        },
+        _ => desugar_surface_sugar_node(proc),
+    }
+}
+
 /// Bounded recursive reference for the AST machine-effect worklist. This remains test-only and is
 /// intentionally independent of the production traversal.
 fn proc_has_machine_effects_recursive(proc: &Proc) -> bool {
-    if let Some(desugared) = desugar_surface_sugar_node(proc) {
+    if let Some(desugared) = desugar_oracle_head(proc) {
         return proc_has_machine_effects_recursive(&desugared);
     }
     match proc {
         Proc::POutput(..)
         | Proc::PPersistOutput(..)
+        | Proc::POutputEmpty(..)
+        | Proc::PPersistOutputEmpty(..)
+        | Proc::POutput2Plus(..)
+        | Proc::PPersistOutput2Plus(..)
         | Proc::POutputShort(..)
         | Proc::PPersistOutputShort(..)
         | Proc::PForUser(..)
@@ -79,7 +119,7 @@ fn name_has_machine_effects_recursive(name: &Name) -> bool {
 
 /// Bounded recursive reference for the innermost-first fold-search worklist.
 fn find_fold_recursive(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
-    if let Some(desugared) = desugar_surface_sugar_node(proc) {
+    if let Some(desugared) = desugar_oracle_head(proc) {
         return find_fold_recursive(&desugared);
     }
     match proc {
@@ -98,6 +138,15 @@ fn find_fold_recursive(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
         Proc::POutput(channel, payload) | Proc::PPersistOutput(channel, payload) => {
             find_fold_in_name_recursive(channel.as_ref())
                 .or_else(|| find_fold_recursive(payload.as_ref()))
+        },
+        Proc::POutputEmpty(channel) | Proc::PPersistOutputEmpty(channel) => {
+            find_fold_in_name_recursive(channel.as_ref())
+        },
+        Proc::POutput2Plus(channel, first, rest)
+        | Proc::PPersistOutput2Plus(channel, first, rest) => {
+            find_fold_in_name_recursive(channel.as_ref())
+                .or_else(|| find_fold_recursive(first.as_ref()))
+                .or_else(|| rest.iter().find_map(find_fold_recursive))
         },
         Proc::POutputShort(channel, payload) | Proc::PPersistOutputShort(channel, payload) => {
             find_fold_recursive(channel.as_ref()).or_else(|| find_fold_recursive(payload.as_ref()))
@@ -179,7 +228,7 @@ fn replace_fold_recursive(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Pr
     if *replaced {
         return proc.clone();
     }
-    if let Some(desugared) = desugar_surface_sugar_node(proc) {
+    if let Some(desugared) = desugar_oracle_head(proc) {
         return replace_fold_recursive(&desugared, r_drop, replaced);
     }
     match proc {
@@ -207,6 +256,32 @@ fn replace_fold_recursive(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Pr
             Arc::new(replace_fold_in_name_recursive(name.as_ref(), r_drop, replaced)),
             Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
         ),
+        Proc::POutputEmpty(name) => Proc::POutputEmpty(Arc::new(replace_fold_in_name_recursive(
+            name.as_ref(),
+            r_drop,
+            replaced,
+        ))),
+        Proc::PPersistOutputEmpty(name) => Proc::PPersistOutputEmpty(Arc::new(
+            replace_fold_in_name_recursive(name.as_ref(), r_drop, replaced),
+        )),
+        Proc::POutput2Plus(name, first, rest) => {
+            let name = Arc::new(replace_fold_in_name_recursive(name.as_ref(), r_drop, replaced));
+            let first = Arc::new(replace_fold_recursive(first.as_ref(), r_drop, replaced));
+            let rest = rest
+                .iter()
+                .map(|part| replace_fold_recursive(part, r_drop, replaced))
+                .collect();
+            Proc::POutput2Plus(name, first, rest)
+        },
+        Proc::PPersistOutput2Plus(name, first, rest) => {
+            let name = Arc::new(replace_fold_in_name_recursive(name.as_ref(), r_drop, replaced));
+            let first = Arc::new(replace_fold_recursive(first.as_ref(), r_drop, replaced));
+            let rest = rest
+                .iter()
+                .map(|part| replace_fold_recursive(part, r_drop, replaced))
+                .collect();
+            Proc::PPersistOutput2Plus(name, first, rest)
+        },
         Proc::POutputShort(channel, payload) => Proc::POutputShort(
             Arc::new(replace_fold_recursive(channel.as_ref(), r_drop, replaced)),
             Arc::new(replace_fold_recursive(payload.as_ref(), r_drop, replaced)),
@@ -392,7 +467,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
     // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to its
     // canonical channel-first form first — a pure structural rearrangement (the same constructor
     // rewrite the rule's `fold` body performs, no value computation) — then lower that.
-    if let Some(desugared) = desugar_surface_sugar_node(proc) {
+    if let Some(desugared) = desugar_oracle_head(proc) {
         return lower_proc(&desugared, env);
     }
     match proc {
@@ -427,6 +502,10 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // (e.g. `q` in `c!(p) | q`) lowers via its own `PVar` arm, so it rides this path too.
         Proc::PParInfix(left, right) => lower_arm_p_par_infix(left, right, env),
         Proc::POutput(channel, payload) => lower_arm_p_output(channel, payload, env),
+        Proc::POutputEmpty(channel) => Ok(send_par(lower_name(channel.as_ref(), env)?, Vec::new())),
+        Proc::POutput2Plus(channel, first, rest) => {
+            lower_arm_p_output_many(channel, first, rest, env, false)
+        },
         // ★ THE LOOKAHEAD ARMS — `x!(P)[*]` and `x!(P)[n]`.
         //
         // These do NOT lower to a send. `x!(P)[*]` is not "send P on x, and also explore": it is
@@ -440,6 +519,12 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // carry a `where` guard. See [`lower_pfor_user`].
         Proc::PForUser(rows, body) => lower_arm_p_for_user(rows, body, env),
         Proc::PPersistOutput(channel, payload) => lower_arm_p_persist_output(channel, payload, env),
+        Proc::PPersistOutputEmpty(channel) => {
+            Ok(send_par_persistent(lower_name(channel.as_ref(), env)?, Vec::new()))
+        },
+        Proc::PPersistOutput2Plus(channel, first, rest) => {
+            lower_arm_p_output_many(channel, first, rest, env, true)
+        },
         // Rholang-style short sends `@P!(q)` / `@P!!(q)`. The WPDA parser emits the raw `*Short`
         // nodes (the `fold` to `POutput(NQuote(P), q)` / `PPersistOutput(NQuote(P), q)` runs only at
         // eval time), so lower them here with the SAME semantics: the channel is the quote of `P`,
@@ -624,6 +709,27 @@ fn lower_arm_p_output(
     let channel = lower_name(channel.as_ref(), env)?;
     let payload = lower_proc(payload.as_ref(), env)?;
     Ok(send_par(channel, vec![payload]))
+}
+
+#[inline(never)]
+fn lower_arm_p_output_many(
+    channel: &Arc<Name>,
+    first: &Arc<Proc>,
+    rest: &[Proc],
+    env: &BoundEnv,
+    persistent: bool,
+) -> Result<Par, RholangAstLowerError> {
+    let channel = lower_name(channel.as_ref(), env)?;
+    let mut data = Vec::with_capacity(rest.len() + 1);
+    data.push(lower_proc(first.as_ref(), env)?);
+    for argument in rest {
+        data.push(lower_proc(argument, env)?);
+    }
+    Ok(if persistent {
+        send_par_persistent(channel, data)
+    } else {
+        send_par(channel, data)
+    })
 }
 
 #[inline(never)]
@@ -1593,7 +1699,7 @@ fn lower_lookahead_operand(
     if matches!(operand, Proc::PForUser(..)) {
         return Err(RholangAstLowerError::LookaheadOperandNotASend("a receive"));
     }
-    if let Some(desugared) = desugar_surface_sugar_node(operand) {
+    if let Some(desugared) = desugar_oracle_head(operand) {
         return lower_lookahead_operand(&desugared, env);
     }
     match operand {

@@ -501,6 +501,42 @@ fn sugar_cases() -> Vec<(Proc, Proc)> {
     ]
 }
 
+// The historical surface-sugar helper still returns its list-packed fold
+// image. Runtime lowering deliberately retains each send argument as a
+// separate RSpace datum, including the zero-argument case. Keep the two
+// contracts independent in this differential test.
+fn explicit_arity_core(source: &Proc, legacy_desugared: &Proc) -> Proc {
+    let nil = || Arc::new(Name::NQuote(Arc::new(Proc::PZero)));
+    let quoted = |process: &Arc<Proc>| Arc::new(Name::NQuote(process.clone()));
+    match source {
+        Proc::POutputEmpty(..)
+        | Proc::PPersistOutputEmpty(..)
+        | Proc::POutput2Plus(..)
+        | Proc::PPersistOutput2Plus(..) => source.clone(),
+        Proc::POutputNilEmpty => Proc::POutputEmpty(nil()),
+        Proc::PPersistOutputNilEmpty => Proc::PPersistOutputEmpty(nil()),
+        Proc::POutputNil2Plus(first, rest) => {
+            Proc::POutput2Plus(nil(), first.clone(), rest.clone())
+        },
+        Proc::PPersistOutputNil2Plus(first, rest) => {
+            Proc::PPersistOutput2Plus(nil(), first.clone(), rest.clone())
+        },
+        Proc::POutputQuotedEmpty(name) => Proc::POutputEmpty(name.clone()),
+        Proc::POutputQuoted2Plus(name, first, rest) => {
+            Proc::POutput2Plus(name.clone(), first.clone(), rest.clone())
+        },
+        Proc::POutputShortEmpty(channel) => Proc::POutputEmpty(quoted(channel)),
+        Proc::PPersistOutputShortEmpty(channel) => Proc::PPersistOutputEmpty(quoted(channel)),
+        Proc::POutputShort2Plus(channel, first, rest) => {
+            Proc::POutput2Plus(quoted(channel), first.clone(), rest.clone())
+        },
+        Proc::PPersistOutputShort2Plus(channel, first, rest) => {
+            Proc::PPersistOutput2Plus(quoted(channel), first.clone(), rest.clone())
+        },
+        _ => legacy_desugared.clone(),
+    }
+}
+
 #[test]
 fn every_paid_send_sugar_preserves_explicit_core_and_public_bytes() {
     for (source, expected) in sugar_cases() {
@@ -513,7 +549,9 @@ fn every_paid_send_sugar_preserves_explicit_core_and_public_bytes() {
         .expect("sugar head");
         assert_eq!(expanded, expected);
         assert_eq!(desugar_surface_sugar_node(&source), Some(expected.clone()));
-        let expected = session::lower_public_body(&expected, BoundEnv::new()).expect("core source");
+        let explicit_core = explicit_arity_core(&source, &expected);
+        let expected = session::lower_public_body(&explicit_core, BoundEnv::new())
+            .expect("arity-preserving core source");
         let mut work = 0;
         let mut cancel = || false;
         let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);

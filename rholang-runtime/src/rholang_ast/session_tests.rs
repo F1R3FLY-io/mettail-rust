@@ -361,6 +361,66 @@ fn checked_nested_list_construction_preserves_public_bytes_and_exact_limits() {
 }
 
 #[test]
+fn checked_expression_families_preserve_public_bytes_and_exact_limits() {
+    use mettail_rholang_codegen::ReflectedCodecBudget;
+
+    fn integer(value: i64) -> Proc {
+        Proc::CastInt(Arc::new(Int::NumLit(value)))
+    }
+    fn string(value: &str) -> Proc {
+        Proc::CastStr(Arc::new(Str::StringLit(value.into())))
+    }
+    let sources = [
+        Proc::NegProc(Arc::new(integer(7))),
+        Proc::Not(Arc::new(Proc::CastBool(Arc::new(Bool::BoolLit(true))))),
+        Proc::Add(Arc::new(integer(3)), Arc::new(integer(7))),
+        Proc::Add(Arc::new(string("a")), Arc::new(string("b"))),
+        Proc::Eq(Arc::new(integer(3)), Arc::new(integer(7))),
+        Proc::Lt(Arc::new(integer(3)), Arc::new(integer(7))),
+        Proc::Implies(
+            Arc::new(Proc::CastBool(Arc::new(Bool::BoolLit(true)))),
+            Arc::new(Proc::CastBool(Arc::new(Bool::BoolLit(false)))),
+        ),
+        Proc::Matches(Arc::new(integer(3)), Arc::new(integer(7))),
+        Proc::MethodCall(Arc::new(string("abc")), "length".into(), vec![]),
+        Proc::MethodCall(Arc::new(string("abc")), "substring".into(), vec![integer(1), integer(2)]),
+    ];
+    for source in sources {
+        let reference = lower_public_body(&source, BoundEnv::new()).expect("existing lowering");
+        let mut work = 0;
+        let mut cancel = || false;
+        let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 10_000_000, &mut cancel);
+        let actual = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget)
+            .expect("checked expression");
+        assert_eq!(actual.par.encode_to_vec(), reference.par.encode_to_vec());
+        let exact_work = budget.work_used();
+        let exact_units = 10_000_000 - budget.remaining_bytes();
+        assert!(exact_work > 0 && exact_units > 0);
+        for (work_limit, unit_limit, accepted) in [
+            (0, 0, false),
+            (exact_work - 1, exact_units, false),
+            (exact_work, exact_units - 1, false),
+            (exact_work, exact_units, true),
+        ] {
+            let mut work = 0;
+            let mut cancel = || false;
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, work_limit, unit_limit, &mut cancel);
+            let result = lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget);
+            if accepted {
+                assert_eq!(
+                    result.expect("exact expression budget").par.encode_to_vec(),
+                    reference.par.encode_to_vec()
+                );
+            } else {
+                assert!(result.is_err(), "insufficient expression budget must not publish");
+            }
+            assert_idle();
+        }
+    }
+}
+
+#[test]
 fn public_whole_body_lifts_folds_and_returns_the_exact_direct_output() {
     let proc = fold(integer(5));
     let reference = with_owned_outputs(|owner| owner.drive(Seed::Body(&proc), &BoundEnv::new()))

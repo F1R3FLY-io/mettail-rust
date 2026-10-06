@@ -90,7 +90,56 @@ pub(crate) struct NativeMetadataFoldDebit {
     pub(crate) bytes: usize,
 }
 
+/// Metadata copies performed by the unchanged unary and binary expression
+/// assemblers. `work` is the non-allocating part of the logical pass debit;
+/// `reserve_parts` adds `bytes` to its work dimension. These equations are
+/// proved by `unary_constructor_passes` and `binary_constructor_passes` in
+/// RholangBoundMetadata.v and use the native `union` length law.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeExpressionDebit {
+    pub(crate) output_bytes: usize,
+    pub(crate) work: usize,
+    pub(crate) bytes: usize,
+}
+
+impl NativeExpressionDebit {
+    pub(crate) fn unary(operand_bytes: usize) -> Self {
+        Self {
+            output_bytes: operand_bytes,
+            work: 0,
+            bytes: operand_bytes,
+        }
+    }
+
+    pub(crate) fn binary(lhs_bytes: usize, rhs_bytes: usize) -> Result<Self, ReceiptError> {
+        let output_bytes = lhs_bytes.max(rhs_bytes);
+        Ok(Self {
+            output_bytes,
+            work: output_bytes.checked_mul(3).ok_or(ReceiptError::Overflow)?,
+            bytes: add(add(lhs_bytes, rhs_bytes)?, output_bytes)?,
+        })
+    }
+
+    /// The existing implication lowering builds an `ENot` around the left
+    /// operand and then an `EOr` around that result and the right operand.
+    pub(crate) fn implication(lhs_bytes: usize, rhs_bytes: usize) -> Result<Self, ReceiptError> {
+        let mut debit = Self::binary(lhs_bytes, rhs_bytes)?;
+        debit.bytes = add(debit.bytes, lhs_bytes)?;
+        Ok(debit)
+    }
+}
+
 impl NativeMetadataFoldDebit {
+    /// Methods clone the receiver summary first; subsequent arguments use
+    /// the ordinary source-ordered collection fold.
+    pub(crate) fn from_first(first_bytes: usize) -> Self {
+        Self {
+            maximum: first_bytes,
+            work: 0,
+            bytes: first_bytes,
+        }
+    }
+
     pub(crate) fn push(&mut self, child_bytes: usize) -> Result<(), ReceiptError> {
         let next = self.maximum.max(child_bytes);
         let step_work = next.checked_mul(3).ok_or(ReceiptError::Overflow)?;
@@ -623,6 +672,20 @@ mod tests {
         assert_eq!(fold, NativeMetadataFoldDebit::default());
     }
 
+    #[test]
+    fn expression_debits_cover_the_proved_native_metadata_passes() {
+        let unary = NativeExpressionDebit::unary(7);
+        assert_eq!(unary, NativeExpressionDebit { output_bytes: 7, work: 0, bytes: 7 });
+        let binary = NativeExpressionDebit::binary(3, 7).expect("finite binary metadata");
+        assert_eq!(binary, NativeExpressionDebit { output_bytes: 7, work: 21, bytes: 17 });
+        assert_eq!(binary.work + binary.bytes, 3 + 7 + 4 * 7);
+        let implication =
+            NativeExpressionDebit::implication(3, 7).expect("finite implication metadata");
+        assert_eq!(implication, NativeExpressionDebit { output_bytes: 7, work: 21, bytes: 20 });
+        assert_eq!(implication.work + implication.bytes, 3 + 3 + 7 + 4 * 7);
+        assert_eq!(NativeExpressionDebit::binary(usize::MAX, 0), Err(ReceiptError::Overflow));
+    }
+
     proptest! {
         #[test]
         fn metadata_fold_matches_the_checked_collection_step_law(
@@ -638,6 +701,51 @@ mod tests {
                 expected_units += child + maximum;
                 fold.push(child).expect("bounded generated lengths");
             }
+            prop_assert_eq!(fold.maximum, maximum);
+            prop_assert_eq!(fold.work + fold.bytes, expected_work);
+            prop_assert_eq!(fold.bytes, expected_units);
+        }
+
+
+        #[test]
+        fn expression_debits_match_unary_and_binary_pass_laws(
+            lhs in 0usize..4096,
+            rhs in 0usize..4096,
+        ) {
+            let unary = NativeExpressionDebit::unary(lhs);
+            prop_assert_eq!(unary.work + unary.bytes, lhs);
+            prop_assert_eq!(unary.bytes, lhs);
+            let binary = NativeExpressionDebit::binary(lhs, rhs)
+                .expect("bounded generated metadata lengths");
+            let maximum = lhs.max(rhs);
+            prop_assert_eq!(binary.output_bytes, maximum);
+            prop_assert_eq!(binary.work + binary.bytes, lhs + rhs + 4 * maximum);
+            prop_assert_eq!(binary.bytes, lhs + rhs + maximum);
+            let implication = NativeExpressionDebit::implication(lhs, rhs)
+                .expect("bounded generated implication metadata");
+            prop_assert_eq!(implication.work + implication.bytes,
+                lhs + lhs + rhs + 4 * maximum);
+            prop_assert_eq!(implication.bytes, lhs + lhs + rhs + maximum);
+        }
+
+        #[test]
+        fn method_fold_matches_receiver_argument_and_inner_copy_law(
+            receiver in 0usize..1024,
+            arguments in proptest::collection::vec(0usize..1024, 0..48),
+        ) {
+            let mut fold = NativeMetadataFoldDebit::from_first(receiver);
+            let mut maximum = receiver;
+            let mut expected_work = receiver;
+            let mut expected_units = receiver;
+            for child in arguments {
+                maximum = maximum.max(child);
+                expected_work += child + 4 * maximum;
+                expected_units += child + maximum;
+                fold.push(child).expect("bounded generated argument metadata");
+            }
+            fold.copy_inner_summary().expect("bounded final inner copy");
+            expected_work += maximum;
+            expected_units += maximum;
             prop_assert_eq!(fold.maximum, maximum);
             prop_assert_eq!(fold.work + fold.bytes, expected_work);
             prop_assert_eq!(fold.bytes, expected_units);

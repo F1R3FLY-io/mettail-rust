@@ -16,7 +16,12 @@ fn event(proc: &Proc) -> Option<i64> {
         Proc::CastList(..) => Some(-3),
         Proc::CastMap(..) => Some(-4),
         Proc::PPar(..) => Some(-5),
-        Proc::POutput(..) | Proc::PPersistOutput(..) => Some(-6),
+        Proc::POutput(..)
+        | Proc::PPersistOutput(..)
+        | Proc::POutputEmpty(..)
+        | Proc::PPersistOutputEmpty(..)
+        | Proc::POutput2Plus(..)
+        | Proc::PPersistOutput2Plus(..) => Some(-6),
         _ => None,
     }
 }
@@ -58,7 +63,7 @@ fn ordered_cases() -> Vec<(Proc, Vec<i64>)> {
                 Arc::new(integer(1)),
                 vec![integer(2), integer(3)],
             ),
-            vec![7, 1, 2, 3, -3, -6],
+            vec![7, 1, 2, 3, -6],
         ),
     ]
 }

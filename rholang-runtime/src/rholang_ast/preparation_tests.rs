@@ -238,6 +238,220 @@ fn checked_list_metadata_refuses_before_consumption_and_preserves_native_output(
 }
 
 #[test]
+fn checked_binary_expression_refuses_before_consumption_and_preserves_native_output() {
+    let calls = Cell::new(0usize);
+    let refuse_at = Cell::new(usize::MAX);
+    let last_charge = Cell::new((0usize, 0usize));
+    let mut reserve = |work, units| {
+        let call = calls.get() + 1;
+        calls.set(call);
+        last_charge.set((work, units));
+        if call == refuse_at.get() {
+            Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+    let source = Proc::PZero;
+    let mut stacks = Stacks::new_preparing(
+        Job::Proc(&source, ROOT_ENV),
+        &mut reserve,
+        SourcePreparation::Checked,
+    )
+    .expect("checked seed");
+    let left = ConstructedValue::bound(
+        mettail_rholang_frontend::construction::CheckedBoundReference::new(18, 17)
+            .expect("bound reference"),
+    )
+    .expect("left receipt");
+    let right = ConstructedValue::text("right".into()).expect("right receipt");
+    let expected =
+        binary_expr_par(left.par.clone(), right.par.clone(), |a, b| BinOp::Eq.build(a, b));
+    let expected_receipt =
+        NativeReceipt::construct(NativeHead::Plain, 18, [&left.receipt, &right.receipt])
+            .expect("finite expression receipt");
+    stacks.value_tracked(left).expect("left slot");
+    stacks.value_tracked(right).expect("right slot");
+
+    refuse_at.set(calls.get() + 2);
+    assert!(matches!(
+        stacks.binary_construct(|lhs, rhs| {
+            binary_expr_par(lhs, rhs, |a, b| BinOp::Eq.build(a, b))
+        }),
+        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+    ));
+    // Two copied operand summaries, union work, and two output records.
+    assert_eq!(last_charge.get(), (90, 44));
+    assert_eq!(stacks.value_count(), 2);
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack").len(), 2);
+
+    refuse_at.set(usize::MAX);
+    stacks
+        .binary_construct(|lhs, rhs| binary_expr_par(lhs, rhs, |a, b| BinOp::Eq.build(a, b)))
+        .expect("paid expression construction");
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack")[0], Some(expected_receipt));
+    assert_eq!(stacks.pop_value().expect("expression"), expected);
+}
+
+#[test]
+fn checked_unary_expression_refuses_before_consumption_and_preserves_native_output() {
+    let calls = Cell::new(0usize);
+    let refuse_at = Cell::new(usize::MAX);
+    let last_charge = Cell::new((0usize, 0usize));
+    let mut reserve = |work, units| {
+        let call = calls.get() + 1;
+        calls.set(call);
+        last_charge.set((work, units));
+        if call == refuse_at.get() {
+            Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+    let source = Proc::PZero;
+    let mut stacks = Stacks::new_preparing(
+        Job::Proc(&source, ROOT_ENV),
+        &mut reserve,
+        SourcePreparation::Checked,
+    )
+    .expect("checked seed");
+    let operand = ConstructedValue::bound(
+        mettail_rholang_frontend::construction::CheckedBoundReference::new(18, 17)
+            .expect("bound operand"),
+    )
+    .expect("operand receipt");
+    let expected = unary_expr_par(operand.par.clone(), |p| UnOp::Neg.build(p));
+    let expected_receipt = NativeReceipt::construct(NativeHead::Plain, 18, [&operand.receipt])
+        .expect("finite expression receipt");
+    stacks.value_tracked(operand).expect("operand slot");
+
+    refuse_at.set(calls.get() + 2);
+    assert!(matches!(
+        stacks.unary_construct(|value| unary_expr_par(value, |p| UnOp::Neg.build(p))),
+        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+    ));
+    assert_eq!(last_charge.get(), (18, 26));
+    assert_eq!(stacks.value_count(), 1);
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack").len(), 1);
+
+    refuse_at.set(usize::MAX);
+    stacks
+        .unary_construct(|value| unary_expr_par(value, |p| UnOp::Neg.build(p)))
+        .expect("paid unary expression");
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack")[0], Some(expected_receipt));
+    assert_eq!(stacks.pop_value().expect("unary expression"), expected);
+}
+
+#[test]
+fn checked_implication_refuses_before_consumption_and_retains_negated_left_child() {
+    let calls = Cell::new(0usize);
+    let refuse_at = Cell::new(usize::MAX);
+    let last_charge = Cell::new((0usize, 0usize));
+    let mut reserve = |work, units| {
+        let call = calls.get() + 1;
+        calls.set(call);
+        last_charge.set((work, units));
+        if call == refuse_at.get() {
+            Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+    let source = Proc::PZero;
+    let mut stacks = Stacks::new_preparing(
+        Job::Proc(&source, ROOT_ENV),
+        &mut reserve,
+        SourcePreparation::Checked,
+    )
+    .expect("checked seed");
+    let left = ConstructedValue::bound(
+        mettail_rholang_frontend::construction::CheckedBoundReference::new(18, 17)
+            .expect("bound antecedent"),
+    )
+    .expect("antecedent receipt");
+    let right = ConstructedValue::boolean(true).expect("consequent receipt");
+    let negated = unary_expr_par(left.par.clone(), |p| ExprInstance::ENotBody(ENot { p }));
+    let expected =
+        binary_expr_par(negated, right.par.clone(), |p1, p2| ExprInstance::EOrBody(EOr { p1, p2 }));
+    let negated_receipt = NativeReceipt::construct(NativeHead::Plain, 18, [&left.receipt])
+        .expect("negated antecedent receipt");
+    let expected_receipt =
+        NativeReceipt::construct(NativeHead::Plain, 18, [&negated_receipt, &right.receipt])
+            .expect("finite implication receipt");
+    stacks.value_tracked(left).expect("antecedent slot");
+    stacks.value_tracked(right).expect("consequent slot");
+
+    refuse_at.set(calls.get() + 2);
+    assert!(matches!(
+        stacks.implication(),
+        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+    ));
+    assert_eq!(last_charge.get(), (108, 70));
+    assert_eq!(stacks.value_count(), 2);
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack").len(), 2);
+
+    refuse_at.set(usize::MAX);
+    stacks.implication().expect("paid implication");
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack")[0], Some(expected_receipt));
+    assert_eq!(stacks.pop_value().expect("implication"), expected);
+}
+
+#[test]
+fn checked_method_refuses_before_consumption_and_preserves_receiver_argument_order() {
+    let calls = Cell::new(0usize);
+    let refuse_at = Cell::new(usize::MAX);
+    let last_charge = Cell::new((0usize, 0usize));
+    let mut reserve = |work, units| {
+        let call = calls.get() + 1;
+        calls.set(call);
+        last_charge.set((work, units));
+        if call == refuse_at.get() {
+            Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+    let source = Proc::PZero;
+    let mut stacks = Stacks::new_preparing(
+        Job::Proc(&source, ROOT_ENV),
+        &mut reserve,
+        SourcePreparation::Checked,
+    )
+    .expect("checked seed");
+    let target = ConstructedValue::bound(
+        mettail_rholang_frontend::construction::CheckedBoundReference::new(18, 17)
+            .expect("bound receiver"),
+    )
+    .expect("receiver receipt");
+    let argument = ConstructedValue::text("arg".into()).expect("argument receipt");
+    let expected = method_par("get", target.par.clone(), vec![argument.par.clone()]);
+    let expected_receipt = NativeReceipt::construct(
+        NativeHead::Method { name_bytes: 3 },
+        18,
+        [&target.receipt, &argument.receipt],
+    )
+    .expect("finite method receipt");
+    stacks.value_tracked(target).expect("receiver slot");
+    stacks.value_tracked(argument).expect("argument slot");
+
+    refuse_at.set(calls.get() + 4);
+    assert!(matches!(
+        stacks.method("get", 1),
+        Err(RholangAstLowerError::Preparation(DynamicReflectionError::Cancelled))
+    ));
+    // Receiver clone, one argument union, inner-summary clone, name bytes,
+    // three output records and the split argument roster.
+    assert_eq!(last_charge.get(), (112, 73));
+    assert_eq!(stacks.value_count(), 2);
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack").len(), 2);
+
+    refuse_at.set(usize::MAX);
+    stacks.method("get", 1).expect("paid method construction");
+    assert_eq!(stacks.receipts.as_ref().expect("receipt stack")[0], Some(expected_receipt));
+    assert_eq!(stacks.pop_value().expect("method"), expected);
+}
+
+#[test]
 fn cancelled_storage_operations_preserve_pending_job_and_ordered_values() {
     let cancelled = Cell::new(false);
     let mut cancel = || cancelled.get();

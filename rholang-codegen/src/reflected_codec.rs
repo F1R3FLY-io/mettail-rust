@@ -9,11 +9,13 @@ use crate::dynamic_admission::{
     positional_children, positional_parts, private_tag_bytes, text_label_payload,
 };
 use crate::dynamic_reflection::{
-    write_dynamic_native_label, DynamicNativeRef, DynamicReflectionError, BOOLEAN_LABEL,
-    INTEGER_LABEL, TEXT_LABEL,
+    write_dynamic_native_label, DynamicNativeRef, DynamicReflectionError, BIGINT_LABEL,
+    BIGRAT_LABEL, BOOLEAN_LABEL, FIXED_POINT_LABEL, INTEGER_LABEL, TEXT_LABEL,
 };
 use crate::{ground_marker_tag_par, parse_reflected_tag, REFLECTED_TERM_ABI_PREFIX};
-use mettail_grammar_core::DynamicValue;
+use mettail_grammar_core::{
+    is_canonical_big_rational, is_canonical_signed_big_endian, DynamicValue,
+};
 use models::rhoapi::Par;
 use prost::Message;
 
@@ -317,7 +319,7 @@ impl<'a> ReflectedPositionalHead<'a> {
 }
 
 /// Decode the existing native label ABI, not guest-language source. A returned
-/// value has exactly one of the Text, Integer or Boolean variants. The enclosing
+/// value has exactly one native scalar variant. The enclosing
 /// head must still be nullary and owned by the expected installed language.
 pub fn decode_dynamic_native_label<C: FnMut() -> bool>(
     label: &str,
@@ -340,12 +342,71 @@ pub fn decode_dynamic_native_label<C: FnMut() -> bool>(
         budget.charge(40, 40)?;
         return Ok(decode_integer_label(label).map(DynamicValue::Integer));
     }
+    if let Some(hex) = label.strip_prefix(BIGINT_LABEL) {
+        let Some(bytes) = decode_exact_hex(hex, budget)? else {
+            return Ok(None);
+        };
+        return Ok(is_canonical_signed_big_endian(&bytes).then_some(DynamicValue::BigInt(bytes)));
+    }
+    if let Some(payload) = label.strip_prefix(BIGRAT_LABEL) {
+        let Some((numerator_hex, denominator_hex)) = payload.split_once(':') else {
+            return Ok(None);
+        };
+        let Some(numerator) = decode_exact_hex(numerator_hex, budget)? else {
+            return Ok(None);
+        };
+        let Some(denominator) = decode_exact_hex(denominator_hex, budget)? else {
+            return Ok(None);
+        };
+        return Ok(is_canonical_big_rational(&numerator, &denominator)
+            .then_some(DynamicValue::BigRat { numerator, denominator }));
+    }
+    if let Some(payload) = label.strip_prefix(FIXED_POINT_LABEL) {
+        let Some((scale_hex, unscaled_hex)) = payload.split_once(':') else {
+            return Ok(None);
+        };
+        if scale_hex.len() != 8 || !valid_exact_hex(scale_hex) {
+            return Ok(None);
+        }
+        let scale = u32::from_str_radix(scale_hex, 16)
+            .expect("eight validated hexadecimal digits fit in u32");
+        let Some(unscaled) = decode_exact_hex(unscaled_hex, budget)? else {
+            return Ok(None);
+        };
+        return Ok(is_canonical_signed_big_endian(&unscaled)
+            .then_some(DynamicValue::FixedPoint { unscaled, scale }));
+    }
     Ok(decode_boolean_label(label).map(DynamicValue::Boolean))
 }
 
+fn valid_exact_hex(hex: &str) -> bool {
+    !hex.is_empty()
+        && hex.len() % 2 == 0
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn decode_exact_hex<C: FnMut() -> bool>(
+    hex: &str,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<Option<Vec<u8>>, DynamicReflectionError> {
+    if !valid_exact_hex(hex) {
+        return Ok(None);
+    }
+    let length = hex.len() / 2;
+    budget.charge(length, length)?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(length)
+        .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+    decode_hex_into(hex, &mut bytes);
+    Ok(Some(bytes))
+}
+
 /// Write the existing native reflection label with a pre-reserved scalar buffer.
-/// Integer reservation is conservatively 40 decimal bytes; String and Boolean
-/// lengths are exact. Reservations describe payload work, not allocator RSS.
+/// Integer reservation is conservatively 40 decimal bytes. Other lengths are
+/// exact. Reservations describe payload work, not allocator RSS.
 pub fn encode_dynamic_native_label<C: FnMut() -> bool>(
     value: DynamicNativeRef<'_>,
     budget: &mut ReflectedCodecBudget<'_, C>,
@@ -358,6 +419,34 @@ pub fn encode_dynamic_native_label<C: FnMut() -> bool>(
         DynamicNativeRef::Integer(_) => INTEGER_LABEL.len().checked_add(40),
         DynamicNativeRef::Boolean(value) => {
             BOOLEAN_LABEL.len().checked_add(if value { 4 } else { 5 })
+        },
+        DynamicNativeRef::BigInt(bytes) => {
+            if !is_canonical_signed_big_endian(bytes) {
+                return Err(DynamicReflectionError::InvalidNativeLiteral);
+            }
+            bytes
+                .len()
+                .checked_mul(2)
+                .and_then(|len| len.checked_add(BIGINT_LABEL.len()))
+        },
+        DynamicNativeRef::BigRat { numerator, denominator } => {
+            if !is_canonical_big_rational(numerator, denominator) {
+                return Err(DynamicReflectionError::InvalidNativeLiteral);
+            }
+            numerator
+                .len()
+                .checked_add(denominator.len())
+                .and_then(|len| len.checked_mul(2))
+                .and_then(|len| len.checked_add(BIGRAT_LABEL.len() + 1))
+        },
+        DynamicNativeRef::FixedPoint { unscaled, .. } => {
+            if !is_canonical_signed_big_endian(unscaled) {
+                return Err(DynamicReflectionError::InvalidNativeLiteral);
+            }
+            unscaled
+                .len()
+                .checked_mul(2)
+                .and_then(|len| len.checked_add(FIXED_POINT_LABEL.len() + 8 + 1))
         },
     }
     .ok_or(DynamicReflectionError::PayloadByteLimit)?;

@@ -332,6 +332,92 @@ Proof.
   split; intros; intro H; inversion H.
 Qed.
 
+(** This abstract surface records the carrier and decoded numeric payload,
+    not the source spelling. Native Int admission depends on both magnitude
+    and sign because the i64 bounds are asymmetric. Float admission excludes
+    noncanonical representations such as negative zero. Failed admission
+    cannot silently retype Int as BigInt or normalize Float. Exact carriers
+    retain their signed byte payloads; executable transducers and conformance
+    tests establish spelling and byte canonicality separately. *)
+Inductive NativeLiteralAtom : Type :=
+| NativeInt (magnitude : nat) (negative : bool)
+| NativeBigInt (signed_bytes : list nat)
+| NativeBigRat (numerator denominator : list nat)
+| NativeFixed (unscaled : list nat) (scale : nat)
+| NativeFloat (bits : nat).
+
+Inductive NativeLiteralSurface : Type :=
+| IntSurface (magnitude : nat) (negative : bool)
+| BigIntSurface (signed_bytes : list nat)
+| BigRatSurface (numerator denominator : list nat)
+| FixedSurface (unscaled : list nat) (scale : nat)
+| FloatSurface (bits : nat).
+
+Definition render_native_literal
+    (int_within_width : nat -> bool -> bool)
+    (canonical_float : nat -> bool)
+    (value : NativeLiteralAtom) : option NativeLiteralSurface :=
+  match value with
+  | NativeInt magnitude negative =>
+      if int_within_width magnitude negative
+      then Some (IntSurface magnitude negative)
+      else None
+  | NativeBigInt bytes => Some (BigIntSurface bytes)
+  | NativeBigRat numerator denominator =>
+      Some (BigRatSurface numerator denominator)
+  | NativeFixed unscaled scale => Some (FixedSurface unscaled scale)
+  | NativeFloat bits =>
+      if canonical_float bits then Some (FloatSurface bits) else None
+  end.
+
+Definition parse_native_literal (source : NativeLiteralSurface) : NativeLiteralAtom :=
+  match source with
+  | IntSurface magnitude negative => NativeInt magnitude negative
+  | BigIntSurface bytes => NativeBigInt bytes
+  | BigRatSurface numerator denominator => NativeBigRat numerator denominator
+  | FixedSurface unscaled scale => NativeFixed unscaled scale
+  | FloatSurface bits => NativeFloat bits
+  end.
+
+Theorem admitted_native_literal_is_kind_and_payload_preserving :
+  forall int_within_width canonical_float value source,
+    render_native_literal int_within_width canonical_float value = Some source ->
+    parse_native_literal source = value.
+Proof.
+  intros int_within_width canonical_float value source Hrender.
+  destruct value; simpl in Hrender;
+    try (inversion Hrender; reflexivity).
+  - destruct (int_within_width magnitude negative) eqn:Hwidth;
+      inversion Hrender; reflexivity.
+  - destruct (canonical_float bits) eqn:Hcanonical;
+      inversion Hrender; reflexivity.
+Qed.
+
+Theorem out_of_width_int_is_refused_not_retyped :
+  forall int_within_width canonical_float magnitude negative,
+    int_within_width magnitude negative = false ->
+    render_native_literal int_within_width canonical_float
+      (NativeInt magnitude negative) = None.
+Proof.
+  intros. simpl. now rewrite H.
+Qed.
+
+Theorem noncanonical_float_is_refused_not_normalized :
+  forall int_within_width canonical_float bits,
+    canonical_float bits = false ->
+    render_native_literal int_within_width canonical_float
+      (NativeFloat bits) = None.
+Proof.
+  intros. simpl. now rewrite H.
+Qed.
+
+Theorem exact_bigint_surface_never_parses_as_native_int :
+  forall bytes magnitude negative,
+    parse_native_literal (BigIntSurface bytes) <> NativeInt magnitude negative.
+Proof.
+  intros. discriminate.
+Qed.
+
 Print Assumptions iterative_depth_admission_is_sound.
 Print Assumptions admitted_wire_covers_framing_and_payload_resources.
 Print Assumptions admitted_wire_covers_every_semantic_section.
@@ -340,3 +426,7 @@ Print Assumptions empty_braces_do_not_identify_a_canonical_value.
 Print Assumptions rendered_canonical_literal_is_unambiguous.
 Print Assumptions rendered_framed_atom_is_kind_and_payload_preserving.
 Print Assumptions unframed_lookalikes_do_not_decode_as_framed_atoms.
+Print Assumptions admitted_native_literal_is_kind_and_payload_preserving.
+Print Assumptions out_of_width_int_is_refused_not_retyped.
+Print Assumptions noncanonical_float_is_refused_not_normalized.
+Print Assumptions exact_bigint_surface_never_parses_as_native_int.

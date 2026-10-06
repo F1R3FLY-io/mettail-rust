@@ -7,18 +7,19 @@
 use crate::installed_flt::{InstalledFltAdapter, InstalledFltBindingError, InstalledFltError};
 use crate::language_install::{LanguageRuntimeError, RholangLanguageRuntime};
 use mettail_dovetail_runtime::{
-    ProjectedMatcherRestoreError, RuntimeLiteralRef, SemanticActionExecutionRequest,
-    SemanticInputLimits, SemanticMatchRefutation, SemanticMatchUndetermined,
-    SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt, SemanticProjectionDecision,
-    SemanticProjectionExecutionRequest, SemanticProjectionReceipt,
+    theory_positional_native_view, ProjectedMatcherRestoreError, RuntimeLiteralRef,
+    SemanticActionExecutionRequest, SemanticInputLimits, SemanticMatchRefutation,
+    SemanticMatchUndetermined, SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt,
+    SemanticProjectionDecision, SemanticProjectionExecutionRequest, SemanticProjectionReceipt,
     SemanticRelationExecutionRequest, SemanticRelationNormalFormReceipt, SemanticResourceReceipt,
     SemanticTransition, SemanticTransitionDecision, SemanticTransitionInput,
     SemanticTransitionLimits, SemanticTransitionMatcher, SemanticTransitionReceipt,
-    TheoryPatternRestoreError, TheoryPositionalNativeView, theory_positional_native_view,
+    TheoryPatternRestoreError, TheoryPositionalNativeView,
 };
 use mettail_grammar_core::{
-    BuiltinCarrier, Carrier, InstalledLanguage, InstalledLanguageHandle, InstalledLanguageTable,
-    LanguageAccessError, LanguageRight, ProjectionDirectionV1, TheoryActionExecutionImageV1,
+    BuiltinCarrier, Carrier, InstalledHostProfileHandle, InstalledLanguage,
+    InstalledLanguageHandle, InstalledLanguageTable, LanguageAccessError,
+    LanguageAndHostAccessError, LanguageRight, ProjectionDirectionV1, TheoryActionExecutionImageV1,
     TheoryActionId, TheoryActionImageV1, TheoryImageOperatorV1, TheoryLimitsV1,
     TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternStateFormV1, TheoryPatternStateV1,
     TheoryResourceProfileV1, TheoryRuleDispositionV1, TheorySemanticImageV1, TheorySortId,
@@ -40,9 +41,9 @@ pub use relation_observation::{
     RelationObservationReport, RelationObservationRequest, RelationObservationResult,
 };
 pub use wire::{
-    LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_ABI_V2, LANGUAGE_SEMANTIC_DISPLAY_URN,
-    LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN, LANGUAGE_SEMANTIC_OBSERVE_URN,
-    LANGUAGE_SEMANTIC_REDUCE_URN, semantic_runtime_definitions,
+    semantic_runtime_definitions, LANGUAGE_SEMANTIC_ABI_V1, LANGUAGE_SEMANTIC_ABI_V2,
+    LANGUAGE_SEMANTIC_DISPLAY_URN, LANGUAGE_SEMANTIC_OBSERVE_RELATION_URN,
+    LANGUAGE_SEMANTIC_OBSERVE_URN, LANGUAGE_SEMANTIC_REDUCE_URN,
 };
 
 const SEMANTIC_SETUP_SCHEDULE_V1: u128 = 1;
@@ -220,12 +221,26 @@ struct InstalledSemanticPublication {
     table: Arc<InstalledLanguageTable>,
     handle: InstalledLanguageHandle,
     required: Vec<LanguageRight>,
+    host_profile: Option<InstalledHostProfileHandle>,
 }
 
 impl InstalledSemanticPublication {
     fn authorize<R>(&self, commit: impl FnOnce() -> R) -> Result<R, LanguageAccessError> {
         self.table
-            .with_authorized_all(&self.handle, &self.required, |_| commit())
+            .with_authorized_batch_and_hosts(
+                [(
+                    &self.handle,
+                    self.required.as_slice(),
+                    self.host_profile
+                        .as_ref()
+                        .map(|host| (host, &[LanguageRight::Bridge][..])),
+                )],
+                commit,
+            )
+            .map_err(|error| match error {
+                LanguageAndHostAccessError::Language(error) => error,
+                LanguageAndHostAccessError::Host(_) => LanguageAccessError::HostProfileUnavailable,
+            })
     }
 }
 
@@ -482,10 +497,33 @@ impl RholangLanguageRuntime {
                 let authorized = table
                     .authorize_all(&handle, &required)
                     .map_err(InstalledSemanticError::Access)?;
+                let native_host_profile = if native_sort.is_some() {
+                    let (host_handle, host) =
+                        self.service().builtin_host_profile_binding().map_err(|_| {
+                            InstalledSemanticError::Access(
+                                LanguageAccessError::HostProfileUnavailable,
+                            )
+                        })?;
+                    if !host.record().payload.sorts.iter().any(|sort| {
+                        sort.name == "Bool"
+                            && sort.kind
+                                == TheorySortKindV1::Syntax {
+                                    literal: Some(TheoryLiteralCarrierV1::Boolean),
+                                }
+                    }) {
+                        return Err(InstalledSemanticError::InvalidEvidence(
+                            "selected host profile has no exact Boolean fragment",
+                        ));
+                    }
+                    Some(host_handle)
+                } else {
+                    None
+                };
                 let retained = publication.insert(InstalledSemanticPublication {
                     table: Arc::clone(table),
                     handle,
                     required,
+                    host_profile: native_host_profile,
                 });
                 if !Arc::ptr_eq(&authorized, &installed) {
                     return Err(InstalledSemanticError::InvalidEvidence("installed owner changed"));
@@ -681,6 +719,32 @@ fn prepare_projected_predicate_results<C: FnMut() -> bool>(
     kernel_work: &mut Option<u64>,
 ) -> Result<mettail_prattail::algebra_tower::Sat3, InstalledSemanticError> {
     use mettail_prattail::algebra_tower::Sat3;
+    if projection.carrier {
+        let mut verdict = None;
+        for result in results {
+            budget.charge(1, 0)?;
+            let mut native_work = None;
+            let (_, current) = prepare_native_predicate_results(
+                prepared,
+                projection.input_sort,
+                &result.term,
+                limits,
+                budget,
+                &mut native_work,
+            )?;
+            *kernel_work = Some(
+                kernel_work
+                    .unwrap_or(0)
+                    .checked_add(native_work.ok_or(InstalledSemanticError::InvalidEvidence(
+                        "carrier projection has no kernel work",
+                    ))?)
+                    .ok_or(InstalledSemanticError::InvalidEvidence("kernel work overflow"))?,
+            );
+            verdict = predicate::fold_uniform_candidate(verdict, current);
+        }
+        budget.charge(0, 0)?;
+        return Ok(verdict.unwrap_or(Sat3::DontKnow));
+    }
     let installed = prepared.installed();
     let image = installed
         .projected_image()
@@ -1719,8 +1783,8 @@ pub(crate) mod tests {
     fn semantic_service_retains_context_before_setup_but_not_before_full_authorization() {
         use crate::language_install::tests::MemoryRegistry;
         use crate::language_install::{
-            InstallCandidate, LANGUAGE_CAPABILITY_ABI_V1, LanguageInstallPolicy,
-            LanguageInstallService,
+            InstallCandidate, LanguageInstallPolicy, LanguageInstallService,
+            LANGUAGE_CAPABILITY_ABI_V1,
         };
         use mettail_grammar_core::{LanguageRights, RuntimePolicy, RuntimeTemplatePiece};
         use std::collections::BTreeMap;
@@ -1880,12 +1944,10 @@ pub(crate) mod tests {
                 .as_ref()
                 .expect("negative retains publication context");
             assert!(retained.required.contains(&LanguageRight::Reduce));
-            assert!(
-                report
-                    .usage
-                    .kernel_work
-                    .is_some_and(|w| w > 0 && w < report.usage.work)
-            );
+            assert!(report
+                .usage
+                .kernel_work
+                .is_some_and(|w| w > 0 && w < report.usage.work));
             let mut calls = 0;
             assert_eq!(commit_produce(Some(retained), || calls += 1), Ok(()));
             assert_eq!(calls, 1);
@@ -1923,6 +1985,7 @@ pub(crate) mod tests {
             table: Arc::clone(runtime.service().table()),
             handle: handle.attenuate(&LanguageRights::from_rights([LanguageRight::Reduce])),
             required,
+            host_profile: None,
         };
         let mut calls = 0;
         assert_eq!(
@@ -1957,7 +2020,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn semantic_service_publication_guards_actual_matched_and_unmatched_space_mutation() {
         use models::rhoapi::{
-            BindPattern, ListParWithRandom, TaggedContinuation, tagged_continuation::TaggedCont,
+            tagged_continuation::TaggedCont, BindPattern, ListParWithRandom, TaggedContinuation,
         };
         use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
         use rspace_plus_plus::rspace::rspace_interface::ISpace;
@@ -1973,6 +2036,7 @@ pub(crate) mod tests {
                         .resolve(&token, LanguageRight::Reduce)
                         .expect("handle"),
                     required: vec![LanguageRight::Reduce, LanguageRight::ReflectAst],
+                    host_profile: None,
                 };
                 let space = crate::speculation::publication_tests::new_space().await;
                 let channel = new_gstring_par("semantic-publication".into(), Vec::new(), false);

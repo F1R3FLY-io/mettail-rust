@@ -3726,8 +3726,14 @@ mod tests {
         let drive = lowered
             .drive()
             .expect("the Lambda-shaped def is drive-admitted");
+        let drive_fingerprint = par_fingerprint(drive);
+        let installed = lowered
+            .installed_program_par()
+            .expect("the Lambda-shaped def installs");
+        assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
+        let installed_fingerprint = par_fingerprint(&installed);
         assert_eq!(
-            par_fingerprint(drive),
+            (drive_fingerprint, installed_fingerprint),
             // ★ #36 S6 RE-CAPTURE (4357, 0xcd74c7d13495d5d5) → (4429, 0x0cfebce014446d5d).
             // EXPLAINED DIFF: INV-S6 scopes every driver-network channel name by the
             // language fingerprint, growing this emission by exactly 2 × 36 bytes (two
@@ -3735,37 +3741,16 @@ mod tests {
             // PROVEN to be EXACTLY that: inverting `rho_net::scoped_channel_name`'s one
             // scope-insertion line restores (4357, 0xcd74c7d13495d5d5) byte-for-byte.
             // The ContractumRedrive SHAPE this pin guards is unchanged.
-            (4429, 936393443138366813),
-            "SM-6: the synthetic-Lambda ^drive receiver family (ContractumRedrive) — pin \
-             pre-restructure; the E-1 firing_emission_node restructure must keep this exact \
-             (E-2-D re-pin: reflected-ABI v2 adds the hereditary-ground marker at index 1)"
-        );
-        let installed = lowered
-            .installed_program_par()
-            .expect("the Lambda-shaped def installs");
-        assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
-        assert_eq!(
-            par_fingerprint(&installed),
-            // ★ #36 S3 RE-CAPTURE (12807, 12027684232042018179) → (12824, …). EXPLAINED
-            // DIFF: the Peano reflect labels moved into the `^` namespace (`Z`/`S` →
-            // `^Z`/`^S`), so every `GPrivate(reflect_tag(fp, Z|S))` tag string in the
-            // subst-TRS receivers grew by one byte. The `^drive` family above is
-            // UNCHANGED (4357) — it emits no Peano node — which localizes the delta to
-            // the TRS half of the installed program. Proof that nothing else moved:
-            // inverting S3 at its source (the two constants + the
-            // `is_marked_object_label` Peano arm they made redundant) restores this pin
-            // and every other byte-identity pin EXACTLY; see the `#36 S3` note on
-            // `rho_net_subst_trs::reserved_subst_trs_labels`.
-            // ★ #36 S6 RE-CAPTURE (12824, 0x89ea12b54e7c61a0) → (12932, 0x87c0768a017c399d).
-            // EXPLAINED DIFF: INV-S6 fingerprint-scoping, exactly 3 × 36 bytes (three scope
-            // insertions; no name crossed prost's 127-byte varint boundary). PROVEN by the
-            // same inversion as the `^drive` pin above: reverting `scoped_channel_name`'s
-            // one scope-insertion line restores (12824, 0x89ea12b54e7c61a0) byte-for-byte.
-            // Receive count UNCHANGED at 7 — only names grew.
-            (12932, 9781948725751200157),
-            "SM-6: the full synthetic-Lambda installed program (ContractumRedrive) — pin \
-             pre-restructure; ContractumRedrive byte-identity across the E-1 restructure \
-             (E-2-D re-pin: reflected-ABI v2 adds the hereditary-ground marker at index 1)"
+            // The installed program's earlier #36 S3/S6 recaptures moved 12807 → 12824
+            // (Peano `^Z`/`^S` labels) → 12932 (three 36-byte channel scopes).
+            // v2 RE-CAPTURE (c387f4cc): driver 4429 → 6429; installed 12932 → 18554.
+            // Language and RhoNet fragment identities now use framed BLAKE3-256:
+            // digest text grows from 16 to 64 hex digits in generated names, with
+            // protobuf length prefixes changing where those names cross a boundary.
+            // The paired A-S5.6 production Lambda capture yields these same tuples.
+            ((6429, 0xbef07b595baddc0c), (18554, 0x1c20e2739423e4ac)),
+            "SM-6: the synthetic-Lambda ^drive family and full installed program must \
+             match their reviewed ContractumRedrive byte goldens"
         );
     }
 

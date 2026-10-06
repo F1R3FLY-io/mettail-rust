@@ -29,6 +29,8 @@ impl Default for RholangLiteralLimits {
 pub enum RholangLiteralError {
     InvalidCanonicalValue(String),
     NonFiniteFloat(u64),
+    NonCanonicalFloat(u64),
+    IntegerOutsideNativeCarrier(i128),
     OutputLimit { limit: usize },
     Allocation(String),
 }
@@ -39,6 +41,12 @@ impl fmt::Display for RholangLiteralError {
             Self::InvalidCanonicalValue(message) => formatter.write_str(message),
             Self::NonFiniteFloat(bits) => {
                 write!(formatter, "non-finite float bits 0x{bits:016x} have no Rholang literal")
+            },
+            Self::NonCanonicalFloat(bits) => {
+                write!(formatter, "float bits 0x{bits:016x} are not a canonical Rholang Float")
+            },
+            Self::IntegerOutsideNativeCarrier(value) => {
+                write!(formatter, "integer {value} is outside Rholang Int; use a BigInt value")
             },
             Self::OutputLimit { limit } => {
                 write!(formatter, "Rholang value literal exceeds {limit} output bytes")
@@ -114,16 +122,38 @@ pub fn render_rholang_value_literal_with(
                 append_bytes(&mut output, value, limits)?;
             },
             Task::Value(RhoValue::Integer(value)) => {
-                let mut literal = value.to_string();
-                if i64::try_from(*value).is_err() {
-                    literal.push('n');
-                }
+                i64::try_from(*value)
+                    .map_err(|_| RholangLiteralError::IntegerOutsideNativeCarrier(*value))?;
+                let literal = value.to_string();
                 append(&mut output, &literal, limits)?;
+            },
+            Task::Value(RhoValue::BigInt(bytes)) => {
+                let literal = num_bigint::BigInt::from_signed_bytes_be(bytes).to_string();
+                append(&mut output, &literal, limits)?;
+                append(&mut output, "n", limits)?;
+            },
+            Task::Value(RhoValue::BigRat { numerator, denominator }) => {
+                let n = num_bigint::BigInt::from_signed_bytes_be(numerator).to_string();
+                let d = num_bigint::BigInt::from_signed_bytes_be(denominator).to_string();
+                append(&mut output, &n, limits)?;
+                append(&mut output, "r/", limits)?;
+                append(&mut output, &d, limits)?;
+                append(&mut output, "r", limits)?;
+            },
+            Task::Value(RhoValue::FixedPoint { unscaled, scale }) => {
+                append_fixed_point(&mut output, unscaled, *scale, limits)?;
             },
             Task::Value(RhoValue::FloatBits(bits)) => {
                 let value = f64::from_bits(*bits);
                 if !value.is_finite() {
                     return Err(RholangLiteralError::NonFiniteFloat(*bits));
+                }
+                if mettail_runtime::CanonicalFloat64::from(value)
+                    .get()
+                    .to_bits()
+                    != *bits
+                {
+                    return Err(RholangLiteralError::NonCanonicalFloat(*bits));
                 }
                 let mut literal = value.to_string();
                 if !literal.contains(['.', 'e', 'E']) {
@@ -157,6 +187,57 @@ fn append(
         .map_err(|error| RholangLiteralError::Allocation(error.to_string()))?;
     output.push_str(value);
     Ok(())
+}
+
+fn append_fixed_point(
+    output: &mut String,
+    unscaled: &[u8],
+    scale: u32,
+    limits: RholangLiteralLimits,
+) -> Result<(), RholangLiteralError> {
+    let number = num_bigint::BigInt::from_signed_bytes_be(unscaled).to_string();
+    let negative = number.starts_with('-');
+    let digits = if negative { &number[1..] } else { &number };
+    let places = scale as usize;
+    let suffix = format!("p{scale}");
+    let width = if places == 0 {
+        number.len().checked_add(suffix.len())
+    } else {
+        places
+            .max(digits.len())
+            .checked_add(2 + usize::from(negative))
+            .and_then(|n| n.checked_add(suffix.len()))
+    }
+    .ok_or(RholangLiteralError::OutputLimit { limit: limits.max_output_bytes })?;
+    if output
+        .len()
+        .checked_add(width)
+        .is_none_or(|n| n > limits.max_output_bytes)
+    {
+        return Err(RholangLiteralError::OutputLimit { limit: limits.max_output_bytes });
+    }
+    if places == 0 {
+        append(output, &number, limits)?;
+    } else {
+        if negative {
+            append(output, "-", limits)?;
+        }
+        if digits.len() <= places {
+            append(output, "0.", limits)?;
+            let padding = places - digits.len();
+            output
+                .try_reserve(padding)
+                .map_err(|error| RholangLiteralError::Allocation(error.to_string()))?;
+            output.extend(std::iter::repeat_n('0', padding));
+            append(output, digits, limits)?;
+        } else {
+            let split = digits.len() - places;
+            append(output, &digits[..split], limits)?;
+            append(output, ".", limits)?;
+            append(output, &digits[split..], limits)?;
+        }
+    }
+    append(output, &suffix, limits)
 }
 
 fn append_quoted(
@@ -232,8 +313,8 @@ mod tests {
     #[test]
     fn canonical_scalar_spellings_are_unambiguous() {
         let value = RhoValue::List(vec![
-            RhoValue::Integer(i64::MAX as i128 + 1),
-            RhoValue::FloatBits((-0.0f64).to_bits()),
+            RhoValue::BigInt(num_bigint::BigInt::from(i64::MAX as i128 + 1).to_signed_bytes_be()),
+            RhoValue::FloatBits(0.0f64.to_bits()),
             RhoValue::String("quote \" slash \\".into()),
             RhoValue::Bytes(vec![0, 0xab, 0xff]),
             RhoValue::Boolean(true),
@@ -241,7 +322,21 @@ mod tests {
         ]);
         assert_eq!(
             render_rholang_value_literal(&value).unwrap(),
-            r#"[9223372036854775808n,-0.0,"quote \" slash \\",b"00abff",true,Nil]"#,
+            r#"[9223372036854775808n,0.0,"quote \" slash \\",b"00abff",true,Nil]"#,
+        );
+    }
+
+    #[test]
+    fn renderer_refuses_values_that_native_rholang_would_retype_or_normalize() {
+        let outside = i64::MAX as i128 + 1;
+        assert_eq!(
+            render_rholang_value_literal(&RhoValue::Integer(outside)),
+            Err(RholangLiteralError::IntegerOutsideNativeCarrier(outside)),
+        );
+        let negative_zero = (-0.0f64).to_bits();
+        assert_eq!(
+            render_rholang_value_literal(&RhoValue::FloatBits(negative_zero)),
+            Err(RholangLiteralError::NonCanonicalFloat(negative_zero)),
         );
     }
 

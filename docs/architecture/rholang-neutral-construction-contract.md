@@ -887,6 +887,34 @@ parity and zero/exact/one-under budgets. Set/Map canonicalization has a
 separate selection-and-normalization correspondence obligation and is not
 claimed by this list rule.
 
+Unary, binary, implication and method expressions likewise retain the native
+assemblers (`unary_expr_par`, `binary_expr_par`, and `method_par`). Their
+checked path composes receipts from the original ordered child Pars and
+reserves metadata passes before the shared consuming reduction. For operand
+metadata lengths `a` and `b`, let `m = max(a, b)`. The
+[expression-pass model](../../formal/rocq/rho_bridge/theories/RholangBoundMetadata.v)
+proves the following logical work `W` and temporary byte units `U`:
+
+```math
+\begin{array}{c|c|c}
+\text{constructor} & W & U \\
+\text{unary} & a & a \\
+\text{binary} & a+b+4m & a+b+m \\
+\text{implication} & 2a+b+4m & 2a+b+m
+\end{array}
+```
+
+Implication retains the intermediate negated-antecedent Par, so its receipt
+embeds that extra unary node instead of flattening the operator. A method
+starts with one receiver-summary clone, folds the arguments in source order
+using the collection-step law above, and clones the final summary into the
+inner EMethod field. The method name is copied as exact UTF-8 bytes in a
+separate admission charge. These are construction costs and shape receipts;
+the Rholang interpreter still evaluates the resulting expressions and method
+dispatch. The [expression tests](../../rholang-runtime/src/rholang_ast/session_tests.rs)
+compare exact native wire bytes and exercise zero, exact and one-under
+resource limits; the receipt tests check refusal before child consumption.
+
 `ConstructionGraph` owns nodes and a checked root, including retained unreachable
 nodes. It is only the construction component, not `RholangFrontendArtifactV1`.
 Owned FLT/session descriptors, source admission, occurrence maps, host emission,

@@ -125,6 +125,9 @@ impl From<crate::DynamicValueEncodingError> for RuntimeError {
             crate::DynamicValueEncodingError::Encode(error) => {
                 Self::DynamicValueEncoding(error.to_string())
             },
+            crate::DynamicValueEncodingError::InvalidNativeLiteral => {
+                Self::DynamicValueEncoding("noncanonical exact native literal".into())
+            },
         }
     }
 }
@@ -894,6 +897,9 @@ fn validate_template_hole_categories(
             DynamicValue::Text(_)
             | DynamicValue::NativeVariable { .. }
             | DynamicValue::Integer(_)
+            | DynamicValue::BigInt(_)
+            | DynamicValue::BigRat { .. }
+            | DynamicValue::FixedPoint { .. }
             | DynamicValue::Boolean(_)
             | DynamicValue::Bytes(_)
             | DynamicValue::Unit => {},

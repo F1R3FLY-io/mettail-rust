@@ -253,3 +253,62 @@ Section RhoCommScheduleFamily.
   Qed.
 
 End RhoCommScheduleFamily.
+
+(** The step observer emits a committed COMM before waiting for the driver's
+    permit. A dropped session or disconnected receiver is a typed error from
+    that wait, and the worker's checkpoint branch restores its prior state.
+    This small control model abstracts away RSpace matching and payloads; it
+    covers an arbitrary finite prefix of already delivered COMMs without
+    constructing or reducing a trace of a particular length in the proof. *)
+Section RhoStepCancellation.
+
+  Inductive StepSignal := Permit | GateAborted | ReceiverClosed.
+  Inductive StepError := Aborted | Disconnected.
+  Inductive StepResult := Finished (live : nat) | Failed (reason : StepError).
+
+  Fixpoint observe_steps (live : nat) (signals : list StepSignal) : StepResult :=
+    match signals with
+    | [] => Finished live
+    | Permit :: rest => observe_steps (S live) rest
+    | GateAborted :: _ => Failed Aborted
+    | ReceiverClosed :: _ => Failed Disconnected
+    end.
+
+  Definition finish_transaction
+      (checkpoint live : nat) (signals : list StepSignal) : nat * StepResult :=
+    match observe_steps live signals with
+    | Finished final => (final, Finished final)
+    | Failed reason => (checkpoint, Failed reason)
+    end.
+
+  Lemma permit_prefix_then_failure : forall count live rest reason,
+    observe_steps live
+      (repeat Permit count ++
+        (match reason with
+         | Aborted => GateAborted
+         | Disconnected => ReceiverClosed
+         end) :: rest) = Failed reason.
+  Proof.
+    induction count as [| count IH]; intros live rest reason.
+    - destruct reason; reflexivity.
+    - simpl. apply IH.
+  Qed.
+
+  Theorem observer_failure_returns_error_and_rolls_back :
+    forall checkpoint live count rest reason,
+      finish_transaction checkpoint live
+        (repeat Permit count ++
+          (match reason with
+           | Aborted => GateAborted
+           | Disconnected => ReceiverClosed
+           end) :: rest) = (checkpoint, Failed reason).
+  Proof.
+    intros checkpoint live count rest reason.
+    unfold finish_transaction.
+    rewrite permit_prefix_then_failure.
+    reflexivity.
+  Qed.
+
+End RhoStepCancellation.
+
+Print Assumptions observer_failure_returns_error_and_rolls_back.
