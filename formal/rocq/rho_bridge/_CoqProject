@@ -32,6 +32,7 @@
 theories/BridgeInertness.v
 theories/HostRhoMachineReuse.v
 theories/MettaGsltPresentation.v
+theories/CostGradeFundingBoundary.v
 theories/MettaFundingLawsConformance.v
 theories/RhoLoweringTotalOrRejects.v
 theories/RhoScalarOperatorTyping.v
@@ -44,6 +45,7 @@ theories/RhoAstSendBoundary.v
 theories/RholangAstLowering.v
 theories/RholangWorklistStorage.v
 theories/RholangFrontendAdmission.v
+theories/SpeculativeCostAuthority.v
 theories/RholangTargetConstruction.v
 theories/RholangSurfaceArity.v
 theories/RholangConstructionProtocol.v
