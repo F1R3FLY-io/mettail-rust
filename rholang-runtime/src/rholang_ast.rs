@@ -19,7 +19,8 @@ use mettail_languages::rholang::receive::{
     desugar_for_rows, eval_guard_bool, pfor_user_still_has_query_rows,
 };
 use mettail_languages::rholang::{
-    Bag, BigInt, BigRat, Bool, Bytes, Fixed, Float, ForRow, InputBind, Int, List, Map, Name,
+    Bag, BigInt, BigRat, Bool, Bytes, CostSig, CostStack as SurfaceCostStack,
+    CostStackChain as SurfaceCostStackChain, Fixed, Float, ForRow, InputBind, Int, List, Map, Name,
     Pathmap, Proc, RholangLanguage, RholangTerm, RholangTermInner, Set, Str, UInt32, Uri,
 };
 use mettail_rholang_codegen::{
@@ -38,12 +39,18 @@ use mettail_runtime::{
 };
 use models::create_bit_vector;
 use models::rhoapi::connective::ConnectiveInstance;
+use models::rhoapi::cost_signature::Value as CostSignatureValue;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{
-    Connective, EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMatches, EMethod, EMinus, EMod, EMult,
-    ENeg, ENeq, ENot, EOr, EPathMap, EPlus, EPlusPlus, Expr, Par, ReceiveBind, VarRef,
+    Connective, CostSignature, CostSignatureCompound, CostSignedTerm, CostStack as WireCostStack,
+    EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMatches, EMethod, EMinus, EMod, EMult, ENeg, ENeq,
+    ENot, EOr, EPathMap, EPlus, EPlusPlus, Expr, Par, ReceiveBind, VarRef,
 };
 use models::rust::rholang::implicits::GPrivateBuilder;
+use models::rust::rholang::sorter::cost_accounting_sorter::sort_signature;
+use models::rust::rholang::sorter::par_sort_matcher::ParSortMatcher;
+use models::rust::rholang::sorter::sortable::Sortable;
+use prost::Message;
 use typed_arena::Arena;
 
 use models::rust::utils::{
@@ -379,6 +386,11 @@ pub enum RholangAstLowerError {
     ExpectedRholangTerm,
     ExpectedProcTerm,
     UnsupportedProc(&'static str),
+    /// Cost syntax whose authority-bearing sidecar has not been constructed.
+    /// Returning an ordinary `Par` here would erase a signed-slot obligation.
+    CostPlanUnavailable(&'static str),
+    /// `-o` is term-level transfer syntax, never a fundable signature atom.
+    UnfundableCostSignature,
     UnsupportedName(&'static str),
     FreeVarWithoutName,
     /// Public source references must resolve lexically, never to harness data.
@@ -979,6 +991,34 @@ pub fn lower_rholang_proc(proc: &Proc) -> Result<Par, RholangAstLowerError> {
     lower_rholang_proc_with_options(proc, LoweringOptions::PRODUCTION)
 }
 
+/// Lower an installed, checked host projection through the same metered Public
+/// source path as node preparation. The caller can share one budget across
+/// projection, typed reconstruction, and this lowering pass. No fold or guard
+/// side output is silently dropped: those require separately enrolled runtime
+/// support before a projected host value can become a canonical `Par` demand.
+/// This conversion does not itself mint or settle cost authority.
+pub fn lower_rholang_host_proc_with_budget<C: FnMut() -> bool>(
+    proc: &Proc,
+    budget: &mut mettail_rholang_codegen::ReflectedCodecBudget<'_, C>,
+) -> Result<Par, RholangAstLowerError> {
+    let output = session::lower_public_body_with_budget(
+        proc,
+        BoundEnv::with_options(LoweringOptions::PRODUCTION),
+        budget,
+    )?;
+    if !output.folds.is_empty() {
+        return Err(RholangAstLowerError::CostPlanUnavailable(
+            "projected host value requires unenrolled fold definitions",
+        ));
+    }
+    if output.guard_report.disagreements != 0 {
+        return Err(RholangAstLowerError::CostPlanUnavailable(
+            "projected host value has guard discharge disagreement",
+        ));
+    }
+    Ok(output.par)
+}
+
 /// [`lower_rholang_proc`] under explicit compilation [`LoweringOptions`] (S-D0).
 ///
 /// The only option today is `guard_discharge`. With
@@ -1370,6 +1410,9 @@ struct ForState<'a> {
     rows: &'a [ForRow],
     /// The `for`'s body, shared by every row's continuation.
     body: &'a Proc,
+    /// Uniform-signing/lollipop continuation authority. This is a borrowed
+    /// signature syntax node; no receive rows or bodies are recursively cloned.
+    continuation_sig: Option<&'a CostSig>,
     /// The scope the row's SOURCES and PATTERNS are read in (the enclosing scope).
     env: EnvId,
     /// `rows[0]`'s binds, BORROWED. The recursive `decompose_for_row` cloned each
@@ -1390,6 +1433,9 @@ struct ForState<'a> {
     /// recursive form kept it in a local across `lower_pattern_proc`'s call; the machine has no
     /// native frame to keep it in, so it rides the stage.
     pending_source: Option<Par>,
+    /// The signed clause's validated wire signature, lowered before its
+    /// channel/pattern and consumed exactly once when the ReceiveBind is made.
+    pending_signature: Option<CostSignature>,
     /// The continuation scope, derived once every bind is done.
     extended_env: EnvId,
     /// The lowered continuation, held while the guard is lowered.
@@ -1420,6 +1466,14 @@ struct PatternState {
 enum Job<'a> {
     /// `lower_proc` — an ordinary term.
     Proc(&'a Proc, EnvId),
+    /// A signed wrapper whose body is already borrowed from the parse AST.
+    SignedProc(&'a Proc, &'a CostSig, EnvId),
+    /// Lower one Cost(Rho) signature on the same explicit worklist. The value
+    /// stack carries its result in a private one-cell `Par.cost_stacks` envelope;
+    /// only a cost continuation can consume that envelope.
+    CostSig(&'a CostSig, EnvId),
+    CostStack(&'a SurfaceCostStack, EnvId),
+    CostStackChain(&'a SurfaceCostStackChain, EnvId),
     /// `lower_name` / `lower_drop` — a channel or a dereference. The two were textually
     /// identical functions (they differ only in which of themselves the `NParen` arm recurses
     /// into, and both recurse into themselves), so the machine has one job for both.
@@ -1429,6 +1483,10 @@ enum Job<'a> {
     Body(&'a Proc, EnvId),
     /// `lower_pfor_user` — the receive rows still to nest, and the body under all of them.
     ForRows(&'a [ForRow], &'a Proc, EnvId),
+    /// A receive whose continuation must be signed by `sig`.
+    ForRowsSigned(&'a [ForRow], &'a Proc, EnvId, &'a CostSig),
+    /// The signed wrapper around the next row of a multi-row receive.
+    SignedForRows(&'a [ForRow], &'a Proc, EnvId, &'a CostSig),
     /// `lower_pattern_proc` — a receive pattern, whose free variables become binders in
     /// `pattern_states[slot]`.
     Pattern(&'a Proc, u32),
@@ -1452,12 +1510,23 @@ enum DirectLookaheadBinding {
 enum Kont<'a> {
     /// `parts.try_fold(Par::default(), append)` — the `PPar` bag.
     ParFold(usize),
+    /// Cost(Rho) signature constructors and authority-preserving surface nodes.
+    CostQuote,
+    CostName,
+    CostCompound,
+    CostSigned,
+    CostStack(usize),
+    CostStackParallel,
+    CostStackWithGroupedTail(usize),
     /// `left.append(right)` — `PParInfix`. Distinct from [`Kont::ParFold`] with `n = 2` on
     /// purpose: it is a different expression, and the differential compares expressions.
     ParPair,
     /// `send_par` / `send_par_persistent` over a channel and exactly `data_len`
     /// independently lowered payloads. A list payload remains one datum.
-    Send { persistent: bool, data_len: usize },
+    Send {
+        persistent: bool,
+        data_len: usize,
+    },
     /// `binary_expr_par(lhs, rhs, op)`.
     BinExpr(BinOp),
     /// `unary_expr_par(operand, op)`.
@@ -1471,7 +1540,10 @@ enum Kont<'a> {
     /// `lower_method`: an `EMethod` over `1 + argc` children, receiver first. The name is
     /// borrowed from `Proc::MethodCall`; accepting `&'a str` keeps arbitrary identifier
     /// names allocation-free until the final protobuf node is assembled.
-    Method { name: &'a str, argc: usize },
+    Method {
+        name: &'a str,
+        argc: usize,
+    },
     /// `EMatches` over `(target, pattern)`.
     Matches,
     /// §18.1's static-`false` fold: the formula is unsatisfiable by construction, so the whole
@@ -1494,7 +1566,10 @@ enum Kont<'a> {
     /// `lower_pathmap` — a homogeneous `EPathMap`. Set mode consumes `len`
     /// keys; map mode consumes `2 * len` interleaved keys and values. Empty is
     /// represented by `map == false, len == 0` and remains mode-neutral.
-    PathmapLit { map: bool, len: usize },
+    PathmapLit {
+        map: bool,
+        len: usize,
+    },
     /// `PNew`'s `new`-scope wrapper over its lowered body. As with the DDL
     /// plan, keep the owned descriptor out of the common work-item layout.
     New {
@@ -1528,13 +1603,20 @@ enum Kont<'a> {
     /// over three interleaved rounds on a pinned core. Clippy's literal suggestion,
     /// `Combine(Box<Kont>)`, is the opposite trade — an allocation on the HOT path to hide
     /// a cold variant's width — and must not be taken.
-    HeldFold { channel: Box<Par> },
+    HeldFold {
+        channel: Box<Par>,
+    },
     /// Run-time-selected FLT construction. `request` already contains the
     /// lexical handle, structural telescope, fills, and private reply channel
     /// under the surrounding `new`; the sole child is the transformed body.
-    InstalledFlt { channel: Box<Par>, request: Box<Par> },
+    InstalledFlt {
+        channel: Box<Par>,
+        request: Box<Par>,
+    },
     /// Stage A of `lower_pfor_user`: the SOURCE of `binds[next_bind]` is on the value stack.
     ForSource(Box<ForState<'a>>),
+    /// A signed receive clause has its fundable signature on the value stack.
+    ForCostSignature(Box<ForState<'a>>),
     /// Stage B: the PATTERN of `binds[next_bind]` is on the value stack.
     ForPattern(Box<ForState<'a>>, u32, usize),
     /// Stage C: the lowered CONTINUATION is on the value stack.
@@ -1582,6 +1664,11 @@ impl Kont<'_> {
     fn arity(&self) -> usize {
         match self {
             Kont::ParFold(n) => *n,
+            Kont::CostQuote | Kont::CostName => 1,
+            Kont::CostCompound | Kont::CostSigned => 2,
+            Kont::CostStack(n) => *n,
+            Kont::CostStackParallel => 2,
+            Kont::CostStackWithGroupedTail(n) => n + 1,
             Kont::ParPair => 2,
             Kont::Send { data_len, .. } => 1 + *data_len,
             Kont::BinExpr(_) => 2,
@@ -1610,6 +1697,7 @@ impl Kont<'_> {
             Kont::InstalledFlt { .. } => 1,
             // The four receive stages are STAGED: each awaits exactly one value.
             Kont::ForSource(_) => 1,
+            Kont::ForCostSignature(_) => 1,
             Kont::ForPattern(_, _, count) => *count,
             Kont::ForBody(_) => 1,
             Kont::ForGuard(_) => 1,
@@ -1635,6 +1723,13 @@ impl Kont<'_> {
     fn name(&self) -> &'static str {
         match self {
             Kont::ParFold(_) => "ParFold",
+            Kont::CostQuote => "CostQuote",
+            Kont::CostName => "CostName",
+            Kont::CostCompound => "CostCompound",
+            Kont::CostSigned => "CostSigned",
+            Kont::CostStack(_) => "CostStack",
+            Kont::CostStackParallel => "CostStackParallel",
+            Kont::CostStackWithGroupedTail(_) => "CostStackWithGroupedTail",
             Kont::ParPair => "ParPair",
             Kont::Send { .. } => "Send",
             Kont::BinExpr(_) => "BinExpr",
@@ -1656,6 +1751,7 @@ impl Kont<'_> {
             Kont::HeldFold { .. } => "HeldFold",
             Kont::InstalledFlt { .. } => "InstalledFlt",
             Kont::ForSource(_) => "ForSource",
+            Kont::ForCostSignature(_) => "ForCostSignature",
             Kont::ForPattern(..) => "ForPattern",
             Kont::ForBody(_) => "ForBody",
             Kont::ForGuard(_) => "ForGuard",
@@ -1671,7 +1767,9 @@ impl Kont<'_> {
     }
 }
 
-/// Every continuation the machine can push, by name. See [`Kont::name`].
+/// Legacy continuations checked against the independent recursive oracle.
+/// Cost continuations have a separate source-semantic corpus below; putting
+/// them in this list would falsely claim the old oracle understands Cost(Rho).
 #[cfg(test)]
 pub(crate) const KONT_NAMES: &[&str] = &[
     "ParFold",
@@ -1710,6 +1808,18 @@ pub(crate) const KONT_NAMES: &[&str] = &[
 ];
 
 #[cfg(test)]
+const COST_KONT_NAMES: &[&str] = &[
+    "CostQuote",
+    "CostName",
+    "CostCompound",
+    "CostSigned",
+    "CostStack",
+    "CostStackParallel",
+    "CostStackWithGroupedTail",
+    "ForCostSignature",
+];
+
+#[cfg(test)]
 thread_local! {
     /// The continuation names the most recent drive pushed. Written by [`Stacks::push`] and
     /// read by [`kont_trace`]; `cfg(test)` only, so the production drive carries no
@@ -1732,6 +1842,31 @@ pub(crate) fn kont_trace(
     KONT_TRACE.with(|trace| trace.borrow_mut().clear());
     let _ = drive(Seed::Proc(proc), env);
     KONT_TRACE.with(|trace| seen.extend(trace.borrow().iter().copied()));
+}
+
+#[cfg(test)]
+mod cost_kont_tests {
+    use super::*;
+
+    #[test]
+    fn cost_corpus_reaches_each_cost_continuation() {
+        let mut seen = BTreeSet::new();
+        for source in [
+            "{% Nil %}[alice (*) #(Nil)]",
+            "{% Nil %}[@Nil]",
+            "alice :: ()",
+            "alice :: (bob :: () | carol :: ())",
+            "for({% value <- channel %}[alice]){ Nil }",
+        ] {
+            let proc = Proc::parse_via_wpda(source).expect("Cost(Rho) worklist corpus parses");
+            kont_trace(&proc, &BoundEnv::new(), &mut seen);
+        }
+        let missing: Vec<_> = COST_KONT_NAMES
+            .iter()
+            .filter(|name| !seen.contains(**name))
+            .collect();
+        assert!(missing.is_empty(), "cost worklist continuation coverage: {missing:?}");
+    }
 }
 
 /// The two stacks, plus the three incremental counters the deficit invariant needs.
@@ -2562,9 +2697,20 @@ fn drive_machine_preparing(
         };
         match job {
             Job::Proc(proc, env) => drive.enter_proc(proc, env)?,
+            Job::SignedProc(body, sig, env) => drive.enter_signed_proc(body, sig, env)?,
+            Job::CostSig(sig, env) => drive.enter_cost_sig(sig, env)?,
+            Job::CostStack(stack, env) => drive.enter_cost_stack(stack, env)?,
+            Job::CostStackChain(chain, env) => drive.enter_cost_stack_chain(chain, env)?,
             Job::Name(name, env) => drive.enter_name(name, env)?,
             Job::Body(body, env) => drive.enter_body(body, env)?,
-            Job::ForRows(rows, body, env) => drive.enter_for_rows(rows, body, env)?,
+            Job::ForRows(rows, body, env) => drive.enter_for_rows(rows, body, env, None)?,
+            Job::ForRowsSigned(rows, body, env, sig) => {
+                drive.enter_for_rows(rows, body, env, Some(sig))?
+            },
+            Job::SignedForRows(rows, body, env, sig) => drive.push_children(
+                Kont::CostSigned,
+                [Job::CostSig(sig, env), Job::ForRowsSigned(rows, body, env, sig)],
+            )?,
             Job::Pattern(pat, slot) => drive.enter_pattern(pat, slot)?,
             Job::Formula(formula, env) => drive.enter_formula(formula, env)?,
             Job::Guard(guard, env) => drive.enter_guard(guard, env)?,
@@ -2591,6 +2737,220 @@ fn drive_machine_preparing(
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 impl<'a> Drive<'a> {
+    fn enter_cost_stack(
+        &mut self,
+        stack: &'a SurfaceCostStack,
+        env: EnvId,
+    ) -> Result<(), RholangAstLowerError> {
+        self.stacks.charge_storage(1, 1)?;
+        match stack {
+            SurfaceCostStack::CostStackLift(chain) => {
+                self.stacks.push(Job::CostStackChain(chain.as_ref(), env))
+            },
+            SurfaceCostStack::CostStackPar(left, right) => self.push_children(
+                Kont::CostStackParallel,
+                [
+                    Job::CostStack(left.as_ref(), env),
+                    Job::CostStackChain(right.as_ref(), env),
+                ],
+            ),
+            // Generated higher-order carrier variants are not authored
+            // stack cells or branch constructors. Refuse rather than erasing
+            // an authority-bearing subtree during lowering.
+            _ => Err(RholangAstLowerError::CostPlanUnavailable(
+                "unsupported cost stack constructor",
+            )),
+        }
+    }
+
+    fn enter_cost_stack_chain(
+        &mut self,
+        chain: &'a SurfaceCostStackChain,
+        env: EnvId,
+    ) -> Result<(), RholangAstLowerError> {
+        self.stacks.charge_storage(1, 1)?;
+        match chain {
+            SurfaceCostStackChain::CostStackChainEmpty => {
+                let mut par = Par::default();
+                par.cost_stacks.push(WireCostStack::default());
+                self.stacks.value(par)
+            },
+            SurfaceCostStackChain::CostStackChainCons(head, tail) => {
+                self.enter_cost_stack_chain_cons(head.as_ref(), tail.as_ref(), env)
+            },
+            SurfaceCostStackChain::CostStackChainGroup(inner) => {
+                self.stacks.push(Job::CostStack(inner.as_ref(), env))
+            },
+            _ => Err(RholangAstLowerError::CostPlanUnavailable(
+                "unsupported cost stack chain constructor",
+            )),
+        }
+    }
+
+    fn enter_cost_stack_chain_cons(
+        &mut self,
+        head: &'a CostSig,
+        tail: &'a SurfaceCostStackChain,
+        env: EnvId,
+    ) -> Result<(), RholangAstLowerError> {
+        self.stacks.charge_storage(1, 1)?;
+        let mut signatures = Vec::new();
+        signatures.try_reserve_exact(1).map_err(|_| {
+            RholangAstLowerError::CostPlanUnavailable("cost stack chain worklist allocation failed")
+        })?;
+        signatures.push(head);
+        let mut next = tail;
+        loop {
+            self.stacks.charge_storage(1, 1)?;
+            match next {
+                SurfaceCostStackChain::CostStackChainEmpty => {
+                    self.push_children(
+                        Kont::CostStack(signatures.len()),
+                        signatures.into_iter().map(|sig| Job::CostSig(sig, env)),
+                    )?;
+                    return Ok(());
+                },
+                SurfaceCostStackChain::CostStackChainCons(sig, rest) => {
+                    self.stacks.charge_storage(1, 1)?;
+                    signatures.try_reserve(1).map_err(|_| {
+                        RholangAstLowerError::CostPlanUnavailable(
+                            "cost stack chain worklist allocation failed",
+                        )
+                    })?;
+                    signatures.push(sig.as_ref());
+                    next = rest.as_ref();
+                },
+                SurfaceCostStackChain::CostStackChainGroup(inner) => {
+                    self.push_children(
+                        Kont::CostStackWithGroupedTail(signatures.len()),
+                        signatures
+                            .into_iter()
+                            .map(|sig| Job::CostSig(sig, env))
+                            .chain(std::iter::once(Job::CostStack(inner.as_ref(), env))),
+                    )?;
+                    return Ok(());
+                },
+                _ => {
+                    return Err(RholangAstLowerError::CostPlanUnavailable(
+                        "unsupported cost stack chain constructor",
+                    ));
+                },
+            }
+        }
+    }
+
+    fn enter_cost_sig(&mut self, sig: &'a CostSig, env: EnvId) -> Result<(), RholangAstLowerError> {
+        match sig {
+            CostSig::CostSigGround(name) => {
+                let mut name = name.as_ref();
+                while let Name::NParen(inner) = name {
+                    name = inner.as_ref();
+                }
+                match name {
+                    Name::NVar(_) => {
+                        let signature = lower_cost_ground(name, self.env(env))?;
+                        self.stacks.value(pack_cost_signature(signature))?;
+                    },
+                    Name::NQuote(_) | Name::NQuoteShort(_) | Name::NQuoteNil => {
+                        self.push_children(Kont::CostName, [Job::Name(name, env)])?;
+                    },
+                    _ => {
+                        return Err(RholangAstLowerError::UnsupportedName(
+                            "cost ground principal is not a variable or quoted name",
+                        ));
+                    },
+                }
+            },
+            CostSig::CostSigHash(body) => {
+                // `#P` denotes the canonical quoted process in the *current*
+                // binding environment. Resetting to an empty environment here
+                // would turn an enclosing `new`/receive binder into a free
+                // principal and break binding-sensitive signature identity.
+                self.push_children(Kont::CostQuote, [Job::Proc(body.as_ref(), env)])?;
+            },
+            CostSig::CostSigCompound(left, right) => self.push_children(
+                Kont::CostCompound,
+                [Job::CostSig(left.as_ref(), env), Job::CostSig(right.as_ref(), env)],
+            )?,
+            CostSig::CostSigGroup(inner) => {
+                self.stacks.push(Job::CostSig(inner.as_ref(), env))?;
+            },
+            CostSig::CostSigTransfer(..) => {
+                return Err(RholangAstLowerError::UnfundableCostSignature);
+            },
+            // The `language!` frontend also generates higher-order
+            // Lam*/Apply* carrier variants for every category. They are not
+            // authored Cost(Rho) signatures and cannot denote funded cells.
+            _ => {
+                return Err(RholangAstLowerError::UnfundableCostSignature);
+            },
+        }
+        Ok(())
+    }
+
+    /// Expand uniform signing and lollipop by scheduling receive jobs, never
+    /// by cloning/reparsing the parse tree. The outer wrapper and each running
+    /// continuation remain distinct `CostSignedTerm` wire nodes.
+    fn enter_signed_proc(
+        &mut self,
+        body: &'a Proc,
+        sig: &'a CostSig,
+        env: EnvId,
+    ) -> Result<(), RholangAstLowerError> {
+        let mut sig = sig;
+        while let CostSig::CostSigGroup(inner) = sig {
+            sig = inner.as_ref();
+        }
+        match sig {
+            CostSig::CostSigTransfer(first, rest) => {
+                let Proc::PForUser(rows, continuation) = body else {
+                    return Err(RholangAstLowerError::UnfundableCostSignature);
+                };
+                if pfor_user_still_has_query_rows(rows) {
+                    return Err(RholangAstLowerError::CostPlanUnavailable(
+                        "signed query receive needs a checked authority rewrite",
+                    ));
+                }
+                self.push_children(
+                    Kont::CostSigned,
+                    [
+                        Job::CostSig(first.as_ref(), env),
+                        Job::ForRowsSigned(
+                            rows.as_slice(),
+                            continuation.as_ref(),
+                            env,
+                            rest.as_ref(),
+                        ),
+                    ],
+                )?;
+            },
+            _ => {
+                let body_job = match body {
+                    Proc::PForUser(rows, continuation) => {
+                        if pfor_user_still_has_query_rows(rows) {
+                            return Err(RholangAstLowerError::CostPlanUnavailable(
+                                "signed query receive needs a checked authority rewrite",
+                            ));
+                        }
+                        if matches!(continuation.as_ref(), Proc::PCostSignedTerm(..)) {
+                            Job::ForRows(rows.as_slice(), continuation.as_ref(), env)
+                        } else {
+                            Job::ForRowsSigned(rows.as_slice(), continuation.as_ref(), env, sig)
+                        }
+                    },
+                    Proc::PForCostSigned(..) => {
+                        return Err(RholangAstLowerError::CostPlanUnavailable(
+                            "signed continuation slot requires a fingerprint-bound cost plan",
+                        ));
+                    },
+                    other => Job::Proc(other, env),
+                };
+                self.push_children(Kont::CostSigned, [Job::CostSig(sig, env), body_job])?;
+            },
+        }
+        Ok(())
+    }
+
     fn enter_proc(&mut self, proc: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
         // A-S4: exec submits the RAW parse tree (no pre-normalization), so the surface-sugar
         // nodes (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, and the `!?` query binds) arrive
@@ -2612,6 +2972,16 @@ impl<'a> Drive<'a> {
         };
 
         match proc {
+            // Unit is a distinct source value from Nil. The host normalizer
+            // emits ETupleBody([]) for `()` and empty Par for `Nil`.
+            Proc::PUnit => {
+                if self.source_preparation == SourcePreparation::Checked {
+                    preparation_scope::reserve_parts(2, 1, 0, self.stacks.reservation)?;
+                    self.stacks.value_tracked(ConstructedValue::unit_tuple()?)?;
+                } else {
+                    self.stacks.value(Target::unit_tuple())?;
+                }
+            },
             Proc::PZero => {
                 if self.source_preparation == SourcePreparation::Checked {
                     preparation_scope::reserve_parts(1, 1, 0, self.stacks.reservation)?;
@@ -2650,6 +3020,13 @@ impl<'a> Drive<'a> {
                     Kont::ParFold(parts.len()),
                     parts.iter_elements().map(|part| Job::Proc(part, env)),
                 )?;
+            },
+            Proc::PCostSignedTerm(body, sig) => {
+                self.stacks
+                    .push(Job::SignedProc(body.as_ref(), sig.as_ref(), env))?;
+            },
+            Proc::PCostStackCons(head, tail) => {
+                self.enter_cost_stack_chain_cons(head.as_ref(), tail.as_ref(), env)?;
             },
             // Bare infix parallel `a | b`. Parallel composition lowers to `Par::append`, which
             // is exactly what lowering the folded `PPar` bag would produce.
@@ -3068,6 +3445,11 @@ impl<'a> Drive<'a> {
                     ));
                 }
                 self.method(method_name.as_str(), receiver, arguments, env)?;
+            },
+            Proc::PForCostSigned(..) => {
+                return Err(RholangAstLowerError::CostPlanUnavailable(
+                    "a standalone signed continuation requires a fingerprint-bound cost plan",
+                ));
             },
             // A-S4 fail-closed: every remaining construct has no machine algebra. The typed
             // error NAMES the construct; nothing silently host-evaluates.
@@ -3583,6 +3965,119 @@ impl<'a> Drive<'a> {
             Kont::ParFold(n) => {
                 self.stacks.append_fold(n)?;
             },
+            Kont::CostQuote => {
+                let body = self.stacks.pop_value()?;
+                let canonical = ParSortMatcher::sort_match(&body).term;
+                self.stacks.value(pack_cost_signature(CostSignature {
+                    value: Some(CostSignatureValue::Quote(canonical)),
+                }))?;
+            },
+            Kont::CostName => {
+                let name = self.stacks.pop_value()?;
+                let canonical = ParSortMatcher::sort_match(&name).term;
+                self.stacks.value(pack_cost_signature(CostSignature {
+                    value: Some(CostSignatureValue::Name(canonical)),
+                }))?;
+            },
+            Kont::CostCompound => {
+                let right = take_cost_signature(self.stacks.pop_value()?)?;
+                let left = take_cost_signature(self.stacks.pop_value()?)?;
+                let combined = sort_signature(&CostSignature {
+                    value: Some(CostSignatureValue::Compound(CostSignatureCompound {
+                        elements: vec![left, right],
+                    })),
+                })
+                .term;
+                self.stacks.value(pack_cost_signature(combined))?;
+            },
+            Kont::CostSigned => {
+                let body = self.stacks.pop_value()?;
+                let signature = take_cost_signature(self.stacks.pop_value()?)?;
+                let (sig_free, sig_connective) = cost_signature_metadata(&signature);
+                let locally_free = union(body.locally_free.clone(), sig_free);
+                let connective_used = body.connective_used || sig_connective;
+                let (body, signature) = flatten_cost_signed_body(body, signature)?;
+                let mut par = Par::default();
+                par.locally_free = locally_free;
+                par.connective_used = connective_used;
+                par.cost_signed_terms.push(CostSignedTerm {
+                    body: Some(body),
+                    signature: Some(signature),
+                });
+                self.stacks.value(par)?;
+            },
+            Kont::CostStack(n) => {
+                let encoded = self.stacks.pop_values(n)?;
+                let mut cells = Vec::with_capacity(n);
+                let mut locally_free = Vec::new();
+                let mut connective_used = false;
+                for carrier in encoded {
+                    let signature = take_cost_signature(carrier)?;
+                    let (sig_free, sig_connective) = cost_signature_metadata(&signature);
+                    locally_free = union(locally_free, sig_free);
+                    connective_used |= sig_connective;
+                    cells.push(signature);
+                }
+                let mut par = Par::default();
+                par.locally_free = locally_free;
+                par.connective_used = connective_used;
+                // Stack syntax is inert evidence; no Send or supply mutation is emitted.
+                par.cost_stacks
+                    .push(WireCostStack { cells, parallel_tail: Vec::new() });
+                self.stacks.value(par)?;
+            },
+            Kont::CostStackParallel => {
+                let branches = self.stacks.pop_values(2)?;
+                let mut parallel_tail = Vec::with_capacity(2);
+                let mut locally_free = Vec::new();
+                let mut connective_used = false;
+                for branch in branches {
+                    locally_free = union(locally_free, branch.locally_free.clone());
+                    connective_used |= branch.connective_used;
+                    parallel_tail.push(take_cost_stack(branch)?);
+                }
+                let mut par = Par::default();
+                par.locally_free = locally_free;
+                par.connective_used = connective_used;
+                par.cost_stacks
+                    .push(WireCostStack { cells: Vec::new(), parallel_tail });
+                self.stacks.value(par)?;
+            },
+            Kont::CostStackWithGroupedTail(n) => {
+                let tail = self.stacks.pop_value()?;
+                let mut locally_free = tail.locally_free.clone();
+                let mut connective_used = tail.connective_used;
+                let mut tail_stack = take_cost_stack(tail)?;
+                let encoded = self.stacks.pop_values(n)?;
+                let cell_count = n.checked_add(tail_stack.cells.len()).ok_or(
+                    RholangAstLowerError::CostPlanUnavailable(
+                        "grouped stack tail cell count overflow",
+                    ),
+                )?;
+                self.stacks.charge_storage(cell_count, cell_count)?;
+                let mut cells = Vec::new();
+                cells.try_reserve_exact(cell_count).map_err(|_| {
+                    RholangAstLowerError::CostPlanUnavailable(
+                        "grouped stack tail allocation failed",
+                    )
+                })?;
+                for carrier in encoded {
+                    let signature = take_cost_signature(carrier)?;
+                    let (sig_free, sig_connective) = cost_signature_metadata(&signature);
+                    locally_free = union(locally_free, sig_free);
+                    connective_used |= sig_connective;
+                    cells.push(signature);
+                }
+                cells.append(&mut tail_stack.cells);
+                let mut par = Par::default();
+                par.locally_free = locally_free;
+                par.connective_used = connective_used;
+                par.cost_stacks.push(WireCostStack {
+                    cells,
+                    parallel_tail: std::mem::take(&mut tail_stack.parallel_tail),
+                });
+                self.stacks.value(par)?;
+            },
             Kont::ParPair => {
                 self.stacks.append_pair()?;
             },
@@ -3857,6 +4352,7 @@ impl<'a> Drive<'a> {
                     source: Some(ret_channel),
                     remainder: None,
                     free_count: 1,
+                    cost_signature: None,
                 };
                 let recv_locally_free =
                     receive_locally_free(std::slice::from_ref(&bind), &for_body, 1);
@@ -3893,6 +4389,10 @@ impl<'a> Drive<'a> {
                     .value(installed_flt_trampoline(*channel, *request, for_body))?;
             },
             Kont::ForSource(state) => return self.for_source(state),
+            Kont::ForCostSignature(mut state) => {
+                state.pending_signature = Some(take_cost_signature(self.stacks.pop_value()?)?);
+                return self.schedule_bind_source(state);
+            },
             Kont::ForPattern(state, slot, count) => return self.for_pattern(state, slot, count),
             Kont::ForBody(mut state) => {
                 state.lowered_body = Some(self.stacks.pop_value()?);
@@ -4004,6 +4504,7 @@ fn installed_flt_trampoline(channel: Par, request: Par, for_body: Par) -> Par {
         source: Some(ret_channel),
         remainder: None,
         free_count: 1,
+        cost_signature: None,
     };
     let recv_locally_free = receive_locally_free(std::slice::from_ref(&bind), &for_body, 1);
     let recv = new_receive_par(
@@ -4045,9 +4546,13 @@ impl<'a> Drive<'a> {
         rows: &'a [ForRow],
         body: &'a Proc,
         env: EnvId,
+        continuation_sig: Option<&'a CostSig>,
     ) -> Result<(), RholangAstLowerError> {
         if rows.is_empty() {
-            self.stacks.push(Job::Body(body, env))?;
+            match continuation_sig {
+                Some(sig) => self.stacks.push(Job::SignedProc(body, sig, env))?,
+                None => self.stacks.push(Job::Body(body, env))?,
+            }
             return Ok(());
         }
         let (binds, persistent, cond) = preparation_source::SourceBuilder::new(
@@ -4069,6 +4574,7 @@ impl<'a> Drive<'a> {
         self.schedule_bind_source(Box::new(ForState {
             rows,
             body,
+            continuation_sig,
             env,
             binds,
             pattern_tokens,
@@ -4079,6 +4585,7 @@ impl<'a> Drive<'a> {
             binds_rho,
             slots: Vec::new(),
             pending_source: None,
+            pending_signature: None,
             extended_env: ROOT_ENV,
             lowered_body: None,
         }))
@@ -4161,7 +4668,18 @@ impl<'a> Drive<'a> {
     ) -> Result<(), RholangAstLowerError> {
         match state.next_bind < state.binds.len() {
             true => {
-                let channel = bind_channel_name(state.binds[state.next_bind])
+                let bind = state.binds[state.next_bind];
+                if state.pending_signature.is_none() {
+                    if let Some(sig) = bind_cost_signature(bind) {
+                        let env = state.env;
+                        self.push_children(
+                            Kont::ForCostSignature(state),
+                            [Job::CostSig(sig, env)],
+                        )?;
+                        return Ok(());
+                    }
+                }
+                let channel = bind_channel_name(bind)
                     .ok_or(RholangAstLowerError::UnsupportedProc("for-row channel"))?;
                 let env = state.env;
                 self.push_children(Kont::ForSource(state), [Job::Name(channel, env)])?;
@@ -4215,6 +4733,7 @@ impl<'a> Drive<'a> {
                             "FLT pattern telescope exceeds the Rho free-count range".into(),
                         )
                     })?,
+                    cost_signature: state.pending_signature.take(),
                 });
                 state.next_bind += 1;
                 return self.schedule_bind_source(state);
@@ -4234,6 +4753,7 @@ impl<'a> Drive<'a> {
                 source: Some(source),
                 remainder: None,
                 free_count,
+                cost_signature: state.pending_signature.take(),
             });
             state.next_bind += 1;
             return self.schedule_bind_source(state);
@@ -4246,6 +4766,7 @@ impl<'a> Drive<'a> {
                 source: Some(source),
                 remainder: None,
                 free_count: 0,
+                cost_signature: state.pending_signature.take(),
             });
             state.next_bind += 1;
             return self.schedule_bind_source(state);
@@ -4301,6 +4822,7 @@ impl<'a> Drive<'a> {
             source: Some(source),
             remainder: None,
             free_count,
+            cost_signature: state.pending_signature.take(),
         });
         state.next_bind += 1;
         self.schedule_bind_source(state)
@@ -4319,12 +4841,14 @@ impl<'a> Drive<'a> {
         let extended =
             self.derive_environment(state.env, EnvironmentDerivation::Slots(&state.slots))?;
         state.extended_env = extended;
-        let job = match state.rows.len() > 1 {
+        let job = match (state.rows.len() > 1, state.continuation_sig) {
             // More rows in THIS `for`: they nest as this row's continuation. These rows are
             // query-free by construction — `enter_proc` expanded every row of this `for`
             // together before scheduling it.
-            true => Job::ForRows(&state.rows[1..], state.body, extended),
-            false => match state.body {
+            (true, Some(sig)) => Job::SignedForRows(&state.rows[1..], state.body, extended, sig),
+            (true, None) => Job::ForRows(&state.rows[1..], state.body, extended),
+            (false, Some(sig)) => Job::SignedProc(state.body, sig, extended),
+            (false, None) => match state.body {
                 // The body is itself a `for`: its rows nest under this one's binders.
                 //
                 // ⚠ This shortcut hands the inner rows straight to `enter_for_rows`, bypassing
@@ -4397,6 +4921,10 @@ impl<'a> Drive<'a> {
             bind.source
                 .as_ref()
                 .is_some_and(|source| source.connective_used)
+                || bind
+                    .cost_signature
+                    .as_ref()
+                    .is_some_and(|sig| cost_signature_metadata(sig).1)
         }) || lowered_body.connective_used;
         let mut receive_par = new_receive_par(
             binds_rho,
@@ -6608,7 +7136,8 @@ fn bind_flt_node_borrowed(bind: &InputBind) -> Option<&Arc<FltNode>> {
     match bind {
         InputBind::InputBind(lhs, _)
         | InputBind::InputBindPersistent(lhs, _)
-        | InputBind::InputBindQuery(lhs, _, _) => flt_of_name(lhs.as_ref()),
+        | InputBind::InputBindQuery(lhs, _, _)
+        | InputBind::InputBindCostSigned(lhs, _, _) => flt_of_name(lhs.as_ref()),
         InputBind::InputBindQuoted(pat, _)
         | InputBind::InputBindQuotedPersistent(pat, _)
         | InputBind::InputBindQuotedQuery(pat, _, _) => flt_of_proc(pat.as_ref()),
@@ -6625,7 +7154,8 @@ fn bind_pattern_proc(bind: &InputBind) -> Option<Vec<Proc>> {
         // so a binder and a ground pattern cannot disagree about arity.
         InputBind::InputBind(lhs, _)
         | InputBind::InputBindPersistent(lhs, _)
-        | InputBind::InputBindQuery(lhs, _, _) => {
+        | InputBind::InputBindQuery(lhs, _, _)
+        | InputBind::InputBindCostSigned(lhs, _, _) => {
             Some(vec![canonicalize_arity_pattern(&name_pattern_to_proc(lhs.as_ref()))])
         },
         InputBind::InputBindPolyadic(lhs, lhss, _)
@@ -6637,7 +7167,8 @@ fn bind_pattern_proc(bind: &InputBind) -> Option<Vec<Proc>> {
         },
         InputBind::InputBindEmpty(_)
         | InputBind::InputBindEmptyPersistent(_)
-        | InputBind::InputBindEmptyQuery(_, _) => Some(Vec::new()),
+        | InputBind::InputBindEmptyQuery(_, _)
+        | InputBind::InputBindCostSignedEmpty(_, _) => Some(Vec::new()),
         InputBind::InputBindQuoted(pat, _)
         | InputBind::InputBindQuotedPersistent(pat, _)
         | InputBind::InputBindQuotedQuery(pat, _, _) => {
@@ -6661,6 +7192,18 @@ fn bind_channel_name(bind: &InputBind) -> Option<&Name> {
         InputBind::InputBindQuoted(_, n) => Some(n.as_ref()),
         InputBind::InputBindQuotedPersistent(_, n) => Some(n.as_ref()),
         InputBind::InputBindQuotedQuery(_, n, _) => Some(n.as_ref()),
+        InputBind::InputBindCostSigned(_, n, _) | InputBind::InputBindCostSignedEmpty(n, _) => {
+            Some(n.as_ref())
+        },
+        _ => None,
+    }
+}
+
+fn bind_cost_signature(bind: &InputBind) -> Option<&CostSig> {
+    match bind {
+        InputBind::InputBindCostSigned(_, _, sig) | InputBind::InputBindCostSignedEmpty(_, sig) => {
+            Some(sig.as_ref())
+        },
         _ => None,
     }
 }
@@ -6683,11 +7226,139 @@ fn is_empty_bind(bind: &InputBind) -> bool {
         InputBind::InputBindEmpty(_)
             | InputBind::InputBindEmptyPersistent(_)
             | InputBind::InputBindEmptyQuery(_, _)
+            | InputBind::InputBindCostSignedEmpty(_, _)
     )
 }
 
 fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     scope::lower_reference(var, env, scope::ReferenceRole::Name)
+}
+
+/// A private value-stack envelope, not an emitted resource cell. The matching
+/// cost continuation consumes it before any process result is exposed.
+fn pack_cost_signature(signature: CostSignature) -> Par {
+    let mut carrier = Par::default();
+    carrier.cost_stacks.push(WireCostStack {
+        cells: vec![signature],
+        parallel_tail: Vec::new(),
+    });
+    carrier
+}
+
+fn take_cost_signature(mut carrier: Par) -> Result<CostSignature, RholangAstLowerError> {
+    if carrier.cost_stacks.len() != 1 {
+        return Err(RholangAstLowerError::UnsupportedProc(
+            "cost signature worklist carrier has no unique stack",
+        ));
+    }
+    let mut stack = carrier.cost_stacks.pop().expect("checked one stack");
+    if stack.cells.len() != 1 || !stack.parallel_tail.is_empty() {
+        return Err(RholangAstLowerError::UnsupportedProc(
+            "cost signature worklist carrier has no unique cell",
+        ));
+    }
+    Ok(stack.cells.pop().expect("checked one cell"))
+}
+
+fn take_cost_stack(mut carrier: Par) -> Result<WireCostStack, RholangAstLowerError> {
+    if carrier.cost_stacks.len() != 1 {
+        return Err(RholangAstLowerError::UnsupportedProc(
+            "cost stack worklist carrier has no unique stack",
+        ));
+    }
+    Ok(carrier.cost_stacks.pop().expect("checked one stack"))
+}
+
+/// Cost ground principals have their own namespace: an unbound `alice` means
+/// the canonical principal `GString("alice")`, not the ordinary MeTTaIL harness
+/// marker `GString("mtl:alice")`. An already-open binder remains a bound level.
+fn lower_cost_ground(name: &Name, env: &BoundEnv) -> Result<CostSignature, RholangAstLowerError> {
+    let mut current = name;
+    while let Name::NParen(inner) = current {
+        current = inner.as_ref();
+    }
+    let Name::NVar(OrdVar(Var::Free(free_var))) = current else {
+        return Err(RholangAstLowerError::UnsupportedName(
+            "cost ground principal must be a bare name variable",
+        ));
+    };
+    let value = match env.binders.get(free_var) {
+        Some(level) => CostSignatureValue::BoundLevel(
+            i32::try_from(*level).map_err(|_| RholangAstLowerError::ScopeIndexOverflow)?,
+        ),
+        None => {
+            let principal =
+                new_gstring_par(pretty_var_name(free_var)?.to_owned(), Vec::new(), false);
+            let bytes = ParSortMatcher::sort_match(&principal).term.encode_to_vec();
+            CostSignatureValue::Ground(bytes)
+        },
+    };
+    Ok(CostSignature { value: Some(value) })
+}
+
+/// This projection is an explicit heap walk: compound signatures may be as
+/// deep as the source, so a recursive helper would defeat the parser/PDA bound.
+fn cost_signature_metadata(signature: &CostSignature) -> (Vec<u8>, bool) {
+    let mut work = vec![signature];
+    let mut locally_free = Vec::new();
+    let mut connective_used = false;
+    while let Some(current) = work.pop() {
+        match current.value.as_ref() {
+            Some(CostSignatureValue::BoundLevel(level)) if *level >= 0 => {
+                locally_free = union(locally_free, create_bit_vector(&[*level as usize]));
+            },
+            Some(CostSignatureValue::Quote(par)) | Some(CostSignatureValue::Name(par)) => {
+                locally_free = union(locally_free, par.locally_free.clone());
+                connective_used |= par.connective_used;
+            },
+            Some(CostSignatureValue::Compound(compound)) => {
+                work.extend(compound.elements.iter().rev());
+            },
+            _ => {},
+        }
+    }
+    (locally_free, connective_used)
+}
+
+fn flatten_cost_signed_body(
+    mut body: Par,
+    signature: CostSignature,
+) -> Result<(Par, CostSignature), RholangAstLowerError> {
+    let solely_nested = body.sends.is_empty()
+        && body.receives.is_empty()
+        && body.news.is_empty()
+        && body.exprs.is_empty()
+        && body.matches.is_empty()
+        && body.unforgeables.is_empty()
+        && body.bundles.is_empty()
+        && body.connectives.is_empty()
+        && body.conditionals.is_empty()
+        && body.cost_stacks.is_empty()
+        && body.cost_signed_terms.len() == 1;
+    if !solely_nested {
+        return Ok((body, signature));
+    }
+    let mut nested = body
+        .cost_signed_terms
+        .pop()
+        .expect("checked one nested signed term");
+    let inner_signature = nested
+        .signature
+        .take()
+        .ok_or(RholangAstLowerError::UnsupportedProc(
+            "nested cost-signed term has no signature",
+        ))?;
+    let compound = sort_signature(&CostSignature {
+        value: Some(CostSignatureValue::Compound(CostSignatureCompound {
+            elements: vec![signature, inner_signature],
+        })),
+    })
+    .term;
+    let inner_body = nested
+        .body
+        .take()
+        .ok_or(RholangAstLowerError::UnsupportedProc("nested cost-signed term has no body"))?;
+    Ok((inner_body, compound))
 }
 
 fn exact_composite_flt_index(
@@ -6938,6 +7609,7 @@ fn wrap_pattern_preparation(inner: Par, frame: PatternPrepFrame) -> Par {
         source: Some(ret_channel),
         remainder: None,
         free_count: 1,
+        cost_signature: None,
     };
     let recv_locally_free = receive_locally_free(std::slice::from_ref(&bind), &inner, 1);
     let recv = new_receive_par(
@@ -6995,10 +7667,16 @@ pub(crate) fn expr_par(expr: Expr) -> Par {
 }
 
 fn receive_locally_free(binds: &[ReceiveBind], body: &Par, bind_count: usize) -> Vec<u8> {
-    let sources = binds
-        .iter()
-        .filter_map(|bind| bind.source.as_ref())
-        .fold(Vec::new(), |acc, source| union(acc, source.locally_free.clone()));
+    let sources = binds.iter().fold(Vec::new(), |acc, bind| {
+        let acc = match bind.source.as_ref() {
+            Some(source) => union(acc, source.locally_free.clone()),
+            None => acc,
+        };
+        match bind.cost_signature.as_ref() {
+            Some(signature) => union(acc, cost_signature_metadata(signature).0),
+            None => acc,
+        }
+    });
     union(sources, filter_and_adjust_bitset(&body.locally_free, bind_count))
 }
 

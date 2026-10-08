@@ -13,6 +13,19 @@ macro_rules! rholang_source_profile_rows {
     ($consumer:ident) => {
         $consumer! {
             Proc::PZero => [];
+            Proc::PUnit => [];
+            Proc::PCostSignedTerm => [Arc<Proc> => T, Arc<CostSig> => T];
+            Proc::PCostStackCons => [Arc<CostSig> => T, Arc<CostStackChain> => T];
+            CostSig::CostSigTransfer => [Arc<CostSig> => T, Arc<CostSig> => T];
+            CostSig::CostSigCompound => [Arc<CostSig> => T, Arc<CostSig> => T];
+            CostSig::CostSigGround => [Arc<Name> => N];
+            CostSig::CostSigHash => [Arc<Proc> => T];
+            CostSig::CostSigGroup => [Arc<CostSig> => I];
+            CostStack::CostStackLift => [Arc<CostStackChain> => I];
+            CostStack::CostStackPar => [Arc<CostStack> => I, Arc<CostStackChain> => I];
+            CostStackChain::CostStackChainEmpty => [];
+            CostStackChain::CostStackChainCons => [Arc<CostSig> => T, Arc<CostStackChain> => T];
+            CostStackChain::CostStackChainGroup => [Arc<CostStack> => I];
             Proc::POutputNilEmpty => [];
             Proc::PPersistOutputNilEmpty => [];
             Proc::MapEmpty => [];
@@ -44,6 +57,7 @@ macro_rules! rholang_source_profile_rows {
             Proc::PNew => [Scope<Vec<Binder<String>>,Arc<Proc>> => T];
             Proc::PNewUris => [Vec<Uri> => I, Scope<Vec<Binder<String>>,Arc<Proc>> => T];
             Proc::PForUser => [Vec<ForRow> => I, Arc<Proc> => T];
+            Proc::PForCostSigned => [Vec<ForRow> => I, Arc<Proc> => T];
             ForRow::ForRowSingleNoWhere => [Arc<InputBind> => I];
             ForRow::ForRowSingleWhere => [Arc<InputBind> => I, Arc<Proc> => G];
             ForRow::ForRowNoWhere => [Arc<InputBind> => I, Vec<InputBind> => I];
@@ -56,6 +70,8 @@ macro_rules! rholang_source_profile_rows {
             InputBind::InputBindEmptyPersistent => [Arc<Name> => N];
             InputBind::InputBindQuoted => [Arc<Proc> => P, Arc<Name> => N];
             InputBind::InputBindQuotedPersistent => [Arc<Proc> => P, Arc<Name> => N];
+            InputBind::InputBindCostSigned => [Arc<Name> => PN, Arc<Name> => N, Arc<CostSig> => T];
+            InputBind::InputBindCostSignedEmpty => [Arc<Name> => N, Arc<CostSig> => T];
             Name::NVar => [OrdVar => Opaque];
             Name::NQuoteNil => [];
             Name::NParen => [Arc<Name> => I];

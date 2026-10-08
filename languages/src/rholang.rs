@@ -90,6 +90,11 @@ language! {
         Name
         InputBind
         ForRow
+        // Cost(Rho) retains signatures and stack cells as typed syntax. The
+        // ordinary Proc category remains the signed-process carrier.
+        noadmit CostSig
+        noadmit CostStack
+        noadmit CostStackChain
         ![i64] as Int
         ![u32] as UInt32
         ![mettail_runtime::CanonicalBigInt] as BigInt
@@ -708,6 +713,43 @@ language! {
     terms {
         PZero .
         |- "Nil" : Proc;
+        // FIPS XVIII.4: `()` is Unit at Proc root, not Nil. The source
+        // compiler emits CREATE_TUPLE(0) for Unit and PUSH_NIL for Nil.
+        PUnit . |- "(" ")" : Proc;
+
+        // FIPS XVIII.4 / Greg BNFC Cost(Rho). These are intentionally NOT
+        // folded to their unsigned bodies: authority and stack-cell
+        // provenance must survive until checked cost elaboration.
+        CostSigTransfer . left:CostSig, right:CostSig
+        |- left "-o" right : CostSig right;
+        CostSigCompound . left:CostSig, right:CostSig
+        |- left "(*)" right : CostSig;
+        CostSigGround . name:Name |- name : CostSig;
+        CostSigHash . body:Proc |- "#" body : CostSig prefix(220);
+        CostSigGroup . sig:CostSig |- "(" sig ")" : CostSig ![{ sig.clone() }] fold;
+
+        // Appendix C's StkPar is a stack node, not Proc-level PParInfix.
+        // A chain has no bare `|` constructor: its only parallel tail is a
+        // parenthesized full stack. This typed factorization makes `::` bind
+        // before `|` structurally, including inside a group, rather than
+        // relying on cross-category Pratt powers for CostSig -> CostStack.
+        // Erasing Lift/Group yields exactly Empty/Cons/Par; a prefix before a
+        // grouped Par remains one cell shared by both branches.
+        CostStackLift . chain:CostStackChain |- chain : CostStack;
+        CostStackPar . left:CostStack, right:CostStackChain
+        |- left "|" right : CostStack;
+        CostStackChainEmpty . |- "(" ")" : CostStackChain;
+        CostStackChainCons . sig:CostSig, tail:CostStackChain
+        |- sig "::" tail : CostStackChain;
+        CostStackChainGroup . inner:CostStack
+        |- "(" inner ")" : CostStackChain;
+
+        PCostSignedTerm . body:Proc, sig:CostSig
+        |- "{%" body "%}" "[" sig "]" : Proc;
+        // A bare empty stack is NOT a process; at the Proc root, () remains
+        // ordinary Unit. Only a cons-headed stack has a Proc reading.
+        PCostStackCons . sig:CostSig, tail:CostStackChain
+        |- sig "::" tail : Proc;
 
         PDrop . n:Name  |- "*" n : Proc ;
 
@@ -1104,6 +1146,13 @@ language! {
             InputBind::InputBindEmptyPersistent(std::sync::Arc::new(n.clone()))
         }] fold;
 
+        // A per-clause signed receipt is distinct from an ordinary bind.
+        // In particular, its signature cannot be dropped by receive sugar.
+        InputBindCostSigned . lhs:Name, n:Name, sig:CostSig
+        |- "{%" lhs "<-" n "%}" "[" sig "]" : InputBind;
+        InputBindCostSignedEmpty . n:Name, sig:CostSig
+        |- "{%" "<-" n "%}" "[" sig "]" : InputBind;
+
         // A ForRow is one row of a multi-row for: one or more & binds with an optional where guard.
         //
         // ROOT-P Layer F (design-cycle-2, `ROOT_P_DESIGN_CYCLE2.md`): the six
@@ -1145,6 +1194,11 @@ language! {
         |- "for" "(" rows.*sep(";") ")" "{" body "}" : Proc ![{
             crate::rholang::receive::desugar_for_rows(rows, body)
         }] fold;
+
+        // The continuation occupies a signed slot even when its inner body
+        // contains no explicit signed wrapper. Keep that fact in the AST.
+        PForCostSigned . rows:Vec(ForRow), body:Proc
+        |- "for" "(" rows.*sep(";") ")" "{%" body "%}" : Proc;
 
 
         NQuote . p:Proc

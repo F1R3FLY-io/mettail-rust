@@ -68,6 +68,8 @@
 //! required for E2 correctness and would introduce a new, riskier recursion-elimination class;
 //! iterative hardening of the whole file is tracked as a separate follow-up.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
@@ -81,8 +83,9 @@ use super::op_enum::{
     pathmap_pair_variant_ident,
 };
 use super::semantic_adapter::{
-    SemanticAdapterLayout, SemanticCollectionProjection, SemanticFieldLayout,
-    SemanticFieldProjection, SemanticVariantLayout,
+    derive_compound_host_profile_record_v2, derive_variant_artifact_fields,
+    generated_variant_family, SemanticAdapterLayout, SemanticCollectionProjection,
+    SemanticFieldLayout, SemanticFieldProjection, SemanticVariantLayout,
 };
 use crate::gen::native_carrier::NativeRecursiveCarrier;
 use crate::gen::term_ops::subst::VariantKind;
@@ -882,6 +885,490 @@ pub(crate) fn typed_assembly_support(
     reconstruction_pda_support_mode(language, layout, true)
 }
 
+/// The selected compound-host DynamicValue inverse shares the pooled typed
+/// constructor kernel above. Grammar-core IDs are looked up in the exact
+/// generated V2 descriptor, never assumed to equal its typed assembly tags.
+/// Only Rholang's installed host fragment exports this API; unsupported
+/// grammar forms, native/opaque values, and field-shape mismatches refuse.
+pub(crate) fn host_dynamic_inverse_support(
+    language: &LanguageDef,
+    layout: &SemanticAdapterLayout,
+) -> TokenStream {
+    if language.name.to_string() != "Rholang" {
+        return TokenStream::new();
+    }
+    let record = match derive_compound_host_profile_record_v2(language, layout) {
+        Ok(record) => record,
+        Err(error) => {
+            return quote! { compile_error!(#error); };
+        },
+    };
+    let descriptor = &record.payload.codec.descriptor;
+    let root_category = descriptor.proc_category.0;
+    // The public compiled-route census is reconstructed from the actual
+    // typed-assembly layout, rather than re-exporting descriptor rows. This
+    // check binds each declared core ID to a constructor the pooled assembly
+    // switch can really build, with the same field shape and discriminant.
+    let category_ids: BTreeMap<String, mettail_grammar_core::CategoryId> = descriptor
+        .categories
+        .iter()
+        .map(|route| (route.name.clone(), route.category))
+        .collect();
+    let spec = match crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(language) {
+        Ok(spec) => spec,
+        Err(error) => {
+            let message = format!("selected inverse cannot independently derive grammar: {error}");
+            return quote! { compile_error!(#message); };
+        },
+    };
+    let grammar = match spec.to_grammar_core() {
+        Ok(grammar) => grammar,
+        Err(error) => {
+            let message = format!("selected inverse cannot independently derive grammar: {error}");
+            return quote! { compile_error!(#message); };
+        },
+    };
+    let mut compiled_categories = Vec::new();
+    for route in &descriptor.categories {
+        let Some(category_layout) = layout
+            .categories()
+            .iter()
+            .find(|candidate| candidate.category().to_string() == route.name)
+        else {
+            let message =
+                format!("selected inverse category `{}` has no typed assembly", route.name);
+            return quote! { compile_error!(#message); };
+        };
+        if category_layout.category_tag() != route.generated_category_tag {
+            let message = format!("selected inverse category `{}` changed typed tag", route.name);
+            return quote! { compile_error!(#message); };
+        }
+        let category = route.category.0;
+        let category_tag = category_layout.category_tag();
+        let name = route.name.as_str();
+        compiled_categories.push(quote! {
+            RholangHostInverseCategoryV2 {
+                category: ::mettail_grammar_core::CategoryId(#category),
+                name: #name,
+                generated_category_tag: #category_tag,
+            }
+        });
+    }
+    let mut compiled_routes = Vec::new();
+    let mut compiled_sequence_elements = BTreeSet::new();
+    for route in &descriptor.operators {
+        let Some(category_route) = descriptor
+            .categories
+            .iter()
+            .find(|candidate| candidate.category == route.category)
+        else {
+            let message = format!("selected inverse route `{}` has no category", route.label);
+            return quote! { compile_error!(#message); };
+        };
+        let Some(category_layout) = layout
+            .categories()
+            .iter()
+            .find(|candidate| candidate.category().to_string() == category_route.name)
+        else {
+            let message = format!("selected inverse route `{}` has no typed category", route.label);
+            return quote! { compile_error!(#message); };
+        };
+        let Some(variant) = category_layout.variants().iter().find(|variant| {
+            route.label
+                == format!("{}::{}::{}", language.name, category_route.name, variant.label())
+        }) else {
+            let message =
+                format!("selected inverse route `{}` has no typed constructor", route.label);
+            return quote! { compile_error!(#message); };
+        };
+        let fields = match derive_variant_artifact_fields(
+            layout,
+            &category_ids,
+            route.category,
+            category_layout.category(),
+            variant,
+        ) {
+            Ok((fields, _)) => fields,
+            Err(error) => {
+                let message = format!(
+                    "selected inverse route `{}` cannot derive typed fields: {error}",
+                    route.label
+                );
+                return quote! { compile_error!(#message); };
+            },
+        };
+        if fields != route.fields
+            || variant.constructor_tag() != route.generated_constructor_tag
+            || variant.operator_discriminant() != Some(route.stable_discriminant)
+            || route.operator.0 != route.stable_discriminant
+        {
+            let message =
+                format!("selected inverse route `{}` disagrees with typed assembly", route.label);
+            return quote! { compile_error!(#message); };
+        }
+        let grammar_production = grammar.productions.iter().find(|production| {
+            production.result == route.category && production.label == variant.label().to_string()
+        });
+        let origin_matches = match (&route.origin, grammar_production) {
+            (
+                mettail_grammar_core::SemanticOperatorOriginV1::GrammarProduction(id),
+                Some(production),
+            ) => *id == production.id && route.constructor == production.constructor,
+            (
+                mettail_grammar_core::SemanticOperatorOriginV1::Generated { family, ordinal },
+                None,
+            ) => {
+                family == generated_variant_family(variant.kind())
+                    && *ordinal == variant.constructor_tag()
+            },
+            _ => false,
+        };
+        if !origin_matches {
+            let message =
+                format!("selected inverse route `{}` changed constructor origin", route.label);
+            return quote! { compile_error!(#message); };
+        }
+        let field_tokens: Vec<TokenStream> = fields.iter().map(|field| match field {
+            mettail_grammar_core::SemanticFieldSchemaV1::Child { category } => {
+                let category = category.0;
+                quote! { RholangHostInverseFieldV2::Child(::mettail_grammar_core::CategoryId(#category)) }
+            },
+            mettail_grammar_core::SemanticFieldSchemaV1::Sequence { element } => {
+                let element = element.0;
+                compiled_sequence_elements.insert(element);
+                quote! { RholangHostInverseFieldV2::Sequence(::mettail_grammar_core::CategoryId(#element)) }
+            },
+            _ => {
+                let message = format!("selected inverse route `{}` has unsupported typed field", route.label);
+                quote! { compile_error!(#message) }
+            },
+        }).collect();
+        let origin = match &route.origin {
+            mettail_grammar_core::SemanticOperatorOriginV1::GrammarProduction(production) => {
+                let production = production.0;
+                quote! { RholangHostInverseOriginV2::GrammarProduction(#production) }
+            },
+            mettail_grammar_core::SemanticOperatorOriginV1::Generated { family, ordinal } => {
+                quote! { RholangHostInverseOriginV2::Generated { family: #family, ordinal: #ordinal } }
+            },
+        };
+        let operator = route.operator.0;
+        let category = route.category.0;
+        let constructor = route.constructor.0;
+        let category_tag = category_layout.category_tag();
+        let constructor_tag = variant.constructor_tag();
+        let stable_discriminant = variant.operator_discriminant().expect("selected operator");
+        let label = route.label.as_str();
+        compiled_routes.push(quote! {
+            RholangHostInverseRouteV2 {
+                operator: ::mettail_grammar_core::SemanticOperatorId(#operator),
+                category: ::mettail_grammar_core::CategoryId(#category),
+                constructor: ::mettail_grammar_core::ConstructorId(#constructor),
+                generated_category_tag: #category_tag,
+                generated_constructor_tag: #constructor_tag,
+                stable_discriminant: #stable_discriminant,
+                label: #label,
+                origin: #origin,
+                fields: &[#(#field_tokens),*],
+            }
+        });
+    }
+    let declared_sequences: BTreeSet<_> = descriptor
+        .sequences
+        .iter()
+        .map(|route| route.element.0)
+        .collect();
+    if compiled_sequence_elements != declared_sequences {
+        return quote! { compile_error!("selected inverse sequence roster differs from typed assembly"); };
+    }
+    let compiled_sequence_elements: Vec<u32> = compiled_sequence_elements.into_iter().collect();
+    let sequence_arms: Vec<TokenStream> = descriptor
+        .sequences
+        .iter()
+        .map(|route| {
+            let element = route.element.0;
+            let category_name = descriptor
+                .categories
+                .iter()
+                .find(|candidate| candidate.category == route.element)
+                .expect("selected sequence has generated category")
+                .name
+                .as_str();
+            let category: Ident = syn::parse_str(category_name)
+                .expect("generated category name is a Rust identifier");
+            let sequence_value = rebuild_seq_value_variant(&category);
+            let take_element = rebuild_value_take_method(&category);
+            quote! {
+                #element => {
+                    __charge(1, __count.checked_mul(::core::mem::size_of::<#category>())
+                        .ok_or(RholangHostReconstructErrorV2::Malformed)?)?;
+                    let mut __sequence = ::std::vec::Vec::new();
+                    __sequence.try_reserve(__count)
+                        .map_err(|_| RholangHostReconstructErrorV2::Allocation)?;
+                    for __value in __values.drain(__base..) {
+                        __sequence.push(__value.#take_element()
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)?);
+                    }
+                    __values.push(__MettailDovetailRebuildValue::#sequence_value(__sequence));
+                },
+            }
+        })
+        .collect();
+    let max_category_sizes: Vec<TokenStream> = descriptor
+        .categories
+        .iter()
+        .map(|route| {
+            let category: Ident =
+                syn::parse_str(&route.name).expect("generated category name is a Rust identifier");
+            quote! { ::core::mem::size_of::<#category>() }
+        })
+        .collect();
+    let take_proc = rebuild_value_take_method(&syn::parse_str("Proc").expect("Proc identifier"));
+
+    quote! {
+        /// The independently checked typed-assembly category census for V2
+        /// provider admission. It is not itself a funding grant.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct RholangHostInverseCategoryV2 {
+            pub category: ::mettail_grammar_core::CategoryId,
+            pub name: &'static str,
+            pub generated_category_tag: u32,
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum RholangHostInverseFieldV2 {
+            Child(::mettail_grammar_core::CategoryId),
+            Sequence(::mettail_grammar_core::CategoryId),
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum RholangHostInverseOriginV2 {
+            GrammarProduction(u32),
+            Generated { family: &'static str, ordinal: u32 },
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct RholangHostInverseRouteV2 {
+            pub operator: ::mettail_grammar_core::SemanticOperatorId,
+            pub category: ::mettail_grammar_core::CategoryId,
+            pub constructor: ::mettail_grammar_core::ConstructorId,
+            pub generated_category_tag: u32,
+            pub generated_constructor_tag: u32,
+            pub stable_discriminant: u32,
+            pub label: &'static str,
+            pub origin: RholangHostInverseOriginV2,
+            pub fields: &'static [RholangHostInverseFieldV2],
+        }
+
+        /// This roster is emitted from typed assembly layout and checked
+        /// against the declared descriptor at macro expansion. A production
+        /// host provider must compare the whole roster before installation.
+        pub fn rholang_host_inverse_categories_v2()
+            -> &'static [RholangHostInverseCategoryV2] {
+            &[#(#compiled_categories),*]
+        }
+
+        pub fn rholang_host_inverse_routes_v2()
+            -> &'static [RholangHostInverseRouteV2] {
+            &[#(#compiled_routes),*]
+        }
+
+        pub fn rholang_host_inverse_sequence_elements_v2()
+            -> &'static [::mettail_grammar_core::CategoryId] {
+            &[#(::mettail_grammar_core::CategoryId(#compiled_sequence_elements)),*]
+        }
+
+        /// Checked reconstruction of one installed compound-host Proc image.
+        /// The caller must bind the DynamicValue's grammar IDs to the selected
+        /// projection receipt; this inverse independently checks each exact
+        /// constructor ID and typed field shape before assembly.
+        #[derive(Debug)]
+        pub enum RholangHostReconstructErrorV2<E> {
+            Meter(E),
+            Malformed,
+            UnsupportedRoute,
+            Allocation,
+        }
+
+        #[derive(::core::clone::Clone, ::core::marker::Copy)]
+        struct __RholangHostRouteV2 {
+            category_tag: u32,
+            constructor_tag: u32,
+            fields: &'static [RholangHostInverseFieldV2],
+        }
+
+        fn __rholang_host_route_v2(
+            __category: u32,
+            __constructor: u32,
+        ) -> ::core::option::Option<__RholangHostRouteV2> {
+            rholang_host_inverse_routes_v2()
+                .iter()
+                .find(|__route| __route.category.0 == __category
+                    && __route.constructor.0 == __constructor)
+                .map(|__route| __RholangHostRouteV2 {
+                    category_tag: __route.generated_category_tag,
+                    constructor_tag: __route.generated_constructor_tag,
+                    fields: __route.fields,
+                })
+        }
+
+        /// Iterative, constructor-preserving DynamicValue→Proc inverse.
+        /// `meter(work, retained_bytes)` is called before each job, worklist
+        /// growth, typed value slot, Arc construction allowance, or sequence
+        /// allocation. There is intentionally no unmetered production entry.
+        pub fn reconstruct_host_proc_v2_with_meter<E, F>(
+            __root: &::mettail_grammar_core::DynamicValue,
+            mut __meter: F,
+        ) -> ::core::result::Result<Proc, RholangHostReconstructErrorV2<E>>
+        where
+            F: FnMut(usize, usize) -> ::core::result::Result<(), E>,
+        {
+            enum __Job<'a> {
+                Category(&'a ::mettail_grammar_core::DynamicValue, u32),
+                Sequence(&'a ::mettail_grammar_core::DynamicValue, u32),
+                Assemble {
+                    route: __RholangHostRouteV2,
+                    base: usize,
+                    count: usize,
+                },
+                AssembleSequence { element: u32, base: usize, count: usize },
+            }
+            let mut __charge = |__work: usize, __bytes: usize| {
+                __meter(__work, __bytes).map_err(RholangHostReconstructErrorV2::Meter)
+            };
+            __charge(1, ::core::mem::size_of::<__Job<'_>>())?;
+            let mut __jobs = ::std::vec::Vec::new();
+            __jobs.try_reserve(1).map_err(|_| RholangHostReconstructErrorV2::Allocation)?;
+            __jobs.push(__Job::Category(__root, #root_category));
+            let mut __values = ::std::vec::Vec::<__MettailDovetailRebuildValue>::new();
+            let __arc_bytes = [#(#max_category_sizes),*]
+                .into_iter()
+                .max()
+                .unwrap_or(0usize)
+                .checked_add(2 * ::core::mem::size_of::<usize>())
+                .ok_or(RholangHostReconstructErrorV2::Malformed)?;
+            while let ::core::option::Option::Some(__job) = __jobs.pop() {
+                __charge(1, 0)?;
+                match __job {
+                    __Job::Category(__input, __expected) => {
+                        let ::mettail_grammar_core::DynamicValue::Term(__term) = __input else {
+                            return ::core::result::Result::Err(
+                                RholangHostReconstructErrorV2::Malformed,
+                            );
+                        };
+                        if __term.category.0 != __expected {
+                            return ::core::result::Result::Err(
+                                RholangHostReconstructErrorV2::Malformed,
+                            );
+                        }
+                        // The installed exact roster is small and fixed. A
+                        // full-table logical charge covers the compiled
+                        // lookup regardless of where this route appears.
+                        __charge(rholang_host_inverse_routes_v2().len(), 0)?;
+                        let __route = __rholang_host_route_v2(
+                            __term.category.0,
+                            __term.constructor.0,
+                        ).ok_or(RholangHostReconstructErrorV2::UnsupportedRoute)?;
+                        if __term.fields.len() != __route.fields.len() {
+                            return ::core::result::Result::Err(
+                                RholangHostReconstructErrorV2::Malformed,
+                            );
+                        }
+                        let __count = __term.fields.len();
+                        let __new_jobs = __count.checked_add(1)
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)?;
+                        __charge(__new_jobs, __new_jobs
+                            .checked_mul(::core::mem::size_of::<__Job<'_>>())
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)?)?;
+                        __jobs.try_reserve(__new_jobs)
+                            .map_err(|_| RholangHostReconstructErrorV2::Allocation)?;
+                        __jobs.push(__Job::Assemble {
+                            route: __route,
+                            base: __values.len(),
+                            count: __count,
+                        });
+                        for (__field, __value) in __route.fields.iter()
+                            .zip(__term.fields.iter()).rev() {
+                            __jobs.push(match __field {
+                                RholangHostInverseFieldV2::Child(__category) =>
+                                    __Job::Category(__value, __category.0),
+                                RholangHostInverseFieldV2::Sequence(__element) =>
+                                    __Job::Sequence(__value, __element.0),
+                            });
+                        }
+                    },
+                    __Job::Sequence(__input, __element) => {
+                        let ::mettail_grammar_core::DynamicValue::Sequence(__items) = __input else {
+                            return ::core::result::Result::Err(
+                                RholangHostReconstructErrorV2::Malformed,
+                            );
+                        };
+                        let __count = __items.len();
+                        let __new_jobs = __count.checked_add(1)
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)?;
+                        __charge(__new_jobs, __new_jobs
+                            .checked_mul(::core::mem::size_of::<__Job<'_>>())
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)?)?;
+                        __jobs.try_reserve(__new_jobs)
+                            .map_err(|_| RholangHostReconstructErrorV2::Allocation)?;
+                        __jobs.push(__Job::AssembleSequence {
+                            element: __element,
+                            base: __values.len(),
+                            count: __count,
+                        });
+                        __jobs.extend(__items.iter().rev()
+                            .map(|__item| __Job::Category(__item, __element)));
+                    },
+                    __Job::Assemble { route: __route, base: __base, count: __count } => {
+                        if __values.len() != __base.checked_add(__count)
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)? {
+                            return ::core::result::Result::Err(
+                                RholangHostReconstructErrorV2::Malformed,
+                            );
+                        }
+                        let __arc_allowance = __count.checked_mul(__arc_bytes)
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)?;
+                        __charge(1, ::core::mem::size_of::<__MettailDovetailRebuildValue>()
+                            .checked_add(__arc_allowance)
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)?)?;
+                        __values.try_reserve(1)
+                            .map_err(|_| RholangHostReconstructErrorV2::Allocation)?;
+                        __mettail_dovetail_rebuild_assemble(
+                            __route.category_tag,
+                            __route.constructor_tag,
+                            __base,
+                            __count,
+                            &mut __values,
+                        ).ok_or(RholangHostReconstructErrorV2::Malformed)?;
+                    },
+                    __Job::AssembleSequence { element: __element, base: __base, count: __count } => {
+                        if __values.len() != __base.checked_add(__count)
+                            .ok_or(RholangHostReconstructErrorV2::Malformed)? {
+                            return ::core::result::Result::Err(
+                                RholangHostReconstructErrorV2::Malformed,
+                            );
+                        }
+                        __charge(1, ::core::mem::size_of::<__MettailDovetailRebuildValue>())?;
+                        __values.try_reserve(1)
+                            .map_err(|_| RholangHostReconstructErrorV2::Allocation)?;
+                        match __element {
+                            #(#sequence_arms)*
+                            _ => return ::core::result::Result::Err(
+                                RholangHostReconstructErrorV2::UnsupportedRoute,
+                            ),
+                        }
+                    },
+                }
+            }
+            if __values.len() != 1 {
+                return ::core::result::Result::Err(RholangHostReconstructErrorV2::Malformed);
+            }
+            __values.pop().and_then(__MettailDovetailRebuildValue::#take_proc)
+                .ok_or(RholangHostReconstructErrorV2::Malformed)
+        }
+    }
+}
+
 fn reconstruction_pda_support_mode(
     language: &LanguageDef,
     layout: &SemanticAdapterLayout,
@@ -1431,6 +1918,13 @@ fn reconstruction_pda_support_mode(
         let mut category_arms = Vec::<TokenStream>::new();
         for variant_layout in category_layout.variants() {
             match variant_layout.kind().clone() {
+                VariantKind::Nullary { label } => {
+                    let tag = rebuild_assemble_tag(variant_layout);
+                    category_arms.push(quote! {
+                        #tag if __value_count == 0 =>
+                            ::core::option::Option::Some(#category::#label),
+                    });
+                },
                 VariantKind::CollectionLiteral { label, element_cat, coll_type }
                     if layout.category(&element_cat).is_some() =>
                 {

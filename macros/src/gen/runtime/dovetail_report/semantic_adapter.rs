@@ -1085,7 +1085,311 @@ pub(crate) fn derive_scalar_host_profile_record(
         .map_err(|error| format!("generated host profile is invalid: {error:?}"))
 }
 
-fn generated_variant_family(kind: &VariantKind) -> &'static str {
+/// Derive only the cost-carrier routes needed by the versioned Rholang host
+/// boundary. This is deliberately an exact *fragment*, not a truncated
+/// `SemanticSignatureV1`: the latter would falsely assert coverage of every
+/// grammar constructor. IDs and schemas come from the one generated adapter
+/// census and the same checked GrammarCore bridge as the full signature.
+/// Unsupported selected routes refuse; omitted routes gain no authority.
+pub(crate) fn derive_compound_host_profile_record_v2(
+    language: &LanguageDef,
+    layout: &SemanticAdapterLayout,
+) -> Result<core::ProjectionHostCompoundProfileRecordV2, String> {
+    const REQUIRED_CATEGORIES: &[&str] =
+        &["Proc", "CostSig", "CostStack", "CostStackChain", "Name", "InputBind", "ForRow"];
+    const REQUIRED_ROUTES: &[(&str, &str)] = &[
+        ("Proc", "PZero"),
+        ("Proc", "PUnit"),
+        ("Proc", "PCostSignedTerm"),
+        ("Proc", "PCostStackCons"),
+        ("Proc", "PForCostSigned"),
+        ("CostSig", "CostSigTransfer"),
+        ("CostSig", "CostSigCompound"),
+        ("CostSig", "CostSigGround"),
+        ("CostSig", "CostSigHash"),
+        ("CostStack", "CostStackLift"),
+        ("CostStack", "CostStackPar"),
+        ("CostStackChain", "CostStackChainEmpty"),
+        ("CostStackChain", "CostStackChainCons"),
+        ("CostStackChain", "CostStackChainGroup"),
+        ("Name", "NQuote"),
+        ("InputBind", "InputBindCostSigned"),
+        ("InputBind", "InputBindCostSignedEmpty"),
+        ("ForRow", "ForRowWhere"),
+        ("ForRow", "ForRowNoWhere"),
+        ("ForRow", "ForRowSingleWhere"),
+        ("ForRow", "ForRowSingleNoWhere"),
+    ];
+
+    let version = language
+        .version
+        .as_deref()
+        .ok_or_else(|| "compound host profile requires an explicit grammar version".to_string())?;
+    for name in REQUIRED_CATEGORIES {
+        if !language
+            .types
+            .iter()
+            .any(|definition| definition.name.to_string() == *name)
+        {
+            return Err(format!("compound host profile lacks category `{name}`"));
+        }
+    }
+    let spec = crate::gen::syntax::parser::prattail_bridge::language_def_to_spec(language)
+        .map_err(|error| format!("checked grammar bridge failed: {error}"))?;
+    let grammar = spec
+        .to_grammar_core()
+        .map_err(|error| format!("checked grammar-core conversion failed: {error}"))?;
+    let grammar_fingerprint = grammar
+        .fingerprint()
+        .map_err(|error| format!("checked grammar fingerprint failed: {error:?}"))?;
+    let categories: BTreeMap<String, core::CategoryId> = grammar
+        .categories
+        .iter()
+        .map(|category| (category.name.clone(), category.id))
+        .collect();
+    let category_names: BTreeMap<core::CategoryId, String> = grammar
+        .categories
+        .iter()
+        .map(|category| (category.id, category.name.clone()))
+        .collect();
+    let mut selected_categories = Vec::new();
+    let mut sorts = Vec::new();
+    for name in REQUIRED_CATEGORIES {
+        let category = categories
+            .get(*name)
+            .copied()
+            .ok_or_else(|| format!("compound host profile lacks category `{name}`"))?;
+        let adapter = layout
+            .categories()
+            .iter()
+            .find(|candidate| candidate.category().to_string() == *name)
+            .ok_or_else(|| format!("compound host category `{name}` has no generated adapter"))?;
+        selected_categories.push(core::ProjectionHostCompoundCategoryRouteV2 {
+            category,
+            name: (*name).to_string(),
+            generated_category_tag: adapter.category_tag(),
+        });
+        sorts.push(core::TheorySortV1 {
+            name: (*name).to_string(),
+            kind: core::TheorySortKindV1::Syntax { literal: None },
+        });
+    }
+
+    let mut productions = BTreeMap::new();
+    for production in &grammar.productions {
+        let category = category_names
+            .get(&production.result)
+            .ok_or_else(|| format!("production {:?} has unknown category", production.id))?;
+        let key = (category.clone(), production.label.clone());
+        if productions.insert(key.clone(), production).is_some() {
+            return Err(format!("duplicate checked production `{}::{}`", key.0, key.1));
+        }
+    }
+    let selected: BTreeSet<(&str, &str)> = REQUIRED_ROUTES.iter().copied().collect();
+    let mut seen = BTreeSet::new();
+    let mut selected_sequence_elements = BTreeSet::new();
+    let mut next_generated_constructor = u32::try_from(grammar.productions.len())
+        .map_err(|_| "too many grammar constructors for V2 host profile".to_string())?;
+    let mut operators = Vec::new();
+    let mut constructors = Vec::new();
+    for category_layout in layout.categories() {
+        let category_name = category_layout.category().to_string();
+        let category = categories
+            .get(&category_name)
+            .copied()
+            .ok_or_else(|| format!("generated category `{category_name}` absent from grammar"))?;
+        for variant in category_layout.variants() {
+            let Some(stable_discriminant) = variant.operator_discriminant() else {
+                continue;
+            };
+            let label = variant.label().to_string();
+            let key = (category_name.clone(), label.clone());
+            // Retain the *full census* constructor allocation even though
+            // only selected routes have their structural fields admitted.
+            let (constructor, origin) = match productions.get(&key) {
+                Some(production) => (
+                    production.constructor,
+                    core::SemanticOperatorOriginV1::GrammarProduction(production.id),
+                ),
+                None => {
+                    let constructor = core::ConstructorId(next_generated_constructor);
+                    next_generated_constructor = next_generated_constructor
+                        .checked_add(1)
+                        .ok_or_else(|| "generated constructor ID overflow".to_string())?;
+                    (
+                        constructor,
+                        core::SemanticOperatorOriginV1::Generated {
+                            family: generated_variant_family(variant.kind()).to_string(),
+                            ordinal: variant.constructor_tag(),
+                        },
+                    )
+                },
+            };
+            if !selected.contains(&(category_name.as_str(), label.as_str())) {
+                continue;
+            }
+            let (fields, _) = derive_variant_artifact_fields(
+                layout,
+                &categories,
+                category,
+                category_layout.category(),
+                variant,
+            )
+            .map_err(|error| format!("selected host route `{category_name}::{label}`: {error}"))?;
+            let mut domain = Vec::new();
+            for field in &fields {
+                let mut children = Vec::new();
+                match field {
+                    core::SemanticFieldSchemaV1::Child { category }
+                    | core::SemanticFieldSchemaV1::Optional { category }
+                    | core::SemanticFieldSchemaV1::Variable { category } => {
+                        children.push(*category);
+                    },
+                    core::SemanticFieldSchemaV1::Sequence { element } => {
+                        let name = category_names.get(element).ok_or_else(|| {
+                            format!("selected host route has unknown sequence element {element:?}")
+                        })?;
+                        if !REQUIRED_CATEGORIES.contains(&name.as_str()) {
+                            return Err(format!(
+                                "selected host route `{category_name}::{label}` has sequence element `{name}` outside the exact fragment"
+                            ));
+                        }
+                        selected_sequence_elements.insert(*element);
+                        domain.push(format!("{}::Sequence::{name}", language.name));
+                    },
+                    core::SemanticFieldSchemaV1::OptionalSequence { .. } => {
+                        return Err(format!(
+                            "selected host route `{category_name}::{label}` needs an explicit optional-sequence algebra"
+                        ));
+                    },
+                    core::SemanticFieldSchemaV1::Collection { key, value, .. } => {
+                        children.extend(key.iter().copied());
+                        children.push(*value);
+                    },
+                    core::SemanticFieldSchemaV1::Scope { domain, body, .. }
+                    | core::SemanticFieldSchemaV1::PathMap { key: domain, value: body } => {
+                        children.extend([*domain, *body]);
+                    },
+                    core::SemanticFieldSchemaV1::Opaque { .. } => {
+                        return Err(format!(
+                            "selected host route `{category_name}::{label}` has an opaque coefficient"
+                        ));
+                    },
+                    core::SemanticFieldSchemaV1::Atom { .. }
+                    | core::SemanticFieldSchemaV1::TokenText
+                    | core::SemanticFieldSchemaV1::OptionalTokenText
+                    | core::SemanticFieldSchemaV1::Unit
+                    | core::SemanticFieldSchemaV1::Bytes => {},
+                }
+                for child in children {
+                    let name = category_names.get(&child).ok_or_else(|| {
+                        format!("selected host route has unknown child {child:?}")
+                    })?;
+                    if !REQUIRED_CATEGORIES.contains(&name.as_str()) {
+                        return Err(format!(
+                            "selected host route `{category_name}::{label}` has child `{name}` outside the exact fragment"
+                        ));
+                    }
+                    domain.push(name.clone());
+                }
+            }
+            let qualified_label = format!("{}::{category_name}::{label}", language.name);
+            operators.push(core::ProjectionHostCompoundOperatorRouteV2 {
+                operator: core::SemanticOperatorId(stable_discriminant),
+                category,
+                constructor,
+                generated_constructor_tag: variant.constructor_tag(),
+                stable_discriminant,
+                label: qualified_label.clone(),
+                origin,
+                fields,
+            });
+            constructors.push(core::TheoryConstructorV1 {
+                name: qualified_label,
+                domain,
+                codomain: category_name.clone(),
+            });
+            seen.insert(key);
+        }
+    }
+    // An exact fragment must NOT assert full grammar-production coverage.
+    // Unselected DDL/fold surfaces may have no semantic adapter route, while
+    // every selected route still retains its original production identity or
+    // generated constructor allocation from the complete adapter census.
+    for &(category, label) in REQUIRED_ROUTES {
+        if !seen.contains(&(category.to_string(), label.to_string())) {
+            return Err(format!("compound host profile lacks route `{category}::{label}`"));
+        }
+    }
+    let mut sequences = Vec::new();
+    for element in selected_sequence_elements {
+        let element_name = category_names
+            .get(&element)
+            .ok_or_else(|| format!("selected sequence element {element:?} has no category"))?;
+        let sort_name = format!("{}::Sequence::{element_name}", language.name);
+        let nil_name = format!("{sort_name}::Nil");
+        let cons_name = format!("{sort_name}::Cons");
+        sorts.push(core::TheorySortV1 {
+            name: sort_name.clone(),
+            kind: core::TheorySortKindV1::Syntax { literal: None },
+        });
+        constructors.push(core::TheoryConstructorV1 {
+            name: nil_name.clone(),
+            domain: Vec::new(),
+            codomain: sort_name.clone(),
+        });
+        constructors.push(core::TheoryConstructorV1 {
+            name: cons_name.clone(),
+            domain: vec![element_name.clone(), sort_name.clone()],
+            codomain: sort_name.clone(),
+        });
+        sequences.push(core::ProjectionHostCompoundSequenceRouteV2 {
+            element,
+            sort_name,
+            nil_name,
+            cons_name,
+        });
+    }
+    let descriptor = core::ProjectionHostCompoundCodecDescriptorV2 {
+        domain: core::ProjectionHostCompoundDomainV2::SelectedRootRoutes,
+        semantic_key_abi: mettail_runtime::GeneratedSemanticKeyAbiV1::StructuralV2 as u16,
+        grammar_fingerprint,
+        proc_category: categories["Proc"],
+        cost_signature_category: categories["CostSig"],
+        cost_stack_category: categories["CostStack"],
+        categories: selected_categories,
+        atom_schemas: Vec::new(),
+        operators,
+        sequences,
+    };
+    let descriptor_bytes = postcard::to_allocvec(&descriptor)
+        .map_err(|error| format!("compound host descriptor encoding failed: {error}"))?;
+    let mut commitment = blake3::Hasher::new();
+    commitment.update(b"mettail-generated-compound-host-provider/2\0");
+    commitment.update(include_bytes!("typed_lowering.rs"));
+    commitment.update(include_bytes!("reconstruct.rs"));
+    commitment.update(&descriptor_bytes);
+    let payload = core::ProjectionHostCompoundProfilePayloadV2 {
+        profile_abi: core::PROJECTION_HOST_COMPOUND_PROFILE_ABI_V2,
+        language_name: language.name.to_string(),
+        language_version: version.to_string(),
+        definition_fingerprint: mettail_ast::identity::language_definition_fingerprint(language),
+        grammar_fingerprint,
+        coverage: core::ProjectionHostCoverageV1::ExactFragment,
+        sorts,
+        constructors,
+        codec: core::ProjectionHostCompoundCodecProfileV2 {
+            codec_abi: core::PROJECTION_HOST_COMPOUND_CODEC_ABI_V2,
+            provider_abi: "mettail-generated-compound-host-provider/2".to_string(),
+            implementation_commitment: *commitment.finalize().as_bytes(),
+            descriptor,
+        },
+    };
+    core::ProjectionHostCompoundProfileRecordV2::new(payload)
+        .map_err(|error| format!("generated compound host profile is invalid: {error:?}"))
+}
+
+pub(crate) fn generated_variant_family(kind: &VariantKind) -> &'static str {
     match kind {
         VariantKind::Var { .. } => "implicit-variable",
         VariantKind::Literal { .. } => "implicit-literal",
@@ -1164,7 +1468,7 @@ fn literal_atom_schema(
     Ok(core::SemanticAtomSchemaV1::Builtin(builtin))
 }
 
-fn derive_variant_artifact_fields(
+pub(crate) fn derive_variant_artifact_fields(
     layout: &SemanticAdapterLayout,
     categories: &BTreeMap<String, core::CategoryId>,
     owner_category: core::CategoryId,

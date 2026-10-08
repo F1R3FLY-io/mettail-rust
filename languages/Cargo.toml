@@ -182,13 +182,13 @@ pathmap = { workspace = true }
 # holds borrowed jobs. A typed arena gives those temporary nodes the driver's full lifetime without
 # unsafe code or repeated subtree cloning. Version 2.0 is already present in the workspace lockfile.
 typed-arena = "2.0"
+mettail-grammar-core = { path = "../grammar-core" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 rand_distr = "0.4"
 mettail-elab = { path = "../mettail-elab" }
-mettail-grammar-core = { path = "../grammar-core" }
 postcard = { version = "1", features = ["alloc"] }
 mettail-testkit = { package = "testkit", path = "../testkit" }
 # Lets the GuardedRho Rho-default backend test (guarded_rho_rho_backend.rs) name
