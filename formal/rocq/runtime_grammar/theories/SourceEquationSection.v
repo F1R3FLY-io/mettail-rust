@@ -28,11 +28,13 @@
 
 From Stdlib Require Import List Bool PeanoNat Lia Arith.Wf_nat.
 From RuntimeGrammar Require Import ExecutableTheoryCore SemanticTransitionKernel.
+From Dovetail.Saturation Require Import DovetailSaturation.
 Import ListNotations.
 
 Module SourceEquationSection.
 Module Core := ExecutableTheoryCore.
 Module K := SemanticTransitionKernel.
+Module Sat := DovetailSaturation.
 Import K.
 
 Definition Term := LogicTerm.
@@ -1102,6 +1104,280 @@ Example additional_unrecognized_equation_is_rejected :
   check_roster example_roles (example_roster ++ [example_equation 0 0]) = None.
 Proof. reflexivity. Qed.
 
+(** Finite structural carrier, separate from the set of represented terms.
+
+    A root contractum reuses a child or a seeded constant. A contextual step
+    need NOT return an original syntactic subterm: an ancestor can denote a
+    different tree after one child class is merged. The carrier model below
+    makes that distinction explicit. Its immutable cells are operator/child
+    handles; the class map interprets their equivalence classes. A cyclic
+    carrier can represent arbitrarily many finite trees without adding cells.
+    This is a representation relation, not a graph algorithm or allocator.
+
+    Physical reuse requires the existing engine's source match to correspond
+    to Represented, closed child references and both constant seeds. Rebuild
+    and hash-consing must realize the same quotient of existing cells. The
+    following theorems prove the LOCAL mathematical reuse obligation; they do
+    not assume or establish those entire Rust implementations as a theorem. *)
+Definition ImmediateChild child parent :=
+  exists operator children, parent = LogicApplication operator children /\ In child children.
+
+Inductive ProperSubterm : Term -> Term -> Prop :=
+| proper_immediate : forall child parent, ImmediateChild child parent -> ProperSubterm child parent
+| proper_transitive : forall small middle large,
+    ProperSubterm small middle -> ProperSubterm middle large -> ProperSubterm small large.
+
+Theorem root_contractum_is_immediate_child_or_seed : forall redex contractum,
+  RootStep redex contractum ->
+  ImmediateChild contractum redex \/ contractum = zero \/ contractum = unit.
+Proof.
+  intros redex contractum H. destruct H;
+    try (right; left; reflexivity); try (right; right; reflexivity).
+  all: left; unfold ImmediateChild; eexists; eexists; split; [reflexivity|simpl; auto].
+Qed.
+
+Theorem root_contractum_is_proper_subterm_or_seed : forall redex contractum,
+  RootStep redex contractum ->
+  ProperSubterm contractum redex \/ contractum = zero \/ contractum = unit.
+Proof.
+  intros redex contractum H.
+  destruct (root_contractum_is_immediate_child_or_seed _ _ H) as [C|S];
+    [left; now apply proper_immediate|now right].
+Qed.
+
+Lemma child_occurrences_member : forall child children,
+  In child children -> occurrences child <= child_occurrences children.
+Proof.
+  intros child children. induction children as [|first rest IH]; intros H; [contradiction|].
+  destruct H as [H|H]; [subst; simpl; lia|].
+  specialize (IH H). change (occurrences child <= occurrences first + child_occurrences rest). lia.
+Qed.
+
+Theorem proper_subterms_have_strictly_fewer_occurrences : forall child parent,
+  ProperSubterm child parent -> occurrences child < occurrences parent.
+Proof.
+  intros child parent H. induction H; [|lia].
+  destruct H as [operator [children [E I]]]. subst parent.
+  pose proof (child_occurrences_member child children I) as B.
+  change (occurrences child < S (child_occurrences children)). lia.
+Qed.
+
+Inductive CarrierCell :=
+| VariableCell (variable : ScopedVariable)
+| ApplicationCell (operator : nat) (children : list nat).
+
+Definition ClosedCarrier (cells : list CarrierCell) :=
+  forall node operator children,
+    nth_error cells node = Some (ApplicationCell operator children) ->
+    Forall (fun child => child < length cells) children.
+
+Inductive Represented (cells : list CarrierCell) (classes : nat -> nat) : nat -> Term -> Prop :=
+| represented_variable : forall handle node variable,
+    nth_error cells node = Some (VariableCell variable) ->
+    classes handle = classes node ->
+    Represented cells classes handle (LogicVariable variable)
+| represented_application : forall handle node operator references children,
+    nth_error cells node = Some (ApplicationCell operator references) ->
+    classes handle = classes node ->
+    Forall2 (Represented cells classes) references children ->
+    Represented cells classes handle (LogicApplication operator children).
+
+Lemma forall2_right_member : forall (A B : Type) (relation : A -> B -> Prop) xs ys,
+  Forall2 relation xs ys -> forall y, In y ys -> exists x, In x xs /\ relation x y.
+Proof.
+  intros A B relation xs ys H. induction H; intros value I; [contradiction|].
+  destruct I as [E|I].
+  - subst value. exists x. split; [now left|assumption].
+  - destruct (IHForall2 _ I) as [found [F R]]. exists found. split; [now right|exact R].
+Qed.
+
+Theorem represented_child_reuses_an_existing_handle : forall cells classes handle parent child,
+  ClosedCarrier cells -> Represented cells classes handle parent ->
+  ImmediateChild child parent ->
+  exists child_handle, child_handle < length cells /\ Represented cells classes child_handle child.
+Proof.
+  intros cells classes handle parent child Closed R [operator [children [E I]]]. subst parent.
+  inversion R as [h node variable N C|h node op references terms N C T]; subst.
+  destruct (forall2_right_member _ _ _ _ _ T child I) as [target [InRefs At]].
+  exists target. split; [|exact At].
+  specialize (Closed node operator references N).
+  now apply Forall_forall with (x := target) in Closed.
+Qed.
+
+(** This is the exact seed/closure interface needed by the reducing-rule
+    instantiator: existence of a contractum handle in the SAME cell table.
+    No absence of productive class cycles or term-depth bound is required. *)
+Theorem root_contractum_reuses_seeded_finite_carrier :
+  forall cells classes root redex contractum zero_handle unit_handle,
+  ClosedCarrier cells ->
+  Represented cells classes root redex ->
+  zero_handle < length cells -> Represented cells classes zero_handle zero ->
+  unit_handle < length cells -> Represented cells classes unit_handle unit ->
+  RootStep redex contractum ->
+  exists result, result < length cells /\ Represented cells classes result contractum.
+Proof.
+  intros cells classes root redex contractum zh uh Closed R ZB Z UB U S.
+  destruct (root_contractum_is_immediate_child_or_seed _ _ S) as [C|[E|E]].
+  - exact (represented_child_reuses_an_existing_handle
+      cells classes root redex contractum Closed R C).
+  - subst contractum. exists zh. auto.
+  - subst contractum. exists uh. auto.
+Qed.
+
+Lemma represented_equal_class_handle : forall cells classes handle term,
+  Represented cells classes handle term -> forall alias,
+  classes alias = classes handle -> Represented cells classes alias term.
+Proof.
+  intros cells classes handle term R. destruct R; intros alias E;
+    [eapply represented_variable|eapply represented_application]; eauto; congruence.
+Qed.
+
+(** The unchanged parent cell represents BOTH trees once its selected child
+    and the replacement have equal class labels. Iterating this local fact up
+    an enclosing context does not require allocating new ancestor cell shapes.
+    It does not assert that the two trees were literally equal before merging. *)
+Theorem equivalent_child_replacement_reuses_the_parent_cell :
+  forall cells classes parent operator before_ids after_ids child_handle replacement_handle
+    before after child replacement,
+  nth_error cells parent =
+    Some (ApplicationCell operator (before_ids ++ child_handle :: after_ids)) ->
+  Forall2 (Represented cells classes) before_ids before ->
+  Forall2 (Represented cells classes) after_ids after ->
+  Represented cells classes child_handle child ->
+  Represented cells classes replacement_handle replacement ->
+  classes child_handle = classes replacement_handle ->
+  Represented cells classes parent (LogicApplication operator (before ++ child :: after)) /\
+  Represented cells classes parent (LogicApplication operator (before ++ replacement :: after)).
+Proof.
+  intros cells classes parent operator before_ids after_ids ch rh before after child replacement
+    Node Before After Child Replacement Equal. split.
+  - eapply represented_application; [exact Node|reflexivity|].
+    apply Forall2_app; [exact Before|]. constructor; assumption.
+  - eapply represented_application; [exact Node|reflexivity|].
+    apply Forall2_app; [exact Before|]. constructor; [|exact After].
+    eapply represented_equal_class_handle; eauto.
+Qed.
+
+(** A successful class merge is an onto quotient of the old finite class set
+    which identifies two previously DISTINCT classes. This interface permits
+    additional congruence-induced merges and arbitrary representative labels.
+    It contains neither a decreasing-count premise nor an engine-correctness
+    premise. No-op/refired equalities do not satisfy the distinct-class field.
+
+    Physical refinement must establish exact class enumeration and the onto
+    quotient map for a reported successful merge. The numerical theorem does
+    not certify Rust's union-find, rebuild, match enumeration or loop reports. *)
+Definition FiniteClassMerge (before after : list nat) : Prop :=
+  NoDup before /\ NoDup after /\ exists quotient : nat -> nat,
+    (forall new_class, In new_class after <->
+      exists old_class, In old_class before /\ quotient old_class = new_class) /\
+    exists first second, In first before /\ In second before /\
+      first <> second /\ quotient first = quotient second.
+
+Theorem successful_finite_class_merge_strictly_decreases_classes : forall before after,
+  FiniteClassMerge before after -> length after < length before.
+Proof.
+  intros before after [Old [New [quotient [Image [first [second [F [S [Different Equal]]]]]]]]].
+  assert (Included : incl after (map quotient (remove Nat.eq_dec first before))).
+  { intros new_class InAfter.
+    destruct (proj1 (Image new_class) InAfter) as [old_class [InBefore Maps]].
+    destruct (Nat.eq_dec old_class first) as [Same|Other].
+    - subst old_class. apply in_map_iff. exists second. split; [congruence|].
+      apply in_in_remove; [congruence|exact S].
+    - apply in_map_iff. exists old_class. split; [exact Maps|].
+      now apply in_in_remove. }
+  pose proof (@NoDup_incl_length nat after
+    (map quotient (remove Nat.eq_dec first before)) New Included) as Bound.
+  rewrite length_map in Bound.
+  pose proof (@remove_length_lt nat Nat.eq_dec before first F) as Strict. lia.
+Qed.
+
+Definition EnumeratesCarrierClasses (cells : list CarrierCell) (classes : nat -> nat) labels :=
+  NoDup labels /\ forall label, In label labels <->
+    exists handle, handle < length cells /\ classes handle = label.
+
+Theorem finite_classes_are_bounded_by_carrier_nodes : forall cells classes labels,
+  EnumeratesCarrierClasses cells classes labels -> length labels <= length cells.
+Proof.
+  intros cells classes labels [Distinct Exact].
+  assert (Included : incl labels (map classes (seq 0 (length cells)))).
+  { intros label I. destruct (proj1 (Exact label) I) as [handle [Bound Same]].
+    apply in_map_iff. exists handle. split; [exact Same|]. apply in_seq. lia. }
+  pose proof (@NoDup_incl_length nat labels (map classes (seq 0 (length cells)))
+    Distinct Included) as Bound.
+  now rewrite length_map, length_seq in Bound.
+Qed.
+
+Inductive SuccessfulMergeChain : nat -> list nat -> list nat -> Prop :=
+| merge_chain_empty : forall classes, SuccessfulMergeChain 0 classes classes
+| merge_chain_next : forall count before middle after,
+    FiniteClassMerge before middle -> SuccessfulMergeChain count middle after ->
+    SuccessfulMergeChain (S count) before after.
+
+Theorem successful_merge_chain_consumes_finite_class_count : forall count before after,
+  SuccessfulMergeChain count before after -> count + length after <= length before.
+Proof.
+  intros count before after H. induction H; [lia|].
+  pose proof (successful_finite_class_merge_strictly_decreases_classes _ _ H). lia.
+Qed.
+
+Theorem successful_merges_are_bounded_by_the_initial_carrier :
+  forall cells classes before after count,
+  EnumeratesCarrierClasses cells classes before ->
+  SuccessfulMergeChain count before after -> count + length after <= length cells.
+Proof.
+  intros cells classes before after count E C.
+  pose proof (finite_classes_are_bounded_by_carrier_nodes _ _ _ E).
+  pose proof (successful_merge_chain_consumes_finite_class_count _ _ _ C). lia.
+Qed.
+
+(** Reuse Dovetail's existing fact-set saturation soundness. Each generated
+    equality carries a LOCAL root-schema instance and the two interpretation
+    equalities connecting that instance to its handles. The root equation's
+    soundness is proved above, not an opaque native-fold assumption. There are
+    no directed guest rewrite facts and no native callbacks in this profile.
+
+    This fact-set composition does not establish completeness of physical
+    matching, reported convergence, or bounded extraction. In particular the
+    finite merge bound is not a proof that an arbitrary matcher terminates or
+    that an iteration-limit report can be treated as convergence. *)
+Definition section_fact_good (meaning : nat -> Term) fact :=
+  match fact with
+  | Sat.EqFact first second => Congruence (meaning first) (meaning second)
+  | Sat.RwFact _ _ => False
+  end.
+Definition section_root_facts (meaning : nat -> Term) fact :=
+  exists first second redex contractum,
+    fact = Sat.EqFact first second /\
+    Congruence (meaning first) redex /\ RootStep redex contractum /\
+    Congruence contractum (meaning second).
+
+Lemma section_root_facts_are_sound : forall meaning,
+  Sat.sound_state (section_fact_good meaning) (section_root_facts meaning).
+Proof.
+  intros meaning fact [first [second [redex [contractum [E [L [S R]]]]]]].
+  subst fact. simpl. eapply congruence_trans with (y := redex); [exact L|].
+  eapply congruence_trans with (y := contractum); [now apply congruence_root|exact R].
+Qed.
+
+Theorem existing_saturation_step_preserves_section_soundness : forall meaning state,
+  Sat.sound_state (section_fact_good meaning) state ->
+  Sat.sound_state (section_fact_good meaning)
+    (Sat.saturate_step state (section_root_facts meaning)).
+Proof.
+  intros meaning state H. apply Sat.saturate_step_sound;
+    [exact H|apply section_root_facts_are_sound].
+Qed.
+
+Theorem existing_iterated_saturation_preserves_section_soundness : forall count meaning state,
+  Sat.sound_state (section_fact_good meaning) state ->
+  Sat.sound_state (section_fact_good meaning)
+    (Sat.saturate_n count (section_root_facts meaning) state).
+Proof.
+  intros count meaning state H. apply Sat.saturate_n_sound;
+    [exact H|apply section_root_facts_are_sound].
+Qed.
+
 Print Assumptions every_contextual_collapse_strictly_decreases_occurrences.
 Print Assumptions collapse_reduction_terminates.
 Print Assumptions source_congruence_preserves_reference_normal_form.
@@ -1121,5 +1397,13 @@ Print Assumptions reversed_actual_source_equations_are_accepted.
 Print Assumptions duplicate_actual_source_equation_is_accepted.
 Print Assumptions missing_nested_closure_equation_is_rejected.
 Print Assumptions additional_unrecognized_equation_is_rejected.
+Print Assumptions root_contractum_is_proper_subterm_or_seed.
+Print Assumptions proper_subterms_have_strictly_fewer_occurrences.
+Print Assumptions root_contractum_reuses_seeded_finite_carrier.
+Print Assumptions equivalent_child_replacement_reuses_the_parent_cell.
+Print Assumptions successful_finite_class_merge_strictly_decreases_classes.
+Print Assumptions successful_merges_are_bounded_by_the_initial_carrier.
+Print Assumptions existing_saturation_step_preserves_section_soundness.
+Print Assumptions existing_iterated_saturation_preserves_section_soundness.
 
 End SourceEquationSection.
