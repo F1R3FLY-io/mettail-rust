@@ -317,6 +317,7 @@ fn nested_optional_language(rule: GrammarRule) -> LanguageDef {
         types: vec![LangType {
             name: Ident::new("Expr", Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         }],

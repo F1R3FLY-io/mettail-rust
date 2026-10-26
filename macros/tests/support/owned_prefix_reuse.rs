@@ -214,6 +214,7 @@ mod owned_prefix_reuse {
         language.types.push(LangType {
             name: id("Expr"),
             role: CategoryRole::Object,
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         });
@@ -291,6 +292,7 @@ mod owned_prefix_reuse {
         language.types.push(LangType {
             name: id("Empty"),
             role: CategoryRole::Data,
+            admits_variables: false,
             native_type: None,
             collection_kind: None,
         });
@@ -341,7 +343,18 @@ mod owned_prefix_reuse {
         // Opening only the source supplies an Ident FIRST reading. The
         // original lexical compatibility gate suppresses that reading in the
         // result category, but it must not suppress a typed structural hole.
-        language.types.last_mut().unwrap().role = CategoryRole::Object;
+        // Changed for the stored variable-admission field: an opened object
+        // category admits variables (`!role.is_data() && !noadmit`,
+        // ast/src/language/parse.rs:570), and the Ident FIRST reading needs
+        // that field. Setting only the role left `admits_variables: false`.
+        // The code was:
+        // language.types.last_mut().unwrap().role = CategoryRole::Object;
+        let opened = language
+            .types
+            .last_mut()
+            .expect("the fixture pushes the Empty source category last");
+        opened.role = CategoryRole::Object;
+        opened.admits_variables = true;
         for gate in [false, true] {
             let (buckets, hole_rows) = try_derive_prefix_buckets_with_holes(
                 &crate::gen::runtime::wpda_codegen::binder::MacroBinderSyntaxReader,
@@ -496,6 +509,7 @@ mod owned_prefix_reuse {
         language.types.push(LangType {
             name: id("Expr"),
             role: CategoryRole::Object,
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         });

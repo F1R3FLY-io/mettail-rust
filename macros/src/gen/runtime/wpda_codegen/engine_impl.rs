@@ -76,11 +76,14 @@ pub(crate) fn emit_engine_impl_full(
     // `#[inline(never)]` PrefixDispatch helper methods alongside the arms; they
     // are emitted into the inherent `impl #engine_ident` block below.
     let mut all_prefix_helpers = TokenStream::new();
+    let special_opener_plans = prefix::special_opener_plans(categories, language, per_cat);
+    let mut ordinary_bucket_counts = Vec::with_capacity(categories.len());
     for (i, rules) in per_cat_indexed.iter().enumerate() {
-        let (arms, helpers) = prefix::emit_prefix_arms_for_category(
+        let (arms, helpers, bucket_counts) = prefix::emit_prefix_arms_for_category(
             language,
             i as u16,
             categories.get(i).map(String::as_str).unwrap_or(""),
+            &special_opener_plans[i],
             rules,
             s1_spine
                 .dispositions
@@ -92,6 +95,7 @@ pub(crate) fn emit_engine_impl_full(
                 .unwrap_or(&s1_empty_group_members),
             fork_rows,
         );
+        ordinary_bucket_counts.push(bucket_counts);
         all_prefix_helpers.extend(helpers);
 
         // A category router is a grammar-table lookup layer in the generated
@@ -136,11 +140,6 @@ pub(crate) fn emit_engine_impl_full(
             ),
         });
     }
-    // Phase 4: prepend collection open-delimiter arms so they run before
-    // generic prefix arms. Open delimiters are typically `Fixed("{")` /
-    // `Fixed("[")` which are unambiguous in PrefixDispatch context.
-    let collection_arms =
-        super::collection::emit_collection_prefix_arms(language, categories, per_cat);
     // Phase 4: CollectionLoop arm body, close-lookup for empty-collection
     // bootstrap, and element_src_idx lookup for Unwinding-CollectionMarker.
     let collection_loop_body =
@@ -227,21 +226,15 @@ pub(crate) fn emit_engine_impl_full(
     // dispatch — FIRST-set peek + inner-position walk + finalize.
     let optional_group_body =
         super::binder::emit_optional_group_body(language, categories, per_cat, &traversal_markers);
-    // B7 Pattern 2: paren-grouping arms in PrefixDispatch — backend
-    // emission of `(`-grouping for every parseable category, satisfying
-    // the user mandate "no per-grammar order; backend change". Emitted
-    // BEFORE generic prefix_arms so `(` matches grouping rather than
-    // any rule that happens to start with `(`.
-    // Stage 3.20 / Commit 4 part 2 (Plan agent Fix, 2026-05-06): replace
-    // `emit_grouping_arms` with `emit_paren_dispatch_arms` that detects
-    // `(`-trigger conflicts (e.g. Lambda's App rule shares `(` with the
-    // B7 paren-grouping arm) and emits a Fork combining both
-    // interpretations so lex-min disambiguates per
-    // `feedback_use_wpds_disambiguation_not_heuristics.md`. For grammars
-    // without a `(`-triggered binder rule (all shipped except Lambda),
-    // the output is byte-identical to `emit_grouping_arms`.
-    let grouping_arms =
-        super::prefix::emit_paren_dispatch_arms(categories, language, per_cat, fork_rows);
+    // One grammar-indexed dispatch arm per `(category, Fixed opener)` joins
+    // grouping, collection and ordinary FIRST-set alternatives. Separate
+    // first-match arms would silently shadow a colliding language route.
+    let special_opener_arms = super::prefix::emit_special_opener_dispatch_arms(
+        categories,
+        &special_opener_plans,
+        &ordinary_bucket_counts,
+        fork_rows,
+    );
 
     let semantic_actions::PartitionedActionFor {
         helpers: action_for_helpers,
@@ -263,33 +256,19 @@ pub(crate) fn emit_engine_impl_full(
     // `children[0]` is the operand `Symbol`, not the realized leading terminal).
     let rule_leads_with_literal_body =
         semantic_actions::emit_rule_leads_with_literal_body(&per_cat_indexed);
-    // AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03): the two
-    // grammar-derived engine helper methods are emitted ONLY when the codegen
-    // realize kill-switch is on (in lock-step with the walker-side
-    // `AT_QUOTED_BIND_REALIZE_GATE`). Baseline (off) ⇒ EMPTY ⇒ the trait
-    // defaults (`false`) apply ⇒ generated engine impl byte-identical.
     let at_quoted_bind_realize_methods: proc_macro2::TokenStream =
         if super::forks::AT_QUOTED_BIND_REALIZE_GATE {
-            let overgen_body =
-                semantic_actions::emit_sigil_quoted_bind_overgen_rule_body(&per_cat_indexed);
-            let atom_body = semantic_actions::emit_sigil_quoted_source_atom_rule_body(
+            let pair_body = semantic_actions::emit_sigil_quoted_bind_rule_pair_body(
                 categories,
                 &per_cat_indexed,
                 language,
             );
             quote! {
-                fn sigil_quoted_bind_overgen_rule(&self, src_idx: u16, rule_idx: u16) -> bool {
-                    // AT_QUOTED_BIND_GATE realize-backstop drop-set (option B):
-                    // generic whole-source bind rules subsumed by a sigil-quoted
-                    // sibling. Grammar-derived (see
-                    // emit_sigil_quoted_bind_overgen_rule_body).
-                    #overgen_body
-                }
-                fn sigil_quoted_source_atom_rule(&self, src_idx: u16, rule_idx: u16) -> bool {
-                    // AT_QUOTED_BIND_GATE realize-backstop sigil-atom set
-                    // (option B): source-cat rules whose leading sigil also
-                    // triggers a rule in another (result) category.
-                    #atom_body
+                fn sigil_quoted_bind_rule_pair(
+                    &self, result_src_idx: u16, whole_rule_idx: u16,
+                    source_src_idx: u16, atom_rule_idx: u16,
+                ) -> bool {
+                    #pair_body
                 }
             }
         } else {
@@ -420,12 +399,10 @@ pub(crate) fn emit_engine_impl_full(
             let cat_disc = i as u16;
             quote! {
                 if let Some(__t) = (&**term).downcast_ref::<#cat_ident>() {
-                    let mut __hasher =
-                        mettail_prattail::wpda_walker::SemanticFingerprintHasher::default();
                     std::hash::Hasher::write_u16(&mut __hasher, #cat_disc);
                     __t.semantic_hash(&mut __hasher);
-                    return Some(__hasher.into_fingerprint());
-                }
+                    true
+                } else
             }
         })
         .collect();
@@ -816,18 +793,7 @@ pub(crate) fn emit_engine_impl_full(
                                     lex_w,
                                     |state_cat_src_idx, _outer_bp, peek| {
                                         match peek {
-                                            // B7 Pattern 2: paren-grouping `(` arms — match
-                                            // first so `(` doesn't fall through to a rule's
-                                            // `(`-prefixed pattern (none exist in shipped
-                                            // grammars; the synthetic-collection paren is
-                                            // consumed via CollectionOpenParen, never here).
-                                            #grouping_arms
-                                            // Phase 4: collection open-delim arms run before
-                                            // generic prefix arms. Open delimiters are
-                                            // typically `Fixed("{")` / `Fixed("[")` /
-                                            // `Fixed("list")` — unambiguous in PrefixDispatch
-                                            // context.
-                                            #collection_arms
+                                            #special_opener_arms
                                             _ => {
                                                 // Generic unified prefix arms.  They retain
                                                 // their original source order, but are routed
@@ -1295,8 +1261,10 @@ pub(crate) fn emit_engine_impl_full(
                 &self,
                 term: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
             ) -> Option<mettail_prattail::wpda_walker::SemanticFingerprintDigest> {
-                #(#semantic_fingerprint_digest_arms)*
-                None
+                let mut __hasher =
+                    mettail_prattail::wpda_walker::SemanticFingerprintHasher::default();
+                let __matched = #(#semantic_fingerprint_digest_arms)* { false };
+                if __matched { Some(__hasher.into_fingerprint()) } else { None }
             }
 
             fn semantic_content_key(

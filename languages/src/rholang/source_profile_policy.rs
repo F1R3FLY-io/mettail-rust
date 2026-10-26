@@ -70,6 +70,9 @@ macro_rules! rholang_source_profile_rows {
             InputBind::InputBindEmptyPersistent => [Arc<Name> => N];
             InputBind::InputBindQuoted => [Arc<Proc> => P, Arc<Name> => N];
             InputBind::InputBindQuotedPersistent => [Arc<Proc> => P, Arc<Name> => N];
+            InputBind::InputBindQuery => [Arc<Name> => PN, Arc<Name> => N, Vec<Proc> => T];
+            InputBind::InputBindEmptyQuery => [Arc<Name> => N, Vec<Proc> => T];
+            InputBind::InputBindQuotedQuery => [Arc<Proc> => P, Arc<Name> => N, Vec<Proc> => T];
             InputBind::InputBindCostSigned => [Arc<Name> => PN, Arc<Name> => N, Arc<CostSig> => T];
             InputBind::InputBindCostSignedEmpty => [Arc<Name> => N, Arc<CostSig> => T];
             Name::NVar => [OrdVar => Opaque];
@@ -86,11 +89,21 @@ macro_rules! rholang_source_profile_rows {
             Proc::CastList => [Arc<List> => I];
             Proc::CastMap => [Arc<Map> => I];
             Int::NumLit => [i64 => Opaque];
-            BigInt::NumLit => [mettail_runtime::CanonicalBigInt => Opaque];
+            // Changed because every other row writes a carrier by its last path
+            // segment (`Arc<Proc>` for `std::sync::Arc<Proc>`), and the macro
+            // census compares slots with the actual field types under that
+            // normalization (`shape` in macros/src/gen/term_ops/source_profile_tests.rs).
+            // The full path made the census refuse an identical carrier.
+            // `define_profile` reads only the roles. The code was:
+            // BigInt::NumLit => [mettail_runtime::CanonicalBigInt => Opaque];
+            BigInt::NumLit => [CanonicalBigInt => Opaque];
             Int::NegInt => [Arc<Int> => I];
             Bool::BoolLit => [bool => Opaque];
             Str::StringLit => [String => Opaque];
-            Float::FloatLit => [mettail_runtime::CanonicalFloat64 => Opaque];
+            // Changed for the same carrier normalization as `BigInt::NumLit`
+            // above. The code was:
+            // Float::FloatLit => [mettail_runtime::CanonicalFloat64 => Opaque];
+            Float::FloatLit => [CanonicalFloat64 => Opaque];
             Bytes::BytesLit => [Vec<u8> => Opaque];
             List::ListLit => [Vec<Proc> => I];
             Map::MapLit => [HashMapLit<Proc,Proc> => I];
@@ -194,8 +207,8 @@ macro_rules! rholang_source_profile_rows {
             DdlFreshness::DdlFreshness => [String => Opaque, String => Opaque];
             DdlRewrite::DdlRewriteDirect => [String => Opaque, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
             DdlRewrite::DdlRewriteConditional => [String => Opaque, Arc<DdlPremises> => D, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
-            DdlRewrite::DdlRewriteTypedDirect => [String => Opaque, Vec<DdlRewriteBinding> => D, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
-            DdlRewrite::DdlRewriteTypedConditional => [String => Opaque, Vec<DdlRewriteBinding> => D, Arc<DdlPremises> => D, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
+            DdlRewrite::DdlRewriteTypedDirect => [String => Opaque, Vec<DdlRewriteContextBinding> => D, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
+            DdlRewrite::DdlRewriteTypedConditional => [String => Opaque, Vec<DdlRewriteContextBinding> => D, Arc<DdlPremises> => D, Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
             DdlRewrite::DdlRewriteProjection => [String => Opaque, String => Opaque, Arc<DdlProjectionDirection> => D, String => Opaque, Vec<DdlProjectionRule> => D];
             DdlRewrite::DdlRewriteCarrierProjection => [String => Opaque, String => Opaque, Arc<DdlProjectionDirection> => D, String => Opaque, Arc<DdlProjectionCarrierMode> => D];
             DdlProjectionCarrierMode::DdlProjectionCarrierOnly => [];
@@ -217,12 +230,29 @@ macro_rules! rholang_source_profile_rows {
             DdlPremise::DdlIntrinsicPremise => [String => Opaque, Vec<DdlPremiseInput> => D, Vec<DdlRewriteBinding> => D];
             DdlPremiseInput::DdlPremiseInput => [String => Opaque];
             DdlRewriteBinding::DdlRewriteBinding => [String => Opaque, Arc<DdlSort> => D];
+            DdlRewriteContextBinding::DdlRewriteContextBinding => [String => Opaque, Arc<DdlRewriteContextType> => D];
+            DdlRewriteContextType::DdlRewriteContextCategory => [String => Opaque];
+            DdlRewriteContextType::DdlRewriteContextArrow => [Arc<DdlRewriteContextType> => D, Arc<DdlRewriteContextType> => D];
+            DdlRewriteContextType::DdlRewriteContextMulti => [Arc<DdlRewriteContextType> => D];
+            DdlRewriteContextType::DdlRewriteContextHashBag => [String => Opaque, Arc<DdlRewriteContextType> => D];
+            DdlRewriteContextType::DdlRewriteContextSet => [String => Opaque, Arc<DdlRewriteContextType> => D];
+            DdlRewriteContextType::DdlRewriteContextList => [String => Opaque, Arc<DdlRewriteContextType> => D];
+            DdlRewriteContextType::DdlRewriteContextRewrite => [String => Opaque, Arc<DdlRewriteContextType> => D];
+            DdlRewriteContextType::DdlRewriteContextMap => [String => Opaque, Arc<DdlRewriteContextType> => D, Arc<DdlRewriteContextType> => D];
+            DdlRewriteContextType::DdlRewriteContextPathMap => [String => Opaque, Arc<DdlRewriteContextType> => D, Arc<DdlRewriteContextType> => D];
             DdlRuleAst::DdlRuleAstSubst => [Arc<DdlRuleAst> => D, Arc<DdlRuleAst> => D];
             DdlRuleAst::DdlRuleAstSExp => [String => Opaque, Vec<DdlRuleAst> => D];
             DdlRuleAst::DdlRuleAstHostSExp => [String => Opaque, Vec<DdlRuleAst> => D];
             DdlRuleAst::DdlRuleAstBoolean => [Arc<Bool> => D];
             DdlRuleAst::DdlRuleAstString => [String => Opaque];
             DdlRuleAst::DdlRuleAstInteger => [Arc<Int> => D];
+            // Added because 7f14e45e declared these three DDL literal rules
+            // (languages/src/rholang.rs, DdlRuleAstBigInt..DdlRuleAstFixed) and
+            // the declaration closure requires a row for every DdlRuleAst
+            // variant. The role follows DdlRuleAstInteger.
+            DdlRuleAst::DdlRuleAstBigInt => [Arc<BigInt> => D];
+            DdlRuleAst::DdlRuleAstBigRat => [Arc<BigRat> => D];
+            DdlRuleAst::DdlRuleAstFixed => [Arc<Fixed> => D];
             DdlRuleAst::DdlRuleAstBytes => [Arc<Bytes> => D];
             DdlRuleAst::DdlRuleAstFloat => [Arc<Float> => D];
             DdlRuleAst::DdlRuleAstAbs => [String => Opaque, Arc<DdlRuleAst> => D];

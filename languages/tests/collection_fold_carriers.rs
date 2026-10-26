@@ -32,6 +32,11 @@
 //! ⚠ Every fixture carries a POSITIVE CONTROL on the same language and the same walk, because
 //! an assertion that something is refused cannot otherwise be told apart from a walk that
 //! inspected nothing.
+//!
+//! (2026-10-20) A fourth fixture, [`sole_collection_carrier_demo`], covers the sole-collection
+//! lane (`VariantKind::Collection`): each emitter of that lane follows the declared carrier
+//! and the declared element. It also declares the `HashSet` fold parameter that FIXTURE 2
+//! records as impossible to declare.
 
 #![allow(non_local_definitions)]
 
@@ -47,6 +52,9 @@ mod map_param_refusal_demo;
 
 #[path = "definitions/turing_loop.rs"]
 mod turing_loop;
+
+#[path = "definitions/sole_collection_carrier_demo.rs"]
+mod sole_collection_carrier_demo;
 
 /// Iteration / node budget for the e-graph saturation. Bounded on purpose: a budget means a
 /// non-converging machine surfaces as a limit error, never as a hung test binary.
@@ -236,6 +244,12 @@ fn single_vec_whole_constructor_fold_fires() {
 /// refused keyed container, and the `Opaque` carrier arm is a FAIL-CLOSED default over the rest
 /// of `CollectionType` rather than a live path. Stating that is more honest than a fixture that
 /// cannot be built.
+///
+/// (2026-10-20) This is no longer true. A `HashSet(T)` field is now
+/// `mettail_runtime::HashSetLit<T>`, which has `Hash`, `Ord` and `BoundTerm`, so FIXTURE 4
+/// declares the `HashSet` fold parameter
+/// (`a_sole_hash_set_fold_parameter_is_declined_naming_its_type`). The text above is the record
+/// from before that change.
 #[test]
 fn map_fold_parameter_stays_declined_naming_its_type() {
     let inventory = map_param_refusal_demo::MapParamRefusalDemoMetadata.lowering_dispositions();
@@ -434,4 +448,395 @@ fn turing_loop_final_tape_reconstructs() {
         "the reconstructed final tape is the COMPUTED zipper move: write `1` at the head cell, \
          step right off the end of the written tape, and read `_`",
     );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// FIXTURE 4 — SoleCollectionCarrierDemo: the sole-collection lane follows its declared
+// carrier and element (added 2026-10-20)
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// `normalize(parse(source))`, or a failure naming the source.
+fn normalized(
+    lang: &sole_collection_carrier_demo::SoleCollectionCarrierDemoLanguage,
+    source: &str,
+) -> Box<dyn mettail_runtime::Term> {
+    let term = lang
+        .parse_term(source)
+        .unwrap_or_else(|e| panic!("`{source}` must parse: {e}"));
+    lang.normalize_term(term.as_ref())
+}
+
+/// ★ Every carrier and element shape of the sole-collection lane parses, normalizes, prints,
+/// and reads back to the same normal form. Before 2026-10-20 this language did not compile:
+/// the auto-flatten helper was emitted and called for the cross-category bags `PNames` and
+/// `PNameBag`, and a `HashSet` field was a raw `std::collections::HashSet`
+/// (BinderFloatCanonicalization.v Part 5, `old_gate_emits_and_calls_an_ill_typed_helper`).
+#[test]
+fn every_sole_collection_shape_reads_back_to_its_normal_form() {
+    mettail_runtime::clear_var_cache();
+    let lang = sole_collection_carrier_demo::SoleCollectionCarrierDemoLanguage;
+    for source in [
+        "par{0|par{0|0}}",
+        "names{n,n}",
+        "metas{m,m}",
+        "metaset{m,m,other}",
+        "metaseq[m,other,m]",
+        "mbag m, m end",
+        "mset m, m end",
+        "mseq m, other end",
+        "set{0,set{0}}",
+        "nameset{n}",
+        "seq[0,seq[0]]",
+        "nameseq[n,n]",
+        "bnames n, n end",
+        "bnames end",
+        "bset 0 end",
+        "bseq 0, 0 end",
+    ] {
+        let first = normalized(&lang, source);
+        let printed = lang.format_term(first.as_ref());
+        let second = normalized(&lang, &printed);
+        assert!(
+            second.term_eq(first.as_ref()),
+            "`{source}` printed as `{printed}`, which reads back to a different normal form",
+        );
+    }
+}
+
+/// ★ Word-delimited collections of every size print with a space at each delimiter boundary
+/// and read back to the same normal form (WpdaDispatchPartition.v, Section
+/// DisplayLexicalBoundaries, `collection_policy_is_glom_safe`). Before 2026-10-21 the
+/// delimited arm wrote no space, so `bnames n , n end` printed as `bnamesn , nend` and the
+/// empty bag printed as the identifier `bnamesend`
+/// (`word_delimited_collection_before_fix_is_not_glom_safe`).
+mod word_delimited_read_back {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+        #[test]
+        fn word_delimited_collections_of_any_size_read_back(form in 0usize..3, copies in 0usize..6) {
+            mettail_runtime::clear_var_cache();
+            let lang = sole_collection_carrier_demo::SoleCollectionCarrierDemoLanguage;
+            let (opener, item) = [("bnames", "n"), ("bset", "0"), ("bseq", "0")][form];
+            let source = if copies == 0 {
+                format!("{opener} end")
+            } else {
+                format!("{opener} {} end", vec![item; copies].join(", "))
+            };
+            let first = normalized(&lang, &source);
+            let printed = lang.format_term(first.as_ref());
+            let second = normalized(&lang, &printed);
+            prop_assert!(
+                second.term_eq(first.as_ref()),
+                "`{}` printed as `{}`, which reads back to a different normal form",
+                source,
+                printed,
+            );
+        }
+    }
+}
+
+/// ★ Normalization keeps the multiplicity of a repeated element in an AC bag, for the
+/// cross-category bag `PNames` and for the same-category bag `PPar`
+/// (TaggedNormalizationMachine.v, "Fused AC bag frames",
+/// `fused_bag_shared_values_have_the_total_multiplicity`). Before 2026-10-20 the fused bag
+/// frame reserved `len()` slots, one per copy, while the visit filled one slot per stored
+/// entry, so a repeated element failed the assembler's cursor check
+/// (`fused_bag_check_before_fails_on_a_repeated_element`).
+mod fused_bag_multiplicity {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// The number of elements between the braces of a printed bag.
+    fn element_count(printed: &str, separator: char) -> usize {
+        let inner = printed
+            .split_once('{')
+            .and_then(|(_, rest)| rest.rsplit_once('}'))
+            .map(|(inner, _)| inner)
+            .expect("a braced bag prints with its braces");
+        if inner.trim().is_empty() {
+            0
+        } else {
+            inner.split(separator).count()
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+        #[test]
+        fn arbitrary_bags_keep_distinct_entries_and_multiplicities(
+            counts in proptest::collection::vec(0usize..8, 0..8), nested in any::<bool>(),
+        ) {
+            use super::sole_collection_carrier_demo::{Name, Proc};
+            use mettail_runtime::{FreeVar, OrdVar, Var};
+
+            let mut names = Vec::with_capacity(counts.iter().sum());
+            let mut processes = Vec::with_capacity(counts.iter().sum());
+            for (index, count) in counts.into_iter().enumerate() {
+                let name = Name::NVar(OrdVar(Var::Free(FreeVar::fresh_named(format!("name{index}")))));
+                let process = Proc::PSeq(vec![Proc::PZero; index]);
+                names.extend(std::iter::repeat_n(name, count));
+                processes.extend(std::iter::repeat_n(process, count));
+            }
+            let names = Proc::PNames(names.into_iter().collect());
+            let flat = Proc::PPar(processes.into_iter().collect());
+            let input_bag = if nested {
+                Proc::PPar([flat.clone()].into_iter().collect())
+            } else {
+                flat.clone()
+            };
+            let input = Proc::PSeq(vec![Proc::PZero, input_bag, names.clone()]);
+            let expected = Proc::PSeq(vec![Proc::PZero, flat, names]);
+            prop_assert_eq!(input.normalize(), expected.clone());
+            prop_assert_eq!(expected.normalize(), expected);
+        }
+
+        #[test]
+        fn repeated_bag_elements_keep_their_multiplicity(names in 1usize..8, zeros in 1usize..8) {
+            mettail_runtime::clear_var_cache();
+            let lang = sole_collection_carrier_demo::SoleCollectionCarrierDemoLanguage;
+            let name_bag = format!("names{{{}}}", vec!["n"; names].join(","));
+            let zero_bag = format!("par{{{}}}", vec!["0"; zeros].join("|"));
+            for (source, separator, copies) in [(&name_bag, ',', names), (&zero_bag, '|', zeros)] {
+                let first = normalized(&lang, source);
+                let printed = lang.format_term(first.as_ref());
+                prop_assert_eq!(
+                    element_count(&printed, separator),
+                    copies,
+                    "`{}` printed as `{}`",
+                    source,
+                    printed,
+                );
+                let second = normalized(&lang, &printed);
+                prop_assert!(
+                    second.term_eq(first.as_ref()),
+                    "`{}` printed as `{}`, which reads back to a different normal form",
+                    source,
+                    printed,
+                );
+            }
+        }
+    }
+}
+
+/// ★ The new gate changes only the cross-category bags. `PPar` keeps its auto-flatten
+/// helper (the positive control, `new_gate_equals_the_old_gate_on_same_category`), a
+/// cross-category bag keeps its multiplicity under the direct insert
+/// (`bag_arm_preserves_flatness`), and a `HashSet` field keeps set semantics through
+/// `HashSetLit`.
+#[test]
+fn each_sole_carrier_keeps_its_own_semantics() {
+    mettail_runtime::clear_var_cache();
+    let lang = sole_collection_carrier_demo::SoleCollectionCarrierDemoLanguage;
+    let same = |left: &str, right: &str| {
+        normalized(&lang, left).term_eq(normalized(&lang, right).as_ref())
+    };
+    assert!(
+        same("par{0|par{0|0}}", "par{0|0|0}"),
+        "the same-category bag must still flatten its nested layer",
+    );
+    assert!(
+        !same("names{n,n}", "names{n}"),
+        "a cross-category bag must keep the multiplicity of its elements",
+    );
+    assert!(
+        !same("bnames n, n end", "bnames n end"),
+        "the BNF cross-category bag must keep the multiplicity of its elements",
+    );
+    assert!(
+        !same("metas{m,m}", "metas{m}"),
+        "a closed-data bag must keep the multiplicity of its elements",
+    );
+    assert!(
+        same("nameset{n,n}", "nameset{n}"),
+        "a set field must keep at most one copy of each element",
+    );
+}
+
+/// ★ A fold over a cross-category bag fires. The typed inverse of the AC bag lowering
+/// rebuilds its operand with a direct `HashBag::insert` of each `Name`
+/// (`every_call_has_an_emitted_well_typed_helper`: no call to a helper that does not exist).
+#[test]
+fn a_cross_category_bag_fold_fires() {
+    mettail_runtime::clear_var_cache();
+    let lang = sole_collection_carrier_demo::SoleCollectionCarrierDemoLanguage;
+    let term = lang
+        .parse_term("nfold(n,n)")
+        .unwrap_or_else(|e| panic!("parse failed: {e}"));
+    let report =
+        sole_collection_carrier_demo::SoleCollectionCarrierDemoLanguage::dovetail_report_for(
+            term.as_ref(),
+            MAX_ITERS,
+            MAX_NODES,
+        )
+        .unwrap_or_else(|e| panic!("dovetail_report_for returned Err: {e}"));
+    let labels: Vec<String> = report
+        .rule_firings
+        .iter()
+        .filter_map(|f| f.label.clone())
+        .collect();
+    assert_eq!(
+        labels,
+        vec!["SoleCollectionCarrierDemo::fold::Proc_NameBagFold".to_string()],
+        "the cross-category bag fold must fire exactly once; firings={:?}",
+        report.rule_firings,
+    );
+
+    // ★ POSITIVE CONTROL ON THE SATURATION: a term with no redex fires nothing.
+    let inert = lang.parse_term("names{n,n}").expect("parse control");
+    let control =
+        sole_collection_carrier_demo::SoleCollectionCarrierDemoLanguage::dovetail_report_for(
+            inert.as_ref(),
+            MAX_ITERS,
+            MAX_NODES,
+        )
+        .expect("control report");
+    assert!(
+        control.rule_firings.is_empty(),
+        "a redex-free term fires nothing; firings={:?}",
+        control.rule_firings,
+    );
+}
+
+/// ★★ A sole `HashSet` fold parameter is refused, and the refusal names the type. Before
+/// 2026-10-20 no `HashSet` field could be declared, so the fold gate's `Opaque` carrier arm
+/// was reachable only through `TypeExpr::Map` (FIXTURE 2). `NameBagFold` on the same language
+/// is the positive control: the same walk delivers an AC bag fold.
+#[test]
+fn a_sole_hash_set_fold_parameter_is_declined_naming_its_type() {
+    let inventory =
+        sole_collection_carrier_demo::SoleCollectionCarrierDemoMetadata.lowering_dispositions();
+    assert!(
+        !inventory.is_empty(),
+        "an empty inventory would make every assertion below vacuous",
+    );
+    let set_fold = fold_disposition(inventory, "SetFold");
+    assert!(
+        set_fold.is_declined(),
+        "a set has no stored order to invert, so its fold must be declined.{}",
+        render(inventory),
+    );
+    assert!(
+        set_fold.detail.contains("HashSet("),
+        "the declination must NAME the refusing type.{}",
+        render(inventory),
+    );
+    let bag_fold = fold_disposition(inventory, "NameBagFold");
+    assert_eq!(
+        bag_fold.outcome,
+        LoweringOutcomeKind::Delivered,
+        "the AC bag fold on the SAME language is lowered.{}",
+        render(inventory),
+    );
+}
+
+mod data_collection_boundaries {
+    use super::sole_collection_carrier_demo::{
+        Meta, Proc, SoleCollectionCarrierDemoLanguage, SoleCollectionCarrierDemoTerm,
+        SoleCollectionCarrierDemoTermInner,
+    };
+    use mettail_runtime::{FreeVar, Language, OrdVar, Var};
+    use proptest::prelude::*;
+    use std::sync::Arc;
+
+    fn collection(form: usize, values: Vec<Meta>) -> Proc {
+        match form {
+            0 => Proc::PMetas(values.into_iter().collect()),
+            1 => Proc::PMetaSet(values.into_iter().collect()),
+            2 => Proc::PMetaSeq(values),
+            3 => Proc::PMetaBagBnf(values.into_iter().collect()),
+            4 => Proc::PMetaSetBnf(values.into_iter().collect()),
+            5 => Proc::PMetaSeqBnf(values),
+            _ => unreachable!("the strategy selects a declared collection"),
+        }
+    }
+
+    fn variable(name: &FreeVar<String>) -> Proc {
+        Proc::PVar(OrdVar(Var::Free(name.clone())))
+    }
+
+    fn nested_bag(copies: usize) -> Proc {
+        Proc::PPar(
+            [Proc::PPar(vec![Proc::PZero; copies].into_iter().collect())]
+                .into_iter()
+                .collect(),
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn normalization_preserves_data_and_transforms_object_children(
+            form in 0usize..6, copies in 0usize..8, zeros in 1usize..6,
+        ) {
+            let nested = nested_bag(zeros);
+            let data = collection(form, vec![Meta::MProc(Arc::new(nested.clone())); copies]);
+            let flat = Proc::PPar(vec![Proc::PZero; zeros].into_iter().collect());
+            prop_assert_ne!(&nested, &flat);
+            let term = Proc::PSeq(vec![data.clone(), nested]);
+            let expected = Proc::PSeq(vec![data.clone(), flat]);
+            prop_assert_eq!(data.normalize(), data);
+            prop_assert_eq!(term.normalize(), expected);
+            prop_assert_eq!(term.normalize().normalize(), term.normalize());
+        }
+
+        #[test]
+        fn substitution_preserves_data_identity_and_composition(
+            form in 0usize..6, copies in 0usize..8,
+        ) {
+            let x = FreeVar::fresh_named("x");
+            let y = FreeVar::fresh_named("y");
+            let data = collection(form, vec![Meta::MProc(Arc::new(variable(&x))); copies]);
+            let term = Proc::PSeq(vec![data.clone(), variable(&x)]);
+            prop_assert_eq!(term.substitute(&x, &variable(&x)), term.clone());
+            prop_assert_eq!(data.substitute(&x, &Proc::PZero), data.clone());
+            let expected = Proc::PSeq(vec![data, Proc::PZero]);
+            prop_assert_eq!(term.substitute(&x, &Proc::PZero), expected.clone());
+            prop_assert_eq!(
+                term.substitute(&x, &variable(&y)).substitute(&y, &Proc::PZero),
+                expected,
+            );
+        }
+
+        #[test]
+        fn matching_compares_data_exactly_and_keeps_object_bindings(
+            form in 0usize..6, copies in 1usize..8,
+        ) {
+            let x = FreeVar::fresh_named("x");
+            let data = collection(form, vec![Meta::MProc(Arc::new(Proc::PZero)); copies]);
+            let different = collection(form, vec![Meta::MProc(Arc::new(variable(&x))); copies]);
+            prop_assert!(data.match_pattern(&different).is_none());
+            let exact = data.match_pattern(&data).expect("equal data must match");
+            prop_assert!(exact.proc_bindings.is_empty());
+            prop_assert!(exact.name_bindings.is_empty());
+            let ground = Proc::PSeq(vec![data.clone(), Proc::PZero]);
+            let pattern = Proc::PSeq(vec![data, variable(&x)]);
+            let matched = ground.match_pattern(&pattern).expect("the object field must bind");
+            prop_assert_eq!(matched.proc_bindings.len(), 1);
+            prop_assert_eq!(&matched.proc_bindings[0].1, &Proc::PZero);
+        }
+
+        #[test]
+        fn all_data_carriers_parse_display_and_read_back(
+            form in 0usize..6, choices in proptest::collection::vec(0usize..3, 0..8),
+        ) {
+            mettail_runtime::clear_var_cache();
+            let values = choices.into_iter().map(|choice| match choice {
+                0 => Meta::MLit,
+                1 => Meta::MOther,
+                _ => Meta::MProc(Arc::new(nested_bag(2))),
+            }).collect();
+            let expected = collection(form, values);
+            let source = expected.to_string();
+            let language = SoleCollectionCarrierDemoLanguage;
+            let parsed = language.parse_term(&source).expect("the displayed collection must parse");
+            let expected = SoleCollectionCarrierDemoTerm(
+                SoleCollectionCarrierDemoTermInner::Proc(expected),
+            );
+            prop_assert!(parsed.term_eq(&expected), "different parsed structure for {}", source);
+        }
+    }
 }

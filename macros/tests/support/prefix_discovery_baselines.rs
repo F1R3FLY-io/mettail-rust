@@ -51,6 +51,7 @@ fn language(terms: Vec<GrammarRule>) -> LanguageDef {
             .map(|name| LangType {
                 name: id(name),
                 role: Default::default(),
+                admits_variables: true,
                 native_type: None,
                 collection_kind: None,
             })

@@ -50,6 +50,13 @@ pub enum MergeError {
         role_b: CategoryRole,
     },
 
+    /// Two declarations disagree on whether implicit variable terms exist.
+    CategoryVariableAdmissionMismatch {
+        category: String,
+        admits_a: bool,
+        admits_b: bool,
+    },
+
     /// Two rules share a label (constructor name) and the strategy is `Error`.
     DuplicateRuleLabel {
         label: String,
@@ -102,6 +109,13 @@ impl fmt::Display for MergeError {
                     f,
                     "category '{}' has conflicting roles: {:?} vs {:?}",
                     category, role_a, role_b
+                )
+            },
+            MergeError::CategoryVariableAdmissionMismatch { category, admits_a, admits_b } => {
+                write!(
+                    f,
+                    "category '{}' has conflicting variable admission: {} vs {}",
+                    category, admits_a, admits_b
                 )
             },
             MergeError::DuplicateRuleLabel { label, category_a, category_b } => {
@@ -471,6 +485,13 @@ fn merge_types(
                     category: name.clone(),
                     role_a: existing.role,
                     role_b: t.role,
+                });
+            }
+            if existing.admits_variables != t.admits_variables {
+                errors.push(MergeError::CategoryVariableAdmissionMismatch {
+                    category: name.clone(),
+                    admits_a: existing.admits_variables,
+                    admits_b: t.admits_variables,
                 });
             }
             // Category exists — verify native type matches
@@ -966,6 +987,7 @@ mod tests {
         LangType {
             name: Ident::new(name, Span::call_site()),
             role: crate::language::CategoryRole::Object,
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         }
@@ -1016,6 +1038,7 @@ mod tests {
         a.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
             role: crate::language::CategoryRole::Object,
+            admits_variables: true,
             native_type: Some(syn::parse_quote!(i32)),
             collection_kind: None,
         });
@@ -1024,6 +1047,7 @@ mod tests {
         b.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
             role: crate::language::CategoryRole::Object,
+            admits_variables: true,
             native_type: Some(syn::parse_quote!(i64)),
             collection_kind: None,
         });
@@ -1032,6 +1056,25 @@ mod tests {
         assert!(err
             .iter()
             .any(|e| matches!(e, MergeError::CategoryNativeTypeMismatch { .. })));
+    }
+
+    #[test]
+    fn merge_shared_category_conflicting_variable_admission_error() {
+        let mut admitted = make_lang("Admitted");
+        admitted.types.push(make_type("Signature"));
+
+        let mut closed = make_lang("Closed");
+        let mut signature = make_type("Signature");
+        signature.admits_variables = false;
+        closed.types.push(signature);
+
+        let errors = merge_language_defs(&admitted, &closed, DuplicateStrategy::Error)
+            .expect_err("a category cannot admit and reject variables in one merged grammar");
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            MergeError::CategoryVariableAdmissionMismatch { category, admits_a: true, admits_b: false }
+                if category == "Signature"
+        )));
     }
 
     #[test]

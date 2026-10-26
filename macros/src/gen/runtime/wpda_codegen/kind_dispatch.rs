@@ -227,6 +227,31 @@ pub fn emit_lex_alt_rule_for_fn(
                 }
                 continue;
             }
+            if let Some(collection) = super::collection::classify_collection(rule, _language) {
+                let opener = collection.open_token;
+                let has_synth_paren = collection.has_synth_paren;
+                let element_src_idx = categories
+                    .iter()
+                    .position(|category| category == &collection.element_cat)
+                    .expect("collection element category must be declared")
+                    as u16;
+                prefix_pushes.push(quote! {
+                    match (cat_src_idx, kind) {
+                        (#cat_src_idx_u16, mettail_prattail::automata::TokenKind::Fixed(text))
+                            if text == #opener => out.push(
+                                mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                                    rule_idx: #rule_idx_u16,
+                                    kind: mettail_prattail::wpda_runtime::LexAltRuleKind::CollectionOpen {
+                                        element_src_idx: #element_src_idx,
+                                        has_synth_paren: #has_synth_paren,
+                                    },
+                                }
+                            ),
+                        _ => {},
+                    }
+                });
+                continue;
+            }
             emit_prefix_pushes_for_shape(
                 _language,
                 rule,
@@ -267,10 +292,8 @@ pub fn emit_lex_alt_rule_for_fn(
         emit_prefix_crosscat_lhs_dispatch_arms(_language, categories);
     let prefix_crosscat_lhs_trigger_set_arms =
         emit_prefix_crosscat_lhs_trigger_set_arms(_language, categories);
-    // AT_QUOTED_BIND_GATE (2026-07-03): per-category (bind_triggers,
-    // polyadic_stops) arms for `prefix_at_quoted_bind_gate_evidence`.
-    let at_quoted_bind_gate_trigger_arms =
-        emit_at_quoted_bind_gate_trigger_arms(_language, categories);
+    let prefix_crosscat_one_token_arms =
+        emit_prefix_crosscat_one_token_arms(_language, per_cat, categories);
     // F0 H1 (2026-06-28): transparent-projection fallback edges, consumed by
     // `crosscat_lhs_has_projection_fallback`. The pair tested is
     // (source_src, result_src); each emitted arm is a `(from, to)` projection
@@ -326,17 +349,11 @@ pub fn emit_lex_alt_rule_for_fn(
         });
     }
 
-    // GEN-1 GAP-2 (2026-06-28): spec-derived structural-delimiter + row-separator
-    // tables for `prefix_crosscat_lhs_trigger_ahead_scoped`, replacing the
-    // hardcoded rholang bracket alphabet (`( [ { #{ {|` / `) ] } }# |}`) and the
-    // hardcoded `;` row boundary. `opens`/`closes` come from the SAME
-    // `collect_structural_delimiters` the rest of the backend consumes (for
-    // rholang this is byte-identical to the former hardcode); `row_seps` is every
-    // `*sep` separator declared in the grammar MINUS the cross-cat trigger set (a
-    // trigger must stay scannable at depth 0; a pure sequence separator bounds the
-    // row). For rholang this resolves to `{";", "|"}` — the extra `"|"` is the
-    // Proc-parallel infix, which never occurs at depth 0 inside a for-binding
-    // scan, so it is behaviorally identical to the former `{";"}`. Audit §GAP-2.
+    // Cross-category lookahead uses the declared structural delimiters and
+    // sequence separators. Cross-category triggers remain scannable at depth zero.
+    // The quoted-bind gate below uses collection bracket pairs separately.
+    // Binder repetition terminators must not change that gate's bracket depth.
+    // AtQuotedBindGate.at_quoted_gate_dead_c4 records the old table defect.
     let (gap2_opens, gap2_closes) =
         super::collection::collect_structural_delimiters(_language, per_cat);
     let gap2_triggers = collect_cross_cat_triggers(_language);
@@ -347,6 +364,17 @@ pub fn emit_lex_alt_rule_for_fn(
     let gap2_open_lits: Vec<&String> = gap2_opens.iter().collect();
     let gap2_close_lits: Vec<&String> = gap2_closes.iter().collect();
     let gap2_row_sep_lits: Vec<&String> = gap2_row_seps.iter().collect();
+    let (evidence_opens, evidence_closes) =
+        super::collection::collect_bracket_delimiters(_language, per_cat);
+    let evidence_open_lits: Vec<&String> = evidence_opens.iter().collect();
+    let evidence_close_lits: Vec<&String> = evidence_closes.iter().collect();
+    let at_quoted_bind_gate_trigger_arms = emit_at_quoted_bind_gate_trigger_arms(
+        _language,
+        categories,
+        &evidence_opens,
+        &evidence_closes,
+        &gap2_row_seps,
+    );
     // AT_QUOTED_BIND_GATE (2026-07-03): emit `prefix_at_quoted_bind_gate_evidence`
     // ONLY when the kill-switch const is on. A baseline (gate-off) build emits an
     // EMPTY TokenStream here ⇒ the generated file is byte-identical to pre-gate.
@@ -363,25 +391,26 @@ pub fn emit_lex_alt_rule_for_fn(
                 /// (a whole-source trigger with NO sigil sibling, e.g. `,`) is
                 /// reached first — a legitimate whole-source (polyadic) reading
                 /// with no sigil counterpart, so the delegate must NOT be
-                /// suppressed. Also `false` at a row boundary / bracket exit / end
-                /// ⇒ FAIL-OPEN. Reuses the SAME spec-derived
-                /// `__OPENS`/`__CLOSES`/`__ROW_SEPS` depth-tracking as
-                /// `prefix_crosscat_lhs_trigger_ahead_scoped`. Soundness:
-                /// one-sided monotone refutation of a proven over-generation (FV
-                /// `AtQuotedBindGate.gate_no_loss`).
+                /// suppressed. A row boundary, bracket exit, or end keeps the route.
+                /// The scan uses collection bracket pairs and source-specific triggers.
+                /// Binder collection terminators do not change the bracket depth.
                 #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
                 fn prefix_at_quoted_bind_gate_evidence(
                     cat_src_idx: u16,
+                    source_src_idx: u16,
                     tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
                     pos: usize,
                 ) -> bool {
+                    let Some(mettail_prattail::automata::TokenKind::Fixed(sigil)) = tokens.peek_kind(pos) else {
+                        return false;
+                    };
                     let (bind_triggers, polyadic_stops): (&[&str], &[&str]) =
-                        match cat_src_idx {
+                        match (cat_src_idx, source_src_idx) {
                             #( #at_quoted_bind_gate_trigger_arms )*
                             _ => (&[], &[]),
                         };
-                    const __OPENS: &[&str] = &[ #( #gap2_open_lits ),* ];
-                    const __CLOSES: &[&str] = &[ #( #gap2_close_lits ),* ];
+                    const __OPENS: &[&str] = &[ #( #evidence_open_lits ),* ];
+                    const __CLOSES: &[&str] = &[ #( #evidence_close_lits ),* ];
                     const __ROW_SEPS: &[&str] = &[ #( #gap2_row_sep_lits ),* ];
                     mettail_prattail::wpda_transitions::prefix_policy::prefix_at_quoted_bind_gate_evidence(
                         tokens, pos, bind_triggers, polyadic_stops,
@@ -577,6 +606,25 @@ pub fn emit_lex_alt_rule_for_fn(
             mettail_prattail::wpda_transitions::prefix_policy::prefix_crosscat_lhs_trigger_ahead(
                 tokens, pos, triggers,
             )
+        }
+
+        /// Reject only source/operator pairs whose entire selected `Ident`
+        /// prefix is grammar-certified as a one-token atom and whose next
+        /// lexical node admits neither that pair's operator nor a source
+        /// extension. Unknown grammar shapes and token edges fail open.
+        #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
+        fn prefix_crosscat_one_token_feasible(
+            result_src: u16,
+            source_src: u16,
+            kind: &mettail_prattail::automata::TokenKind,
+            tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+            pos: usize,
+            alt_idx: usize,
+        ) -> bool {
+            match (result_src, source_src, kind) {
+                #( #prefix_crosscat_one_token_arms )*
+                _ => true,
+            }
         }
 
         /// ForRow Part-1 push-gate (F0, 2026-06-28): ROW-SCOPED variant of
@@ -813,6 +861,20 @@ pub(crate) fn emit_cat_can_reach(
     per_cat: &[Vec<GrammarRule>],
     categories: &[String],
 ) -> TokenStream {
+    let pairs = category_extension_reachability(language, per_cat, categories);
+    // 4. Emit `matches!` over the non-reflexive pairs (or `false`).
+    if pairs.is_empty() {
+        quote! { false }
+    } else {
+        let arms = pairs.into_iter().map(|(a, b)| quote! { (#a, #b) });
+        quote! { matches!((from, goal), #( #arms )|* ) }
+    }
+}
+pub(crate) fn category_extension_reachability(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+    categories: &[String],
+) -> Vec<(u16, u16)> {
     use std::collections::BTreeSet;
     let idx_of = |name: &str| -> Option<u16> {
         categories
@@ -847,13 +909,7 @@ pub(crate) fn emit_cat_can_reach(
         mettail_prattail::wpda_rule_analysis::rule_observation::non_reflexive_category_reachability(
             direct,
         );
-    // 4. Emit `matches!` over the non-reflexive pairs (or `false`).
-    if pairs.is_empty() {
-        quote! { false }
-    } else {
-        let arms = pairs.into_iter().map(|(a, b)| quote! { (#a, #b) });
-        quote! { matches!((from, goal), #( #arms )|* ) }
-    }
+    pairs
 }
 
 fn emit_chain_atom_pushes_for_shape(
@@ -1268,6 +1324,142 @@ fn emit_prefix_primary_non_atom_dispatch_arms(
 /// every category-changing infix resulting in `d` (the same rule walk as
 /// `emit_prefix_crosscat_lhs_dispatch_arms` / prefix.rs Pass-0 — no drift).
 /// Each arm: `#d_idx => &[#(triggers),*],`.
+/// A conservative certificate for an `Ident`-led source. It is issued only
+/// when every `Ident`-starting prefix path is a synthetic one-token variable
+/// atom or a transparent projection to another certified category. All
+/// infix/postfix continuations of every category on that projection chain
+/// are retained as possible immediate successors; an unrecognized shape or
+/// projection cycle disables the certificate. This is intentionally a
+/// negative-only optimization, not a new parsing rule.
+fn certified_ident_source_extensions(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+    categories: &[String],
+    source_idx: u16,
+) -> Option<Vec<String>> {
+    let mut pending = vec![usize::from(source_idx)];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut extensions = std::collections::BTreeSet::new();
+    let mut found_atom = false;
+    while let Some(cat_idx) = pending.pop() {
+        if !seen.insert(cat_idx) {
+            return None;
+        }
+        let cat_name = categories.get(cat_idx)?;
+        for rule in per_cat.get(cat_idx)? {
+            if let Some(infix) = super::infix::classify_rule_public(rule) {
+                if infix.category != *cat_name {
+                    // A category-changing LHS can begin with Ident and need
+                    // not complete after one token.
+                    return None;
+                }
+                extensions.insert(infix.terminal);
+                continue;
+            }
+            match classify_atomic(rule, language) {
+                AtomicShape::VarRule { .. } => found_atom = true,
+                AtomicShape::CrossCatProjection { source_cat_name, .. } => {
+                    pending.push(categories.iter().position(|c| c == &source_cat_name)?);
+                },
+                AtomicShape::TerminalKeyword { terminal_text, .. } => {
+                    if mettail_prattail::grammar_core_bridge::terminal_may_start_with_ident(
+                        &terminal_text,
+                    ) {
+                        return None;
+                    }
+                },
+                AtomicShape::NullaryLiteralRun { trigger, .. }
+                | AtomicShape::CrossCatPrefixUnary { trigger, .. }
+                | AtomicShape::PrefixOperator { trigger, .. } => {
+                    if mettail_prattail::grammar_core_bridge::terminal_may_start_with_ident(
+                        &trigger,
+                    ) {
+                        return None;
+                    }
+                },
+                // The native literal families may be customized by the
+                // lexer. Without an exact edge-disjointness proof, do not
+                // certify their selected Ident alternative.
+                AtomicShape::LiteralInteger
+                | AtomicShape::LiteralBoolean
+                | AtomicShape::LiteralString
+                | AtomicShape::LiteralFloat => return None,
+                AtomicShape::NonAtomic => {
+                    let fixed_opener = rule
+                        .syntax_pattern
+                        .as_ref()
+                        .and_then(|pattern| pattern.first())
+                        .and_then(|part| match part {
+                            SyntaxExpr::Literal(text) => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .or_else(|| match rule.items.first() {
+                            Some(mettail_ast::grammar::GrammarItem::Terminal(text)) => {
+                                Some(text.as_str())
+                            },
+                            _ => None,
+                        });
+                    let Some(opener) = fixed_opener else {
+                        return None;
+                    };
+                    if opener.is_empty()
+                        || mettail_prattail::grammar_core_bridge::terminal_may_start_with_ident(
+                            opener,
+                        )
+                    {
+                        return None;
+                    }
+                },
+                AtomicShape::LiteralPatterned { .. } => return None,
+            }
+        }
+    }
+    found_atom.then(|| extensions.into_iter().collect())
+}
+
+fn emit_prefix_crosscat_one_token_arms(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+    categories: &[String],
+) -> Vec<TokenStream> {
+    let mut pairs =
+        std::collections::BTreeMap::<(u16, u16), std::collections::BTreeSet<String>>::new();
+    for rule in &language.terms {
+        let Some(infix) = super::infix::classify_rule_public(rule) else {
+            continue;
+        };
+        if !infix.is_cross_category || infix.category == infix.result_category {
+            continue;
+        }
+        let Some(result) = categories.iter().position(|c| c == &infix.result_category) else {
+            continue;
+        };
+        let Some(source) = categories.iter().position(|c| c == &infix.category) else {
+            continue;
+        };
+        pairs
+            .entry((result as u16, source as u16))
+            .or_default()
+            .insert(infix.terminal);
+    }
+    pairs
+        .into_iter()
+        .filter_map(|((result, source), target_operators)| {
+            let source_extensions =
+                certified_ident_source_extensions(language, per_cat, categories, source)?;
+            let target_operators: Vec<_> = target_operators.into_iter().collect();
+            Some(quote! {
+                (#result, #source, mettail_prattail::automata::TokenKind::Ident) =>
+                    mettail_prattail::wpda_transitions::prefix_policy::crosscat_one_token_successor_may_continue(
+                        tokens, pos, alt_idx,
+                        &[ #( #target_operators ),* ],
+                        &[ #( #source_extensions ),* ],
+                    ),
+            })
+        })
+        .collect()
+}
+
 fn emit_prefix_crosscat_lhs_trigger_set_arms(
     language: &LanguageDef,
     categories: &[String],
@@ -1297,103 +1489,206 @@ fn emit_prefix_crosscat_lhs_trigger_set_arms(
     arms
 }
 
-/// AT_QUOTED_BIND_GATE (2026-07-03): per result-category match arms for the
-/// `prefix_at_quoted_bind_gate_evidence` predicate. For each category emits a
-/// `(bind_triggers, polyadic_stops)` pair:
-///
-///   - `bind_triggers` = the terminals `T` such that BOTH a whole-source
-///     cross-cat-LHS rule `result ::= source T …` exists (contributing `T` to
-///     the cross-cat trigger set) AND a SIGIL-LED sibling rule `result ::= σ …
-///     T …` (a rule whose `syntax_pattern[0]` is a Literal `σ`) also carries
-///     `T` as an interior terminal. For rholang InputBind + sigil `@`: `<-`
-///     (InputBind `lhs "<-" n` ∧ InputBindQuoted `"@" pat "<-" n`) and `<=`
-///     (InputBindPersistent ∧ InputBindQuotedPersistent). A bind-trigger
-///     reached FIRST at depth 0 ⇒ the whole-`source` reading is the proven
-///     over-generation of the sigil-quoted sibling ⇒ SUPPRESS.
-///
-///   - `polyadic_stops` = the whole-source cross-cat-LHS trigger terminals that
-///     are NOT bind_triggers (no sigil-led sibling carries them) — e.g. the
-///     polyadic `,` (`InputBindPolyadic lhs "," … "<-" n`, whose whole-`source`
-///     reading has NO `@`-quoted counterpart). A polyadic-stop reached FIRST at
-///     depth 0 ⇒ this is a legitimate whole-`source` reading with no sigil
-///     sibling ⇒ do NOT suppress (the delegate is the only admitting parse).
-///
-/// The FIRST-hit-wins scan over `bind_triggers ∪ polyadic_stops` makes the gate
-/// precise: `@a<-@b` (first depth-0 trigger `<-` ∈ bind) suppresses; `@a,b<-c`
-/// (first depth-0 trigger `,` ∈ stops) does not. Both sets grammar-derived; an
-/// empty `bind_triggers` (no sigil-quoted sibling shares a whole-source
-/// trigger) ⇒ the predicate is always `false` ⇒ inert (baseline).
+fn quoted_bind_tail(
+    rule: &GrammarRule,
+    prefix: Option<&str>,
+    operand_category: &str,
+) -> Option<(
+    Vec<mettail_prattail::wpda_rule_analysis::InfixTypeShape>,
+    Vec<mettail_prattail::wpda_rule_analysis::InfixSyntaxShape>,
+)> {
+    use mettail_prattail::wpda_rule_analysis::{InfixParamShape, InfixSyntaxShape, InfixTypeShape};
+    let mut shape = super::infix::project_infix_rule(rule);
+    let params = shape.term_context.take()?;
+    let mut syntax = shape.syntax_pattern.take()?;
+    if let Some(prefix) = prefix {
+        if !matches!(syntax.first(), Some(InfixSyntaxShape::Literal(text)) if text == prefix) {
+            return None;
+        }
+        syntax.remove(0);
+    }
+    let mut names = std::collections::BTreeMap::new();
+    let mut types = Vec::with_capacity(params.len());
+    for (index, param) in params.into_iter().enumerate() {
+        let InfixParamShape::Simple { name, ty } = param else {
+            return None;
+        };
+        if matches!(ty, InfixTypeShape::Other | InfixTypeShape::Collection { element_base: None })
+            || names.insert(name, index.to_string()).is_some()
+        {
+            return None;
+        }
+        types.push(ty);
+    }
+    if types.first() != Some(&InfixTypeShape::Base(operand_category.into())) {
+        return None;
+    }
+    for part in &mut syntax {
+        match part {
+            InfixSyntaxShape::Param(name) | InfixSyntaxShape::Sep { collection: name, .. } => {
+                *name = names.get(name)?.clone();
+            },
+            InfixSyntaxShape::Literal(_) => {},
+            InfixSyntaxShape::Other => return None,
+        }
+    }
+    if syntax.first() != Some(&InfixSyntaxShape::Param("0".into())) {
+        return None;
+    }
+    Some((types.into_iter().skip(1).collect(), syntax.into_iter().skip(1).collect()))
+}
+
+pub(super) struct QuotedBindFamily {
+    pub result: String,
+    pub source: String,
+    pub prefix: String,
+    pub binds: std::collections::BTreeSet<String>,
+    pub stops: std::collections::BTreeSet<String>,
+    pub rule_pairs: std::collections::BTreeSet<(String, String)>,
+}
+
+pub(super) fn quoted_bind_families(language: &LanguageDef) -> Vec<QuotedBindFamily> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut normalized = language.clone();
+    for rule in &mut normalized.terms {
+        mettail_ast::grammar::convert_items_to_term_context(rule);
+    }
+    let aliases = crate::gen::syntax::synonymy::derive(&normalized);
+    let mut operators: BTreeMap<(String, String), BTreeMap<String, Vec<&GrammarRule>>> =
+        BTreeMap::new();
+    for rule in &normalized.terms {
+        if let Some(info) = super::infix::classify_rule_public(rule) {
+            if info.is_cross_category {
+                operators
+                    .entry((info.result_category, info.category))
+                    .or_default()
+                    .entry(info.terminal)
+                    .or_default()
+                    .push(rule);
+            }
+        }
+    }
+    let mut families = Vec::new();
+    for ((result, source), triggers) in operators {
+        let mut wrappers: BTreeMap<String, Vec<(&GrammarRule, String)>> = BTreeMap::new();
+        for rule in normalized
+            .terms
+            .iter()
+            .filter(|rule| rule.category == source)
+        {
+            if let AtomicShape::CrossCatPrefixUnary { trigger, source_cat_name, .. } =
+                classify_atomic(rule, &normalized)
+            {
+                wrappers
+                    .entry(trigger)
+                    .or_default()
+                    .push((rule, source_cat_name));
+            }
+        }
+        for (prefix, wrappers) in wrappers {
+            let mut source_labels = BTreeSet::new();
+            for (wrapper, _) in &wrappers {
+                source_labels.insert(wrapper.label.to_string());
+                for class in &aliases.classes {
+                    if class.category == source
+                        && class.members.contains(&wrapper.label.to_string())
+                    {
+                        source_labels.extend(normalized.terms.iter().filter(|rule| {
+                            class.members.contains(&rule.label.to_string())
+                                && matches!(rule.syntax_pattern.as_deref().and_then(|syntax| syntax.first()),
+                                    Some(SyntaxExpr::Literal(text)) if text == &prefix)
+                        }).map(|rule| rule.label.to_string()));
+                    }
+                }
+            }
+            let complete_source = normalized
+                .terms
+                .iter()
+                .filter(|rule| rule.category == source)
+                .all(|rule| {
+                    match rule
+                        .syntax_pattern
+                        .as_deref()
+                        .and_then(|syntax| syntax.first())
+                    {
+                        Some(SyntaxExpr::Literal(text)) if text == &prefix => {
+                            source_labels.contains(&rule.label.to_string())
+                        },
+                        _ => true,
+                    }
+                });
+            if !complete_source {
+                continue;
+            }
+            let mut family = QuotedBindFamily {
+                result: result.clone(),
+                source: source.clone(),
+                prefix: prefix.clone(),
+                binds: BTreeSet::new(),
+                stops: BTreeSet::new(),
+                rule_pairs: BTreeSet::new(),
+            };
+            for (trigger, whole_rules) in &triggers {
+                let covered = whole_rules.iter().all(|whole| {
+                    let Some(whole_tail) = quoted_bind_tail(whole, None, &source) else {
+                        return false;
+                    };
+                    wrappers.iter().all(|(_, operand)| {
+                        normalized.terms.iter().any(|direct| {
+                            direct.category == result
+                                && quoted_bind_tail(direct, Some(&prefix), operand)
+                                    .is_some_and(|tail| tail == whole_tail)
+                        })
+                    })
+                });
+                if covered {
+                    family.binds.insert(trigger.clone());
+                    for whole in whole_rules {
+                        family.rule_pairs.extend(
+                            source_labels
+                                .iter()
+                                .map(|atom| (whole.label.to_string(), atom.clone())),
+                        );
+                    }
+                } else {
+                    family.stops.insert(trigger.clone());
+                }
+            }
+            if !family.binds.is_empty() {
+                families.push(family);
+            }
+        }
+    }
+    families
+}
+
 fn emit_at_quoted_bind_gate_trigger_arms(
     language: &LanguageDef,
     categories: &[String],
+    opens: &std::collections::BTreeSet<String>,
+    closes: &std::collections::BTreeSet<String>,
+    rows: &[String],
 ) -> Vec<TokenStream> {
-    let mut arms: Vec<TokenStream> = Vec::new();
-    for (result_idx, result_cat_name) in categories.iter().enumerate() {
-        let result_src_idx = result_idx as u16;
-        // whole-source cross-cat-LHS triggers (mirror
-        // emit_prefix_crosscat_lhs_trigger_set_arms).
-        let mut whole_source_triggers: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
-        for rule in &language.terms {
-            if rule.category.to_string() != *result_cat_name {
-                continue;
+    quoted_bind_families(language)
+        .into_iter()
+        .filter_map(|family| {
+            let result_src_idx = categories.iter().position(|cat| cat == &family.result)? as u16;
+            let source_src_idx = categories.iter().position(|cat| cat == &family.source)? as u16;
+            if family.binds.iter().chain(&family.stops).any(|trigger| {
+                opens.contains(trigger) || closes.contains(trigger) || rows.contains(trigger)
+            }) {
+                return None;
             }
-            if let Some(info) = super::infix::classify_rule_public(rule) {
-                if info.is_cross_category && info.category != info.result_category {
-                    whole_source_triggers.insert(info.terminal.clone());
-                }
-            }
-        }
-        if whole_source_triggers.is_empty() {
-            continue;
-        }
-        // Interior terminals of every SIGIL-LED rule in this result category
-        // (rule whose syntax_pattern[0] is a Literal). Excludes that leading
-        // sigil literal itself — we want the bind terminals that follow the
-        // quoted operand.
-        let mut sigil_interior_terminals: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
-        for rule in &language.terms {
-            if rule.category.to_string() != *result_cat_name {
-                continue;
-            }
-            let Some(sp) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            // Must be sigil-LED: first syntax element a literal.
-            if !matches!(sp.first(), Some(mettail_ast::grammar::SyntaxExpr::Literal(_))) {
-                continue;
-            }
-            for (i, item) in sp.iter().enumerate() {
-                if i == 0 {
-                    continue; // the leading sigil literal itself
-                }
-                if let mettail_ast::grammar::SyntaxExpr::Literal(t) = item {
-                    sigil_interior_terminals.insert(t.clone());
-                }
-            }
-        }
-        let bind_triggers: Vec<&String> = whole_source_triggers
-            .iter()
-            .filter(|t| sigil_interior_terminals.contains(*t))
-            .collect();
-        let polyadic_stops: Vec<&String> = whole_source_triggers
-            .iter()
-            .filter(|t| !sigil_interior_terminals.contains(*t))
-            .collect();
-        // If no bind trigger has a sigil sibling, the gate is inert for this
-        // category — omit the arm (falls through to the empty default).
-        if bind_triggers.is_empty() {
-            continue;
-        }
-        arms.push(quote! {
-            #result_src_idx => (
-                &[ #( #bind_triggers ),* ],
-                &[ #( #polyadic_stops ),* ],
-            ),
-        });
-    }
-    arms
+            let prefix = family.prefix;
+            let binds = family.binds;
+            let stops = family.stops;
+            Some(quote! {
+                (#result_src_idx, #source_src_idx) if sigil.as_str() == #prefix => (
+                    &[ #(#binds),* ], &[ #(#stops),* ],
+                ),
+            })
+        })
+        .collect()
 }
 
 fn emit_prefix_crosscat_lhs_dispatch_arms(
@@ -2245,6 +2540,89 @@ mod tests {
         }
     }
 
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+
+        #[test]
+        fn quoted_bind_rows_preserve_rule_associations(suffix in "[A-Z]{1,6}") {
+            use proptest::prelude::*;
+            let value = format!("Value{suffix}");
+            let source = format!("Source{suffix}");
+            let result = format!("Result{suffix}");
+            let mut language = empty_lang();
+            let param = |name: &str| SyntaxExpr::Param(Ident::new(name, Span::call_site()));
+            let lit = |text: &str| SyntaxExpr::Literal(text.into());
+            let whole = |label: &str, trigger: &str| judgment_rule(
+                label, &result, &[("lhs", &source), ("rhs", &value)],
+                vec![param("lhs"), lit(trigger), lit("("), param("rhs"), lit(")")],
+            );
+            let direct = |label: &str, prefix: &str, trigger: &str, body: &str, close: &str| judgment_rule(
+                label, &result, &[("body", body), ("arg", &value)],
+                vec![lit(prefix), param("body"), lit(trigger), lit("("), param("arg"), lit(close)],
+            );
+            language.terms = vec![
+                judgment_rule("Quote", &source, &[("value", &value)], vec![lit("@"), param("value")]),
+                judgment_rule("Mark", &source, &[("value", &value)], vec![lit("#"), param("value")]),
+                whole("Send", "!"), whole("Ask", "?"),
+                direct("DirectSend", "@", "!", &value, ")"),
+                direct("DirectAsk", "#", "?", &value, ")"),
+                terminal_rule("Unrelated", &result, "("),
+            ];
+            let families = quoted_bind_families(&language);
+            prop_assert_eq!(families.len(), 2);
+            let quote = families.iter().find(|family| family.prefix == "@").expect("quote family");
+            let mark = families.iter().find(|family| family.prefix == "#").expect("mark family");
+            prop_assert_eq!(&quote.binds, &std::collections::BTreeSet::from(["!".into()]));
+            prop_assert_eq!(&quote.stops, &std::collections::BTreeSet::from(["?".into()]));
+            prop_assert_eq!(&mark.binds, &std::collections::BTreeSet::from(["?".into()]));
+            prop_assert_eq!(&mark.stops, &std::collections::BTreeSet::from(["!".into()]));
+            prop_assert_eq!(&quote.rule_pairs, &std::collections::BTreeSet::from([("Send".into(), "Quote".into())]));
+            prop_assert_eq!(&mark.rule_pairs, &std::collections::BTreeSet::from([("Ask".into(), "Mark".into())]));
+            for family in &families {
+                prop_assert_eq!(&family.result, &result);
+                prop_assert_eq!(&family.source, &source);
+            }
+            let categories = vec![result.clone(), source.clone(), value.clone()];
+            let arms = emit_at_quoted_bind_gate_trigger_arms(&language, &categories, &Default::default(), &Default::default(), &[]);
+            prop_assert_eq!(arms.len(), 2);
+            let mut partial = language.clone();
+            let mut extra = whole("Uncovered", "!");
+            extra.syntax_pattern.as_mut().expect("syntax").push(lit("tail"));
+            partial.terms.push(extra);
+            prop_assert!(quoted_bind_families(&partial).iter().all(|family| family.prefix != "@"));
+            for bad in [
+                direct("Bad", "@", "!", "Foreign", ")"),
+                direct("Bad", "@", "!", &value, "}"),
+                judgment_rule("Bad", &result, &[], vec![lit("@"), lit("empty"), lit("!"), lit("("), lit(")")]),
+            ] {
+                let mut invalid = language.clone();
+                invalid.terms[4] = bad;
+                prop_assert!(quoted_bind_families(&invalid).iter().all(|family| family.prefix != "@"));
+            }
+            let mut aliased = language.clone();
+            let source_ident = Ident::new(&source, Span::call_site());
+            aliased.terms[1].eval_mode = Some(mettail_ast::types::EvalMode::Fold);
+            aliased.terms[1].rust_code = Some(mettail_ast::types::RustCodeBlock {
+                code: syn::parse_quote! { #source_ident::Quote(std::sync::Arc::new(value.clone())) },
+            });
+            let alias_families = quoted_bind_families(&aliased);
+            prop_assert_eq!(alias_families.len(), 2);
+            for family in &alias_families {
+                let expected = if family.prefix == "@" { ("Send".into(), "Quote".into()) } else { ("Ask".into(), "Mark".into()) };
+                prop_assert_eq!(&family.rule_pairs, &std::collections::BTreeSet::from([expected]));
+            }
+            let mut unrelated_source = language.clone();
+            unrelated_source.terms.push(judgment_rule("Special", &source, &[], vec![lit("@"), lit("special")]));
+            prop_assert!(quoted_bind_families(&unrelated_source).iter().all(|family| family.prefix != "@"));
+            let mut foreign = language.clone();
+            foreign.terms[4].category = Ident::new("ForeignResult", Span::call_site());
+            prop_assert!(quoted_bind_families(&foreign).iter().all(|family| family.prefix != "@"));
+            let mut empty = language;
+            empty.terms.clear();
+            prop_assert!(quoted_bind_families(&empty).is_empty());
+        }
+    }
+
     fn emitted_lex_alt_tables(
         mut language: LanguageDef,
         categories: Vec<String>,
@@ -2259,6 +2637,105 @@ mod tests {
         emitted
             .split_once("fn lex_alt_rules_for_infix")
             .expect("generator must emit distinct prefix and infix lexical tables")
+    }
+
+    #[test]
+    fn ident_certificate_follows_transparent_projection_and_source_extensions() {
+        let categories = vec!["Proc".into(), "CostSig".into(), "Name".into()];
+        let var_name = GrammarRule {
+            items: vec![GrammarItem::NonTerminal {
+                kind: mettail_ast::grammar::NonTerminalKind::Var,
+                ident: Ident::new("Name", Span::call_site()),
+            }],
+            ..rule_fixture(
+                Ident::new("NVar", Span::call_site()),
+                Ident::new("Name", Span::call_site()),
+            )
+        };
+        let ground = judgment_rule(
+            "Ground",
+            "CostSig",
+            &[("name", "Name")],
+            vec![SyntaxExpr::Param(Ident::new("name", Span::call_site()))],
+        );
+        let transfer = judgment_rule(
+            "Transfer",
+            "CostSig",
+            &[("left", "CostSig"), ("right", "CostSig")],
+            vec![
+                SyntaxExpr::Param(Ident::new("left", Span::call_site())),
+                SyntaxExpr::Literal("-o".into()),
+                SyntaxExpr::Param(Ident::new("right", Span::call_site())),
+            ],
+        );
+        let hash = judgment_rule(
+            "Hash",
+            "CostSig",
+            &[("body", "Proc")],
+            vec![
+                SyntaxExpr::Literal("#".into()),
+                SyntaxExpr::Param(Ident::new("body", Span::call_site())),
+            ],
+        );
+        let per_cat = vec![vec![], vec![ground, transfer, hash], vec![var_name]];
+        let language = empty_lang();
+        assert_eq!(
+            certified_ident_source_extensions(&language, &per_cat, &categories, 1),
+            Some(vec!["-o".into()]),
+        );
+
+        // An identifier-starting fixed opener may have an Ident co-accept. Even though
+        // its rule is syntactically fixed-led, that does not certify the
+        // selected Ident edge as a one-token source atom.
+        let mut contextual = per_cat.clone();
+        contextual[1].push(judgment_rule(
+            "KeywordBody",
+            "CostSig",
+            &[("body", "Proc")],
+            vec![
+                SyntaxExpr::Literal("hash".into()),
+                SyntaxExpr::Param(Ident::new("body", Span::call_site())),
+            ],
+        ));
+        assert_eq!(certified_ident_source_extensions(&language, &contextual, &categories, 1), None,);
+
+        let mut compound_keyword = per_cat.clone();
+        compound_keyword[1].push(judgment_rule(
+            "CompoundKeywordBody",
+            "CostSig",
+            &[("body", "Proc")],
+            vec![
+                SyntaxExpr::Literal("hash!".into()),
+                SyntaxExpr::Param(Ident::new("body", Span::call_site())),
+            ],
+        ));
+        assert_eq!(
+            certified_ident_source_extensions(&language, &compound_keyword, &categories, 1),
+            None,
+        );
+
+        let mut keyword_atom = per_cat.clone();
+        keyword_atom[1].push(terminal_rule("Keyword", "CostSig", "yes"));
+        assert_eq!(
+            certified_ident_source_extensions(&language, &keyword_atom, &categories, 1),
+            None,
+        );
+
+        let mut uncertified = per_cat;
+        uncertified[2].push(judgment_rule(
+            "UnknownName",
+            "Name",
+            &[("inner", "Proc"), ("tail", "Name")],
+            vec![
+                SyntaxExpr::Param(Ident::new("inner", Span::call_site())),
+                SyntaxExpr::Literal("?".into()),
+                SyntaxExpr::Param(Ident::new("tail", Span::call_site())),
+            ],
+        ));
+        assert_eq!(
+            certified_ident_source_extensions(&language, &uncertified, &categories, 1),
+            None,
+        );
     }
 
     #[test]

@@ -397,6 +397,7 @@ mod tests {
             language.types.push(LangType {
                 name: format_ident!("{}", name),
                 role: CategoryRole::Object,
+                admits_variables: true,
                 native_type: None,
                 collection_kind: None,
             });

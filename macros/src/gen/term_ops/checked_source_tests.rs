@@ -51,7 +51,7 @@ fn actual_rholang_checked_source_tags_cover_every_original_constructor() {
         })
         .collect();
     assert_eq!(actual, expected, "exact actual constructor identity, including refused forms");
-    assert_eq!(actual.values().map(BTreeSet::len).sum::<usize>(), 1990);
+    assert_eq!(actual.values().map(BTreeSet::len).sum::<usize>(), 2324);
     let compact: String = emitted.to_string().split_whitespace().collect();
     for forbidden in [
         ".clone(",
@@ -468,7 +468,13 @@ fn actual_rholang_checked_source_capture() {
             let query = Proc::PForUser(vec![ForRow::ForRowSingleNoWhere(Arc::new(
                 InputBind::InputBindQuery(Arc::new(Name::NQuoteNil), Arc::new(Name::NQuoteNil),
                     vec![Proc::Err])))], Arc::new(Proc::PZero));
-            refused(&query, "InputBindQuery", SourceRole::Term, 2);
+            // Changed because the policy now admits the checked query binds
+            // (InputBindQuery => [Arc<Name> => PN, Arc<Name> => N, Vec<Proc> => T]).
+            // The walk then refuses the first unlisted child in pre-order:
+            // PForUser 0, ForRowSingleNoWhere 1, InputBindQuery 2, NQuoteNil 3,
+            // NQuoteNil 4, and the argument Err 5 in the Term role. The code was:
+            // refused(&query, "InputBindQuery", SourceRole::Term, 2);
+            refused(&query, "Err", SourceRole::Term, 5);
             let mut first_map = HashMapLit::new();
             first_map.insert(Proc::PZero, Proc::Err);
             first_map.insert(Proc::Err, Proc::PZero);

@@ -651,6 +651,10 @@ impl TropicalDeltaWeight for LexicographicWeight {
 /// inherent lex-Fork provenance from `from_cost_with_lex`. Expose
 /// the three discriminator fields for inclusion in `ConfigKey`.
 impl LexProvenance for LexicographicWeight {
+    fn lex_open_len(&self) -> u32 {
+        u32::from(self.open_len)
+    }
+
     #[inline]
     fn lex_alt_idx(&self) -> u16 {
         self.lex_alt_idx

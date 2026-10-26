@@ -532,6 +532,7 @@ pub(crate) fn emit_layout_oracle(language: &LanguageDef) -> proc_macro2::TokenSt
         struct __MettailSourceLayout {
             auxiliary: Vec<(usize, usize)>,
             opaque: Vec<(usize, usize)>,
+            token_boundaries: Vec<usize>,
         }
 
         /// Ranges hidden from the parser by the generated lexer's own channel
@@ -540,6 +541,21 @@ pub(crate) fn emit_layout_oracle(language: &LanguageDef) -> proc_macro2::TokenSt
         fn __mettail_layout_ranges(input: &str) -> Option<__MettailSourceLayout> {
             let __auxiliary = { #collect_auxiliary };
             let __dag = lex_dag(input).ok()?;
+            let __boundary_capacity = 2 + __dag.nodes.iter()
+                .map(|node| 1 + node.edges.len()).sum::<usize>();
+            let mut __token_boundaries = Vec::with_capacity(__boundary_capacity);
+            __token_boundaries.extend([0, input.len()]);
+            for node in &__dag.nodes {
+                __token_boundaries.push(node.byte_start);
+                __token_boundaries.extend(node.edges.iter().map(|edge| edge.end_byte));
+            }
+            __token_boundaries.sort_unstable();
+            __token_boundaries.dedup();
+            if __token_boundaries.iter().any(|&boundary| {
+                boundary > input.len() || !input.is_char_boundary(boundary)
+            }) {
+                return None;
+            }
             let mut __opaque: Vec<(usize, usize)> = __dag
                 .nodes
                 .iter()
@@ -571,6 +587,7 @@ pub(crate) fn emit_layout_oracle(language: &LanguageDef) -> proc_macro2::TokenSt
             Some(__MettailSourceLayout {
                 auxiliary: __auxiliary,
                 opaque: __opaque,
+                token_boundaries: __token_boundaries,
             })
         }
 

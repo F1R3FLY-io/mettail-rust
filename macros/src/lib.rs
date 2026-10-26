@@ -114,6 +114,10 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
         return refuse(language_def.name.span(), &format!("mixins error:\n{msg}"));
     }
 
+    if let Err(error) = mettail_ast::rewrite_family::normalize_rewrite_families(&mut language_def) {
+        return error.to_compile_error();
+    }
+
     if let Err(e) = validate_language(&language_def) {
         // The spanned renderer that has existed beside `ValidationError` since the
         // type was written, and that this boundary reached past for months.

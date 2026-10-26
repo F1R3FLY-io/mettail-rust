@@ -78,3 +78,8 @@ cc efb4d761385d14d957e6d5f4ba3aa98458685c55cfb45291e77e3596112937d8 # shrinks to
 cc f0bf93cdd672abf4cb40a4217fe9dcf443f9ef53ef074b774367b979df62f321 # shrinks to term = ForRowWhere(InputBindPolyadic(NParen(NQuoteNil), [NQuoteShort(MapEmpty)], NParen(NQuoteNil)), [], MValues(FixedBinProc(POutputNilEmpty, NumLit(6967741428829650031))))
 cc fab2ff51109b347a62d722e563e0e17845ebf423de6f86d260b7611451e42394 # shrinks to term = NQuote(MGet(NegProc(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") })))), PZero))
 cc 30b5c23acd4ab5b6c55dae27d3ffb297c8bde6228026b9d38a59990898fa1369 # shrinks to term = InputBindPolyadic(NQuoteNil, [NParen(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") })))), NQuote(CastBytes(ListLit([])))], NQuoteNil)
+cc e2a7bb73c4a73c806358500833c497caf047c405b070f2477d6e622eaa948e51 # shrinks to term = CostStackChainCons(CostSigHash(PParInfix(PZero, PZero)), CostStackChainEmpty)
+cc 2a57ae2afe51d1c1892220e7ccd3cbbd38a79aab414d1e0005c3240d86bf9a81 # shrinks to term = DdlTheoryTypes(DdlTheoryDiff(DdlTheoryFree(DdlPathName("A")), DdlTheoryApply(DdlPathName("A"), [])), [])
+cc 5c2a32ba3dd5ffcb5628f8229841f8a3b432ff93452e9cabed160a262e387f9c # shrinks to term = InputBindEmpty(NQuote(PLookahead(PUnit, PZero)))
+cc 960df075de3f0abb7068b3c880d8037b6c69d726ccb9d053adc20b7703338dc2 # shrinks to term = POutput(NQuote(MethodCall(POutputNilEmpty, "A", [])), PZero)
+cc bd2292b637d09d9e5c80251eace1397de14b9cce7954f08096458a60ba833873 # shrinks to term = IntBinProc(PCostSignedTerm(Eq(PZero, PZero), CostSigGround(NQuoteNil)), IVar(OrdVar(Free(FreeVar { unique_id: UniqueId(11981), pretty_name: Some("a") }))))

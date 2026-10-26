@@ -97,6 +97,9 @@ where
     fn try_is_data(&self, category: Self::Category) -> Result<bool, Self::Error> {
         Ok(<C as FirstSetContext<'source, R>>::is_data(self, category))
     }
+    fn try_admits_variables(&self, category: Self::Category) -> Result<bool, Self::Error> {
+        Ok(<C as FirstSetContext<'source, R>>::admits_variables(self, category))
+    }
     fn try_collection_open(
         &self,
         category: Self::Category,

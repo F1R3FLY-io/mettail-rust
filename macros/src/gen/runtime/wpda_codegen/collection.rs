@@ -87,6 +87,17 @@ impl<'source> CollectionAssemblyContext<'source, GrammarRule>
 pub type CollectionShape =
     mettail_prattail::wpda_rule_analysis::collection::CollectionShape<CollectionType>;
 
+pub(crate) fn collect_bracket_delimiters(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    collection_assembly::try_collect_bracket_delimiters(
+        per_cat,
+        &mut MacroCollectionAssemblyContext { language },
+    )
+    .expect("static collection delimiter observations are infallible")
+}
+
 pub(crate) fn collect_structural_delimiters(
     language: &LanguageDef,
     per_cat: &[Vec<GrammarRule>],
@@ -209,12 +220,11 @@ pub(crate) fn classify_collection(
 /// ROOT-A (2026-06-27): detect the cross-cat collection projections that COLLIDE
 /// with a braced collection rule on its open token.
 ///
-/// A collision exists when a rule in the SAME result category is classified by
-/// [`prefix::classify_atomic`] as `CrossCatProjection { source }` where `source`
-/// is a collection-kind category (`collection_kind.is_some()`) whose open
-/// FIRST-token — trailing `(` trimmed exactly as `prefix.rs:594` does so the
-/// token equals the lexer's first emitted `Fixed` token — equals this collection
-/// rule's open token.
+/// A collision exists when a rule in the SAME result category projects from a
+/// source category that has an actual collection rule with this lexer-visible
+/// first token. The caller supplies the once-classified source opener sets;
+/// no route is guessed by trimming delimiter text (notably for an authored
+/// `(` opener), and each source rule is classified only once per plan.
 ///
 /// The defect this guards: at Rholang's `Proc` entry the open `{` is a single
 /// (non-lex-ambiguous) token, so the lex-fork is SKIPPED and the braced `PPar`
@@ -232,10 +242,11 @@ pub(crate) fn classify_collection(
 /// no-spurious-accept, decisive mutual-exclusion, empty-collection tie-break to
 /// the primary, fast-path identity, frontier-delta ≤ 1 — all zero-admission) and
 /// `formal/tla/prattail_wpda` `CollectionFork` scenario.
-fn collection_open_collision_projections(
+pub(crate) fn collection_open_collision_projections(
     language: &LanguageDef,
     categories: &[String],
     rules_in_result_cat: &[GrammarRule],
+    source_collection_openers: &[BTreeSet<String>],
     open_token: &str,
 ) -> Vec<(u16, u16)> {
     let mut out = Vec::new();
@@ -245,150 +256,23 @@ fn collection_open_collision_projections(
         else {
             continue;
         };
-        let Some(lang_type) = language
-            .types
-            .iter()
-            .find(|t| t.name.to_string() == source_cat_name)
-        else {
-            continue;
-        };
-        let Some(coll_kind) = lang_type.collection_kind.as_ref() else {
-            continue;
-        };
-        // Stage 2 (2026-06-27): one delimiters() accessor in place of a
-        // per-variant `match coll_kind { List(d) => &d.open, ... }`.
-        let open = &coll_kind.delimiters().open;
-        // Mirror prefix.rs:594 — trim a trailing `(` so the open FIRST token
-        // matches the lexer's first emitted `Fixed` token (`list(` → `list`).
-        if open.trim_end_matches('(') != open_token {
-            continue;
-        }
         let Some(source_src_idx) = categories.iter().position(|c| c == &source_cat_name) else {
             continue;
         };
-        out.push((source_src_idx as u16, rule_i as u16));
+        if !source_collection_openers
+            .get(source_src_idx)
+            .is_some_and(|openers| openers.contains(open_token))
+        {
+            continue;
+        }
+        out.push((
+            u16::try_from(source_src_idx)
+                .expect("admitted source category index fits the WPDA coordinate"),
+            u16::try_from(rule_i)
+                .expect("admitted collection projection index fits the WPDA coordinate"),
+        ));
     }
     out
-}
-
-/// Phase 4: emit prefix-dispatch arms that recognize the open delimiter
-/// of each collection-shaped rule. On match, the arm pushes a
-/// `CollectionMarker` symbol carrying `(result_src_idx, rule_idx,
-/// slot_idx)`. The walker allocates a fresh runtime accumulator id when the
-/// marker is pushed and carries that id through the CollectionId action
-/// argument that the finalize action consumes.
-///
-/// After the open delim, the new_state is `PrefixDispatch{cur_bp:0}`. The
-/// frontier_top is the marker, whose `category_src_idx == result_src_idx`.
-/// For self-collections (Rholang PPar: HashBag(Proc) in Proc), this routes
-/// the first-element parse to the right category. For cross-cat collections
-/// (e.g. `Vec<Int>` in some `List` category), the open arm pushes an
-/// additional CategoryEntry(element_src_idx) frame to redirect dispatch.
-///
-/// Arms guard on `state_cat_src_idx == result_src_idx` so the same open
-/// delimiter routes to different collection rules per category.
-pub(crate) fn emit_collection_prefix_arms(
-    language: &mettail_ast::language::LanguageDef,
-    categories: &[String],
-    per_cat: &[Vec<GrammarRule>],
-) -> TokenStream {
-    let mut arms = Vec::new();
-    for (cat_i, rules) in per_cat.iter().enumerate() {
-        for (rule_i, rule) in rules.iter().enumerate() {
-            let Some(shape) = classify_collection(rule, language) else {
-                continue;
-            };
-            let result_src_idx = cat_i as u16;
-            let rule_idx = rule_i as u16;
-            // The lexer emits the open keyword as a single `Fixed` token
-            // matching `shape.open_token` (e.g. `"list"` for the default
-            // form, or `"{"` for explicit-delimited 3-element rules).
-            // For 4-element forms (`has_synth_paren = true`), the next
-            // token is `Fixed("(")` which the engine consumes via
-            // `WpdaState::CollectionOpenParen` BEFORE entering the
-            // first-element parse. For 3-element forms, the prefix arm
-            // transitions directly to `PrefixDispatch`.
-            let open_token = &shape.open_token;
-            // Look up the element category's src_idx (for both self and
-            // cross-cat). Required by CollectionOpenParen so the engine
-            // arm knows whether to push CategoryEntry for cross-cat.
-            let Some(element_src) = lookup_element_src_idx(&shape.element_cat, categories) else {
-                continue;
-            };
-            let new_state = if shape.has_synth_paren {
-                quote! {
-                    WpdaState::CollectionOpenParen {
-                        result_src_idx: #result_src_idx,
-                        rule_idx: #rule_idx,
-                        element_src_idx: #element_src,
-                        outer_bp: *cur_bp,
-                    }
-                }
-            } else {
-                quote! {
-                    WpdaState::PrefixDispatch {
-                        pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
-                        cur_bp: 0,
-                    }
-                }
-            };
-            // ROOT-A (2026-06-27): does this open token collide with a cross-cat
-            // collection projection sharing the open token? If so, FORK into the
-            // PPar collection marker (the primary) + the Map projection(s); else
-            // emit the byte-identical bare ConsumeAndPush (no-collision fast path).
-            // FV: CollectionPrefixDispatchFork.v + TLA CollectionFork scenario.
-            let collisions =
-                collection_open_collision_projections(language, categories, rules, open_token);
-            if collisions.is_empty() {
-                // ── No-collision fast path: byte-identical bare ConsumeAndPush. ──
-                arms.push(quote! {
-                    Some(mettail_prattail::automata::TokenKind::Fixed(__open))
-                        if __open == #open_token && state_cat_src_idx == #result_src_idx => {
-                        return mettail_prattail::wpda_transitions::collection_prefix::singleton(
-                            #result_src_idx, #rule_idx, cur_bp, lex_w, || #new_state,
-                        );
-                    }
-                });
-            } else {
-                // ── Collision: fork into branch0 (PPar collection marker, the
-                // PRIMARY infix tier weight 0.0) + branch1+ (one Map cross-cat
-                // projection per colliding rule, BP_TIER_CROSSCAT_PROJECTION =
-                // 0.025). The empty `{}` ties to the primary by the 0.0 < 0.025
-                // weight ordering (empty_collection_tie_breaks_to_primary). Branch
-                // shapes mirror forks.rs:272-292 (projection) + the singleton
-                // projection arm prefix.rs:1480-1491, and the marker branch
-                // mirrors the no-collision ConsumeAndPush above. ──
-                let proj_branches: Vec<TokenStream> = collisions
-                    .iter()
-                    .map(|(source_src_idx, proj_rule)| {
-                        let source_src_idx = *source_src_idx;
-                        let proj_rule = *proj_rule;
-                        quote! {
-                            mettail_prattail::wpda_transitions::collection_prefix::projection(
-                                #result_src_idx, #proj_rule, #source_src_idx, cur_bp, lex_w,
-                            )
-                        }
-                    })
-                    .collect();
-                arms.push(quote! {
-                    Some(mettail_prattail::automata::TokenKind::Fixed(__open))
-                        if __open == #open_token && state_cat_src_idx == #result_src_idx => {
-                        return mettail_prattail::wpda_transitions::collection_prefix::collision(|| vec![
-                                // branch0 — the PPar collection marker (primary,
-                                // weight BP_TIER_INFIX = 0.0). Discards the open
-                                // trigger token, like the no-collision path.
-                                mettail_prattail::wpda_transitions::collection_prefix::primary(
-                                    #result_src_idx, #rule_idx, cur_bp, lex_w, || #new_state,
-                                ),
-                                // branch1+ — the Map cross-cat projection(s).
-                                #(#proj_branches),*
-                            ]);
-                    }
-                });
-            }
-        }
-    }
-    quote! { #(#arms)* }
 }
 
 /// Phase 4: emit the body of `WpdaState::CollectionLoop`. Looks up the
@@ -459,7 +343,7 @@ pub(crate) fn emit_collection_loop_arm(
 ///   selector: `true` for binder-internal slots, `false` for Class-5.
 /// - `open` / `has_synth_paren` carry the Class-5 open token; binder-internal
 ///   slots get `""` / `false` (no consumer reads them yet — open-side dispatch
-///   stays in `emit_collection_prefix_arms`).
+///   uses the per-token special-opener plan in `prefix.rs`).
 ///
 /// The iteration order (Class-5 first, else binder infos in order) matches the
 /// former tables exactly, so the emitted arm order — hence duplicate-key
@@ -519,7 +403,7 @@ pub(crate) fn emit_collection_spec_table(
             let close_resumes_via_unwinding = spec.close_resumes_via_unwinding;
             quote! {
                 (#result_src_idx, #rule_idx, #slot_idx) => Some(
-                    mettail_prattail::wpda_runtime::CollectionSpec {
+                    &mettail_prattail::wpda_runtime::CollectionSpec {
                         open: #open,
                         has_synth_paren: #has_synth_paren,
                         close: #close,
@@ -535,10 +419,10 @@ pub(crate) fn emit_collection_spec_table(
         })
         .collect();
     quote! {
-        match (result_src_idx, rule_idx, slot_idx) {
+        (match (result_src_idx, rule_idx, slot_idx) {
             #(#rendered_arms)*
             _ => None,
-        }
+        }).copied()
     }
 }
 
@@ -558,7 +442,7 @@ fn has_any_collection_slot(
     .expect("static collection slot discovery requires representable coordinates")
 }
 
-fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u16> {
+pub(crate) fn lookup_element_src_idx(element_cat: &str, categories: &[String]) -> Option<u16> {
     collection_assembly::try_lookup_element_src_idx::<std::convert::Infallible>(
         element_cat,
         categories,
@@ -1242,6 +1126,7 @@ mod tests {
         let declaration = |kind| mettail_ast::language::LangType {
             name: Ident::new("Home", Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: kind,
         };
@@ -1446,6 +1331,31 @@ mod tests {
         }
     }
 
+    fn map_brace_rule() -> GrammarRule {
+        GrammarRule {
+            term_context: Some(vec![TermParam::Simple {
+                name: Ident::new("entries", Span::call_site()),
+                ty: TypeExpr::Collection {
+                    coll_type: CollectionType::HashMap,
+                    element: Box::new(TypeExpr::Base(Ident::new("Proc", Span::call_site()))),
+                },
+            }]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("{".into()),
+                SyntaxExpr::Op(PatternOp::Sep {
+                    collection: Ident::new("entries", Span::call_site()),
+                    separator: ",".into(),
+                    source: None,
+                }),
+                SyntaxExpr::Literal("}".into()),
+            ]),
+            ..rule_fixture(
+                Ident::new("MapLit", Span::call_site()),
+                Ident::new("Map", Span::call_site()),
+            )
+        }
+    }
+
     // Rholang's `CastMap . m:Map |- m : Proc;` — a cross-cat projection from the
     // Map collection category into Proc (classify_atomic ⇒ CrossCatProjection).
     fn cast_map_projection_rule() -> GrammarRule {
@@ -1471,10 +1381,12 @@ mod tests {
     fn collection_open_collision_emits_fork_else_bare_consume_and_push() {
         let ppar = ppar_brace_rule();
         let cast_map = cast_map_projection_rule();
+        let map = map_brace_rule();
         let mut lang = empty_lang();
         lang.types.push(mettail_ast::language::LangType {
             name: Ident::new("Proc", Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         });
@@ -1482,6 +1394,7 @@ mod tests {
         lang.types.push(mettail_ast::language::LangType {
             name: Ident::new("Map", Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: Some(CollectionCategory::Map(
                 mettail_ast::language::CollectionDelimiters {
@@ -1493,11 +1406,35 @@ mod tests {
             )),
         });
         let categories = vec!["Proc".to_string(), "Map".to_string()];
+        lang.terms = vec![ppar.clone(), cast_map.clone(), map.clone()];
 
         // ── Collision: per_cat[Proc] = [PPar, CastMap] ⇒ Fork. ──
-        let per_cat_collision = vec![vec![ppar.clone(), cast_map.clone()], Vec::new()];
-        let forwarding =
-            emit_collection_prefix_arms(&lang, &categories, &per_cat_collision).to_string();
+        let per_cat_collision = vec![vec![ppar.clone(), cast_map.clone()], vec![map.clone()]];
+        let plans =
+            super::super::prefix::special_opener_plans(&categories, &lang, &per_cat_collision);
+        let mut rows = super::super::fork_emission::ForkEmissionOrdinalModel::new();
+        let (_, _, ordinary_counts) = super::super::prefix::emit_prefix_arms_for_category(
+            &lang,
+            0,
+            "Proc",
+            &plans[0],
+            &[(0, &ppar), (1, &cast_map)],
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut rows,
+        );
+        assert_eq!(
+            ordinary_counts["{"], 0,
+            "the specialized CastMap route must not be duplicated in the ordinary opener bucket"
+        );
+        let collision_counts = vec![ordinary_counts, std::collections::BTreeMap::new()];
+        let forwarding = super::super::prefix::emit_special_opener_dispatch_arms(
+            &categories,
+            &plans,
+            &collision_counts,
+            &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
+        )
+        .to_string();
         let projection_call = quote! {
             mettail_prattail::wpda_transitions::collection_prefix::projection(
                 0u16, 1u16, 1u16, cur_bp, lex_w,
@@ -1512,7 +1449,7 @@ mod tests {
                 < forwarding.find(projection_path).expect("projection branch"),
             "original primary-before-projection order: {forwarding}"
         );
-        assert!(forwarding.contains("collection_prefix :: collision"));
+        assert!(forwarding.contains("prefix :: paren_fork"));
         let shared = syn::parse_file(include_str!(
             "../../../../../prattail/src/wpda_transitions/collection_prefix.rs"
         ))
@@ -1534,10 +1471,10 @@ mod tests {
             assert_eq!(bodies.len(), names.len(), "every selected body must exist");
             quote! { #(#bodies)* }.to_string()
         };
-        let collision = shared_body(&["collision", "primary", "projection"]);
+        let collision = shared_body(&["primary", "projection"]);
         assert!(
-            collision.contains("WpdaStepAction :: Fork"),
-            "collision must emit a Fork: {collision}"
+            forwarding.contains("prefix :: paren_fork"),
+            "collision must emit a Fork: {forwarding}"
         );
         assert!(
             collision.contains("collection_marker"),
@@ -1570,16 +1507,30 @@ mod tests {
             "projection must delegate to source Map (src_idx 1): {collision}"
         );
         assert!(
-            collision.contains("consume_trigger : false"),
-            "the Fork must not pre-consume the trigger: {collision}"
+            syn::parse_file(include_str!("../../../../../prattail/src/wpda_transitions/prefix.rs"))
+                .expect("shared prefix module parses")
+                .items
+                .iter()
+                .any(|item| matches!(item, syn::Item::Fn(function)
+                if function.sig.ident == "paren_fork"
+                    && quote! { #function }.to_string().contains("consume_trigger : false"))),
+            "the shared fork must not pre-consume the trigger"
         );
 
         // ── No collision: per_cat[Proc] = [PPar] only ⇒ bare ConsumeAndPush. ──
-        let per_cat_fast = vec![vec![ppar.clone()], Vec::new()];
-        let fast_forwarding =
-            emit_collection_prefix_arms(&lang, &categories, &per_cat_fast).to_string();
+        let per_cat_fast = vec![vec![ppar.clone()], vec![map]];
+        let fast_plans =
+            super::super::prefix::special_opener_plans(&categories, &lang, &per_cat_fast);
+        let empty_counts = vec![std::collections::BTreeMap::new(); categories.len()];
+        let fast_forwarding = super::super::prefix::emit_special_opener_dispatch_arms(
+            &categories,
+            &fast_plans,
+            &empty_counts,
+            &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
+        )
+        .to_string();
         assert!(fast_forwarding.contains("collection_prefix :: singleton"));
-        assert!(!fast_forwarding.contains("collection_prefix :: collision"));
+        assert!(!fast_forwarding.contains("prefix :: paren_fork"));
         let fast = shared_body(&["singleton"]);
         assert!(
             fast.contains("WpdaStepAction :: ConsumeAndPush"),

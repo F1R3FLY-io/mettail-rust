@@ -1174,11 +1174,27 @@ fn generate_random_collection_constructor(
             }
         }
     } else {
+        // Changed for sole-collection lane (carrier): a `HashSet(T)` field is
+        // `mettail_runtime::HashSetLit<T>` in the AST (`gen/types/enums.rs`), so a set is
+        // built as a set. The other carriers keep the bag (a `Vec` takes the `is_list`
+        // branch above). The emitted line was:
+        // let mut bag = mettail_runtime::HashBag::new();
+        let empty_carrier = match coll_type {
+            mettail_ast::types::CollectionType::HashSet => {
+                quote! { mettail_runtime::HashSetLit::new() }
+            },
+            mettail_ast::types::CollectionType::HashBag
+            | mettail_ast::types::CollectionType::HashMap
+            | mettail_ast::types::CollectionType::PathMap
+            | mettail_ast::types::CollectionType::Vec => {
+                quote! { mettail_runtime::HashBag::new() }
+            },
+        };
         // List and Bag both use the same bag-shaped generation when not is_list
         quote! {
             {
                 let size = rng.gen_range(0..=max_collection_width);
-                let mut bag = mettail_runtime::HashBag::new();
+                let mut bag = #empty_carrier;
                 for _ in 0..size {
                     let elem_depth = if depth > 0 { rng.gen_range(0..depth) } else { 0 };
                     let elem = #element_cat::generate_random_at_depth_internal(

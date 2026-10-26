@@ -320,8 +320,12 @@ fn generate_type_handler(
         }
         let task = format_ident!("Infer{}", cat_name);
         let argument_task = format_ident!("Infer{}", domain);
-        arms.push(quote! {
-            #cat_name::#apply(ref lam, ref arg) => {
+        // An HOL application still traverses a `noadmit` category, but its
+        // head cannot be the category's nonexistent synthetic CVar variant.
+        // Only variable-admitting categories may infer an arrow from that
+        // direct variable-head witness.
+        let unary_variable_head = category_has_var_variant(cat_name, language).then(|| {
+            quote! {
                 if let #cat_name::#var_label(
                     mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))
                 ) = **lam {
@@ -332,14 +336,10 @@ fn generate_type_handler(
                         ));
                     }
                 }
-                // LIFO reverse of the recursive order: lambda, then argument.
-                stack.push(InferenceTask::#argument_task(&**arg as *const _));
-                stack.push(InferenceTask::#task(&**lam as *const _));
-                None
             }
         });
-        arms.push(quote! {
-            #cat_name::#multi_apply(ref lam, ref args) => {
+        let multi_variable_head = category_has_var_variant(cat_name, language).then(|| {
+            quote! {
                 if let #cat_name::#var_label(
                     mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))
                 ) = **lam {
@@ -350,6 +350,20 @@ fn generate_type_handler(
                         ));
                     }
                 }
+            }
+        });
+        arms.push(quote! {
+            #cat_name::#apply(ref lam, ref arg) => {
+                #unary_variable_head
+                // LIFO reverse of the recursive order: lambda, then argument.
+                stack.push(InferenceTask::#argument_task(&**arg as *const _));
+                stack.push(InferenceTask::#task(&**lam as *const _));
+                None
+            }
+        });
+        arms.push(quote! {
+            #cat_name::#multi_apply(ref lam, ref args) => {
+                #multi_variable_head
                 for arg in args.iter().rev() {
                     stack.push(InferenceTask::#argument_task(arg as *const _));
                 }
@@ -1028,6 +1042,32 @@ mod exhaustive_match_tests {
         coverage.mark_partial(&generate_var_label(&proc));
 
         assert!(generated_category_has_uncovered_pattern(&proc, &language, &coverage,));
+    }
+
+    #[test]
+    fn closed_hol_result_traverses_application_without_a_nonexistent_variable_head() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: ClosedHolResult,
+                types { Proc Name noadmit CostSig },
+                terms {
+                    Zero . |- "0" : Proc;
+                    Bind . ^x.body:[Name -> Proc] |- "for" x "." body : Proc;
+                    N . |- "n" : Name;
+                    Ground . n:Name |- n : CostSig;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("closed HOL fixture parses");
+        let closed: syn::Ident = syn::parse_str("CostSig").expect("category identifier");
+        let proc: syn::Ident = syn::parse_str("Proc").expect("category identifier");
+        let name: syn::Ident = syn::parse_str("Name").expect("category identifier");
+        let categories = [&proc, &name, &closed];
+        let generated = generate_type_handler(&closed, &categories, &language).to_string();
+        assert!(generated.contains("ApplyName"), "HOL traversal remains available");
+        assert!(!generated.contains("CostSig :: CVar"), "no absent variable head may be emitted");
     }
 }
 

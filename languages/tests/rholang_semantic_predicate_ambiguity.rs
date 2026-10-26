@@ -109,14 +109,12 @@
 //! rather than permuting within one, and it did so by making a reading unspellable rather than by
 //! adding lookahead. That is why it changes the count and divergence I did not.
 //!
-//! `implies` and `matches` cannot add a row: `D02` reports conflicts at
-//! TRIE-DISPATCH prefixes, and an infix operator declared `a "op" b` contributes
-//! no leading terminal — it is handled by the Pratt LED loop, not the decision
-//! trie. `PPar` DOES contribute a leading terminal, but as a RESERVED word
-//! (`options { reserved_keywords: auto }`), so its `Ident` co-accept is dropped
-//! and it cannot fork against the lowercase call-forms. Those are structural
-//! arguments; the byte-identical `D02` block measured before M-0, after M-0 and
-//! after M-1b is their confirmation.
+//! The historical M-1b measurement used global keyword reservation for `PPar`.
+//! The current grammar lists `PPar` in `contextual_keywords`.
+//! The word therefore retains both keyword and identifier readings.
+//! The complete `PPar(a, b)` context selects the spatial constructor.
+//! A bare `PPar` remains a variable, including in embedded declaration contexts.
+//! The tests check both contexts and preserve the existing call-form counts.
 
 use std::time::{Duration, Instant};
 
@@ -325,13 +323,8 @@ fn matches_forms_are_unambiguous() {
 
 #[test]
 fn ppar_forms_are_unambiguous() {
-    // ★ `PPar` is the interesting case for ambiguity: unlike `implies`/`matches`
-    // it is a LEADING LITERAL, so it does enter the decision trie. It cannot fork
-    // against the lowercase call-forms (`int(…)`, `bool(…)`, a method call)
-    // because Rholang runs `options { reserved_keywords: auto }`, which reserves
-    // every identifier-shaped literal terminal — so `PPar` is a keyword and can
-    // no longer co-accept as an `Ident`. These goldens are the executable check on
-    // that reasoning.
+    // The contextual keyword retains its identifier reading.
+    // Each complete spatial-predicate context still has one reading.
     for source in [
         "PPar(true, true)",
         "t matches PPar(true, true)",
@@ -345,10 +338,7 @@ fn ppar_forms_are_unambiguous() {
 }
 
 #[test]
-fn the_pre_existing_call_forms_keep_their_parse_counts_after_ppar_is_reserved() {
-    // The control arm for the reservation. `PPar` joining the keyword set must not
-    // perturb the parenthesized call-forms it sits next to in the trie, nor the
-    // ordinary identifier and method surfaces.
+fn the_pre_existing_call_forms_and_contextual_ppar_keep_their_readings() {
     for source in [
         "int(3, 8)",
         "uint(3, 8)",
@@ -359,25 +349,10 @@ fn the_pre_existing_call_forms_keep_their_parse_counts_after_ppar_is_reserved() 
         "PParX",
         "xPPar",
     ] {
-        // `PPar` alone is now a bare keyword in operand position and no longer
-        // parses as a variable; the two neighbouring identifiers still do. Both
-        // outcomes are pinned by the parse-count contract below rather than
-        // asserted informally.
-        match mettail_runtime::clear_var_cache() {
-            () => {},
-        }
-        let parsed = Proc::parse_via_wpda_all(source);
-        match source {
-            "PPar" => assert!(
-                parsed.is_err() || parsed.as_ref().map(Vec::len).unwrap_or(0) == 0,
-                "the reserved keyword `PPar` must not parse as a bare variable, got {parsed:?}"
-            ),
-            _ => {
-                let alternatives = parsed
-                    .unwrap_or_else(|err| panic!("{source:?} must still parse: {err:?}"))
-                    .len();
-                assert_eq!(alternatives, 1, "parse-forest size for {source:?} changed");
-            },
+        let elected = assert_parse_count(source, 1);
+        if matches!(source, "PPar" | "PParX" | "xPPar") {
+            assert!(matches!(elected, Proc::PVar(..)), "{source:?}: {elected:?}");
+            assert_eq!(elected.to_string(), source);
         }
     }
 }

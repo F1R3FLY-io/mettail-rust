@@ -442,17 +442,17 @@ pub(crate) fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) ->
         let _is_known = language.types.iter().any(|t| t.name == field.category);
         match field.coll_type {
             Some(mettail_ast::types::CollectionType::Vec) => Some(format!("vec![]")),
-            Some(mettail_ast::types::CollectionType::HashBag) => {
+            Some(mettail_ast::types::CollectionType::HashBag)
+            | Some(mettail_ast::types::CollectionType::PathMap) => {
                 Some(format!("mettail_runtime::HashBag::new()"))
             },
             // Phase 4 #5b (2026-05-12): HashMap binder field — use
             // HashMapLit::default() for empty construction.
-            Some(mettail_ast::types::CollectionType::HashMap)
-            | Some(mettail_ast::types::CollectionType::PathMap) => {
+            Some(mettail_ast::types::CollectionType::HashMap) => {
                 Some(format!("mettail_runtime::HashMapLit::default()"))
             },
             Some(mettail_ast::types::CollectionType::HashSet) => {
-                Some(format!("mettail_runtime::HashSet::new()"))
+                Some(format!("mettail_runtime::HashSetLit::new()"))
             },
             None => Some(format!("vec![]")),
         }
@@ -489,13 +489,10 @@ fn construct_leaf_for_category(cat: &str, language: &LanguageDef) -> Option<Stri
     // Check for nullary constructors
     for rule in &language.terms {
         if rule.category.to_string() == cat {
-            if rule.items.is_empty()
-                || (rule.term_context.is_some()
-                    && rule
-                        .term_context
-                        .as_ref()
-                        .map_or(false, |ctx| ctx.is_empty()))
-            {
+            if matches!(
+                crate::gen::term_ops::subst::rule_to_variant_kind(rule, language),
+                VariantKind::Nullary { .. }
+            ) {
                 return Some(format!("{}::{}", cat, rule.label));
             }
         }
@@ -523,6 +520,82 @@ fn construct_leaf_for_category(cat: &str, language: &LanguageDef) -> Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn leaf_language(shapes: &[(u8, bool)]) -> LanguageDef {
+        let mut rules = String::new();
+        for (index, (shape, requested_category)) in shapes.iter().enumerate() {
+            let category = if *requested_category { "Proc" } else { "Other" };
+            let body = match shape {
+                0 => format!(r#"|- "zero{index}""#),
+                1 => format!(r#"|- "capture{index}" value@Ident"#),
+                2 => format!(r#"value:Proc |- "node{index}" value"#),
+                _ => format!(r#"values:Vec(Proc) |- "list{index}" "[" values.*sep(",") "]""#),
+            };
+            rules.push_str(&format!("R{index} . {body} : {category};\n"));
+        }
+        syn::parse_str(&format!(
+            "name: LeafFixture, types {{ data Proc data Other }}, terms {{ {rules} }}, equations {{}}, rewrites {{}},"
+        ))
+        .expect("leaf classifier fixture")
+    }
+
+    #[test]
+    fn captured_token_is_not_a_nullary_leaf() {
+        let mut language = leaf_language(&[(1, true), (0, true)]);
+        for context in [None, Some(Vec::new())] {
+            language.terms[0].term_context = context;
+            assert!(matches!(
+                crate::gen::term_ops::subst::rule_to_variant_kind(&language.terms[0], &language),
+                VariantKind::Regular { .. }
+            ));
+            assert_eq!(construct_leaf_for_category("Proc", &language), Some("Proc::R1".into()));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn first_nullary_leaf_matches_model(
+            shapes in prop::collection::vec((0u8..4, any::<bool>()), 0..24)
+        ) {
+            let language = leaf_language(&shapes);
+            let expected = shapes.iter().position(|(shape, category)| *shape == 0 && *category)
+                .map(|index| format!("Proc::R{index}"));
+            let observed = construct_leaf_for_category("Proc", &language);
+            prop_assert_eq!(observed, expected);
+            for (rule, (shape, _)) in language.terms.iter().zip(&shapes) {
+                prop_assert_eq!(
+                    matches!(crate::gen::term_ops::subst::rule_to_variant_kind(rule, &language), VariantKind::Nullary { .. }),
+                    *shape == 0
+                );
+            }
+        }
+
+        #[test]
+        fn empty_carrier_matches_model(index in 0usize..5, optional in any::<bool>()) {
+            use mettail_ast::types::CollectionType;
+            let (carrier, expression) = [
+                (CollectionType::Vec, "vec![]"),
+                (CollectionType::HashBag, "mettail_runtime::HashBag::new()"),
+                (CollectionType::HashSet, "mettail_runtime::HashSetLit::new()"),
+                (CollectionType::PathMap, "mettail_runtime::HashBag::new()"),
+                (CollectionType::HashMap, "mettail_runtime::HashMapLit::default()"),
+            ][index].clone();
+            let field = FieldInfo {
+                category: quote::format_ident!("Proc"),
+                is_collection: true,
+                coll_type: Some(carrier),
+                is_predicate: false,
+                is_optional: optional,
+                opaque_leaf: None,
+            };
+            let expected = if optional { "None" } else { expression };
+            prop_assert_eq!(
+                construct_leaf_value(&field, &crate::gen::empty_language_for_tests()),
+                Some(expected.to_string())
+            );
+        }
+    }
 
     fn pred_field(optional: bool) -> FieldInfo {
         FieldInfo {

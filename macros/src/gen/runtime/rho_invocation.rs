@@ -813,7 +813,7 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
             // co-installed `ac_sigma_receiver_par` over the SPREAD of this collection) picks k-of-n +
             // binds `rest` ON the interpreter: a genuine in-Rho replacement, not a σ-replay duplicate.
             // A `HashBag` rides the process-soup carrier; a `HashSet` the native `ESet` carrier (its
-            // field is `std::collections::HashSet<E>`, iterated by `.iter()`). A `HashMap` has no
+            // field is `mettail_runtime::HashSetLit<E>`, iterated by `.iter()`). A `HashMap` has no
             // element_cat-shaped image here (its entries are `key => value` pairs — its reflection is
             // reached through the runtime-value path, not this constructor arm) and fails CLOSED,
             // routing that firing to the σ-replay driver.
@@ -4034,11 +4034,9 @@ mod tests {
         // Stage 4 S-AC (AC4): a `HashSet` collection FIELD reflects to a
         // `GroundTerm::collection(HashSet, …)` via the `VariantKind::Collection` `HashSet` arm — the
         // subject side of the native `ESet` carrier. The reflect fn iterates the set by `.iter()`
-        // (the `HashSetLit`/`std::collections::HashSet` API, no multiplicity), so the reflected
-        // collection is tagged `HashSet` and rides `reflect_ac_set_par`. (The generated-language
-        // HashSet FIELD does not yet compile end-to-end — the base collection-field codegen is
-        // HashBag-shaped, a separate GROUP-B item — but the reflection codegen branch itself is
-        // exercised here at the token level.)
+        // (`HashSetLit` has no multiplicity), so the reflected collection is tagged `HashSet`
+        // and uses `reflect_ac_set_par`. The collection_fold_carriers integration suite also
+        // compiles and executes the generated HashSet field operations.
         let language = parse(
             r##"
                 name: SetNetGen,

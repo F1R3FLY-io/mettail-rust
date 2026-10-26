@@ -129,6 +129,7 @@ fn lang_type(name: &str, native: Option<&str>) -> LangType {
     LangType {
         name: id(name),
         role: Default::default(),
+        admits_variables: true,
         native_type: native.map(|t| syn::parse_str::<syn::Type>(t).expect("native type parses")),
         collection_kind: None,
     }

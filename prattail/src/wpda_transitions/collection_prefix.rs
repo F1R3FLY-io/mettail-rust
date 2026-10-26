@@ -84,3 +84,29 @@ pub fn collision<W: SemiringRef>(
         consume_trigger: false,
     }
 }
+
+pub fn lexical<W: SemiringRef>(
+    result_src_idx: u16,
+    rule_idx: u16,
+    element_src_idx: u16,
+    outer_bp: u8,
+    has_synth_paren: bool,
+    next_pos: usize,
+    weight: W,
+) -> ForkBranch<W> {
+    ForkBranch {
+        symbol: StackSymbolV2::collection_marker(result_src_idx, rule_idx, 0, outer_bp),
+        weight,
+        new_state: if has_synth_paren {
+            WpdaState::CollectionOpenParen {
+                result_src_idx,
+                rule_idx,
+                element_src_idx,
+                outer_bp,
+            }
+        } else {
+            WpdaState::PrefixDispatch { pos: next_pos, cur_bp: 0 }
+        },
+        action_kind: crate::wpda_walker::ForkActionKind::ConsumeAtAndPush { next_pos },
+    }
+}

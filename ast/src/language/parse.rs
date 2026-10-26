@@ -520,6 +520,21 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
     let mut types = Vec::new();
     let mut refinement_types = Vec::new();
     while !content.is_empty() {
+        // `noadmit` is contextual: `types { noadmit }` remains a category
+        // named `noadmit`, while `noadmit Name` and `noadmit ![T] as Name`
+        // disable only the implicit variable constructor of an object sort.
+        let noadmit = if content.peek(Ident) {
+            let fork = content.fork();
+            let first = fork.parse::<Ident>()?;
+            if first == "noadmit" && (fork.peek(Ident) || fork.peek(Token![!])) {
+                let _ = content.parse::<Ident>()?;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         // Closed parser-data categories are structural metasyntax, not object-
         // language sorts. The modifiers are contextual inside `types {}` only.
         let role = if content.peek(Ident) {
@@ -546,6 +561,13 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
         } else {
             CategoryRole::Object
         };
+        if noadmit && role.is_data() {
+            return Err(syn::Error::new(
+                content.span(),
+                "`noadmit` applies to object categories; `data` is already closed",
+            ));
+        }
+        let admits_variables = !role.is_data() && !noadmit;
 
         // Check for native type syntax: ![Type] as Name
         if content.peek(Token![!]) {
@@ -648,6 +670,7 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
             types.push(LangType {
                 name,
                 role,
+                admits_variables,
                 native_type: Some(native_type),
                 collection_kind,
             });
@@ -667,6 +690,7 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
                 types.push(LangType {
                     name,
                     role,
+                    admits_variables,
                     native_type: None,
                     collection_kind: None,
                 });
@@ -685,6 +709,7 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
                 types.push(LangType {
                     name,
                     role,
+                    admits_variables,
                     native_type: None,
                     collection_kind,
                 });
@@ -3718,7 +3743,7 @@ fn parse_behavioral_predicate_tokens(tokens: TokenStream) -> SynResult<Behaviora
 fn parse_typed_param(input: ParseStream) -> SynResult<TypedParam> {
     let name = input.parse::<Ident>()?;
     let _ = input.parse::<Token![:]>()?;
-    let ty = input.parse::<crate::types::TypeExpr>()?;
+    let ty = input.parse::<RuleContextType>()?;
     Ok(TypedParam { name, ty })
 }
 

@@ -2141,17 +2141,21 @@ fn generate_collection_rebuild(
         CollectionType::HashSet => {
             let value = take(quote! { #start + index });
             match surface {
-                CollectionSurface::Direct => quote! {{
-                    let mut output = std::collections::HashSet::with_capacity_and_hasher(
-                        #source.capacity(),
-                        #source.hasher().clone(),
-                    );
-                    for index in 0..#source.len() {
-                        output.insert(#value);
-                    }
-                    output
-                }},
-                CollectionSurface::Literal => quote! {{
+                // Changed for sole-collection lane (carrier): a declared `HashSet(T)` field is
+                // `mettail_runtime::HashSetLit<T>` in the AST (`gen/types/enums.rs`), which
+                // has no `capacity()` or `hasher()`, so the direct surface rebuilds it the way
+                // the literal surface does. The code was:
+                // CollectionSurface::Direct => quote! {{
+                //     let mut output = std::collections::HashSet::with_capacity_and_hasher(
+                //         #source.capacity(),
+                //         #source.hasher().clone(),
+                //     );
+                //     for index in 0..#source.len() {
+                //         output.insert(#value);
+                //     }
+                //     output
+                // }},
+                CollectionSurface::Direct | CollectionSurface::Literal => quote! {{
                     let mut output = mettail_runtime::HashSetLit::new();
                     for index in 0..#source.len() {
                         output.insert(#value);

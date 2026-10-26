@@ -79,6 +79,11 @@ pub trait FirstSetContext<'source, R: BinderRuleReader<'source>> {
     fn rule_at(&self, index: usize) -> R::Rule;
     fn find_category(&mut self, name: &str) -> Option<Self::Category>;
     fn is_data(&self, category: Self::Category) -> bool;
+    /// Whether this category admits an implicit object-language variable.
+    /// Existing role-only sources retain their historical behavior.
+    fn admits_variables(&self, category: Self::Category) -> bool {
+        !self.is_data(category)
+    }
     fn collection_open(&self, category: Self::Category) -> Option<&'source str>;
     fn legacy_first(
         &self,

@@ -59,9 +59,10 @@ use std::sync::Arc;
 
 use mettail_prattail::algebra_tower::Sat3;
 use mettail_prattail::guard_formula::{
+    CONSENSUS_SUBSTRATE_CONFIG, CmpOp, GuardAssignment, GuardAtom, GuardAtomKind, GuardFormula,
+    GuardSiteKind, GuardValue, GuardVarMap, LinearForm, ScalarOperand, StaticVerdict,
     ground_verdict_with, linear_atom, prop_var, static_verdict as substrate_static_verdict,
-    str_equals, CmpOp, GuardAssignment, GuardAtom, GuardAtomKind, GuardFormula, GuardSiteKind,
-    GuardValue, GuardVarMap, LinearForm, ScalarOperand, StaticVerdict, CONSENSUS_SUBSTRATE_CONFIG,
+    str_equals,
 };
 use mettail_prattail::guard_refusal::{
     GuardRefusal, GuardRefusalCause, GuardRefusalClass, RefusalProvenance,
@@ -934,7 +935,11 @@ pub fn surface_guard_disposition(written: &Proc, substituted: &Proc) -> SurfaceG
     match encoding.vars.is_empty() {
         true => {},
         false => {
-            return SurfaceGuardDisposition::Undecided(refusal_for(&encoding, written, substituted))
+            return SurfaceGuardDisposition::Undecided(refusal_for(
+                &encoding,
+                written,
+                substituted,
+            ));
         },
     }
 
@@ -1185,7 +1190,7 @@ mod recursive_oracle;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_prattail::guard_formula::{ground_verdict, UndecidedCause};
+    use mettail_prattail::guard_formula::{UndecidedCause, ground_verdict};
     use mettail_runtime::get_or_create_var;
 
     fn int(n: i64) -> Proc {

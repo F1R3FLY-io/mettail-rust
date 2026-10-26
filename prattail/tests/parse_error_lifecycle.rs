@@ -74,7 +74,7 @@ fn parse_error_formatting_preserves_compact_contracts() {
 #[test]
 fn realization_failure_remains_distinct_from_invalid_syntax() {
     let error = ParseError::RealizationFailed {
-        error: mettail_semantic_key::ContentKeyCacheError::ResourceExhausted {
+        error: mettail_semantic_key::ContentKeyCacheError::KeyBytesExhausted {
             limit: 8,
             requested: 9,
         }
@@ -85,13 +85,13 @@ fn realization_failure_remains_distinct_from_invalid_syntax() {
     assert_eq!(error.range(), range());
     assert_eq!(
         error.to_string(),
-        "1:1: parser realization failed: semantic-key cache entry limit 8 exceeded (requested 9)"
+        "1:1: parser realization failed: semantic-key logical byte limit 8 exceeded (requested 9)"
     );
     assert!(matches!(
         error.clone(),
         ParseError::RealizationFailed {
             error: mettail_prattail::wpda_runtime::RealizationError::SemanticKey(
-                mettail_semantic_key::ContentKeyCacheError::ResourceExhausted {
+                mettail_semantic_key::ContentKeyCacheError::KeyBytesExhausted {
                     limit: 8,
                     requested: 9,
                 }

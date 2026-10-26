@@ -223,22 +223,22 @@ required-features = ["strategies"]
 [[bin]]
 name = "simulate_calculator"
 path = "src/bin/simulate_calculator.rs"
-required-features = ["strategies"]
+required-features = ["strategies", "calculator"]
 
 [[bin]]
 name = "simulate_lambda"
 path = "src/bin/simulate_lambda.rs"
-required-features = ["strategies"]
+required-features = ["strategies", "lambda"]
 
 [[bin]]
 name = "simulate_rholang"
 path = "src/bin/simulate_rholang.rs"
-required-features = ["strategies"]
+required-features = ["strategies", "rholang"]
 
 [[bin]]
 name = "simulate_ambient"
 path = "src/bin/simulate_ambient.rs"
-required-features = ["strategies"]
+required-features = ["strategies", "ambient"]
 
 [[bin]]
 name = "simulate_ledtest"
@@ -248,22 +248,22 @@ required-features = ["strategies"]
 [[bin]]
 name = "simulate_basemath"
 path = "src/bin/simulate_basemath.rs"
-required-features = ["strategies"]
+required-features = ["strategies", "composition"]
 
 [[bin]]
 name = "simulate_extmath"
 path = "src/bin/simulate_extmath.rs"
-required-features = ["strategies"]
+required-features = ["strategies", "composition"]
 
 [[bin]]
 name = "simulate_mixedmath"
 path = "src/bin/simulate_mixedmath.rs"
-required-features = ["strategies"]
+required-features = ["strategies", "composition"]
 
 [[bin]]
 name = "simulate_importedmath"
 path = "src/bin/simulate_importedmath.rs"
-required-features = ["strategies"]
+required-features = ["strategies", "composition"]
 
 [[bin]]
 name = "simulate_refinementsmoke"

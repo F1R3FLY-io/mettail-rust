@@ -375,6 +375,13 @@ impl PreparationBudget {
     ) -> Result<(), RuntimeError> {
         self.descriptors(&descriptors.synthesis)
     }
+
+    /// Each owned prefix-index map, fixed-token key and route reference is
+    /// charged before it is allocated. The keys borrow descriptor spellings,
+    /// so no source-string payload is copied by this index.
+    pub(super) fn prefix_route_slots(&mut self, count: usize) -> Result<(), RuntimeError> {
+        self.slots(count)
+    }
 }
 
 /// Count actual shallow vector entries and immediate arena references. A Rule

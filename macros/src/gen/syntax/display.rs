@@ -331,6 +331,24 @@ pub(crate) fn build_bp_lookup(language: &LanguageDef) -> Result<BpLookup, String
         }
     }
 
+    for rule in &language.terms {
+        if let crate::gen::runtime::wpda_codegen::prefix::AtomicShape::CrossCatPrefixUnary {
+            source_cat_name,
+            ..
+        } = crate::gen::runtime::wpda_codegen::prefix::classify_atomic(rule, language)
+        {
+            let prefix_bp = compute_prefix_bp(&source_cat_name, rule.prefix_bp, &bp_table);
+            lookup
+                .prefix
+                .insert(rule.label.to_string(), DisplayPrefixBpInfo { prefix_bp });
+            lookup
+                .max_bp_by_category
+                .entry(rule.category.to_string())
+                .and_modify(|max_bp| *max_bp = (*max_bp).max(prefix_bp))
+                .or_insert(prefix_bp);
+        }
+    }
+
     Ok(lookup)
 }
 
@@ -1140,7 +1158,7 @@ fn simple_projection_shape_for_display(rule: &GrammarRule) -> Option<(String, St
 // pure, inert grouping form, which carries no rule of its own and therefore denotes
 // nothing (`languages/tests/calculator_grouping_is_inert.rs` pins
 // `C::parse(E).is_ok() ⟺ C::parse("(" ++ E ++ ")").is_ok()` for every category, and
-// `emit_paren_dispatch_arms` in `macros/src/gen/runtime/wpda_codegen/prefix.rs` emits
+// `emit_special_opener_dispatch_arms` in `macros/src/gen/runtime/wpda_codegen/prefix.rs` emits
 // the `(`-grouping dispatch for every category, so no category lacks the form).
 //
 // Because the threshold is consulted per-term rather than applied blanketly, a
@@ -1351,6 +1369,52 @@ fn is_direct_surface_capture(expr: Option<&SyntaxExpr>) -> bool {
     )
 }
 
+/// Whether a literal is identifier-shaped. This is the `WordLiteral` surface kind of
+/// WpdaDispatchPartition.v, Section DisplayLexicalBoundaries: it may end and may begin an
+/// identifier. Every other literal is a `DelimitedLiteral`.
+fn is_word_literal(literal: &str) -> bool {
+    !literal.is_empty()
+        && literal.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !literal.chars().next().is_some_and(char::is_numeric)
+}
+
+fn is_raw_pattern_region(
+    previous: Option<&SyntaxExpr>,
+    next: Option<&SyntaxExpr>,
+    language: &LanguageDef,
+) -> bool {
+    let (
+        Some(SyntaxExpr::TokenKind { name: before, .. }),
+        Some(SyntaxExpr::TokenKind { name: after, .. }),
+    ) = (previous, next)
+    else {
+        return false;
+    };
+    let previous_token = language
+        .token_defs
+        .iter()
+        .map(|token| (None, token))
+        .chain(language.mode_defs.iter().flat_map(|mode| {
+            mode.token_defs
+                .iter()
+                .map(move |token| (Some(&mode.name), token))
+        }))
+        .find(|(_, token)| token.name == *before);
+    let Some((owner, token)) = previous_token else {
+        return false;
+    };
+    let active = token
+        .push_mode
+        .as_ref()
+        .or_else(|| if token.is_pop { None } else { owner });
+    let Some(active) = active else {
+        return false;
+    };
+    language.mode_defs.iter().any(|mode| {
+        mode.name == *active && mode.raw && mode.token_defs.iter().any(|token| token.name == *after)
+    })
+}
+
 /// Compute the minimum spaces needed around one literal to preserve lexer token
 /// boundaries. Identifier-shaped literals must be separated from captured values and
 /// collection operations on either side; punctuation retains the historical canonical
@@ -1369,9 +1433,12 @@ fn literal_surface_spacing(
     let next_capture = is_direct_surface_capture(next);
     let previous_op = matches!(previous, Some(SyntaxExpr::Op(_)));
     let next_op = matches!(next, Some(SyntaxExpr::Op(_)));
-    let is_word = !literal.is_empty()
-        && literal.chars().all(|c| c.is_alphanumeric() || c == '_')
-        && !literal.chars().next().is_some_and(char::is_numeric);
+    // Moved into `is_word_literal` (2026-10-21), so that the delimited-collection arm of
+    // `generate_engine_regular_arm` classifies its delimiters with the same rule.
+    // let is_word = !literal.is_empty()
+    //     && literal.chars().all(|c| c.is_alphanumeric() || c == '_')
+    //     && !literal.chars().next().is_some_and(char::is_numeric);
+    let is_word = is_word_literal(literal);
 
     if is_word {
         (
@@ -1545,7 +1612,12 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
                         rule.syntax_pattern.as_ref().and_then(|sp| sp.last()),
                         Some(SyntaxExpr::Literal(_))
                     );
-                    match leading_operand_field_index(rule).filter(|_| bracket_closed) {
+                    let precedence_governed =
+                        crate::gen::runtime::wpda_codegen::infix::classify_rule_public(rule)
+                            .is_some_and(|operator| operator.category == operator.result_category);
+                    match leading_operand_field_index(rule)
+                        .filter(|_| bracket_closed && !precedence_governed)
+                    {
                         Some(idx) => {
                             let binds: Vec<TokenStream> = (0..constructor_field_count(rule))
                                 .map(|i| {
@@ -2844,13 +2916,47 @@ fn generate_engine_regular_arm(
                         },
                     };
                     if let Some((open, close)) = delimiters {
+                        // Changed for word-shaped collection delimiters (2026-10-21). The arm
+                        // wrote the opener, the items and the closer with no space between
+                        // them, so a word delimiter glommed onto its neighbor: `bnames n , n
+                        // end` printed as `bnamesn , nend`, and the empty bag printed as the
+                        // identifier `bnamesend` (WpdaDispatchPartition.v,
+                        // `word_delimited_collection_before_fix_is_not_glom_safe`). Each space
+                        // is now `collection_policy` at one boundary of `collection_boundaries`,
+                        // read from one delimiter end
+                        // (`collection_spaces_follow_the_delimiter_ends`): after the opener and
+                        // before the closer when there are items, and between them when the
+                        // collection is empty. Bracket delimiters write no new space, so their
+                        // generated arm is unchanged (`bracket_delimited_collection_is_unchanged`).
+                        // forward_ops.push(quote! {
+                        //     {
+                        //         let mut s = String::from(#open);
+                        //         #items_expr
+                        //         if !items.is_empty() {
+                        //             s.push_str(&items.join(&format!(" {} ", #sep)));
+                        //         }
+                        //         s.push_str(#close);
+                        //         stack.push(DisplayTask::WriteString(s));
+                        //     }
+                        // });
+                        let opener_is_word = is_word_literal(open);
+                        let closer_is_word = is_word_literal(close);
+                        let space_after_opener =
+                            opener_is_word.then(|| quote! { s.push_str(" "); });
+                        let space_before_closer =
+                            closer_is_word.then(|| quote! { s.push_str(" "); });
+                        let space_when_empty = (opener_is_word && closer_is_word)
+                            .then(|| quote! { else { s.push_str(" "); } });
                         forward_ops.push(quote! {
                             {
                                 let mut s = String::from(#open);
                                 #items_expr
                                 if !items.is_empty() {
+                                    #space_after_opener
                                     s.push_str(&items.join(&format!(" {} ", #sep)));
+                                    #space_before_closer
                                 }
+                                #space_when_empty
                                 s.push_str(#close);
                                 stack.push(DisplayTask::WriteString(s));
                             }
@@ -3774,6 +3880,11 @@ fn generate_engine_syntax_pattern_arm_inner(
                     next_outer_emits_value,
                     outer_fence.as_deref(),
                     is_member_call_pattern,
+                    is_raw_pattern_region(
+                        i.checked_sub(1).and_then(|index| syntax_pattern.get(index)),
+                        syntax_pattern.get(i + 1),
+                        _language,
+                    ),
                 );
                 forward_ops.push(op_code);
             },
@@ -3922,6 +4033,7 @@ fn generate_engine_pattern_op(
     next_outer_emits_value: bool,
     outer_fence: Option<&str>,
     compact_member_arguments: bool,
+    raw_region: bool,
 ) -> TokenStream {
     // Sep / Var ignore the outer flags; their emission already produces
     // self-contained spacing or atomic ident formatting.
@@ -3929,7 +4041,7 @@ fn generate_engine_pattern_op(
     match op {
         PatternOp::Sep { collection, separator, source } => {
             if let Some(chain_source) = source {
-                return generate_engine_chained_sep(chain_source, separator);
+                return generate_engine_chained_sep(chain_source, separator, raw_region);
             }
             let coll_name = collection.to_string();
             // A repetition owns the separators BETWEEN its elements, but its
@@ -3937,6 +4049,8 @@ fn generate_engine_pattern_op(
             // Add those lexical boundaries only when the collection is
             // nonempty; otherwise an optional empty repetition must remain
             // observationally absent (no leading or trailing whitespace).
+            let prev_outer_emits_value = prev_outer_emits_value && !raw_region;
+            let next_outer_emits_value = next_outer_emits_value && !raw_region;
             let outer_spacing = quote! {
                 if !parts.is_empty() {
                     if #prev_outer_emits_value {
@@ -3947,7 +4061,9 @@ fn generate_engine_pattern_op(
                     }
                 }
             };
-            let sep_with_spaces = if compact_member_arguments && separator == "," {
+            let sep_with_spaces = if raw_region {
+                separator.to_string()
+            } else if compact_member_arguments && separator == "," {
                 ", ".to_string()
             } else {
                 format!(" {} ", separator)
@@ -4003,8 +4119,12 @@ fn generate_engine_pattern_op(
                 // fence — i.e. for every pre-2026-07-24 display — so it can
                 // only repair a broken roundtrip, never break a working one.
                 // See `runtime/src/display_grouping.rs`.
-                let elem_delims = fence_slice_expr(Some(separator), outer_fence)
-                    .unwrap_or_else(|| quote! { &[] });
+                let elem_delims = if raw_region {
+                    quote! { &[] }
+                } else {
+                    fence_slice_expr(Some(separator), outer_fence).unwrap_or_else(|| quote! { &[] })
+                };
+                let map_separator = if raw_region { ":" } else { " : " };
                 let iter_body = match coll_kind {
                     Some(mettail_ast::types::CollectionType::Vec) => quote! {
                         for item in #coll_ident.iter() {
@@ -4024,8 +4144,9 @@ fn generate_engine_pattern_op(
                         // in walker phase 1 (`emit_collection_loop_arm`).
                         for (k, v) in #coll_ident.iter() {
                             parts.push(format!(
-                                "{} : {}",
+                                "{}{}{}",
                                 mettail_runtime::group_if_bare_delims(&k.to_string(), #elem_delims),
+                                #map_separator,
                                 mettail_runtime::group_if_bare_delims(&v.to_string(), #elem_delims),
                             ));
                         }
@@ -4043,8 +4164,9 @@ fn generate_engine_pattern_op(
                             parts.push(match entry.value() {
                                 None => k_s,
                                 Some(inner) => format!(
-                                    "{} : {}",
+                                    "{}{}{}",
                                     k_s,
+                                    #map_separator,
                                     mettail_runtime::group_if_bare_delims(
                                         &inner.to_string(), #elem_delims,
                                     ),
@@ -4404,14 +4526,22 @@ fn generate_engine_pattern_op(
 }
 
 /// Generate engine code for chained #zip().#map().#sep() pattern
-fn generate_engine_chained_sep(source: &PatternOp, separator: &str) -> TokenStream {
+fn generate_engine_chained_sep(
+    source: &PatternOp,
+    separator: &str,
+    raw_region: bool,
+) -> TokenStream {
     if let PatternOp::Map { source: map_source, params, body } = source {
         if let PatternOp::Zip { left, .. } = map_source.as_ref() {
             let left_name = left.to_string();
             let left_ident = syn::Ident::new(&left_name, proc_macro2::Span::call_site());
 
             let format_code = generate_engine_map_body_format(params, body);
-            let sep_str = format!("{} ", separator);
+            let sep_str = if raw_region {
+                separator.to_string()
+            } else {
+                format!("{} ", separator)
+            };
 
             return quote! {
                 {
@@ -5558,6 +5688,70 @@ mod tests {
         );
     }
 
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+
+        #[test]
+        fn sigil_wrap_preserves_parser_operator_boundaries(
+            suffix in "[a-z]{1,8}", closed in proptest::prelude::any::<bool>(),
+        ) {
+            let source = format!("Source{suffix}");
+            let other = format!("Other{suffix}");
+            let closing = if closed { "\"end\"" } else { "" };
+            let language: LanguageDef = syn::parse_str(&format!(
+                "name: TailClassification, types {{ noadmit {source} noadmit {other} noadmit Quoted }}, terms {{ \
+                 Atom . |- \"atom\" : {source}; OtherAtom . |- \"other\" : {other}; \
+                 Local . left:{source}, right:{source} |- left \"local\" right {closing} : {source}; \
+                 Foreign . left:{other}, right:{source} |- left \"foreign\" right {closing} : {source}; \
+                 Complex . left:{source}, args:Vec({source}) |- left \".\" name@Ident \"(\" args.*sep(\",\") \")\" : {source}; \
+                 Quote . value:{source} |- \"@\" value : Quoted prefix(220); \
+                 }}, equations {{}}, rewrites {{}},",
+            )).expect("tail classification fixture must parse");
+            let emitted: String = generate_at_sigil_wrap_predicate(&language)
+                .to_string().split_whitespace().collect();
+            proptest::prop_assert!(emitted.contains(&format!("{source}::Local(..)=>true")), "local operator must group its tail");
+            let foreign = if closed {
+                format!("{source}::Foreign(__lead,_)=>{{!__lead.__renders_sigil_led_primary()}}")
+            } else {
+                format!("{source}::Foreign(..)=>true")
+            };
+            proptest::prop_assert!(emitted.contains(&foreign), "foreign frame policy: {emitted}");
+            proptest::prop_assert!(emitted.contains(&format!(
+                "{source}::Complex(__lead,_,_)=>{{!__lead.__renders_sigil_led_primary()}}",
+            )), "unclassified frame must retain its existing policy");
+        }
+
+        #[test]
+        fn cross_category_prefix_uses_source_binding_power(
+            source_levels in 0usize..8,
+            target_levels in 0usize..8,
+            explicit in proptest::option::of(proptest::prelude::any::<u8>()),
+        ) {
+            let mut rules = String::from(
+                "SourceZero . |- \"z\" : Source; TargetZero . |- \"w\" : Target;",
+            );
+            for (category, levels) in [("Source", source_levels), ("Target", target_levels)] {
+                for index in 0..levels {
+                    rules.push_str(&format!(
+                        "{category}Op{index} . left:{category}, right:{category} |- left \"op{category}{index}\" right : {category};",
+                    ));
+                }
+            }
+            let annotation = explicit.map(|value| format!(" prefix({value})")).unwrap_or_default();
+            rules.push_str(&format!(
+                "Foreign . body:Source |- \"#\" body : Target{annotation}; Local . body:Source |- \"~\" body : Source{annotation};",
+            ));
+            let language: LanguageDef = syn::parse_str(&format!(
+                "name: PrefixThresholdFixture, types {{ noadmit Source noadmit Target }}, terms {{ {rules} }}, equations {{}}, rewrites {{}},",
+            )).expect("prefix threshold fixture must parse");
+            let lookup = build_bp_lookup(&language).expect("prefix threshold fixture must classify");
+            let source_max = if source_levels == 0 { 0 } else { 2 * source_levels + 1 };
+            let expected = explicit.unwrap_or((source_max + 2) as u8);
+            proptest::prop_assert_eq!(lookup.prefix.get("Foreign").map(|info| info.prefix_bp), Some(expected));
+            proptest::prop_assert_eq!(lookup.prefix.get("Local").map(|info| info.prefix_bp), Some(expected));
+        }
+    }
+
     #[test]
     fn explicit_grouping_frame_is_not_a_sigil_prefix() {
         let grouping = rule(
@@ -5609,5 +5803,107 @@ mod tests {
         assert_eq!(literal_surface_spacing(".", Some(&left), Some(&right), true), ("", ""));
         assert!(is_direct_surface_capture(Some(&left)));
         assert!(is_direct_surface_capture(Some(&right)));
+    }
+
+    /// The text of one generated delimited-collection arm, from its opener to the push of the
+    /// finished string. Each `" "` literal is kept as `SPACE`, because the comparison drops
+    /// whitespace.
+    fn delimited_collection_arm(display: &str, opener: &str) -> String {
+        let text: String = display
+            .replace("\" \"", "SPACE")
+            .split_whitespace()
+            .collect();
+        let open = format!("String::from(\"{opener}\")");
+        assert_eq!(text.matches(&open).count(), 1, "exactly one arm opens with `{opener}`");
+        let start = text.find(&open).expect("the opener arm is generated");
+        let arm = &text[start..];
+        let end = arm
+            .find("stack.push(DisplayTask::WriteString(s))")
+            .expect("the arm pushes its string");
+        arm[..end].to_string()
+    }
+
+    /// WpdaDispatchPartition.v, Section DisplayLexicalBoundaries: a delimited collection writes
+    /// a space at each boundary where `collection_policy` needs one
+    /// (`collection_spaces_follow_the_delimiter_ends`). Word delimiters get a space after the
+    /// opener, before the closer, and between them when the collection is empty
+    /// (`word_delimited_collection_separates_every_boundary`). Bracket delimiters keep the old
+    /// text (`bracket_delimited_collection_is_unchanged`).
+    #[test]
+    fn delimited_collections_space_word_delimiters_from_their_items() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: DelimitedCollectionDisplay,
+                types { Proc Name },
+                terms {
+                    PZero . |- "0" : Proc;
+                    NLit . |- "n" : Name;
+                    PWordBag . Proc ::= HashBag(Name) sep "," delim "bnames" "end" ;
+                    PBracketBag . Proc ::= HashBag(Name) sep "," delim "[" "]" ;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("delimited collection fixture must parse");
+        let display = generate_display(&language)
+            .expect("display generates")
+            .to_string();
+        let word = delimited_collection_arm(&display, "bnames");
+        let bracket = delimited_collection_arm(&display, "[");
+        let mut failed = Vec::with_capacity(5);
+        for (arm, needle, wanted) in [
+            (&word, "if!items.is_empty(){s.push_str(SPACE);s.push_str(&items.join(", true),
+            (
+                &word,
+                "));s.push_str(SPACE);}else{s.push_str(SPACE);}s.push_str(\"end\");",
+                true,
+            ),
+            (&bracket, "if!items.is_empty(){s.push_str(&items.join(", true),
+            (&bracket, "));}s.push_str(\"]\");", true),
+            (&bracket, "SPACE", false),
+        ] {
+            if arm.contains(needle) != wanted {
+                failed
+                    .push(format!("{} `{needle}`", if wanted { "missing" } else { "unexpected" }));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:#?}\nword arm: {word}\nbracket arm: {bracket}");
+    }
+}
+
+#[cfg(test)]
+mod raw_mode_boundary_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn raw_region_spacing_follows_declared_mode_ownership(
+            suffix in "[a-z]{1,8}", raw in any::<bool>(),
+        ) {
+            let raw_flag = if raw { "raw " } else { "" };
+            let source = format!(
+                "name: RawBoundaryFixture, types {{ noadmit Root data Piece }}, \
+                 tokens {{ Open{suffix} = \"<\" push(mode_{suffix}); \
+                 {raw_flag}mode mode_{suffix} {{ Close{suffix} = \">\" pop; Body{suffix} = \"[a-z]+\"; }} \
+                 raw mode other_{suffix} {{ OtherClose{suffix} = \"!\" pop; }} }}, \
+                 terms {{ Frame . pieces:Vec(Piece) |- open@Open{suffix} pieces.*sep(\"\") close@Close{suffix} : Root; \
+                 Text . |- text@Body{suffix} : Piece; }}, equations {{}}, rewrites {{}},",
+            );
+            let language: LanguageDef = syn::parse_str(&source).expect("mode ownership fixture");
+            let frame = language.terms.iter().find(|rule| rule.label == "Frame").expect("frame");
+            let syntax = frame.syntax_pattern.as_ref().expect("frame syntax");
+            prop_assert_eq!(is_raw_pattern_region(syntax.first(), syntax.get(2), &language), raw);
+            prop_assert!(!is_raw_pattern_region(syntax.get(2), syntax.get(2), &language));
+            prop_assert!(!is_raw_pattern_region(None, syntax.get(2), &language));
+            let other = SyntaxExpr::TokenKind {
+                name: syn::Ident::new(&format!("OtherClose{suffix}"), proc_macro2::Span::call_site()),
+                bind: None,
+            };
+            prop_assert!(!is_raw_pattern_region(syntax.first(), Some(&other), &language));
+        }
     }
 }

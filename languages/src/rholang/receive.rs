@@ -1216,6 +1216,14 @@ pub fn is_query_bind(bind: &InputBind) -> bool {
     as_query_bind(bind).is_some()
 }
 
+pub fn query_request(bind: &InputBind) -> Option<(&Name, &[Proc])> {
+    match as_query_bind(bind)? {
+        QueryBind::Plain { channel, args, .. }
+        | QueryBind::Empty { channel, args }
+        | QueryBind::Quoted { channel, args, .. } => Some((channel, args)),
+    }
+}
+
 /// Expand one query bind into `(receive twin, [(private return binder, request send)])`, or
 /// `None` if `bind` is not a query bind.
 ///

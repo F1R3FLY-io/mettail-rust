@@ -409,7 +409,7 @@ mod tests {
         let key = sink
             .into_result()
             .expect("balanced original visitor frames");
-        transaction.commit().expect("complete transaction");
+        transaction.commit();
         let mut flat = FramedSemanticKeyHasher::default();
         variable(&mut flat, |state| free_variable(state, || Some("a")));
         assert_eq!(key.as_bytes(), flat.into_key());

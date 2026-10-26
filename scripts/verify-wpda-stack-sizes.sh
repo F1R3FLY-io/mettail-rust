@@ -86,7 +86,7 @@ perl -ne '
 
 # The first term covers trait/inherent/local state handlers.  The remaining
 # terms cover generated free-function grammar routers called by those handlers.
-grep -E $'RholangWpdaEngine|lex_alt_rules_for_|__lex_alt_rules_for_|prefix_(arm|category|primary|crosscat|at_quoted)|binder_rule_|collection_(spec|loop)|mixfix_(part|parts|rep|nullary)|recovery_infra_for|infix_rules_for' \
+grep -E $'RholangWpdaEngine|via_wpda_ranked_prefix|lex_alt_rules_for_|__lex_alt_rules_for_|prefix_(arm|category|primary|crosscat|at_quoted)|binder_rule_|collection_(spec|loop)|mixfix_(part|parts|rep|nullary)|recovery_infra_for|infix_rules_for' \
   "$all_sizes" >"$dispatch_sizes" || true
 
 matched_count="$(wc -l <"$dispatch_sizes")"
@@ -94,7 +94,7 @@ if (( matched_count < 10 )); then
   echo "stack metadata matched only $matched_count generated dispatch symbols" >&2
   exit 1
 fi
-for required in RholangWpdaEngine step_prefix_category binder_rule_dispatch __lex_alt_rules_for_prefix_chunk_; do
+for required in RholangWpdaEngine via_wpda_ranked_prefix step_prefix_category binder_rule_dispatch __lex_alt_rules_for_prefix_chunk_; do
   grep -q "$required" "$dispatch_sizes" || {
     echo "required generated dispatch symbol missing from stack metadata: $required" >&2
     exit 1

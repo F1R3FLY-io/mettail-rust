@@ -26,6 +26,7 @@ fn declaration(name: &str, native: Option<&str>, collection: bool) -> LangType {
     LangType {
         name: ident(name),
         role: CategoryRole::Object,
+        admits_variables: true,
         native_type: native
             .map(|source| syn::parse_str(source).expect("native fixture must parse")),
         collection_kind: collection

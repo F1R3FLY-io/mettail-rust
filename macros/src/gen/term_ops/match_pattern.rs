@@ -31,37 +31,19 @@
 //! - **Var**: bind pattern variable to ground term (immediate, no stack push)
 //! - **Literal/Nullary**: exact equality (immediate)
 //! - **Regular**: push `MatchTask` for each field onto the work stack
-//! - **Collection**: inline element-wise matching; each element's `match_pattern`
-//!   call re-enters the iterative engine via TLS (bounded by collection size)
+//! - **Collection**: ordered elements match positionally; unordered elements
+//!   use a complete, iterative one-to-one assignment search. Individual
+//!   element matches still re-enter the engine via TLS.
 //! - **Binder/MultiBinder**: inline scope opening; body `match_pattern` call
 //!   re-enters the iterative engine (one re-entry per binder level)
 
 use crate::gen::generate_var_label;
+use crate::gen::runtime::dovetail_report::semantic_adapter::is_closed_data_category;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
-
-/// COLL_MATCH_CARDINALITY_GATE — kill-switch for the ★D11 cardinality guard on
-/// the UNORDERED collection match arms (`HashBag`, `HashSet`), 2026-07-25.
-///
-/// A collection pattern must account for every ground element. The unordered
-/// arms claimed one ground element per pattern element and never compared
-/// cardinalities, so a pattern that is a strict sub-multiset of the ground
-/// MATCHED. The ordered `Vec` arm has always had the guard.
-///
-/// When `false` the guard is omitted ENTIRELY from the emission (the
-/// `AT_QUOTED_BIND_GATE` convention), so the generated `match_pattern.rs` is
-/// textually byte-identical to the pre-fix baseline. `true` is the SHIP DEFAULT
-/// — this IS the fix.
-///
-/// Direction of change: strictly REMOVES matches, so it can only move a host
-/// verdict `Some(true) → None`. Because the host's term arm is positive-only, a
-/// removed match becomes a DECLINE and never a `Some(false)`, so differential
-/// property (3) cannot break and `declined` may only rise. That is why the
-/// false-positive family is landed before the false-negative family.
-pub(crate) const COLL_MATCH_CARDINALITY_GATE: bool = true;
 
 /// BINDER_COLL_FIELD_MATCH_GATE — kill-switch for the D1 fix, 2026-07-25.
 ///
@@ -223,7 +205,11 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
         })
         .collect();
 
-    // Generate `merge()` — extend each field from other
+    // Generate `merge()` — extend each field from other. This matcher is not
+    // a unifier: repeated pattern-variable occurrences remain independent.
+    // Rholang `matches` lowers them to independent Wildcards, including
+    // nonlinear spellings. GSLT rewrite substitution uses a separate matcher
+    // and must not silently inherit this occurrence-wise contract.
     let merge_fields: Vec<TokenStream> = crate::gen::variable_types(language)
         .map(|t| {
             let field_name = format_ident!("{}_bindings", t.name.to_string().to_lowercase());
@@ -257,6 +243,8 @@ fn generate_match_bindings_type(language: &LanguageDef) -> TokenStream {
         ///
         /// Accumulates variable bindings from cross-category matching.
         /// Each category has its own binding vector to support typed lookups.
+        /// Duplicate names are retained rather than equated: this is the
+        /// occurrence-wise first-order matcher, not a rewrite unifier.
         #[derive(Debug, Clone)]
         pub struct MatchBindings {
             #(#fields),*
@@ -343,7 +331,9 @@ fn generate_match_task_enum(language: &LanguageDef) -> TokenStream {
 /// For Regular variants, sub-field matching pushes new `MatchTask` entries.
 /// For Collection/Binder variants, the handler is inline and calls
 /// `match_pattern()` for element/body sub-matches (re-entering the engine
-/// via TLS — bounded by collection size, not nesting depth).
+/// via TLS. Arbitrarily nested collection/binder re-entry is a separate
+/// inherited stack-safety issue; this assignment repair does not claim to
+/// resolve it.
 /// **Frame-size fix (residual #11-2, 2026-07-14):** each category's structural
 /// match is peeled into a `#[inline(never)] match_visit_<cat>` helper (the
 /// Tier-1 idiom `normalize_iterative` uses). Without it, `match_pattern_iterative`'s
@@ -612,6 +602,11 @@ fn generate_iterative_variant_arm(
         },
 
         VariantKind::Collection { label, element_cat, coll_type } => {
+            if is_closed_data_category(language, element_cat) {
+                return quote! {
+                    (#category::#label(ground), #category::#label(pattern)) if ground == pattern => {}
+                };
+            }
             // Collection matching is inline — calls match_pattern() on elements
             // which re-enters the iterative engine (bounded by element count).
             generate_collection_match_arm(category, label, element_cat, coll_type, language)
@@ -758,34 +753,18 @@ fn generate_collection_match_arm(
     coll_type: &mettail_ast::types::CollectionType,
     _language: &LanguageDef,
 ) -> TokenStream {
-    let var_label = generate_var_label(category);
-
-    // ★D11 (2026-07-25): the unordered branches claim one ground element per
-    // PATTERN element and then stop, so every LEFTOVER ground element was
-    // silently ignored and `pattern ⊆ ground` MATCHED. The sibling `Vec` branch
-    // below has always compared lengths, so this was an asymmetry rather than a
-    // considered choice.
-    //
-    // CONFIRMED LIVE by direct construction (`languages/tests/
-    // collection_cardinality_probe.rs`): a canonical `Proc::PPar` over the bag
-    // {1,2,3} matched the pattern bag {1,2}. ⚠ It is NOT reachable from surface
-    // syntax — `1 | 2 | 3` parses to the binary infix tree
-    // `PParInfix(PParInfix(1,2),3)`, a `Regular` variant whose cardinality is
-    // enforced by the tree shape — so it is reachable only through the CANONICAL
-    // par form that normalization produces, and the `rho_matches_differential`
-    // MATRIX cannot witness it (the host declines that route).
-    //
-    // A collection pattern must ACCOUNT FOR every ground element. For `HashBag`
-    // both sides are flattened by multiplicity first, so this compares MULTISET
-    // cardinality, not distinct-element count.
-    let cardinality_guard = if COLL_MATCH_CARDINALITY_GATE {
-        quote! {
-            if g_elems.len() != p_elems.len() {
-                return None;
-            }
+    let unordered_match = quote! {
+        let assignment = mettail_runtime::first_perfect_matching(
+            g_elems.len(),
+            p_elems.len(),
+            |ground, pattern| g_elems[ground].match_pattern(&p_elems[pattern]).is_some(),
+        )?;
+        for (pattern, ground) in assignment.into_iter().enumerate() {
+            // Replay only the selected edges to obtain the existing one-witness
+            // binding representation. The search never commits bindings from
+            // an edge that was later displaced by an augmenting path.
+            bindings.merge(g_elems[ground].match_pattern(&p_elems[pattern])?);
         }
-    } else {
-        quote! {}
     };
 
     match coll_type {
@@ -801,53 +780,7 @@ fn generate_collection_match_arm(
                         .flat_map(|(elem, count)| std::iter::repeat(elem.clone()).take(count))
                         .collect();
 
-                    #cardinality_guard
-
-                    let mut claimed = vec![false; g_elems.len()];
-
-                    for p_elem in &p_elems {
-                        let is_var = matches!(
-                            p_elem,
-                            #category::#var_label(mettail_runtime::OrdVar(
-                                mettail_runtime::Var::Free(_)
-                            ))
-                        );
-
-                        if is_var {
-                            if let Some(idx) = claimed.iter().position(|c| !c) {
-                                claimed[idx] = true;
-                                if let #category::#var_label(mettail_runtime::OrdVar(
-                                    mettail_runtime::Var::Free(ref fv)
-                                )) = p_elem {
-                                    if fv.pretty_name.is_some() {
-                                        // Re-enter iterative engine via match_pattern
-                                        let sub = p_elem.match_pattern(&g_elems[idx]);
-                                        if let Some(b) = sub {
-                                            bindings.merge(b);
-                                        }
-                                    }
-                                }
-                            } else {
-                                return None;
-                            }
-                        } else {
-                            let found = g_elems.iter().enumerate()
-                                .find(|(idx, g_elem)| {
-                                    // Re-enter iterative engine for structural check
-                                    !claimed[*idx] && g_elem.match_pattern(p_elem).is_some()
-                                });
-                            match found {
-                                Some((idx, _)) => {
-                                    claimed[idx] = true;
-                                    // Re-enter for binding extraction
-                                    if let Some(b) = g_elems[idx].match_pattern(p_elem) {
-                                        bindings.merge(b);
-                                    }
-                                }
-                                None => return None,
-                            }
-                        }
-                    }
+                    #unordered_match
                 }
             }
         },
@@ -873,25 +806,7 @@ fn generate_collection_match_arm(
                     let g_elems: Vec<_> = g_set.iter().cloned().collect();
                     let p_elems: Vec<_> = p_set.iter().cloned().collect();
 
-                    #cardinality_guard
-
-                    let mut claimed = vec![false; g_elems.len()];
-
-                    for p_elem in &p_elems {
-                        let found = g_elems.iter().enumerate()
-                            .find(|(idx, g_elem)| {
-                                !claimed[*idx] && g_elem.match_pattern(p_elem).is_some()
-                            });
-                        match found {
-                            Some((idx, _)) => {
-                                claimed[idx] = true;
-                                if let Some(b) = g_elems[idx].match_pattern(p_elem) {
-                                    bindings.merge(b);
-                                }
-                            }
-                            None => return None,
-                        }
-                    }
+                    #unordered_match
                 }
             }
         },
@@ -1197,5 +1112,48 @@ mod tests {
             !arm.contains("MatchGuard"),
             "no Match task exists for the Guard pseudo-category: {arm}",
         );
+    }
+
+    #[test]
+    fn unordered_collection_matching_delegates_element_typing_to_pair_matcher() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: ClosedCollectionPattern,
+                types { Name noadmit CostSig },
+                terms {
+                    NameLit . |- "n" : Name;
+                    Ground . values:HashBag(Name) |- "[" values.*sep(",") "]" : CostSig;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("closed-owner collection fixture parses");
+        let owner = format_ident!("CostSig");
+        let open_element = format_ident!("Name");
+        let open_arm = compact(generate_collection_match_arm(
+            &owner,
+            &format_ident!("Ground"),
+            &open_element,
+            &mettail_ast::types::CollectionType::HashBag,
+            &language,
+        ));
+        assert!(open_arm.contains("mettail_runtime::first_perfect_matching"), "{open_arm}");
+        assert!(
+            open_arm.contains("g_elems[ground].match_pattern(&p_elems[pattern])"),
+            "{open_arm}"
+        );
+        assert!(!open_arm.contains("CostSig::CVar"), "{open_arm}");
+
+        let closed_element = format_ident!("CostSig");
+        let closed_arm = compact(generate_collection_match_arm(
+            &owner,
+            &format_ident!("Nested"),
+            &closed_element,
+            &mettail_ast::types::CollectionType::HashBag,
+            &language,
+        ));
+        assert!(!closed_arm.contains("CostSig::CVar"), "{closed_arm}");
+        assert!(closed_arm.contains("mettail_runtime::first_perfect_matching"), "{closed_arm}");
     }
 }

@@ -49,13 +49,10 @@ impl ContentKeyNodeIdentity {
 }
 
 struct CachedNode {
-    // Keeping the allocation alive makes its address a stable identity for the
-    // complete cache lifetime and prevents allocator-address reuse.
-    _owner: Option<Arc<dyn Any + Send + Sync>>,
+    owner: std::sync::Weak<dyn Any + Send + Sync>,
     key: ContentKey,
 }
 
-/// Failure to stage or atomically commit a semantic-key cache transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContentKeyCacheError {
     /// One live immutable allocation was assigned two different exact keys.
@@ -63,9 +60,6 @@ pub enum ContentKeyCacheError {
     IdentityConflict,
     /// A generated traversal failed to produce exactly one balanced root key.
     ConstructionInvariant,
-    /// Publishing the complete transaction would exceed the configured number
-    /// of retained node witnesses. No staged entry is published on failure.
-    ResourceExhausted { limit: usize, requested: usize },
     /// One exact semantic stream would exceed the configured logical byte
     /// bound. Persistent sharing does not weaken this bound: it is measured on
     /// the complete flattened stream that defines semantic identity.
@@ -81,10 +75,6 @@ impl fmt::Display for ContentKeyCacheError {
             Self::ConstructionInvariant => {
                 formatter.write_str("semantic-key construction did not produce one balanced root")
             },
-            Self::ResourceExhausted { limit, requested } => write!(
-                formatter,
-                "semantic-key cache entry limit {limit} exceeded (requested {requested})",
-            ),
             Self::KeyBytesExhausted { limit, requested } => write!(
                 formatter,
                 "semantic-key logical byte limit {limit} exceeded (requested {requested})",
@@ -96,15 +86,8 @@ impl fmt::Display for ContentKeyCacheError {
 impl std::error::Error for ContentKeyCacheError {}
 
 /// Session-scoped cache of persistent exact keys by immutable allocation.
-///
-/// The cache retains either the indexed allocation itself or an immutable root
-/// that transitively owns every indexed descendant, preventing allocator reuse
-/// from turning pointer identity into a stale cache hit.
-/// Construction uses [`ContentKeyCacheTransaction`], so resource exhaustion
-/// cannot publish a proper subset of one root's node keys.
 pub struct ContentKeyCache {
-    entries: HashMap<ContentKeyNodeIdentity, CachedNode>,
-    retained_roots: Vec<Arc<dyn Any + Send + Sync>>,
+    entries: Option<lru::LruCache<ContentKeyNodeIdentity, CachedNode, rustc_hash::FxBuildHasher>>,
     max_entries: usize,
     max_key_bytes: usize,
 }
@@ -120,23 +103,21 @@ impl ContentKeyCache {
         Self::with_limits(max_entries, usize::MAX)
     }
 
-    /// Construct a cache with independent retained-node and logical-key-byte
-    /// limits. Both limits are checked before a transaction is published.
     pub fn with_limits(max_entries: usize, max_key_bytes: usize) -> Self {
-        Self {
-            entries: HashMap::default(),
-            retained_roots: Vec::new(),
-            max_entries,
-            max_key_bytes,
-        }
+        let entries = std::num::NonZeroUsize::new(max_entries).map(|capacity| {
+            let mut entries = lru::LruCache::unbounded_with_hasher(rustc_hash::FxBuildHasher);
+            entries.resize(capacity);
+            entries
+        });
+        Self { entries, max_entries, max_key_bytes }
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.as_ref().map_or(0, lru::LruCache::len)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len() == 0
     }
 
     pub fn max_entries(&self) -> usize {
@@ -151,15 +132,10 @@ impl ContentKeyCache {
         ContentKeyCacheTransaction {
             cache: self,
             root_owner: None,
-            staged: HashMap::default(),
+            staged: rustc_hash::FxHashSet::default(),
         }
     }
 
-    /// Begin one atomic traversal transaction over an immutable owned graph.
-    ///
-    /// The committed cache retains the root owner, so addresses of every
-    /// descendant allocation borrowed from that graph remain live until the
-    /// cache is dropped.
     pub fn transaction_for_root<T>(&mut self, root_owner: Arc<T>) -> ContentKeyCacheTransaction<'_>
     where
         T: Any + Send + Sync,
@@ -167,17 +143,15 @@ impl ContentKeyCache {
         ContentKeyCacheTransaction {
             cache: self,
             root_owner: Some(root_owner),
-            staged: HashMap::default(),
+            staged: rustc_hash::FxHashSet::default(),
         }
     }
 }
 
-/// Atomic staging area for all persistent keys discovered while constructing
-/// one semantic root.
 pub struct ContentKeyCacheTransaction<'a> {
     cache: &'a mut ContentKeyCache,
     root_owner: Option<Arc<dyn Any + Send + Sync>>,
-    staged: HashMap<ContentKeyNodeIdentity, CachedNode>,
+    staged: rustc_hash::FxHashSet<ContentKeyNodeIdentity>,
 }
 
 impl ContentKeyCacheTransaction<'_> {
@@ -196,12 +170,8 @@ impl ContentKeyCacheTransaction<'_> {
         }
     }
 
-    pub fn get<T: Any + Send + Sync>(&self, owner: &Arc<T>) -> Option<ContentKey> {
-        let identity = ContentKeyNodeIdentity::of_arc(owner);
-        self.staged
-            .get(&identity)
-            .or_else(|| self.cache.entries.get(&identity))
-            .map(|entry| entry.key.clone())
+    pub fn get<T: Any + Send + Sync>(&mut self, owner: &Arc<T>) -> Option<ContentKey> {
+        self.get_identity(ContentKeyNodeIdentity::of_arc(owner))
     }
 
     pub fn stage<T: Any + Send + Sync>(
@@ -209,37 +179,27 @@ impl ContentKeyCacheTransaction<'_> {
         owner: Arc<T>,
         key: ContentKey,
     ) -> Result<ContentKey, ContentKeyCacheError> {
-        self.check_key_bytes(&key)?;
         let identity = ContentKeyNodeIdentity::of_arc(&owner);
-        if let Some(existing) = self
-            .staged
-            .get(&identity)
-            .or_else(|| self.cache.entries.get(&identity))
-        {
-            return if existing.key == key {
-                Ok(existing.key.clone())
-            } else {
-                Err(ContentKeyCacheError::IdentityConflict)
-            };
-        }
-        self.staged
-            .insert(identity, CachedNode { _owner: Some(owner), key: key.clone() });
-        Ok(key)
+        let owner: Arc<dyn Any + Send + Sync> = owner;
+        self.stage_with_owner(identity, Arc::downgrade(&owner), key)
     }
 
     /// Look up a node borrowed from the immutable root graph of this
     /// transaction.
-    pub fn get_borrowed<T: Any + Send + Sync>(&self, node: &T) -> Option<ContentKey> {
-        let identity = ContentKeyNodeIdentity::of_ref(node);
-        self.get_identity(identity)
+    pub fn get_borrowed<T: Any + Send + Sync>(&mut self, node: &T) -> Option<ContentKey> {
+        self.get_identity(ContentKeyNodeIdentity::of_ref(node))
     }
 
     /// Look up a process-local node identity retained by this cache.
-    pub fn get_identity(&self, identity: ContentKeyNodeIdentity) -> Option<ContentKey> {
-        self.staged
-            .get(&identity)
-            .or_else(|| self.cache.entries.get(&identity))
-            .map(|entry| entry.key.clone())
+    pub fn get_identity(&mut self, identity: ContentKeyNodeIdentity) -> Option<ContentKey> {
+        let entries = self.cache.entries.as_mut()?;
+        let entry = entries.get(&identity)?;
+        if entry.owner.upgrade().is_some() {
+            return Some(entry.key.clone());
+        }
+        entries.pop(&identity);
+        self.staged.remove(&identity);
+        None
     }
 
     /// Stage a key for a node borrowed from the transaction's retained root.
@@ -272,50 +232,52 @@ impl ContentKeyCacheTransaction<'_> {
         identity: ContentKeyNodeIdentity,
         key: ContentKey,
     ) -> Result<ContentKey, ContentKeyCacheError> {
+        let owner = self
+            .root_owner
+            .as_ref()
+            .ok_or(ContentKeyCacheError::IdentityConflict)?;
+        self.stage_with_owner(identity, Arc::downgrade(owner), key)
+    }
+
+    fn stage_with_owner(
+        &mut self,
+        identity: ContentKeyNodeIdentity,
+        owner: std::sync::Weak<dyn Any + Send + Sync>,
+        key: ContentKey,
+    ) -> Result<ContentKey, ContentKeyCacheError> {
         self.check_key_bytes(&key)?;
-        if self.root_owner.is_none() {
-            return Err(ContentKeyCacheError::IdentityConflict);
-        }
-        if let Some(existing) = self
-            .staged
-            .get(&identity)
-            .or_else(|| self.cache.entries.get(&identity))
-        {
-            return if existing.key == key {
-                Ok(existing.key.clone())
+        if let Some(existing) = self.get_identity(identity) {
+            return if existing == key {
+                Ok(existing)
             } else {
                 Err(ContentKeyCacheError::IdentityConflict)
             };
         }
-        self.staged
-            .insert(identity, CachedNode { _owner: None, key: key.clone() });
+        if let Some(entries) = self.cache.entries.as_mut() {
+            if let Some((evicted, _)) =
+                entries.push(identity, CachedNode { owner, key: key.clone() })
+            {
+                self.staged.remove(&evicted);
+            }
+            self.staged.insert(identity);
+        }
         Ok(key)
     }
 
-    pub fn commit(self) -> Result<usize, ContentKeyCacheError> {
-        let requested = self
-            .cache
-            .entries
-            .len()
-            .checked_add(self.staged.len())
-            .ok_or(ContentKeyCacheError::ResourceExhausted {
-                limit: self.cache.max_entries,
-                requested: usize::MAX,
-            })?;
-        if requested > self.cache.max_entries {
-            return Err(ContentKeyCacheError::ResourceExhausted {
-                limit: self.cache.max_entries,
-                requested,
-            });
-        }
+    pub fn commit(mut self) -> usize {
         let added = self.staged.len();
-        self.cache.entries.extend(self.staged);
-        if added != 0 {
-            if let Some(root_owner) = self.root_owner {
-                self.cache.retained_roots.push(root_owner);
+        self.staged.clear();
+        added
+    }
+}
+
+impl Drop for ContentKeyCacheTransaction<'_> {
+    fn drop(&mut self) {
+        if let Some(entries) = self.cache.entries.as_mut() {
+            for identity in &self.staged {
+                entries.pop(identity);
             }
         }
-        Ok(added)
     }
 }
 
@@ -1440,29 +1402,28 @@ mod tests {
             assert!(transaction.get(&node).is_none());
             assert_eq!(transaction.stage(node.clone(), key.clone()), Ok(key.clone()));
             assert_eq!(transaction.get(&node), Some(key.clone()));
-            assert_eq!(transaction.commit(), Ok(1));
+            assert_eq!(transaction.commit(), 1);
         }
-        let transaction = cache.transaction();
+        let mut transaction = cache.transaction();
         assert_eq!(transaction.get(&node), Some(key));
     }
 
     #[test]
-    fn cache_exhaustion_publishes_no_partial_transaction() {
+    fn cache_capacity_evicts_live_nodes_without_rejecting_keys() {
         let first = Arc::new(1u64);
         let second = Arc::new(2u64);
         let mut cache = ContentKeyCache::with_max_entries(1);
         let mut transaction = cache.transaction();
         transaction
-            .stage(first, ContentKey::from_bytes(vec![1]))
+            .stage(first.clone(), ContentKey::from_bytes(vec![1]))
             .expect("first staged key");
         transaction
-            .stage(second, ContentKey::from_bytes(vec![2]))
+            .stage(second.clone(), ContentKey::from_bytes(vec![2]))
             .expect("second staged key");
-        assert_eq!(
-            transaction.commit(),
-            Err(ContentKeyCacheError::ResourceExhausted { limit: 1, requested: 2 })
-        );
-        assert!(cache.is_empty());
+        assert_eq!(transaction.commit(), 1);
+        let mut transaction = cache.transaction();
+        assert_eq!(transaction.get(&first), None);
+        assert_eq!(transaction.get(&second), Some(ContentKey::from_bytes(vec![2])));
     }
 
     #[test]
@@ -1497,7 +1458,7 @@ mod tests {
             transaction.stage(node, ContentKey::from_bytes(vec![1, 2, 3])),
             Err(ContentKeyCacheError::KeyBytesExhausted { limit: 2, requested: 3 }),
         );
-        assert_eq!(transaction.commit(), Ok(0));
+        assert_eq!(transaction.commit(), 0);
         assert!(cache.is_empty());
     }
 
@@ -1516,7 +1477,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_cache_retains_the_root_that_owns_borrowed_node_addresses() {
+    fn graph_cache_validates_borrowed_addresses_without_retaining_roots() {
         #[derive(Debug)]
         struct Root {
             child: Box<u64>,
@@ -1535,19 +1496,19 @@ mod tests {
                     .expect("borrowed node has one exact identity");
             }
             assert_eq!(transaction.get_borrowed(root.child.as_ref()), Some(key.clone()));
-            assert_eq!(transaction.commit(), Ok(1));
+            assert_eq!(transaction.commit(), 1);
         }
 
+        let identity = ContentKeyNodeIdentity::of_ref(root.child.as_ref());
         drop(root);
-        let retained = weak
-            .upgrade()
-            .expect("committed graph cache must retain its root owner");
-        let transaction = cache.transaction_for_root(retained.clone());
-        assert_eq!(transaction.get_borrowed(retained.child.as_ref()), Some(key));
+        assert!(weak.upgrade().is_none());
+        let mut transaction = cache.transaction();
+        assert_eq!(transaction.get_identity(identity), None);
+        assert_eq!(key, 17u64.content_key());
     }
 
     #[test]
-    fn graph_cache_exhaustion_publishes_no_root_or_node() {
+    fn zero_capacity_computes_without_retaining_root_or_node() {
         let root = Arc::new(Box::new(29u64));
         let weak = Arc::downgrade(&root);
         let mut cache = ContentKeyCache::with_max_entries(0);
@@ -1558,14 +1519,200 @@ mod tests {
                 .stage_borrowed(root.as_ref().as_ref(), 29u64.content_key())
                 .expect("staging remains provisional");
         }
-        assert_eq!(
-            transaction.commit(),
-            Err(ContentKeyCacheError::ResourceExhausted { limit: 0, requested: 1 })
-        );
+        assert_eq!(transaction.commit(), 0);
         assert!(cache.is_empty());
-        assert!(cache.retained_roots.is_empty());
         drop(root);
         assert!(weak.upgrade().is_none());
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(96))]
+
+        #[test]
+        fn cache_transactions_follow_bounded_lru(
+            capacity in 0usize..12,
+            base in proptest::prelude::any::<u64>(),
+            history in proptest::collection::vec(
+                (proptest::collection::vec((0usize..16, proptest::prelude::any::<bool>()), 0..40), proptest::prelude::any::<bool>()),
+                1..24,
+            ),
+        ) {
+            use proptest::prelude::*;
+            let owners: Vec<_> = (0..16).map(|i| Arc::new(base.wrapping_add(i))).collect();
+            let identities: Vec<_> = owners.iter().map(ContentKeyNodeIdentity::of_arc).collect();
+            let keys: Vec<_> = owners.iter().map(|n| ContentKey::from_bytes(n.to_le_bytes().to_vec())).collect();
+            let mut cache = ContentKeyCache::with_max_entries(capacity);
+            let mut expected: Vec<usize> = Vec::new();
+            for (operations, commit) in history {
+                let mut provisional = std::collections::HashSet::new();
+                let mut transaction = cache.transaction();
+                for (node, insert) in operations {
+                    let position = expected.iter().position(|prior| *prior == node);
+                    if let Some(position) = position {
+                        expected.remove(position);
+                        expected.insert(0, node);
+                    }
+                    if insert {
+                        prop_assert_eq!(transaction.stage(owners[node].clone(), keys[node].clone())?, keys[node].clone());
+                        if position.is_none() && capacity != 0 {
+                            if expected.len() == capacity {
+                                provisional.remove(&expected.pop().expect("full cache has an LRU entry"));
+                            }
+                            expected.insert(0, node);
+                            provisional.insert(node);
+                        }
+                    } else {
+                        prop_assert_eq!(transaction.get(&owners[node]), position.map(|_| keys[node].clone()));
+                    }
+                    prop_assert!(transaction.cache.len() <= capacity);
+                    prop_assert!(transaction.staged.len() <= transaction.cache.len());
+                    prop_assert_eq!(transaction.staged.len(), provisional.len());
+                    let actual: Vec<_> = transaction.cache.entries.iter().flat_map(|entries| entries.iter().map(|(id, _)| *id)).collect();
+                    prop_assert_eq!(actual, expected.iter().map(|i| identities[*i]).collect::<Vec<_>>());
+                }
+                if commit {
+                    prop_assert_eq!(transaction.commit(), provisional.len());
+                } else {
+                    drop(transaction);
+                    expected.retain(|i| !provisional.contains(i));
+                }
+                let actual: Vec<_> = cache.entries.iter().flat_map(|entries| entries.iter().map(|(id, _)| *id)).collect();
+                prop_assert_eq!(actual, expected.iter().map(|i| identities[*i]).collect::<Vec<_>>());
+            }
+        }
+
+        #[test]
+        fn expired_owners_and_shared_children_are_cache_misses(
+            value in proptest::prelude::any::<u64>(),
+            capacity in 0usize..8,
+        ) {
+            use proptest::prelude::*;
+            let child = Arc::new(value);
+            let root = Arc::new(vec![child.clone()]);
+            let weak = Arc::downgrade(&root);
+            let identity = ContentKeyNodeIdentity::of_ref(child.as_ref());
+            let key = ContentKey::from_bytes(value.to_le_bytes().to_vec());
+            let mut cache = ContentKeyCache::with_max_entries(capacity);
+            let mut transaction = cache.transaction_for_root(root.clone());
+            let returned = unsafe { transaction.stage_borrowed(root[0].as_ref(), key.clone())? };
+            transaction.commit();
+            drop(root);
+            prop_assert!(weak.upgrade().is_none());
+            prop_assert_eq!(returned.as_bytes(), value.to_le_bytes());
+            let next = Arc::new(vec![child.clone()]);
+            let mut transaction = cache.transaction_for_root(next.clone());
+            prop_assert_eq!(transaction.get_identity(identity), None);
+            prop_assert_eq!(unsafe { transaction.stage_borrowed(next[0].as_ref(), key.clone())? }, key.clone());
+            transaction.commit();
+            if let Some(entries) = cache.entries.as_mut() {
+                let stale: Arc<dyn Any + Send + Sync> = Arc::new(0u8);
+                let expired = Arc::downgrade(&stale);
+                drop(stale);
+                entries.put(identity, CachedNode { owner: expired, key: ContentKey::from_bytes(vec![0]) });
+                let mut transaction = cache.transaction_for_root(next.clone());
+                prop_assert_eq!(transaction.get_identity(identity), None);
+                prop_assert_eq!(unsafe { transaction.stage_borrowed(next[0].as_ref(), key.clone())? }, key.clone());
+                transaction.commit();
+            }
+            drop(next);
+            drop(child);
+            prop_assert_eq!(returned, key);
+        }
+
+        #[test]
+        fn real_key_failures_abort_provisional_entries(
+            capacity in 1usize..12,
+            value in proptest::prelude::any::<u64>(),
+            byte_failure in proptest::prelude::any::<bool>(),
+        ) {
+            use proptest::prelude::*;
+            let owners: Vec<_> = (0..capacity + 2).map(|i| Arc::new(value.wrapping_add(i as u64))).collect();
+            let key = ContentKey::from_bytes(value.to_le_bytes().to_vec());
+            let mut cache = ContentKeyCache::with_limits(capacity, 8);
+            let mut transaction = cache.transaction();
+            transaction.stage(owners[0].clone(), key.clone())?;
+            transaction.commit();
+            let mut transaction = cache.transaction();
+            for owner in &owners[1..] {
+                transaction.stage(owner.clone(), key.clone())?;
+            }
+            let owner = owners.last().expect("nonempty owners");
+            let failure = if byte_failure {
+                ContentKey::from_bytes(vec![0; 9])
+            } else {
+                ContentKey::from_bytes(value.wrapping_add(1).to_le_bytes().to_vec())
+            };
+            prop_assert_eq!(transaction.stage(owner.clone(), failure).err(), Some(if byte_failure {
+                ContentKeyCacheError::KeyBytesExhausted { limit: 8, requested: 9 }
+            } else {
+                ContentKeyCacheError::IdentityConflict
+            }));
+            drop(transaction);
+            prop_assert!(cache.is_empty());
+            let mut transaction = cache.transaction();
+            prop_assert_eq!(transaction.stage(owners[0].clone(), key.clone())?, key);
+            transaction.commit();
+        }
+
+        #[test]
+        fn persistent_chain_shares_linear_local_storage(depth in 0usize..256, byte in proptest::prelude::any::<u8>()) {
+            use proptest::prelude::*;
+            let mut keys = vec![ContentKey::from_bytes(Vec::new())];
+            for _ in 0..depth {
+                keys.push(ContentKey::concat(vec![byte], vec![keys.last().expect("base key").clone()]));
+            }
+            let mut local_bytes = 0;
+            let mut references = 0;
+            let mut restreamed = 0;
+            for (index, key) in keys.iter().enumerate().skip(1) {
+                prop_assert!(key.inner().flattened.get().is_none());
+                let ContentKeyKind::Tree { header, children } = &key.inner().kind else {
+                    prop_assert!(false, "nonempty chain has a shared child");
+                    unreachable!();
+                };
+                prop_assert_eq!(children.len(), 1);
+                prop_assert!(Arc::ptr_eq(children[0].0.as_ref().expect("child allocation"), keys[index - 1].0.as_ref().expect("prior allocation")));
+                local_bytes += header.len();
+                references += children.len();
+                restreamed += ContentKeyBytes::new(key).count();
+            }
+            prop_assert_eq!(2 * restreamed, depth * (depth + 1));
+            prop_assert_eq!(local_bytes + references, 2 * depth);
+            prop_assert_eq!(local_bytes + references * std::mem::size_of::<ContentKey>(), depth * (1 + std::mem::size_of::<ContentKey>()));
+        }
+
+        #[test]
+        fn persistent_composition_preserves_exact_stream_and_limits(
+            fragments in proptest::collection::vec(proptest::collection::vec(proptest::prelude::any::<u8>(), 0..32), 0..32),
+            limit in 0usize..1024,
+        ) {
+            use proptest::prelude::*;
+            let flat: Vec<_> = fragments.iter().flatten().copied().collect();
+            let keys: Vec<_> = fragments.into_iter().map(ContentKey::from_bytes).collect();
+            let composed = ContentKey::concat_keys(keys.clone());
+            prop_assert_eq!(composed.as_bytes(), flat.as_slice());
+            prop_assert_eq!(&composed, &ContentKey::from_bytes(flat.clone()));
+            let bounded = ContentKey::try_concat_keys(vec![composed.clone()], limit);
+            if flat.len() <= limit {
+                prop_assert_eq!(bounded?, composed);
+            } else {
+                prop_assert_eq!(bounded.err(), Some(ContentKeyCacheError::KeyBytesExhausted { limit, requested: flat.len() }));
+            }
+            let mut builder = SemanticKeyBuilder::with_max_bytes(limit);
+            for key in keys { builder.push_key(key); }
+            match builder.into_key() {
+                Ok(key) => {
+                    prop_assert!(flat.len() <= limit);
+                    prop_assert_eq!(key.as_bytes(), flat.as_slice());
+                },
+                Err(ContentKeyCacheError::KeyBytesExhausted { limit: actual, requested }) => {
+                    prop_assert_eq!(actual, limit);
+                    prop_assert!(requested > limit);
+                    prop_assert!(flat.len() > limit);
+                },
+                Err(other) => prop_assert!(false, "unexpected construction error: {other}"),
+            }
+        }
     }
 
     #[test]

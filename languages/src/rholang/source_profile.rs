@@ -5,7 +5,7 @@
 //! refused. Original child occurrences retain their structural role; guest FLT
 //! payloads remain opaque and are checked by their separate preparation stage.
 
-use super::{source_constructor, SourceConstructor, SourceProfile};
+use super::{SourceConstructor, SourceProfile, source_constructor};
 
 #[path = "source_profile_policy.rs"]
 mod policy;

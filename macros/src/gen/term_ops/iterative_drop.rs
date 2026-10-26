@@ -140,9 +140,10 @@ fn generate_drop_task_enum(language: &LanguageDef) -> TokenStream {
 
 /// The constructors already chosen by the existing dummy-selection rules.
 ///
-/// Ordinary categories occur first in dependency_order and select leaf recipes.
-/// Data categories follow in their actual fixed-point selection order. An
-/// uninhabited data category has no entry; its existing renderer refuses it.
+/// Variable-admitting categories occur first in dependency_order and select
+/// leaf recipes. Variable-closed categories (Data or `noadmit` Object) follow
+/// in their actual fixed-point selection order. An uninhabited closed category
+/// has no entry; its renderer refuses it.
 /// VariantKind retains field order, multiplicity and native-carrier descriptors
 /// so rendering and resource projection need no second field algebra.
 pub(super) struct DummyPlan {
@@ -163,12 +164,12 @@ fn generate_dummy_functions(language: &LanguageDef) -> TokenStream {
         .iter()
         .map(|lang_type| {
             let selected = plan.selected.get(&lang_type.name.to_string());
-            if lang_type.is_data() {
-                generate_data_dummy_fn(&lang_type.name, selected, language)
+            if !lang_type.admits_variables() {
+                generate_closed_dummy_fn(&lang_type.name, selected, language)
             } else {
                 generate_dummy_fn(
                     &lang_type.name,
-                    selected.expect("ordinary categories always select a dummy"),
+                    selected.expect("variable-admitting categories always select a dummy"),
                     language,
                 )
             }
@@ -180,37 +181,45 @@ fn generate_dummy_functions(language: &LanguageDef) -> TokenStream {
 
 /// Select once; rendering and resource projection share the actual choices.
 pub(super) fn select_dummy_plan(language: &LanguageDef) -> DummyPlan {
-    // A closed data category has no synthetic Var sentinel. Select a finite,
-    // declared constructor for each such category by least fixed point over
+    // A variable-closed category (Data or `noadmit` Object) has no synthetic
+    // Var sentinel. Select a finite declared constructor by least fixed point over
     // constructor dependencies. Collection and optional fields are productive
     // at width zero; a scalar data field becomes productive only after its
     // target category does. This is a finite graph analysis at macro time, not
     // a recursive runtime search.
-    let data_names: std::collections::BTreeSet<String> = language
+    let closed_names: std::collections::BTreeSet<String> = language
         .types
         .iter()
-        .filter(|category| category.is_data())
+        .filter(|category| !category.admits_variables())
         .map(|category| category.name.to_string())
         .collect();
     let mut selected = std::collections::BTreeMap::<String, VariantKind>::new();
     let mut dependency_order = Vec::new();
 
-    // Non-data dependencies were already productive under the existing test.
-    // Seeding their leaf recipes does not change any data constructor choice.
-    for category in language.types.iter().filter(|category| !category.is_data()) {
+    // Admitted categories have the historical finite variable fallback.
+    // Seeding their leaf recipes does not change any closed constructor choice.
+    for category in language
+        .types
+        .iter()
+        .filter(|category| category.admits_variables())
+    {
         selected.insert(category.name.to_string(), select_ordinary_dummy(&category.name, language));
         dependency_order.push(category.name.clone());
     }
     loop {
         let mut changed = false;
-        for category in language.types.iter().filter(|category| category.is_data()) {
+        for category in language
+            .types
+            .iter()
+            .filter(|category| !category.admits_variables())
+        {
             let name = category.name.to_string();
             if selected.contains_key(&name) {
                 continue;
             }
             if let Some(variant) = collect_category_variants(&category.name, language)
                 .into_iter()
-                .find(|variant| data_variant_is_productive(variant, &data_names, &selected))
+                .find(|variant| closed_variant_is_productive(variant, &closed_names, &selected))
             {
                 selected.insert(name, variant);
                 dependency_order.push(category.name.clone());
@@ -293,17 +302,48 @@ mod dummy_plan_tests {
     }
 
     #[test]
+    fn noadmit_semantic_categories_use_finite_declared_replacements() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: ClosedObjectDummies,
+                types { Name noadmit CostSig noadmit CostStack },
+                terms {
+                    Ground . name:Name |- name : CostSig;
+                    Empty . |- "()" : CostStack;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("noadmit object fixture parses");
+        let plan = select_dummy_plan(&language);
+        assert_eq!(plan.selected["CostSig"].label().to_string(), "Ground");
+        assert_eq!(plan.selected["CostStack"].label().to_string(), "Empty");
+        let order: Vec<_> = plan
+            .dependency_order
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(order, ["Name", "CostSig", "CostStack"]);
+        let generated = generate_dummy_functions(&language).to_string();
+        assert!(generated.contains("dummy_costsig"));
+        assert!(!generated.contains("CostSig :: CVar"));
+    }
+
+    #[test]
     fn uninhabited_data_keeps_existing_diagnostic() {
         let language = dependency_fixture();
         let plan = select_dummy_plan(&language);
         let category = format_ident!("Dead");
-        let rendered = generate_data_dummy_fn(&category, plan.selected.get("Dead"), &language);
+        let rendered = generate_closed_dummy_fn(&category, plan.selected.get("Dead"), &language);
         assert_eq!(
             rendered.to_string(),
-            generate_data_dummy_fn(&category, None, &language).to_string()
+            generate_closed_dummy_fn(&category, None, &language).to_string()
         );
         let rendered = rendered.to_string();
-        assert!(rendered.contains("closed data category `Dead` has no finite declared constructor"));
+        assert!(
+            rendered.contains("variable-closed category `Dead` has no finite declared constructor")
+        );
         assert!(rendered.contains("compile_error"));
     }
 
@@ -311,7 +351,11 @@ mod dummy_plan_tests {
     fn ordinary_choices_keep_nullary_literal_collection_and_variable_priority() {
         let language = crate::gen::collection_literal_language_for_tests();
         let plan = select_dummy_plan(&language);
-        for category in language.types.iter().filter(|category| !category.is_data()) {
+        for category in language
+            .types
+            .iter()
+            .filter(|category| category.admits_variables())
+        {
             let variants = collect_category_variants(&category.name, &language);
             let expected = variants
                 .iter()
@@ -383,15 +427,15 @@ mod dummy_plan_tests {
             label: format_ident!("Composite"),
             fields: vec![scalar("C"), scalar("C"), optional, collection, text],
         };
-        let data_names = ["Composite", "C", "Dead"]
+        let closed_names = ["Composite", "C", "Dead"]
             .into_iter()
             .map(str::to_owned)
             .collect();
         let selected = [("C".to_owned(), VariantKind::Nullary { label: format_ident!("CFirst") })]
             .into_iter()
             .collect();
-        assert!(data_variant_is_productive(&variant, &data_names, &selected));
-        let rendered: String = generate_data_dummy_fn(
+        assert!(closed_variant_is_productive(&variant, &closed_names, &selected));
+        let rendered: String = generate_closed_dummy_fn(
             &format_ident!("Composite"),
             Some(&variant),
             &dependency_fixture(),
@@ -454,9 +498,9 @@ mod dummy_plan_tests {
     }
 }
 
-fn data_variant_is_productive(
+fn closed_variant_is_productive(
     variant: &VariantKind,
-    data_names: &std::collections::BTreeSet<String>,
+    closed_names: &std::collections::BTreeSet<String>,
     selected: &std::collections::BTreeMap<String, VariantKind>,
 ) -> bool {
     match variant {
@@ -477,7 +521,7 @@ fn data_variant_is_productive(
                 Some(OpaqueLeafKind::GuestBody) => false,
                 None => {
                     let dependency = field.category.to_string();
-                    !data_names.contains(&dependency) || selected.contains_key(&dependency)
+                    !closed_names.contains(&dependency) || selected.contains_key(&dependency)
                 },
             }
         }),
@@ -488,7 +532,7 @@ fn data_variant_is_productive(
     }
 }
 
-fn generate_data_dummy_fn(
+fn generate_closed_dummy_fn(
     category: &Ident,
     variant: Option<&VariantKind>,
     language: &LanguageDef,
@@ -496,7 +540,7 @@ fn generate_data_dummy_fn(
     let fn_name = format_ident!("dummy_{}", category.to_string().to_lowercase());
     let Some(variant) = variant else {
         let message = format!(
-            "closed data category `{category}` has no finite declared constructor; \
+            "variable-closed category `{category}` has no finite declared constructor; \
              iterative destruction requires an inhabited finite replacement"
         );
         return quote! {
@@ -542,7 +586,7 @@ fn generate_data_dummy_fn(
         | VariantKind::Binder { .. }
         | VariantKind::MultiBinder { .. } => {
             let message = format!(
-                "mettail internal error: data productivity selected an unsupported `{category}` constructor shape",
+                "mettail internal error: closed-category productivity selected an unsupported `{category}` constructor shape",
             );
             quote! {{
                 compile_error!(#message);

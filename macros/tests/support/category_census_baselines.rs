@@ -14,6 +14,7 @@ fn category(name: &str, native: bool, collection: bool) -> LangType {
     LangType {
         name: id(name),
         role: CategoryRole::Data,
+        admits_variables: false,
         native_type: native.then(|| syn::parse_quote!(i32)),
         collection_kind: collection
             .then(|| CollectionCategory::List(CollectionCategory::list_defaults())),

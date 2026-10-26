@@ -48,6 +48,7 @@
 
 #![allow(clippy::cmp_owned)]
 
+use crate::gen::runtime::dovetail_report::semantic_adapter::is_closed_data_category;
 use crate::gen::term_param_walk::{TermParamLeafKind, TermParamLeaves};
 use crate::gen::type_expr_walk::terminal_base;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
@@ -632,6 +633,40 @@ fn generate_subst_op_enum(language: &LanguageDef) -> TokenStream {
             #(#match_variants,)*
             #(#env_variants,)*
             Unify,
+            Instantiate {
+                replacements: std::sync::Arc<Vec<AnySubstTerm>>,
+                depth: u32,
+                failed: std::rc::Rc<std::cell::Cell<bool>>,
+            },
+            Shift {
+                depth: u32,
+                amount: u32,
+                failed: std::rc::Rc<std::cell::Cell<bool>>,
+            },
+        }
+
+        impl SubstOp {
+            fn under_scope(&self) -> Self {
+                let next_depth = |depth: u32, failed: &std::cell::Cell<bool>| {
+                    depth.checked_add(1).unwrap_or_else(|| {
+                        failed.set(true);
+                        depth
+                    })
+                };
+                match self {
+                    Self::Instantiate { replacements, depth, failed } => Self::Instantiate {
+                        replacements: replacements.clone(),
+                        depth: next_depth(*depth, failed),
+                        failed: failed.clone(),
+                    },
+                    Self::Shift { depth, amount, failed } => Self::Shift {
+                        depth: next_depth(*depth, failed),
+                        amount: *amount,
+                        failed: failed.clone(),
+                    },
+                    _ => unreachable!("scope operation expected"),
+                }
+            }
         }
     }
 }
@@ -808,7 +843,10 @@ fn generate_assemble_variant_decl(
             })
         },
 
-        VariantKind::Collection { label, coll_type, .. } => {
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            if is_closed_data_category(language, element_cat) {
+                return None;
+            }
             let variant_name = format_ident!("Assemble{}_{}", category, label);
             match coll_type {
                 CollectionType::HashBag | CollectionType::HashMap => Some(quote! {
@@ -1072,6 +1110,14 @@ fn generate_visit_variant_arm(
             generate_regular_visit_arm(cat, label, fields, language)
         },
         VariantKind::Collection { label, element_cat, coll_type } => {
+            if is_closed_data_category(language, element_cat) {
+                let wrap = format_ident!("Wrap{}", cat);
+                return quote! {
+                    #cat::#label(collection) => {
+                        results[slot] = Some(AnySubstTerm::#wrap(#cat::#label(collection.clone())));
+                    }
+                };
+            }
             generate_collection_visit_arm(cat, label, element_cat, coll_type)
         },
         VariantKind::Binder {
@@ -1489,6 +1535,44 @@ fn generate_var_visit_arm(cat: &Ident, label: &Ident, language: &LanguageDef) ->
     quote! {
         #cat::#label(v) => {
             match &ops[op_idx] {
+                SubstOp::Instantiate { replacements, depth, failed } => {
+                    let result = match &v.0 {
+                        mettail_runtime::Var::Bound(bound) if bound.scope.0 == *depth => {
+                            match replacements.get(bound.binder.to_usize()) {
+                                Some(AnySubstTerm::#wrap(replacement)) => {
+                                    replacement.shift_bound_scopes(*depth).unwrap_or_else(|| {
+                                        failed.set(true);
+                                        #cat::#label(v.clone())
+                                    })
+                                },
+                                _ => {
+                                    failed.set(true);
+                                    #cat::#label(v.clone())
+                                },
+                            }
+                        },
+                        mettail_runtime::Var::Bound(bound) if bound.scope.0 > *depth => {
+                            let mut adjusted = bound.clone();
+                            adjusted.scope.0 -= 1;
+                            #cat::#label(mettail_runtime::OrdVar(mettail_runtime::Var::Bound(adjusted)))
+                        },
+                        _ => #cat::#label(v.clone()),
+                    };
+                    results[slot] = Some(AnySubstTerm::#wrap(result));
+                },
+                SubstOp::Shift { depth, amount, failed } => {
+                    let mut adjusted = v.clone();
+                    if let mettail_runtime::Var::Bound(bound) = &mut adjusted.0 {
+                        if bound.scope.0 >= *depth {
+                            if let Some(scope) = bound.scope.0.checked_add(*amount) {
+                                bound.scope.0 = scope;
+                            } else {
+                                failed.set(true);
+                            }
+                        }
+                    }
+                    results[slot] = Some(AnySubstTerm::#wrap(#cat::#label(adjusted)));
+                },
                 SubstOp::#match_variant { vars, repls } => {
                     let result = 'find: {
                         if let mettail_runtime::Var::Free(ref fv) = v.0 {
@@ -1875,6 +1959,11 @@ fn generate_binder_visit_arm(
             // If the op is Match<BinderCat> or Env<BinderCat>, filter
             // shadowed entries; else pass through unchanged.
             let body_op_idx = match &ops[op_idx] {
+                op @ (SubstOp::Instantiate { .. } | SubstOp::Shift { .. }) => {
+                    let nested = op.under_scope();
+                    ops.push(nested);
+                    ops.len() - 1
+                },
                 SubstOp::#match_binder_variant { vars, repls } => {
                     let mut fvars: Vec<mettail_runtime::FreeVar<String>> = Vec::with_capacity(vars.len());
                     let mut frepls: Vec<#binder_cat> = Vec::with_capacity(repls.len());
@@ -1955,6 +2044,11 @@ fn generate_multi_binder_visit_arm(
             let cloned_pattern = binders.clone();
 
             let body_op_idx = match &ops[op_idx] {
+                op @ (SubstOp::Instantiate { .. } | SubstOp::Shift { .. }) => {
+                    let nested = op.under_scope();
+                    ops.push(nested);
+                    ops.len() - 1
+                },
                 SubstOp::#match_binder_variant { vars, repls } => {
                     // A var is shadowed if ANY binder in the multi-binder matches it.
                     let mut fvars: Vec<mettail_runtime::FreeVar<String>> = Vec::with_capacity(vars.len());
@@ -2166,6 +2260,9 @@ fn generate_assemble_arm_for_variant(
             Some(generate_regular_assemble_arm(cat, label, fields, language))
         },
         VariantKind::Collection { label, element_cat, coll_type } => {
+            if is_closed_data_category(language, element_cat) {
+                return None;
+            }
             Some(generate_collection_assemble_arm(cat, label, element_cat, coll_type))
         },
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
@@ -2818,7 +2915,11 @@ fn generate_collection_assemble_arm(
                         elements_start: usize,
                         elements_count: usize,
                     ) {
-                        let mut set = std::collections::HashSet::with_capacity(elements_count);
+                        // Changed for sole-collection lane (carrier): a `HashSet(T)` field is
+                        // `mettail_runtime::HashSetLit<T>` in the AST (`gen/types/enums.rs`),
+                        // and `HashSetLit` has no `with_capacity`. The code was:
+                        // let mut set = std::collections::HashSet::with_capacity(elements_count);
+                        let mut set = mettail_runtime::HashSetLit::new();
                         for idx in 0..elements_count {
                             match results[elements_start + idx].take()
                                 .expect("iterative subst: missing hashset element")
@@ -3160,6 +3261,29 @@ fn generate_subst_wrappers(category: &Ident, language: &LanguageDef) -> TokenStr
     let host_visit = format_ident!("Visit{}", category);
     let host_wrap = format_ident!("Wrap{}", category);
     let match_self_variant = format_ident!("Match{}", category);
+    let wrong_scope_category =
+        (crate::gen::semantic_transit_types(language).count() > 1).then(|| {
+            quote! { _ => unreachable!("scope operation changed the root category"), }
+        });
+    let instantiate_methods = crate::gen::variable_types(language).map(|ty| {
+        let replacement_cat = &ty.name;
+        let replacement_wrap = format_ident!("Wrap{}", replacement_cat);
+        let method =
+            format_ident!("instantiate_scope_{}", replacement_cat.to_string().to_lowercase());
+        quote! {
+            pub fn #method(&self, replacements: &[#replacement_cat]) -> Option<Self> {
+                let failed = std::rc::Rc::new(std::cell::Cell::new(false));
+                let replacements = std::sync::Arc::new(replacements.iter()
+                    .map(|value| AnySubstTerm::#replacement_wrap(value.clone())).collect());
+                let result = self.apply_scope_operation(SubstOp::Instantiate {
+                    replacements,
+                    depth: 0,
+                    failed: failed.clone(),
+                });
+                if failed.get() { None } else { Some(result) }
+            }
+        }
+    });
 
     // Same-category aliases
     let self_alias = format_ident!("subst_{}", category_str.to_lowercase());
@@ -3255,8 +3379,91 @@ fn generate_subst_wrappers(category: &Ident, language: &LanguageDef) -> TokenStr
         })
         .collect();
 
+    // `noadmit` removes this category's object-variable constructor. A
+    // same-sort replacement therefore has no matching leaf and is exactly
+    // identity, even when this term embeds *other* variable-admitting sorts.
+    // Cross-sort methods above still run the existing PDA and traverse those
+    // embedded terms; no absent Match<ClosedCategory> op is manufactured.
+    let self_subst_body = if crate::gen::category_has_var_variant(category, language) {
+        quote! {
+            if vars.is_empty() { return self.clone(); }
+            let result: Self = SUBST_TASK_POOL.with(|t| {
+                SUBST_RESULT_POOL.with(|r| {
+                    SUBST_OP_POOL.with(|o| {
+                        let mut stack = t.take();
+                        let mut results = r.take();
+                        let mut ops = o.take();
+                        stack.clear();
+                        results.clear();
+                        ops.clear();
+
+                        results.push(None);
+                        ops.push(SubstOp::#match_self_variant {
+                            vars: vars.iter().map(|v| (**v).clone()).collect(),
+                            repls: repls.to_vec(),
+                        });
+                        stack.push(SubstTask::#host_visit {
+                            src: self as *const _,
+                            slot: 0,
+                            op_idx: 0,
+                        });
+
+                        subst_iterative(&mut stack, &mut results, &mut ops);
+
+                        let root = match results[0].take()
+                            .expect("iterative subst: root slot empty")
+                        {
+                            AnySubstTerm::#host_wrap(v) => v,
+                            _ => unreachable!(
+                                "iterative subst: wrong category in root slot"
+                            ),
+                        };
+
+                        o.set(ops);
+                        r.set(results);
+                        t.set(stack);
+                        root
+                    })
+                })
+            });
+            result
+        }
+    } else {
+        quote! {
+            let _ = (vars, repls);
+            self.clone()
+        }
+    };
+
     quote! {
         impl #category {
+            fn apply_scope_operation(&self, operation: SubstOp) -> Self {
+                let mut stack = vec![SubstTask::#host_visit {
+                    src: self as *const _,
+                    slot: 0,
+                    op_idx: 0,
+                }];
+                let mut results = vec![None];
+                let mut ops = vec![operation];
+                subst_iterative(&mut stack, &mut results, &mut ops);
+                match results[0].take().expect("scope operation produced no root") {
+                    AnySubstTerm::#host_wrap(result) => result,
+                    #wrong_scope_category
+                }
+            }
+
+            pub fn shift_bound_scopes(&self, amount: u32) -> Option<Self> {
+                let failed = std::rc::Rc::new(std::cell::Cell::new(false));
+                let result = self.apply_scope_operation(SubstOp::Shift {
+                    depth: 0,
+                    amount,
+                    failed: failed.clone(),
+                });
+                if failed.get() { None } else { Some(result) }
+            }
+
+            #(#instantiate_methods)*
+
             /// Single-variable substitution (same category).
             pub fn substitute(
                 &self,
@@ -3273,47 +3480,7 @@ fn generate_subst_wrappers(category: &Ident, language: &LanguageDef) -> TokenStr
                 vars: &[&mettail_runtime::FreeVar<String>],
                 repls: &[Self],
             ) -> Self {
-                if vars.is_empty() { return self.clone(); }
-                let result: Self = SUBST_TASK_POOL.with(|t| {
-                    SUBST_RESULT_POOL.with(|r| {
-                        SUBST_OP_POOL.with(|o| {
-                            let mut stack = t.take();
-                            let mut results = r.take();
-                            let mut ops = o.take();
-                            stack.clear();
-                            results.clear();
-                            ops.clear();
-
-                            results.push(None);
-                            ops.push(SubstOp::#match_self_variant {
-                                vars: vars.iter().map(|v| (**v).clone()).collect(),
-                                repls: repls.to_vec(),
-                            });
-                            stack.push(SubstTask::#host_visit {
-                                src: self as *const _,
-                                slot: 0,
-                                op_idx: 0,
-                            });
-
-                            subst_iterative(&mut stack, &mut results, &mut ops);
-
-                            let root = match results[0].take()
-                                .expect("iterative subst: root slot empty")
-                            {
-                                AnySubstTerm::#host_wrap(v) => v,
-                                _ => unreachable!(
-                                    "iterative subst: wrong category in root slot"
-                                ),
-                            };
-
-                            o.set(ops);
-                            r.set(results);
-                            t.set(stack);
-                            root
-                        })
-                    })
-                });
-                result
+                #self_subst_body
             }
 
             /// Backward compatibility alias for `subst`.
@@ -3358,6 +3525,33 @@ fn generate_subst_wrappers(category: &Ident, language: &LanguageDef) -> TokenStr
 
             #(#cross_methods)*
         }
+    }
+}
+
+#[cfg(test)]
+mod noadmit_substitution_tests {
+    use super::*;
+
+    #[test]
+    fn closed_same_sort_is_identity_but_open_child_sort_keeps_the_pda() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: ClosedSubstitution,
+                types { Name noadmit CostSig },
+                terms {
+                    N . |- "n" : Name;
+                    Ground . name:Name |- name : CostSig;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("closed substitution fixture parses");
+        let closed: Ident = syn::parse_str("CostSig").expect("category identifier");
+        let generated = generate_subst_wrappers(&closed, &language).to_string();
+        assert!(!generated.contains("SubstOp :: MatchCostSig"));
+        assert!(generated.contains("SubstOp :: MatchName"));
+        assert!(generated.contains("self . clone ()"));
     }
 }
 

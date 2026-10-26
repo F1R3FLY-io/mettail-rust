@@ -334,6 +334,32 @@ struct PositionPhases {
     productions: Vec<RankEvent>,
 }
 
+pub fn ranked_semantic_prefix<T, K: Eq + std::hash::Hash>(
+    readings: impl IntoIterator<
+        Item = (T, crate::automata::semiring::ExactParseCost, CompleteDerivationRank),
+    >,
+    limit: usize,
+    key: impl Fn(&T) -> K,
+) -> Vec<(T, crate::automata::semiring::ExactParseCost, CompleteDerivationRank)> {
+    let mut classes = Vec::new();
+    let mut indices = std::collections::HashMap::<K, usize>::new();
+    for reading in readings {
+        let class = key(&reading.0);
+        if let Some(&index) = indices.get(&class) {
+            let prior: &(T, _, CompleteDerivationRank) = &classes[index];
+            if (&reading.1, &reading.2) < (&prior.1, &prior.2) {
+                classes[index] = reading;
+            }
+        } else {
+            indices.insert(class, classes.len());
+            classes.push(reading);
+        }
+    }
+    classes.sort_by(|a, b| (&a.1, &a.2).cmp(&(&b.1, &b.2)));
+    classes.truncate(limit);
+    classes
+}
+
 /// Iteratively normalize an arbitrary event stream into the position-indexed
 /// two-phase representation. The stable per-phase pushes are the executable
 /// counterpart of the Rocq `combine_bucket` append laws.

@@ -57,7 +57,7 @@ pub(crate) fn build_per_category_rules(
             TypeInput {
                 name,
                 is_data,
-                admits_variables: !is_data,
+                admits_variables: ty.admits_variables(),
                 has_native: ty.native_type.is_some(),
                 has_collection: ty.collection_kind.is_some(),
                 source: ty,
@@ -295,12 +295,14 @@ mod tests {
                 LangType {
                     name: Ident::new("Int", Span::call_site()),
                     role: Default::default(),
+                    admits_variables: true,
                     native_type: Some(parse_quote!(i32)),
                     collection_kind: None,
                 },
                 LangType {
                     name: Ident::new("Bool", Span::call_site()),
                     role: Default::default(),
+                    admits_variables: true,
                     native_type: Some(parse_quote!(bool)),
                     collection_kind: None,
                 },
@@ -364,6 +366,17 @@ mod tests {
     }
 
     #[test]
+    fn noadmit_object_keeps_literal_synthesis_without_implicit_variable() {
+        let mut lang = lang_with_int_and_bool_literals();
+        lang.types[0].admits_variables = false;
+        let per_cat = build_per_category_rules(&lang, &["Int".into(), "Bool".into()]);
+
+        assert_eq!(synthesis_baseline_labels(&per_cat[0]), ["NumLit"]);
+        assert_eq!(synthesis_baseline_labels(&per_cat[1]), ["BoolLit", "BVar"]);
+        assert!(lang.types[0].supports(mettail_ast::language::CategoryCapability::SemanticRoot));
+    }
+
+    #[test]
     fn synthesizes_for_native_type_without_literal_block() {
         // Stage 4 fix: categories with `native_type` are synthesized
         // regardless of whether they have a `from_literals` TokenDef.
@@ -409,6 +422,7 @@ mod tests {
         LangType {
             name: synthesis_baseline_ident("Seq"),
             role: CategoryRole::Object,
+            admits_variables: true,
             native_type: Some(parse_quote!(Vec<Int>)),
             collection_kind: Some(CollectionCategory::List(CollectionDelimiters {
                 open: open.into(),

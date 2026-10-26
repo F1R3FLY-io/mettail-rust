@@ -62,6 +62,44 @@ language! {
 }
 
 #[test]
+fn ranked_capture_evidence_uses_the_consumed_token_position() {
+    use mettail_prattail::derivation_rank::RankDecision;
+    use mettail_prattail::wpda_runtime::{CursorBoundingMode, LatticeTokenSource, WpdaTokenSource};
+    for (source, positions) in
+        [("<xyz>!", vec![0]), ("tag <abc>", vec![4]), ("pair <a> <bc>", vec![5, 9])]
+    {
+        let tokens = LatticeTokenSource::new(lex_dag(source).unwrap());
+        let mut position = 0;
+        let readings = parse_Num_via_wpda_ranked_prefix_with_source_and_bounding_mode(
+            &tokens,
+            &mut position,
+            0,
+            16,
+            CursorBoundingMode::Unbounded,
+        )
+        .unwrap();
+        assert_eq!(position, tokens.eof_node());
+        let expected = Num::parse(source).unwrap();
+        let reading = readings
+            .iter()
+            .find(|(term, _, _)| term == &expected)
+            .unwrap();
+        for position in positions {
+            assert!(
+                reading
+                    .2
+                    .events()
+                    .iter()
+                    .any(|event| event.input_position == position
+                        && matches!(event.decision, RankDecision::LexAlternative(_))),
+                "missing capture decision at {position} in {source}: {:?}",
+                reading.2
+            );
+        }
+    }
+}
+
+#[test]
 fn l9_modal_toy_lexer_interface_resolves() {
     let lang = L9ModalToyLanguage;
     assert_eq!(lang.name(), "L9ModalToy");

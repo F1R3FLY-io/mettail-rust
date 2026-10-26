@@ -2314,9 +2314,8 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
             /// Construct the same exact semantic stream as semantic_hash while
             /// retaining cached child streams as persistent ContentKey ropes.
             ///
-            /// Every address admitted to the cache is transitively owned by
-            /// owner. The transaction publishes all discovered keys together,
-            /// or none of them when a deterministic cache limit is exhausted.
+            /// Cache capacity affects retention only. Weak owner witnesses
+            /// validate cached addresses, and misses compute the same exact key.
             pub fn semantic_content_key(
                 owner: std::sync::Arc<Self>,
                 cache: &mut mettail_runtime::exact_semantic_key::ContentKeyCache,
@@ -2326,7 +2325,7 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
             > {
                 let mut transaction = cache.transaction_for_root(owner.clone());
                 // SAFETY: cacheable tasks borrow immutable descendants of owner,
-                // which is retained by this transaction for the full cache lifetime.
+                // which remains strongly owned throughout this transaction.
                 let mut sink = unsafe { __MettailComposingSemanticSink::new(&mut transaction) };
                 let used_tls = SEMANTIC_HASH_TASK_POOL
                     .try_with(|cell| {
@@ -2351,7 +2350,7 @@ fn generate_semantic_impl(category: &Ident) -> TokenStream {
                     semantic_hash_iterative(&mut stack, &mut sink);
                 }
                 let key = sink.into_result()?;
-                transaction.commit()?;
+                transaction.commit();
                 Ok(key)
             }
         }

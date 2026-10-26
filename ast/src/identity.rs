@@ -833,7 +833,8 @@ fn write_language(language: &LanguageDef, out: &mut impl IdentitySink) {
         push_ident(out, &ty.name);
         out.push(':');
         out.push_str(match ty.role {
-            crate::language::CategoryRole::Object => "object",
+            crate::language::CategoryRole::Object if ty.admits_variables => "object",
+            crate::language::CategoryRole::Object => "object-noadmit",
             crate::language::CategoryRole::Data => "data",
             crate::language::CategoryRole::SpannedData => "spanned-data",
         });
@@ -1167,7 +1168,19 @@ fn write_typed_params(params: &[TypedParam], out: &mut impl IdentitySink) {
     for param in params {
         push_ident(out, &param.name);
         out.push(':');
-        write_type_expr(&param.ty, out);
+        match &param.ty {
+            crate::language::RuleContextType::Ordinary(ty) => write_type_expr(ty, out),
+            crate::language::RuleContextType::RewriteFamily { domains, result } => {
+                out.push_str("rewrite_family(");
+                for domain in domains {
+                    write_type_expr(domain, out);
+                    out.push(';');
+                }
+                out.push_str("=>");
+                write_type_expr(result, out);
+                out.push(')');
+            },
+        }
         out.push(';');
     }
     out.push(']');
@@ -1408,6 +1421,33 @@ mod tests {
             .expect("v2 prefix");
         assert_eq!(digest.len(), 64);
         assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn object_noadmit_has_distinct_identity_without_changing_old_object_profile() {
+        let admitted = syn::parse_str::<LanguageDef>(
+            r#"name: AdmissionIdentity, types { Proc } terms { Zero . |- "0" : Proc; }"#,
+        )
+        .expect("historical object declaration");
+        let admitted_again = syn::parse_str::<LanguageDef>(
+            r#"name: AdmissionIdentity, types { Proc; } terms { Zero . |- "0" : Proc; }"#,
+        )
+        .expect("equivalent historical object declaration");
+        let noadmit = syn::parse_str::<LanguageDef>(
+            r#"name: AdmissionIdentity, types { noadmit Proc } terms { Zero . |- "0" : Proc; }"#,
+        )
+        .expect("object category without implicit variables");
+
+        assert_eq!(
+            language_definition_fingerprint(&admitted),
+            language_definition_fingerprint(&admitted_again),
+            "optional historical semicolon does not alter canonical identity"
+        );
+        assert_ne!(
+            language_definition_fingerprint(&admitted),
+            language_definition_fingerprint(&noadmit),
+            "different variable admission changes the language identity"
+        );
     }
 
     #[test]

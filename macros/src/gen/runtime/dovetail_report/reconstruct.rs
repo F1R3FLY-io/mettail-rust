@@ -1969,7 +1969,7 @@ fn reconstruction_pda_support_mode(
                         }
                     });
                 },
-                VariantKind::Collection { label, element_cat, .. } => {
+                VariantKind::Collection { label, element_cat, coll_type } => {
                     let tag = rebuild_assemble_tag(variant_layout);
                     match variant_layout
                         .collection_projection()
@@ -1979,13 +1979,27 @@ fn reconstruction_pda_support_mode(
                             let take_element = rebuild_value_take_method(&element_cat);
                             let helper =
                                 format_ident!("insert_into_{}", label.to_string().to_lowercase());
+                            // Changed for sole-collection lane (element): the helper exists only
+                            // when the element is the owner category, so a cross-category bag
+                            // inserts each element directly (BinderFloatCanonicalization.v Part 5,
+                            // `caller_calls` for `RebuildKernel`). The code was:
+                            // #category::#helper(&mut __bag, __element);
+                            let insert = if crate::gen::term_ops::normalize::collection_flatten_helper_applies(
+                                category,
+                                &element_cat,
+                                &coll_type,
+                            ) {
+                                quote! { #category::#helper(&mut __bag, __element); }
+                            } else {
+                                quote! { __bag.insert(__element); }
+                            };
                             category_arms.push(quote! {
                                 #tag => {
                                     let __first = __values.len().checked_sub(__value_count)?;
                                     let mut __bag = ::mettail_runtime::HashBag::<#element_cat>::new();
                                     for __value in __values.drain(__first..) {
                                         let __element = __value.#take_element()?;
-                                        #category::#helper(&mut __bag, __element);
+                                        #insert
                                     }
                                     ::core::option::Option::Some(
                                         #category::#label(__bag)
@@ -3565,7 +3579,10 @@ fn category_reconstruct_recursive_reference(
             // fold — the "stuck child ⇒ no fold" case of `APPLY-NATIVE-FOLD`. Only `HashBag`
             // is AC-lowered; `Vec`/`HashSet`/`HashMap` lower to `FieldOpaque` and never reach
             // this arm (they have no AC-bag op node), so they correctly stay `None`.
-            VariantKind::Collection { label, element_cat, .. } => {
+            //
+            // (2026-10-20) The helper exists only when the element is the owner category, so a
+            // cross-category bag inserts each child directly.
+            VariantKind::Collection { label, element_cat, coll_type } => {
                 let v = op_variant_ident(category, &label);
                 match variant_layout
                     .collection_projection()
@@ -3575,11 +3592,24 @@ fn category_reconstruct_recursive_reference(
                         let elem_build = build_fn(&element_cat);
                         let helper =
                             format_ident!("insert_into_{}", label.to_string().to_lowercase());
+                        // Changed for sole-collection lane (element): BinderFloatCanonicalization.v
+                        // Part 5, `caller_calls` for `TypedInverse`. The code was:
+                        // #category::#helper(&mut __bag, #elem_build(__child)?);
+                        let insert =
+                            if crate::gen::term_ops::normalize::collection_flatten_helper_applies(
+                                category,
+                                &element_cat,
+                                &coll_type,
+                            ) {
+                                quote! { #category::#helper(&mut __bag, #elem_build(__child)?); }
+                            } else {
+                                quote! { __bag.insert(#elem_build(__child)?); }
+                            };
                         arms.push(quote! {
                             &#enum_id::#v => {
                                 let mut __bag = ::mettail_runtime::HashBag::<#element_cat>::new();
                                 for __child in &__d.children {
-                                    #category::#helper(&mut __bag, #elem_build(__child)?);
+                                    #insert
                                 }
                                 ::core::option::Option::Some(#category::#label(__bag))
                             },
@@ -4034,5 +4064,24 @@ mod factored_assembly_tests {
         assert!(pathmap_handler.contains("PathMapModeProc(__mode)if*__mode<=2u8"));
         assert!(pathmap_handler.contains("PathMapPairProc"));
         assert!(pathmap_handler.contains("EmitPathMapMode(__mode)"));
+    }
+
+    #[test]
+    fn typed_inverse_follows_the_declared_collection_element() {
+        use crate::gen::term_ops::normalize::sole_collection_lane_tests::{
+            failed_checks, sole_collection_lane_language,
+        };
+        let language = sole_collection_lane_language();
+        let category: Ident = syn::parse_str("Proc").expect("identifier");
+        let inverse = compact(category_reconstruct_recursive_reference(&language, &category));
+        let failed = failed_checks(
+            &inverse,
+            &[
+                "Proc::insert_into_ppar(&mut__bag,__mettail_dovetail_build_proc_d(__child)?);",
+                "__bag.insert(__mettail_dovetail_build_name_d(__child)?);",
+            ],
+            &["insert_into_pnames", "insert_into_pmetas"],
+        );
+        assert!(failed.is_empty(), "{failed:#?}");
     }
 }

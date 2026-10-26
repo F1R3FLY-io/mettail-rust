@@ -153,7 +153,7 @@ pub(crate) const VARIABLE_FILLER_SURFACE: &str = "a";
 pub(crate) fn nonground_filler_surfaces(language: &LanguageDef) -> BTreeMap<String, String> {
     let mut filler = nullary_filler_surfaces(language);
     for lang_type in &language.types {
-        if lang_type.native_type.is_some() {
+        if !crate::gen::category_emits_parseable_auto_var(&lang_type.name, language) {
             continue;
         }
         filler.insert(lang_type.name.to_string(), VARIABLE_FILLER_SURFACE.to_string());
@@ -671,4 +671,35 @@ pub(crate) fn compile_errors(language: &LanguageDef, model: &SynonymyModel) -> T
         out.extend(quote! { compile_error!(#message); });
     }
     out
+}
+
+#[cfg(test)]
+mod filler_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn surface_fillers_follow_declared_variable_admission(
+            suffix in "[A-Z]{1,8}", ground in "ground_[a-z]{1,8}", has_ground in any::<bool>(),
+        ) {
+            for (declaration, variable_allowed) in [("", true), ("noadmit", false), ("data", false)] {
+                let category = format!("Value{suffix}");
+                let terms = if has_ground { format!("Leaf . |- {ground:?} : {category};") } else { String::new() };
+                let language: LanguageDef = syn::parse_str(&format!(
+                    "name: FillerAdmission, types {{ {declaration} {category} }}, terms {{ {terms} }}, equations {{}}, rewrites {{}},"
+                )).expect("filler grammar");
+                let samples = nonground_filler_surfaces(&language);
+                let expected = if variable_allowed { Some(VARIABLE_FILLER_SURFACE.to_string()) }
+                    else if has_ground { Some(ground.clone()) } else { None };
+                prop_assert_eq!(samples.get(&category), expected.as_ref());
+                if !variable_allowed {
+                    let ground_samples = nullary_filler_surfaces(&language);
+                    prop_assert_eq!(samples.get(&category), ground_samples.get(&category));
+                }
+            }
+        }
+    }
 }

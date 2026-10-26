@@ -72,282 +72,314 @@ fn generated_native_scalar_preserves_original_semantic_equivalence() {
     use mettail_prattail::wpda_walker::WpdaEngine;
     use native_scalar_fixture::{Pattern, Scalar};
 
-    let variable = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
-        core::native_variable::get_or_create_var("a"),
-    ));
-    let engine = native_scalar_fixture::GeneratedNativeScalarWpdaEngine;
-    let mut cache = mettail_runtime::exact_semantic_key::ContentKeyCache::with_limits(64, 4096);
-    let candidates: [std::sync::Arc<dyn std::any::Any + Send + Sync>; 4] = [
-        std::sync::Arc::new(Pattern::PVar(variable.clone())),
-        std::sync::Arc::new(Pattern::PLiteral(std::sync::Arc::new(Scalar::SVar(variable.clone())))),
-        std::sync::Arc::new(Pattern::PLiteral(std::sync::Arc::new(Scalar::StringLit("a".into())))),
-        std::sync::Arc::new(Scalar::SVar(variable.clone())),
-    ];
-    let keys: Vec<_> = candidates
-        .iter()
-        .map(|term| {
-            engine
-                .semantic_content_key(term, &mut cache)
-                .expect("bounded original key construction")
-                .expect("original generated category key")
-        })
-        .collect();
-    assert_eq!(keys[0], keys[1], "transparent variable projection is observationally equal");
-    assert_ne!(keys[0], keys[2], "a literal is not a variable with the same spelling");
-    assert_ne!(keys[0], keys[3], "root-category tags separate equal descendant streams");
-    for (term, key) in candidates.iter().zip(&keys) {
-        assert_eq!(
-            key.as_bytes(),
-            engine
-                .semantic_fingerprint(term)
-                .expect("original framed byte stream"),
-            "cached persistent keys reproduce the complete original write stream"
-        );
-    }
-    assert_eq!(
-        engine.semantic_fingerprint(&candidates[0]),
-        engine.semantic_fingerprint(&candidates[1]),
-        "persistent keys agree with the original byte-stream observation"
-    );
-    assert_ne!(
-        engine.semantic_fingerprint(&candidates[0]),
-        engine.semantic_fingerprint(&candidates[2])
-    );
-
-    let metadata = native_scalar_fixture::GeneratedNativeScalarLanguage.metadata();
-    let artifacts = metadata
-        .generated_semantic_artifacts_v1()
-        .expect("captured native fixture");
-    let grammar: core::GrammarCoreV1 = postcard::from_bytes(artifacts.grammar_core_postcard)
-        .expect("exact captured native grammar");
-    assert!(
-        grammar
-            .categories
+    for cache_capacity in [0, 1, 64] {
+        let variable = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            core::native_variable::get_or_create_var("a"),
+        ));
+        let engine = native_scalar_fixture::GeneratedNativeScalarWpdaEngine;
+        let mut cache =
+            mettail_runtime::exact_semantic_key::ContentKeyCache::with_limits(cache_capacity, 4096);
+        let candidates: [std::sync::Arc<dyn std::any::Any + Send + Sync>; 4] = [
+            std::sync::Arc::new(Pattern::PVar(variable.clone())),
+            std::sync::Arc::new(Pattern::PLiteral(std::sync::Arc::new(Scalar::SVar(
+                variable.clone(),
+            )))),
+            std::sync::Arc::new(Pattern::PLiteral(std::sync::Arc::new(Scalar::StringLit(
+                "a".into(),
+            )))),
+            std::sync::Arc::new(Scalar::SVar(variable.clone())),
+        ];
+        let keys: Vec<_> = candidates
             .iter()
-            .find(|category| category.name == "Scalar")
-            .expect("captured String-native Scalar declaration")
-            .admits_variables
-    );
-    let image = compile_parser_image(&grammar).expect("existing runtime lexical image");
-    let observations = grammar
-        .wpda_token_observations
-        .as_ref()
-        .expect("captured original token observations");
-    let scalar_token = grammar
-        .tokens
-        .iter()
-        .find(|token| {
-            matches!(
-                observations.get(token.id.0 as usize),
-                Some(Some(core::WpdaTokenObservation::StringLit))
-            )
-        })
-        .expect("original String literal token family");
-    assert_eq!(
-        scalar_token.category, None,
-        "original builtin tokens carry no Core category tag; source rules supply admission"
-    );
-    let host = FixtureHost(grammar.fingerprint().expect("native fixture fingerprint"));
-    let parser = core::RuntimeParser::new(
-        &grammar,
-        &image,
-        RUNTIME_COMPILER_ABI,
-        RUNTIME_UNICODE_ABI,
-        &host,
-    )
-    .expect("existing host admission; native actions remain generated Rust");
-    let receipt = grammar
-        .wpda_original_occurrences
-        .as_ref()
-        .expect("real macro producer retains its original occurrence receipt");
-    assert_eq!(
-        receipt,
-        &[
-            core::ProductionId(0),
-            core::ProductionId(1),
-            core::ProductionId(2),
-            core::ProductionId(3)
-        ]
-    );
-    let occurrences: Vec<_> = receipt.iter().map(|id| id.0 as usize).collect();
-    let synthesis = derive_authored_rules(&grammar, &occurrences, |_| Ok::<_, Infallible>(()))
-        .expect("original native fixture synthesis");
-    let descriptors = derive_authored_descriptors(
-        &grammar,
-        &occurrences,
-        synthesis,
-        DescriptorOptions {
-            crosscat_lex_compat_gate: true,
-            prefix_factoring: false,
-            mixfix_factoring: false,
-            accept_continue: false,
-            recovery_base: 0xFE00,
-            max_mixfix_slice: usize::MAX,
-        },
-        |_, _, _, _| Ok::<_, Infallible>(()),
-        |_, _| Ok::<_, Infallible>(false),
-    )
-    .expect("complete captured native descriptor domain");
-    let absorption = derive_absorption_rows(&grammar, &descriptors)
-        .expect("original native absorption observations");
-    let collect = |input: &str| {
-        let session = parser
-            .lexical_session(input)
-            .expect("existing original lexical session");
-        let source = OwnedTokenSource::from_admitted_session(
-            &session,
-            SourceAdapterLimits {
-                nodes: 1024,
-                edges: 4096,
-                text_bytes: 65536,
-            },
-        )
-        .expect("original token-kind observations");
-        let mut walker = WpdaWalker::new_for_category(
-            native_scalar_fixture::GeneratedNativeScalarWpdaEngine,
-            0,
-            0,
+            .map(|term| {
+                engine
+                    .semantic_content_key(term, &mut cache)
+                    .expect("bounded original key construction")
+                    .expect("original generated category key")
+            })
+            .collect();
+        assert_eq!(keys[0], keys[1], "transparent variable projection is observationally equal");
+        assert_ne!(keys[0], keys[2], "a literal is not a variable with the same spelling");
+        assert_ne!(keys[0], keys[3], "root-category tags separate equal descendant streams");
+        for (term, key) in candidates.iter().zip(&keys) {
+            assert_eq!(
+                key.as_bytes(),
+                engine
+                    .semantic_fingerprint(term)
+                    .expect("original framed byte stream"),
+                "cached persistent keys reproduce the complete original write stream"
+            );
+        }
+        assert_eq!(
+            engine.semantic_fingerprint(&candidates[0]),
+            engine.semantic_fingerprint(&candidates[1]),
+            "persistent keys agree with the original byte-stream observation"
         );
-        walker
-            .run_to_end_of_input(10_000, &source)
-            .expect("original generated engine walk");
-        let resolved = walker.resolve_at_end_of_input(&source);
-        let WpdaResolveResult::Accepted { roots, .. } = resolved else {
-            panic!("generated engine must accept {input:?}: {resolved:?}");
-        };
-        assert!(!roots.is_empty());
-        let mut terms = Vec::new();
-        let mut weights = Vec::new();
-        let mut generated_family = Vec::new();
-        let mut key_cache = mettail_runtime::exact_semantic_key::ContentKeyCache::default();
-        for root in roots {
-            let readings = walker
-                .realize_root_to_terms_with_weights(
-                    root,
-                    Some(256),
-                    RealizeRequestMode::BoundedEnumeration,
+        assert_ne!(
+            engine.semantic_fingerprint(&candidates[0]),
+            engine.semantic_fingerprint(&candidates[2])
+        );
+
+        let metadata = native_scalar_fixture::GeneratedNativeScalarLanguage.metadata();
+        let artifacts = metadata
+            .generated_semantic_artifacts_v1()
+            .expect("captured native fixture");
+        let grammar: core::GrammarCoreV1 = postcard::from_bytes(artifacts.grammar_core_postcard)
+            .expect("exact captured native grammar");
+        assert!(
+            grammar
+                .categories
+                .iter()
+                .find(|category| category.name == "Scalar")
+                .expect("captured String-native Scalar declaration")
+                .admits_variables
+        );
+        let image = compile_parser_image(&grammar).expect("existing runtime lexical image");
+        let observations = grammar
+            .wpda_token_observations
+            .as_ref()
+            .expect("captured original token observations");
+        let scalar_token = grammar
+            .tokens
+            .iter()
+            .find(|token| {
+                matches!(
+                    observations.get(token.id.0 as usize),
+                    Some(Some(core::WpdaTokenObservation::StringLit))
                 )
-                .expect("original generated semantic actions");
-            assert!(readings.len() < 256, "root {root:?} exhausted for {input:?}");
-            for (term, weight) in readings {
-                let key = native_scalar_fixture::GeneratedNativeScalarWpdaEngine
-                    .semantic_content_key(&term, &mut key_cache)
-                    .expect("bounded original native key")
-                    .expect("generated native category has an exact key");
-                generated_family.push((key.as_bytes().to_vec(), weight));
-                terms.push(
-                    term.downcast_ref::<Pattern>()
-                        .expect("generated Pattern carrier")
-                        .clone(),
+            })
+            .expect("original String literal token family");
+        assert_eq!(
+            scalar_token.category, None,
+            "original builtin tokens carry no Core category tag; source rules supply admission"
+        );
+        let host = FixtureHost(grammar.fingerprint().expect("native fixture fingerprint"));
+        let parser = core::RuntimeParser::new(
+            &grammar,
+            &image,
+            RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI,
+            &host,
+        )
+        .expect("existing host admission; native actions remain generated Rust");
+        let receipt = grammar
+            .wpda_original_occurrences
+            .as_ref()
+            .expect("real macro producer retains its original occurrence receipt");
+        assert_eq!(
+            receipt,
+            &[
+                core::ProductionId(0),
+                core::ProductionId(1),
+                core::ProductionId(2),
+                core::ProductionId(3)
+            ]
+        );
+        let occurrences: Vec<_> = receipt.iter().map(|id| id.0 as usize).collect();
+        let synthesis = derive_authored_rules(&grammar, &occurrences, |_| Ok::<_, Infallible>(()))
+            .expect("original native fixture synthesis");
+        let descriptors = derive_authored_descriptors(
+            &grammar,
+            &occurrences,
+            synthesis,
+            DescriptorOptions {
+                crosscat_lex_compat_gate: true,
+                prefix_factoring: false,
+                mixfix_factoring: false,
+                accept_continue: false,
+                recovery_base: 0xFE00,
+                max_mixfix_slice: usize::MAX,
+            },
+            |_, _, _, _| Ok::<_, Infallible>(()),
+            |_, _| Ok::<_, Infallible>(false),
+        )
+        .expect("complete captured native descriptor domain");
+        let absorption = derive_absorption_rows(&grammar, &descriptors)
+            .expect("original native absorption observations");
+        let collect = |input: &str| {
+            let session = parser
+                .lexical_session(input)
+                .expect("existing original lexical session");
+            let source = OwnedTokenSource::from_admitted_session(
+                &session,
+                SourceAdapterLimits {
+                    nodes: 1024,
+                    edges: 4096,
+                    text_bytes: 65536,
+                },
+            )
+            .expect("original token-kind observations");
+            let mut walker = WpdaWalker::new_for_category(
+                native_scalar_fixture::GeneratedNativeScalarWpdaEngine,
+                0,
+                0,
+            )
+            .with_semantic_key_cache_entries(cache_capacity);
+            walker
+                .run_to_end_of_input(10_000, &source)
+                .expect("original generated engine walk");
+            let resolved = walker.resolve_at_end_of_input(&source);
+            let WpdaResolveResult::Accepted { roots, .. } = resolved else {
+                panic!("generated engine must accept {input:?}: {resolved:?}");
+            };
+            assert!(!roots.is_empty());
+            let mut terms = Vec::new();
+            let mut weights = Vec::new();
+            let mut generated_family = Vec::new();
+            let mut key_cache =
+                mettail_runtime::exact_semantic_key::ContentKeyCache::with_max_entries(
+                    cache_capacity,
                 );
-                weights.push(weight);
+            for root in roots {
+                let readings = walker
+                    .realize_root_to_terms_with_weights(
+                        root,
+                        Some(256),
+                        RealizeRequestMode::BoundedEnumeration,
+                    )
+                    .expect("original generated semantic actions");
+                assert!(readings.len() < 256, "root {root:?} exhausted for {input:?}");
+                for (term, weight) in readings {
+                    let key = native_scalar_fixture::GeneratedNativeScalarWpdaEngine
+                        .semantic_content_key(&term, &mut key_cache)
+                        .expect("bounded original native key")
+                        .expect("generated native category has an exact key");
+                    generated_family.push((key.as_bytes().to_vec(), weight));
+                    terms.push(
+                        term.downcast_ref::<Pattern>()
+                            .expect("generated Pattern carrier")
+                            .clone(),
+                    );
+                    weights.push(weight);
+                }
             }
-        }
-        assert!(!terms.is_empty(), "acceptance realizes original generated terms for {input:?}");
-        let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
-            .expect("complete owned native actions");
-        let owned_engine =
-            OwnedWpdaEngine::new(&descriptors, &actions, 0, &[], &absorption, |_| Ok(()))
-                .expect("original native routing for owned carrier");
-        let mut owned_walker = WpdaWalker::new_for_category(owned_engine, 0, 0);
-        owned_walker
-            .run_to_end_of_input(10_000, &source)
-            .expect("owned consumer of the same native source");
-        let resolved = owned_walker.resolve_at_end_of_input(&source);
-        let WpdaResolveResult::Accepted { roots, .. } = resolved else {
-            panic!("owned engine must accept native input {input:?}: {resolved:?}");
+            assert!(
+                !terms.is_empty(),
+                "acceptance realizes original generated terms for {input:?}"
+            );
+            let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
+                .expect("complete owned native actions");
+            let owned_engine = OwnedWpdaEngine::new(
+                &descriptors,
+                &actions,
+                0,
+                &[],
+                &absorption,
+                |_| Ok(()),
+                |_| Ok(()),
+            )
+            .expect("original native routing for owned carrier");
+            let mut owned_walker = WpdaWalker::new_for_category(owned_engine, 0, 0)
+                .with_semantic_key_cache_entries(cache_capacity);
+            owned_walker
+                .run_to_end_of_input(10_000, &source)
+                .expect("owned consumer of the same native source");
+            let resolved = owned_walker.resolve_at_end_of_input(&source);
+            let WpdaResolveResult::Accepted { roots, .. } = resolved else {
+                panic!("owned engine must accept native input {input:?}: {resolved:?}");
+            };
+            assert!(!roots.is_empty());
+            let mut owned_family = Vec::new();
+            let mut owned_cache =
+                mettail_runtime::exact_semantic_key::ContentKeyCache::with_max_entries(
+                    cache_capacity,
+                );
+            for root in roots {
+                let readings = owned_walker
+                    .realize_root_to_terms_with_weights(
+                        root,
+                        Some(256),
+                        RealizeRequestMode::BoundedEnumeration,
+                    )
+                    .expect("owned native semantic actions");
+                assert!(readings.len() < 256, "owned root {root:?} exhausted for {input:?}");
+                for (value, weight) in readings {
+                    let term = value
+                        .downcast_ref::<OwnedTerm>()
+                        .expect("owned native carrier");
+                    assert_eq!(term.syntax, term.value, "native identity carrier for {input:?}");
+                    let key = actions
+                        .semantic_content_key(&value, &mut owned_cache)
+                        .expect("bounded owned native key")
+                        .expect("captured native profile has an exact key");
+                    owned_family.push((key.as_bytes().to_vec(), weight));
+                }
+            }
+            // Compare complete finite observations, including native variables and
+            // transparent projections. Reuse the original exact-key worker rather
+            // than inventing a second serializer or filtering a ground sublanguage.
+            generated_family.sort();
+            generated_family.dedup();
+            owned_family.sort();
+            owned_family.dedup();
+            assert_eq!(
+                owned_family, generated_family,
+                "complete native weighted family for {input:?}"
+            );
+            (terms, weights)
         };
-        assert!(!roots.is_empty());
-        let mut owned_family = Vec::new();
-        let mut owned_cache = mettail_runtime::exact_semantic_key::ContentKeyCache::default();
-        for root in roots {
-            let readings = owned_walker
-                .realize_root_to_terms_with_weights(
-                    root,
-                    Some(256),
-                    RealizeRequestMode::BoundedEnumeration,
-                )
-                .expect("owned native semantic actions");
-            assert!(readings.len() < 256, "owned root {root:?} exhausted for {input:?}");
-            for (value, weight) in readings {
-                let term = value
-                    .downcast_ref::<OwnedTerm>()
-                    .expect("owned native carrier");
-                assert_eq!(term.syntax, term.value, "native identity carrier for {input:?}");
-                let key = actions
-                    .semantic_content_key(&value, &mut owned_cache)
-                    .expect("bounded owned native key")
-                    .expect("captured native profile has an exact key");
-                owned_family.push((key.as_bytes().to_vec(), weight));
-            }
-        }
-        // Compare complete finite observations, including native variables and
-        // transparent projections. Reuse the original exact-key worker rather
-        // than inventing a second serializer or filtering a ground sublanguage.
-        generated_family.sort();
-        generated_family.dedup();
-        owned_family.sort();
-        owned_family.dedup();
-        assert_eq!(owned_family, generated_family, "complete native weighted family for {input:?}");
-        (terms, weights)
-    };
-    // This macro fixture has no explicit precedence for category-leading
-    // concatenation: its original binder RHS starts at floor zero. Preserve
-    // that baseline independently of the actual DDL's explicit precedence
-    // acceptance test, which requires Alt(Concat(a, Star(b)), c).
-    let (terms, weights) = collect("ab*|c");
-    assert_eq!(terms.len(), weights.len());
-    let literal = |term: &Pattern, text: &str| {
-        matches!(term,
+        // This macro fixture has no explicit precedence for category-leading
+        // concatenation: its original binder RHS starts at floor zero. Preserve
+        // that baseline independently of the actual DDL's explicit precedence
+        // acceptance test, which requires Alt(Concat(a, Star(b)), c).
+        let (terms, weights) = collect("ab*|c");
+        assert_eq!(terms.len(), weights.len());
+        let literal = |term: &Pattern, text: &str| {
+            matches!(term,
         Pattern::PLiteral(scalar) if matches!(scalar.as_ref(), Scalar::StringLit(value) if value == text))
-    };
-    assert!(
-        terms.iter().any(|term| matches!(term,
+        };
+        assert!(
+            terms.iter().any(|term| matches!(term,
         Pattern::PConcat(first, rest) if literal(first, "a") && matches!(rest.as_ref(),
             Pattern::PAlt(second, third) if literal(third, "c") && matches!(second.as_ref(),
                 Pattern::PStar(body) if literal(body, "b"))))),
-        "original unranked binder behavior must remain unchanged: {terms:?}"
-    );
+            "original unranked binder behavior must remain unchanged: {terms:?}"
+        );
 
-    let (terms, weights) = collect("a");
-    assert_eq!(terms.len(), weights.len(), "each original reading retains its full weight");
-    assert_eq!(terms.len(), 2, "literal and the original variable equivalence class: {terms:?}");
-    let expected_variable = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
-        core::native_variable::get_or_create_var("a"),
-    ));
-    let mut counts = [0; 3];
-    for term in &terms {
-        match term {
-            Pattern::PVar(variable) => {
-                assert_eq!(variable, &expected_variable, "actual shared native identity");
-                counts[0] += 1;
-            },
-            Pattern::PLiteral(scalar) => match scalar.as_ref() {
-                Scalar::SVar(variable) => {
-                    assert_eq!(
-                        variable, &expected_variable,
-                        "projection preserves native identity"
-                    );
-                    counts[1] += 1;
+        let (terms, weights) = collect("a");
+        assert_eq!(terms.len(), weights.len(), "each original reading retains its full weight");
+        assert_eq!(
+            terms.len(),
+            2,
+            "literal and the original variable equivalence class: {terms:?}"
+        );
+        let expected_variable = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            core::native_variable::get_or_create_var("a"),
+        ));
+        let mut counts = [0; 3];
+        for term in &terms {
+            match term {
+                Pattern::PVar(variable) => {
+                    assert_eq!(variable, &expected_variable, "actual shared native identity");
+                    counts[0] += 1;
                 },
-                Scalar::StringLit(text) => {
-                    assert_eq!(text, "a");
-                    counts[2] += 1;
+                Pattern::PLiteral(scalar) => match scalar.as_ref() {
+                    Scalar::SVar(variable) => {
+                        assert_eq!(
+                            variable, &expected_variable,
+                            "projection preserves native identity"
+                        );
+                        counts[1] += 1;
+                    },
+                    Scalar::StringLit(text) => {
+                        assert_eq!(text, "a");
+                        counts[2] += 1;
+                    },
                 },
-            },
-            other => panic!("unexpected original reading of a: {other:?}"),
+                other => panic!("unexpected original reading of a: {other:?}"),
+            }
         }
-    }
-    assert_eq!(counts[0] + counts[1], 1, "one representative of the proved variable class");
-    assert_eq!(counts[2], 1, "the distinct literal class must survive");
-    let (terms, _) = collect("a|aa");
-    assert!(terms.iter().any(|term| matches!(term,
+        assert_eq!(counts[0] + counts[1], 1, "one representative of the proved variable class");
+        assert_eq!(counts[2], 1, "the distinct literal class must survive");
+        let (terms, _) = collect("a|aa");
+        assert!(terms.iter().any(|term| matches!(term,
         Pattern::PAlt(left, right) if literal(left, "a") && matches!(right.as_ref(),
             Pattern::PConcat(first, second) if literal(first, "a") && literal(second, "a")))),
         "generated and owned parsers must retain the outer alternation when its RHS begins with a category-leading concatenation: {terms:?}"
     );
-    for input in ["a*", "abc", "a|b|c", "a|ab", "aa|a", "(a*)*"] {
-        collect(input);
+        for input in ["a*", "abc", "a|b|c", "a|ab", "aa|a", "(a*)*"] {
+            collect(input);
+        }
     }
 }
 
@@ -442,8 +474,16 @@ fn owned_grouping_boundary_admits_grouped_nonassociative_postfix() {
         .expect("retained token bindings");
         let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
             .expect("complete original action domain");
-        let engine = OwnedWpdaEngine::new(&descriptors, &actions, 0, &[], &absorption, |_| Ok(()))
-            .expect("postfix owned routing");
+        let engine = OwnedWpdaEngine::new(
+            &descriptors,
+            &actions,
+            0,
+            &[],
+            &absorption,
+            |_| Ok(()),
+            |_| Ok(()),
+        )
+        .expect("postfix owned routing");
         let mut walker = WpdaWalker::new_for_category(engine, 0, 0);
         walker
             .run_to_end_of_input(10_000, &source)
@@ -693,8 +733,16 @@ fn owned_and_generated_engines_drive_the_same_walker_to_real_terms() {
         .expect("exact retained token bindings cover the fixture lattice");
         let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
             .expect("actual action provider admits every original fixture rule");
-        let engine = OwnedWpdaEngine::new(&descriptors, &actions, 0, &[], &absorption, |_| Ok(()))
-            .expect("owned engine admits the entire fixture");
+        let engine = OwnedWpdaEngine::new(
+            &descriptors,
+            &actions,
+            0,
+            &[],
+            &absorption,
+            |_| Ok(()),
+            |_| Ok(()),
+        )
+        .expect("owned engine admits the entire fixture");
         // Match the actual generated parse_Expr facade's category seed.
         let mut walker = WpdaWalker::new_for_category(engine, 0, 0);
         walker
@@ -863,9 +911,16 @@ fn owned_and_generated_engines_drive_the_same_walker_to_real_terms() {
             .expect("structural source");
             let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
                 .expect("whole provider");
-            let engine =
-                OwnedWpdaEngine::new(&descriptors, &actions, 0, &[], &absorption, |_| Ok(()))
-                    .expect("whole engine");
+            let engine = OwnedWpdaEngine::new(
+                &descriptors,
+                &actions,
+                0,
+                &[],
+                &absorption,
+                |_| Ok(()),
+                |_| Ok(()),
+            )
+            .expect("whole engine");
             let mut walker = WpdaWalker::new_for_category(engine, 0, 0);
             walker
                 .run_to_end_of_input(10000, &source)
@@ -929,6 +984,115 @@ fn owned_and_generated_engines_drive_the_same_walker_to_real_terms() {
                         "bounded owned readings retain every original fixture result"
                     );
                 }
+            }
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+
+    #[test]
+    fn generated_exact_keys_are_independent_of_cache_capacity(
+        shapes in proptest::collection::vec((proptest::prelude::any::<bool>(), proptest::prelude::any::<bool>()), 0..24),
+    ) {
+        use proptest::prelude::*;
+        use mettail_prattail::wpda_walker::WpdaEngine;
+        use std::sync::Arc;
+        use fixture::Expr;
+        let engine = fixture::OwnedEngineParityWpdaEngine;
+        let mut term = Arc::new(Expr::A);
+        let mut owners: Vec<Arc<dyn std::any::Any + Send + Sync>> = vec![term.clone()];
+        for (pair, leaf) in shapes {
+            term = Arc::new(if pair {
+                Expr::Pair(term, Arc::new(if leaf { Expr::A } else { Expr::B }))
+            } else {
+                Expr::Wrap(term)
+            });
+            owners.push(term.clone());
+            owners.push(Arc::new(term.as_ref().clone()));
+        }
+        for capacity in [0, 1, 7, usize::MAX] {
+            let mut cache = mettail_runtime::exact_semantic_key::ContentKeyCache::with_max_entries(capacity);
+            for owner in owners.iter().chain(owners.iter().rev()) {
+                let expected = engine.semantic_fingerprint(owner).expect("generated exact observation");
+                let actual = engine.semantic_content_key(owner, &mut cache)?
+                    .expect("generated category key");
+                prop_assert_eq!(actual.as_bytes(), expected.as_slice());
+                prop_assert!(cache.len() <= capacity);
+            }
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+
+    #[test]
+    fn typed_unary_publication_generated_and_owned_input_contract(text in "[a-zA-Z0-9]{0,32}") {
+        use mettail_prattail::wpda_owned::engine::OwnedEngineActions;
+        use mettail_prattail::wpda_runtime::{ActionArg, ActionContext, SemanticBuilder};
+        use mettail_prattail::wpda_walker::WpdaEngine;
+        use native_scalar_fixture::{Pattern, Scalar};
+        use proptest::prelude::*;
+        use std::sync::Arc;
+
+        let engine = native_scalar_fixture::GeneratedNativeScalarWpdaEngine;
+        let metadata = native_scalar_fixture::GeneratedNativeScalarLanguage.metadata();
+        let artifacts = metadata.generated_semantic_artifacts_v1().unwrap();
+        let grammar: core::GrammarCoreV1 = postcard::from_bytes(artifacts.grammar_core_postcard).unwrap();
+        let occurrences: Vec<_> = grammar.wpda_original_occurrences.as_ref().unwrap()
+            .iter().map(|id| id.0 as usize).collect();
+        let synthesis = derive_authored_rules(&grammar, &occurrences, |_| Ok::<_, Infallible>(())).unwrap();
+        let descriptors = derive_authored_descriptors(&grammar, &occurrences, synthesis,
+            DescriptorOptions {
+                crosscat_lex_compat_gate: true, prefix_factoring: false, mixfix_factoring: false,
+                accept_continue: false, recovery_base: 0xFE00, max_mixfix_slice: usize::MAX,
+            }, |_, _, _, _| Ok::<_, Infallible>(()), |_, _| Ok::<_, Infallible>(false)).unwrap();
+        let image = compile_parser_image(&grammar).unwrap();
+        let host = FixtureHost(grammar.fingerprint().unwrap());
+        let parser = core::RuntimeParser::new(&grammar, &image, RUNTIME_COMPILER_ABI,
+            RUNTIME_UNICODE_ABI, &host).unwrap();
+        let session = parser.lexical_session("a").unwrap();
+        let source = OwnedTokenSource::from_admitted_session(&session,
+            SourceAdapterLimits { nodes: 1024, edges: 4096, text_bytes: 65536 }).unwrap();
+        let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(())).unwrap();
+        let generated_signature = engine.action_signature(0, 0).unwrap();
+        let owned_signature = actions.action_signature(0, 0).unwrap();
+        prop_assert_eq!(generated_signature, owned_signature);
+        prop_assert_eq!(generated_signature.arity, 1);
+        prop_assert_eq!(generated_signature.expected_input_cats, &[1]);
+        prop_assert_eq!(generated_signature.output_cat, 0);
+        let context = ActionContext { source_positions: Some((0, 1)), result_category: Some(0) };
+        for wrong_category in [true, false] {
+            let scalar = Arc::new(Scalar::StringLit(text.clone()));
+            let generated_arg = if wrong_category {
+                ActionArg::Term { value: Arc::new(Pattern::PLiteral(scalar)), type_name: std::any::type_name::<Pattern>() }
+            } else {
+                ActionArg::Term { value: scalar, type_name: std::any::type_name::<Scalar>() }
+            };
+            let generated = SemanticBuilder::invoke_selected_action_with(generated_signature,
+                vec![generated_arg], |builder, args| engine.execute_action_with_context(0, 0, builder, args, context)).unwrap();
+            let owned_arg = ActionArg::Term {
+                value: Arc::new(OwnedTerm {
+                    category: if wrong_category { 0 } else { 1 }, production: None,
+                    syntax: core::DynamicValue::Text(text.clone()), value: core::DynamicValue::Text(text.clone()),
+                    span: core::SourceSpan { start: 0, end: 1 },
+                }),
+                type_name: std::any::type_name::<OwnedTerm>(),
+            };
+            let owned = SemanticBuilder::invoke_selected_action_with(owned_signature,
+                vec![owned_arg], |builder, args| actions.execute_action_with_context(0, 0, builder, args, context)).unwrap();
+            prop_assert_eq!(generated.is_none(), wrong_category);
+            prop_assert_eq!(owned.is_none(), wrong_category);
+            if !wrong_category {
+                let generated = generated.unwrap().try_into_term::<Pattern>().unwrap();
+                prop_assert_eq!(generated, Pattern::PLiteral(Arc::new(Scalar::StringLit(text.clone()))));
+                let owned = owned.unwrap().try_into_term::<OwnedTerm>().unwrap();
+                prop_assert_eq!(owned.category, 0);
+                prop_assert_eq!(&owned.syntax, &owned.value);
+                let core::DynamicValue::Term(term) = &owned.value else { panic!("declared constructor") };
+                prop_assert_eq!(&term.fields, &vec![core::DynamicValue::Text(text.clone())]);
             }
         }
     }

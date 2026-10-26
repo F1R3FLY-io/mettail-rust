@@ -173,6 +173,8 @@ pub fn reconstruct_language_def_from_tokens(
     crate::merge::apply_mixins(&mut def)
         .map_err(|msg| syn::Error::new(span, format!("mixins error:\n{msg}")))?;
 
+    crate::rewrite_family::normalize_rewrite_families(&mut def)?;
+
     // Mirror macros/src/lib.rs: append synthetic auto-injection terms +
     // rewrites. This is the augmentation the fingerprint is computed over.
     let out = emit_auto_injection_rules(&def);
@@ -662,6 +664,7 @@ mod tests {
         LangType {
             name: ident(name),
             role: crate::language::CategoryRole::Object,
+            admits_variables: true,
             native_type: Some(native_ty),
             collection_kind: None,
         }

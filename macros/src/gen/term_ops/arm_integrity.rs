@@ -348,6 +348,7 @@ mod tests {
             language.types.push(LangType {
                 name: quote::format_ident!("{}", name),
                 role: Default::default(),
+                admits_variables: true,
                 native_type: Some(
                     syn::parse_str::<syn::Type>(&format!(
                         "std::sync::Arc<mettail_runtime::{carrier}<Proc, Proc>>"

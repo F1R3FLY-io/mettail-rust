@@ -244,6 +244,8 @@ language! {
         data DdlPremise
         data DdlPremiseInput
         data DdlRewriteBinding
+        data DdlRewriteContextBinding
+        data DdlRewriteContextType
         data DdlRuleAstItems
         data DdlRuleAstRemainderTail
         data DdlRuleAstRemainderName
@@ -596,6 +598,13 @@ language! {
     // an explicit lexical handle reference and qualified result category; no
     // delimiter triggers language inference or an ambient registry lookup.
     tokens {
+        DdlContextName = "[A-Za-z_][A-Za-z0-9_]*" priority(0);
+        DdlContextHashBag = "HashBag" priority(0);
+        DdlContextSet = "Set" priority(0);
+        DdlContextList = "List" priority(0);
+        DdlContextMap = "Map" priority(0);
+        DdlContextPathMap = "PathMap" priority(0);
+        DdlContextRewrite = "Rewrite" priority(0);
         // DDL keywords are ordinary grammar literals listed in
         // `contextual_keywords`: their fixed-token reading is available in DDL
         // positions while the Ident co-reading remains available elsewhere.
@@ -2834,15 +2843,35 @@ language! {
         DdlPremiseInput . |- name@Ident : DdlPremiseInput;
         DdlRewriteBinding . sort:DdlSort
             |- name@Ident ":" sort : DdlRewriteBinding;
+
+        DdlRewriteContextCategory . |- name@DdlContextName : DdlRewriteContextType;
+        DdlRewriteContextArrow . domain:DdlRewriteContextType, codomain:DdlRewriteContextType
+            |- "[" domain "->" codomain "]" : DdlRewriteContextType;
+        DdlRewriteContextMulti . element:DdlRewriteContextType
+            |- element "*" : DdlRewriteContextType;
+        DdlRewriteContextHashBag . element:DdlRewriteContextType
+            |- keyword@DdlContextHashBag "(" element ")" : DdlRewriteContextType;
+        DdlRewriteContextSet . element:DdlRewriteContextType
+            |- keyword@DdlContextSet "(" element ")" : DdlRewriteContextType;
+        DdlRewriteContextList . element:DdlRewriteContextType
+            |- keyword@DdlContextList "(" element ")" : DdlRewriteContextType;
+        DdlRewriteContextRewrite . element:DdlRewriteContextType
+            |- keyword@DdlContextRewrite "(" element ")" : DdlRewriteContextType;
+        DdlRewriteContextMap . key:DdlRewriteContextType, value:DdlRewriteContextType
+            |- keyword@DdlContextMap "(" key "," value ")" : DdlRewriteContextType;
+        DdlRewriteContextPathMap . key:DdlRewriteContextType, value:DdlRewriteContextType
+            |- keyword@DdlContextPathMap "(" key "," value ")" : DdlRewriteContextType;
+        DdlRewriteContextBinding . sort:DdlRewriteContextType
+            |- name@Ident ":" sort : DdlRewriteContextBinding;
         DdlPremiseOne . premise:DdlPremise |- premise : DdlPremises;
         DdlPremiseMore . premise:DdlPremise, rest:DdlPremises |- premise rest : DdlPremises;
         DdlRewriteDirect . left:DdlRuleAst, right:DdlRuleAst
             |- name@Ident ":" left "~>" right ";" : DdlRewrite;
         DdlRewriteConditional . premises:DdlPremises, left:DdlRuleAst, right:DdlRuleAst
             |- name@Ident ":" premises left "~>" right ";" : DdlRewrite;
-        DdlRewriteTypedDirect . context:Vec(DdlRewriteBinding), left:DdlRuleAst, right:DdlRuleAst
+        DdlRewriteTypedDirect . context:Vec(DdlRewriteContextBinding), left:DdlRuleAst, right:DdlRuleAst
             |- name@Ident "(" context.*sep(",") ")" ":" left "~>" right ";" : DdlRewrite;
-        DdlRewriteTypedConditional . context:Vec(DdlRewriteBinding), premises:DdlPremises,
+        DdlRewriteTypedConditional . context:Vec(DdlRewriteContextBinding), premises:DdlPremises,
             left:DdlRuleAst, right:DdlRuleAst
             |- name@Ident "(" context.*sep(",") ")" ":" premises left "~>" right ";"
                 : DdlRewrite;

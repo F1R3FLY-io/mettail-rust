@@ -88,6 +88,7 @@ fn binder_slot_kind_controls_retained_declared_separator() {
     source.types.push(LangType {
         name: id("Expr"),
         role: Default::default(),
+        admits_variables: true,
         native_type: None,
         collection_kind: Some(CollectionCategory::Map(delimiters)),
     });
@@ -109,6 +110,7 @@ fn binder_slot_kind_controls_retained_declared_separator() {
         LangType {
             name: id("Expr"),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         },

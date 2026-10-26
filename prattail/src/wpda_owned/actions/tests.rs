@@ -514,8 +514,16 @@ fn owned_walker_publishes_native_failure_and_capability_revocation_as_errors() {
         .expect("existing lexical lattice projection");
         let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
             .expect("actual owned action provider");
-        let engine = OwnedWpdaEngine::new(&descriptors, &actions, 0, &[], &absorption, |_| Ok(()))
-            .expect("actual owned engine");
+        let engine = OwnedWpdaEngine::new(
+            &descriptors,
+            &actions,
+            0,
+            &[],
+            &absorption,
+            |_| Ok(()),
+            |_| Ok(()),
+        )
+        .expect("actual owned engine");
         let mut walker = WpdaWalker::new_for_category(engine, 0, 0);
         walker
             .run_to_end_of_input(1_024, &source)

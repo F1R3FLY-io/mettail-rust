@@ -968,7 +968,7 @@ pub enum WpdaResolveResult<W: SemiringRef> {
     MaxStepsExceeded { position: usize },
     /// SPPF realization failed before any term was published.
     ///
-    /// Reconstruction faults and semantic-key cache exhaustion are distinct
+    /// Reconstruction faults and semantic-key construction failures are distinct
     /// from invalid syntax and from ambiguity exhaustion. The realization boundary
     /// discards every candidate accumulated by the failed call.
     RealizationFailed { error: RealizationError, position: usize },
@@ -1441,6 +1441,10 @@ pub struct LexAltRuleInfo {
 /// See [`LexAltRuleInfo`] for the per-kind dispatch semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexAltRuleKind {
+    CollectionOpen {
+        element_src_idx: u16,
+        has_synth_paren: bool,
+    },
     /// Atomic-literal rule (e.g., `NumLit`, `BoolLit`). M6c.3 path.
     Atomic,
     /// Literal-leading binder trigger (e.g., unary `Neg` or
@@ -4140,6 +4144,23 @@ pub fn lex_w_alt_with_len(
 pub fn lex_one() -> crate::automata::lex_weight::LexicographicWeight {
     use crate::automata::semiring::Semiring;
     crate::automata::lex_weight::LexicographicWeight::one()
+}
+
+pub fn align_semantic_class_representatives<T: Clone, K: Eq, W>(
+    classes: &mut [(T, W)],
+    elected: &[T],
+    key: impl Fn(&T) -> K,
+) {
+    let representatives: Vec<_> = elected.iter().map(|term| (key(term), term)).collect();
+    for (term, _) in classes {
+        let class_key = key(term);
+        if let Some((_, representative)) = representatives
+            .iter()
+            .find(|(candidate_key, _)| *candidate_key == class_key)
+        {
+            *term = (*representative).clone();
+        }
+    }
 }
 
 impl fmt::Debug for SemanticBuilder {

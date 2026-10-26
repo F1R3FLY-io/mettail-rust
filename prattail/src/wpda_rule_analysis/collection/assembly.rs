@@ -388,6 +388,31 @@ fn collect_binder_close_delimiters(positions: &[BinderPosition], closes: &mut BT
     }
 }
 
+pub fn try_collect_bracket_delimiters<'source, Rule: 'source, C>(
+    per_cat: &'source [Vec<Rule>],
+    context: &mut C,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), CollectionAssemblyError<C::Error>>
+where
+    C: CollectionAssemblyContext<'source, Rule>,
+{
+    let mut opens = BTreeSet::from(["(".to_string()]);
+    let mut closes = BTreeSet::from([")".to_string()]);
+    for rule in per_cat.iter().flatten() {
+        if let Some(shape) = context
+            .try_collection(rule)
+            .map_err(CollectionAssemblyError::Callback)?
+        {
+            opens.insert(if shape.has_synth_paren {
+                "(".to_string()
+            } else {
+                shape.open_token
+            });
+            closes.insert(shape.close);
+        }
+    }
+    Ok((opens, closes))
+}
+
 pub fn try_collect_structural_delimiters<'source, Rule: 'source, C>(
     per_cat: &'source [Vec<Rule>],
     context: &mut C,

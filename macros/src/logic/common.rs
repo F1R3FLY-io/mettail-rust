@@ -10,10 +10,12 @@ use std::collections::BTreeSet;
 /// higher-order-logic variants `Lam{Domain}` / `MLam{Domain}` /
 /// `Apply{Domain}` / `MApply{Domain}`.
 ///
-/// **Demand-driven (work item #98).** A language that declares a binder gets the full
-/// cross-product of (category × domain) over its declared object types. Closed
-/// `data` categories are parser metasyntax and are excluded from both axes. A language that
-/// declares none gets the EMPTY set, and therefore no HOL family at all.
+/// **Demand-driven (work item #98).** A language that declares a binder gets
+/// every pair of a semantic object category and a variable-admitting domain.
+/// Parser `data` categories occur on neither axis. A `noadmit` object category
+/// remains a semantic result category, but cannot be the domain of a generated
+/// binding: it has no variable constructor for that binder to bind. A language
+/// declaring no binder gets the EMPTY set, and therefore no HOL family at all.
 ///
 /// The demand signal is [`mettail_ast::grammar_shapes::declares_binder`] — read there,
 /// never restated here, so the WPDA surface-syntax emitter
@@ -50,16 +52,14 @@ use std::collections::BTreeSet;
 /// unconditionally, no longer exists. An empty set now propagates to every one of those
 /// sites together, which is precisely the property HOL-B lacked.
 ///
-/// ## The gate is per LANGUAGE, deliberately not per (category, domain)
+/// ## The gate is per LANGUAGE, then restricted by category capability
 ///
-/// Narrowing further is derivable — an abstraction's type `[D -> C]` names its domain
-/// and its host category directly — but it would change the emitted variant set of the
-/// binder-declaring languages, and those languages' term encodings are pinned
-/// byte-for-byte by the consensus suites (`rholang-codegen/tests/a_s5_*`,
-/// `runtime/tests/canonical_to_bytes.rs`). Per-language gating touches no
-/// binder-declaring language at all, so it moves no pinned byte. See
-/// `languages/tests/hol_family_demand_driven.rs` for the guard that holds both
-/// directions.
+/// Narrowing to only explicitly authored abstraction pairs would alter pinned
+/// variant sets, so all semantically possible result categories remain. The
+/// domain restriction is different: `noadmit` makes a binding over that sort
+/// impossible by declaration. For grammars without `noadmit`, the historical
+/// full object-category cross-product and its encoded variant set are unchanged.
+/// See `languages/tests/hol_family_demand_driven.rs` for the existing gate.
 pub fn compute_hol_domain_pairs(language: &LanguageDef) -> BTreeSet<(String, String)> {
     // ★ The demand gate. Without a binder the family is unreachable, not merely unused:
     // `Lam{D}` is the only constructor that introduces a binding, so nothing can build
@@ -68,15 +68,21 @@ pub fn compute_hol_domain_pairs(language: &LanguageDef) -> BTreeSet<(String, Str
         return BTreeSet::new();
     }
 
-    let all_types: Vec<String> = language
+    let result_categories: Vec<String> = language
         .types
         .iter()
         .filter(|t| !t.is_data())
         .map(|t| t.name.to_string())
         .collect();
+    let binder_domains: Vec<String> = language
+        .types
+        .iter()
+        .filter(|t| t.admits_variables())
+        .map(|t| t.name.to_string())
+        .collect();
     let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
-    for cat in &all_types {
-        for domain in &all_types {
+    for cat in &result_categories {
+        for domain in &binder_domains {
             pairs.insert((cat.clone(), domain.clone()));
         }
     }
@@ -185,6 +191,27 @@ mod tests {
              Without a `Lam{{D}}` introduction form the family cannot be constructed and \
              `Apply{{D}}` has nothing to β-reduce."
         );
+    }
+
+    #[test]
+    fn noadmit_object_is_a_result_category_but_not_a_binding_domain() {
+        let language = parse(
+            r#"
+                name: ClosedObjectHolDomain,
+                types { Proc Name noadmit Signature },
+                terms {
+                    Zero . |- "0" : Proc;
+                    Bind . ^x.body:[Name -> Proc] |- "for" x "." body : Proc;
+                    Ground . n:Name |- n : Signature;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        );
+        let pairs = compute_hol_domain_pairs(&language);
+        assert_eq!(pairs.len(), 6);
+        assert!(pairs.contains(&("Signature".into(), "Name".into())));
+        assert!(!pairs.iter().any(|(_, domain)| domain == "Signature"));
     }
 
     /// The legacy positional style spells binding in `items` as a `GrammarItem::Binder`
@@ -301,17 +328,21 @@ mod tests {
                         .iter()
                         .filter(|category| !category.is_data())
                         .count();
-                    let closed_category_count = def.types.len() - open_category_count;
+                    let admitted_domain_count = def
+                        .types
+                        .iter()
+                        .filter(|category| category.admits_variables())
+                        .count();
                     assert_eq!(
                         pairs.len(),
-                        open_category_count * open_category_count,
-                        "{} declares {} categories ({} open, {} closed data), so the HOL \
-                         cross-product is {}² open-category pairs, but {} were produced.",
+                        open_category_count * admitted_domain_count,
+                        "{} declares {} categories ({} semantic, {} variable-admitting), \
+                         so the HOL cross-product has {} result/domain pairs, but {} were produced.",
                         entry.name,
                         entry.category_count,
                         open_category_count,
-                        closed_category_count,
-                        open_category_count,
+                        admitted_domain_count,
+                        open_category_count * admitted_domain_count,
                         pairs.len(),
                     );
                 }

@@ -31,7 +31,7 @@
 //! code TODO.)
 //!
 //! Derivation discipline: rows are recorded BY THE EMITTERS as they emit
-//! (`prefix::emit_unified_arm`, `prefix::emit_paren_dispatch_arms`, the
+//! (`prefix::emit_unified_arm`, `prefix::emit_special_opener_dispatch_arms`, the
 //! binder.rs optional-group constants) — never re-derived from the grammar
 //! model — so the table can never diverge from what is actually emitted.
 //! The S1-ON emission is the derivation base: a `GroupFirst` disposition
@@ -53,7 +53,7 @@
 //!     non-coercion fire) is broader than the trigger-initiated rule set;
 //!     0 is the trait default's site-2 value, so the underived remainder —
 //!     the ambiguous-multi-bucket class, the `(`-grouping NParen-class
-//!     (whose grouping branches come FIRST in `emit_paren_dispatch_arms`'
+//!     (whose grouping branches come FIRST in `emit_special_opener_dispatch_arms`'
 //!     layout and thus sit at index 0 anyway), and the operand-leading
 //!     mixfix cohorts — stays byte-identical)
 //!   - site 3 = grouping-TRANSPARENT → 1, MIRRORING the trait default's

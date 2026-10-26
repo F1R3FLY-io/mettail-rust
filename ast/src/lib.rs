@@ -25,6 +25,7 @@ pub mod manifest;
 pub mod merge;
 pub mod pattern;
 pub mod registry;
+pub mod rewrite_family;
 pub mod token_codec;
 pub mod types;
 pub mod validation;

@@ -3530,7 +3530,24 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
 /// runtime with the mode-dispatch shims. Mirrors the non-modal
 /// `write_lex_*_via_core` writers so the generated WPDA parser resolves the same
 /// entry points on a modal grammar. [L9-1]
-fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::ModeDfaResult]) {
+fn write_modal_dag_functions(buf: &mut String, mode_results: &[crate::lexer::ModeDfaResult]) {
+    buf.push_str(
+        "pub fn lex_dag_in_mode(input: &str, mode: Option<&str>) \
+         -> Result<mettail_prattail::lexer_types::LexDag, String> { \
+         let initial_mode = match mode { None => 0u8,",
+    );
+    for mode in mode_results {
+        w!(buf, "Some({:?}) => {}u8,", mode.name, mode.mode_id);
+    }
+    buf.push_str(
+        "Some(name) => return Err(format!(\"unknown lexer mode {:?}\", name)), }; \
+         let mode_at = mettail_prattail::runtime_types::compute_mode_map_from( \
+         input, initial_mode, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
+         mettail_prattail::runtime_types::lex_dag_core_modal_with_shadow( \
+         input, None, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw, m_stream_id, m_reserved_ident_shadow) \
+         }",
+    );
+
     // lex_weighted / lex_weighted_with_file_id
     buf.push_str(
         "pub fn lex_weighted<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
@@ -3588,9 +3605,7 @@ fn write_modal_dag_functions(buf: &mut String, _mode_results: &[crate::lexer::Mo
          Ok(stream) }\n\
          pub fn lex_dag<'a>(input: &'a str) \
          -> Result<mettail_prattail::lexer_types::LexDag, String> { \
-         let mode_at = mettail_prattail::runtime_types::compute_mode_map(input, m_char_class, m_dfa_next, m_is_accepting, m_push_target, m_should_pop, m_is_raw)?; \
-         mettail_prattail::runtime_types::lex_dag_core_modal_with_shadow( \
-         input, None, &mode_at, m_char_class, m_dfa_next, m_is_accepting, m_accept_alternatives, token_to_kind, m_is_raw, m_stream_id, m_reserved_ident_shadow) \
+         lex_dag_in_mode(input, None) \
          }\n\
          // L9-1: LAZY modal lattice token source. The byte→mode map is computed \n\
          // ONCE up front (deterministic per position under the DUI) and captured \n\
@@ -3644,6 +3659,8 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
 
     // Main lexer loop
     buf.push_str("while pos < bytes.len() {");
+    buf.push_str("let mode = *mode_stack.last().expect(\"mode stack empty\");");
+    buf.push_str("if !m_is_raw(mode) {");
 
     // Whitespace skip (ASCII fast path + Unicode fallback)
     buf.push_str(
@@ -3664,7 +3681,7 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
     );
 
     // Read current mode and set up DFA walk
-    buf.push_str("let mode = *mode_stack.last().expect(\"mode stack empty\");");
+    buf.push_str("}");
     buf.push_str("let start_pos = pos; let start_line = line; let start_col = col;");
     buf.push_str("let mut state: u32 = 0;");
     buf.push_str("let mut last_accept: Option<(u32, usize, usize, usize)> = None;");
@@ -3887,6 +3904,8 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
 
     // Same loop structure as write_modal_lex_functions but with stream routing
     buf.push_str("while pos < bytes.len() {");
+    buf.push_str("let mode = *mode_stack.last().expect(\"mode stack empty\");");
+    buf.push_str("if !m_is_raw(mode) {");
 
     // Whitespace skip
     buf.push_str(
@@ -3906,7 +3925,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
          }",
     );
 
-    buf.push_str("let mode = *mode_stack.last().expect(\"mode stack empty\");");
+    buf.push_str("}");
     buf.push_str("let start_pos = pos; let start_line = line; let start_col = col;");
     buf.push_str("let mut state: u32 = 0;");
     buf.push_str("let mut last_accept: Option<(u32, usize, usize, usize)> = None;");

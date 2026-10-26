@@ -665,7 +665,7 @@ pub(crate) fn emit_binder_prefix_arms(
             };
             // Stage 3.20 / Commit 4 part 2 (Plan agent Fix, 2026-05-06):
             // skip `(`-triggered binders here — they're handled by
-            // `prefix.rs::emit_paren_dispatch_arms` which emits a Fork
+            // `prefix.rs::emit_special_opener_dispatch_arms` which emits a Fork
             // combining grouping + binder rule(s) so lex-min disambiguates
             // the `(`-conflict (e.g. Lambda's App rule shares `(` with the
             // B7 paren-grouping arm). Per `feedback_use_wpds_disambiguation_not_heuristics.md`.
@@ -2415,8 +2415,17 @@ pub(crate) fn emit_binder_action_entry(
                     #exact_elements
                 )
             },
+            // Changed for sole-collection lane (carrier): a judgement-form `HashSet(T)`
+            // parameter is `mettail_runtime::HashSetLit<T>` in the AST
+            // (`gen/types/enums.rs`, `type_expr_to_rust_type`), so the drained elements are
+            // collected into that type. The code was:
+            // CollectionType::HashSet => quote! {
+            //     std::collections::HashSet::<#elem_id>::from_iter(
+            //         #exact_elements
+            //     )
+            // },
             CollectionType::HashSet => quote! {
-                std::collections::HashSet::<#elem_id>::from_iter(
+                mettail_runtime::HashSetLit::<#elem_id>::from_iter(
                     #exact_elements
                 )
             },
@@ -2941,6 +2950,7 @@ mod tests {
         lang.types.push(LangType {
             name: Ident::new("Term", proc_macro2::Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         });
@@ -3325,12 +3335,14 @@ mod tests {
             LangType {
                 name: Ident::new("Proc", Span::call_site()),
                 role: Default::default(),
+                admits_variables: true,
                 native_type: None,
                 collection_kind: None,
             },
             LangType {
                 name: Ident::new("Name", Span::call_site()),
                 role: Default::default(),
+                admits_variables: true,
                 native_type: None,
                 collection_kind: None,
             },

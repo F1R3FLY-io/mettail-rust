@@ -1747,14 +1747,14 @@ mod tests {
     /// perturbs exactly one thing: the positions.
     fn rholang_with_one_extra_proc_rule() -> LanguageDef {
         let mut def = rholang();
-        let first_proc = def
+        let at = def
             .terms
             .iter()
-            .position(|t| t.category == "Proc")
-            .expect("Rholang declares at least one `Proc` rule");
-        // Three past the first `Proc` rule — the neighbourhood the real deletion occurred in —
-        // rather than at the very front, so the shift is not trivially the first index.
-        let at = (first_proc + 3).min(def.terms.len());
+            .enumerate()
+            .filter(|(_, term)| term.category == "Proc")
+            .nth(3)
+            .map(|(index, _)| index)
+            .expect("Rholang declares at least four Proc rules");
         let mut probe = def.terms[at].clone();
         probe.label = Ident::new(SHIFT_PROBE_LABEL, Span::call_site());
         def.terms.insert(at, probe);
@@ -2032,6 +2032,7 @@ mod tests {
         LangType {
             name: id(name),
             role: Default::default(),
+            admits_variables: true,
             native_type: native.map(|t| syn::parse_str::<syn::Type>(t).expect("type parses")),
             collection_kind: None,
         }
@@ -2041,44 +2042,33 @@ mod tests {
     // The rholang `@`-cohort pins (F0 gate, plan §5).
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Proc@ = 3 groups with 6/3/6 leaves: Nil {9,10,14,15,19,20} (incl. the
-    /// two NULLARY members 14/15), Quoted {11,16,21}, Short {12,13,17,18,
-    /// 22,23}. Rule indices are pinned against the generated WPDA_RULES
-    /// table (labels asserted first, so drift fails loudly and precisely).
-    ///
-    /// ⚠ THESE INDICES ARE ABSOLUTE POSITIONS IN THE `Proc` RULE LIST, so any
-    /// rule added or removed ANYWHERE ABOVE THEM shifts all of them. They were
-    /// last re-derived on 2026-07-29, when deleting `PParInternal` (which sat
-    /// at `Proc` index 3) shifted every index from 3 upward down by one. They
-    /// were re-derived by DUMPING the regenerated rule list, not by
-    /// decrementing the previous numbers — an arithmetic shortcut is right only
-    /// until one pin moves for an unrelated reason. If you are updating them
-    /// again, dump the list again; `rule_idx(&per_cat[0], "Label")` in this
-    /// module is the helper that resolves a label to its current index.
+    /// The merged grammar retains three send groups with 6, 3, and 6 members.
+    /// The test checks rule labels before it checks their measured coordinates.
+    /// The 2026-10-21 measurement includes the cost categories and constructors.
     #[test]
     fn rholang_proc_at_cohort_pins_three_groups_6_3_6() {
         let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         assert_eq!(categories[0], "Proc", "Proc is the primary category");
         let name_src = src_idx(&categories, "Name");
-        assert_eq!(name_src, 3, "Name src_idx pinned by WPDA_CATEGORIES");
+        assert_eq!(name_src, 6, "Name src_idx pinned by WPDA_CATEGORIES");
         // WPDA_RULES parity for the 15-rule cohort.
         let pinned_labels = [
-            (9u16, "POutputNil"),
-            (10, "PPersistOutputNil"),
-            (11, "POutputQuoted"),
-            (12, "POutputShort"),
-            (13, "PPersistOutputShort"),
-            (14, "POutputNilEmpty"),
-            (15, "PPersistOutputNilEmpty"),
-            (16, "POutputQuotedEmpty"),
-            (17, "POutputShortEmpty"),
-            (18, "PPersistOutputShortEmpty"),
-            (19, "POutputNil2Plus"),
-            (20, "PPersistOutputNil2Plus"),
-            (21, "POutputQuoted2Plus"),
-            (22, "POutputShort2Plus"),
-            (23, "PPersistOutputShort2Plus"),
+            (12u16, "POutputNil"),
+            (13, "PPersistOutputNil"),
+            (14, "POutputQuoted"),
+            (15, "POutputShort"),
+            (16, "PPersistOutputShort"),
+            (17, "POutputNilEmpty"),
+            (18, "PPersistOutputNilEmpty"),
+            (19, "POutputQuotedEmpty"),
+            (20, "POutputShortEmpty"),
+            (21, "PPersistOutputShortEmpty"),
+            (22, "POutputNil2Plus"),
+            (23, "PPersistOutputNil2Plus"),
+            (24, "POutputQuoted2Plus"),
+            (25, "POutputShort2Plus"),
+            (26, "PPersistOutputShort2Plus"),
         ];
         for (idx, label) in pinned_labels {
             assert_eq!(
@@ -2115,9 +2105,9 @@ mod tests {
         assert_eq!(quoted.leaf_count(), 3);
         assert_eq!(short.leaf_count(), 6);
 
-        assert_eq!(nil.member_rule_idxs(), BTreeSet::from([9, 10, 14, 15, 19, 20]));
-        assert_eq!(quoted.member_rule_idxs(), BTreeSet::from([11, 16, 21]));
-        assert_eq!(short.member_rule_idxs(), BTreeSet::from([12, 13, 17, 18, 22, 23]));
+        assert_eq!(nil.member_rule_idxs(), BTreeSet::from([12, 13, 17, 18, 22, 23]));
+        assert_eq!(quoted.member_rule_idxs(), BTreeSet::from([14, 19, 24]));
+        assert_eq!(short.member_rule_idxs(), BTreeSet::from([15, 16, 20, 21, 25, 26]));
 
         // Divergence-only cohorts stay SINGLE-ROOT forests (F5-1 invariant:
         // multiple roots require a root accept, which Proc@ has none of).
@@ -2166,29 +2156,25 @@ mod tests {
 
         assert_eq!(
             render_forest(&proc_at.groups[0].roots),
-            "L(Nil)[L(!)[L(()[P(0,0)[L())=>r9 L(,)=>r19] L())=>r14]] \
-             L(!!)[L(()[P(0,0)[L())=>r10 L(,)=>r20] L())=>r15]]]",
+            "L(Nil)[L(!)[L(()[P(0,0)[L())=>r12 L(,)=>r22] L())=>r17]] \
+             L(!!)[L(()[P(0,0)[L())=>r13 L(,)=>r23] L())=>r18]]]",
             "Nil group divergence structure",
         );
         assert_eq!(
             render_forest(&proc_at.groups[1].roots),
-            format!("P({name_src},0)[L(!)[L(()[P(0,0)[L())=>r11 L(,)=>r21] L())=>r16]]]"),
+            format!("P({name_src},0)[L(!)[L(()[P(0,0)[L())=>r14 L(,)=>r24] L())=>r19]]]"),
             "Quoted group divergence structure",
         );
         assert_eq!(
             render_forest(&proc_at.groups[2].roots),
-            "P(0,0)[L(!)[L(()[P(0,0)[L())=>r12 L(,)=>r22] L())=>r17]] \
-             L(!!)[L(()[P(0,0)[L())=>r13 L(,)=>r23] L())=>r18]]]",
+            "P(0,0)[L(!)[L(()[P(0,0)[L())=>r15 L(,)=>r25] L())=>r20]] \
+             L(!!)[L(()[P(0,0)[L())=>r16 L(,)=>r26] L())=>r21]]]",
             "Short group divergence structure",
         );
     }
 
-    /// Commit-coordinate pins (amendment A4): rule 14 = `POutputNilEmpty`
-    /// (nullary — full `@ Nil ! (` spine shared, commit into the literal tail
-    /// at sub_pos 4 = parts_len, the tail-complete pop-and-fire arm) and rule
-    /// 19 = `POutputNil2Plus` (2Plus — commit at the `,` leaf into BinderRule
-    /// pos 6, collection remainder in its own machinery); rule 9 =
-    /// `POutputNil` as the no-remainder control.
+    /// The nullary, polyadic, and unary send rules retain their commit shapes.
+    /// The test checks each rule label before it uses the current coordinate.
     ///
     /// ⚠ THIS TEST WAS SILENTLY RETARGETED BY A RULE DELETION AND DID NOT
     /// FAIL (2026-07-29). It named rules 15/20/10; removing `PParInternal`
@@ -2213,9 +2199,9 @@ mod tests {
         // ★ The anti-retarget guard: bind the indices to their LABELS before
         // using them as coordinates. Without this, a shift selects a twin and
         // every assertion below still holds.
-        const NULLARY_IDX: u16 = 14;
-        const TWO_PLUS_IDX: u16 = 19;
-        const CONTROL_IDX: u16 = 9;
+        const NULLARY_IDX: u16 = 17;
+        const TWO_PLUS_IDX: u16 = 22;
+        const CONTROL_IDX: u16 = 12;
         for (idx, label) in [
             (NULLARY_IDX, "POutputNilEmpty"),
             (TWO_PLUS_IDX, "POutputNil2Plus"),
@@ -3265,12 +3251,12 @@ mod tests {
         }
         // A3/F5-1 stance-follow: the const-gated model gains the InputBind@
         // accept+continue group when `S1F5_ACCEPT_CONTINUE` is on (3 Proc@
-        // groups + 1 InputBind@), and stays at the Proc@ trio when off —
+        // groups + 1 Proc-for group + 1 InputBind@), and stays at the Proc@ trio when off —
         // green at BOTH stances; the min re-derivation loop above already
         // covered the new group (r2's Op-bearing pattern ⇒ min 0 ⇒ its span
         // row is ABSENT and the prelude stays empty).
         let expected_groups = if crate::gen::runtime::wpda_codegen::forks::S1F5_ACCEPT_CONTINUE {
-            4
+            5
         } else {
             3
         };
@@ -3280,7 +3266,7 @@ mod tests {
         );
         // F5-2 stance-follow (A3 discipline — no pin edits ride the flip):
         // the const-gated bundle gains the two Name-dispatched send cohorts
-        // (`!` {4,6,8} spine 0xF803, `!!` {5,7,9} spine 0xF804) when
+        // (`!` {6,8,10} spine 0xF804, `!!` {7,9,11} spine 0xF805) when
         // `S1F5_MIXFIX_COHORTS` is on, and stays mixfix-empty when off.
         // The min_span emptiness re-derivation extends to the mixfix groups
         // (self-adjudicating: rules 8/9 are Op-bearing ⇒ min 0 ⇒ every
@@ -3390,26 +3376,35 @@ mod tests {
             let empty_members: HashMap<u16, Vec<u16>> = HashMap::new();
             let mut fork_model =
                 crate::gen::runtime::wpda_codegen::fork_emission::ForkEmissionOrdinalModel::new();
+            let opener_plans = crate::gen::runtime::wpda_codegen::prefix::special_opener_plans(
+                &categories,
+                &def,
+                &per_cat,
+            );
+            let mut ordinary_bucket_counts = Vec::with_capacity(categories.len());
             for (i, _cat) in categories.iter().enumerate() {
                 let indexed: Vec<(u16, &GrammarRule)> = per_cat[i]
                     .iter()
                     .enumerate()
                     .map(|(r, rule)| (r as u16, rule))
                     .collect();
-                let _ = crate::gen::runtime::wpda_codegen::prefix::emit_prefix_arms_for_category(
-                    &def,
-                    i as u16,
-                    &categories[i],
-                    &indexed,
-                    bundle.dispositions.get(i).unwrap_or(&empty_disp),
-                    bundle.group_members.get(i).unwrap_or(&empty_members),
-                    &mut fork_model,
-                );
+                let (_, _, bucket_counts) =
+                    crate::gen::runtime::wpda_codegen::prefix::emit_prefix_arms_for_category(
+                        &def,
+                        i as u16,
+                        &categories[i],
+                        &opener_plans[i],
+                        &indexed,
+                        bundle.dispositions.get(i).unwrap_or(&empty_disp),
+                        bundle.group_members.get(i).unwrap_or(&empty_members),
+                        &mut fork_model,
+                    );
+                ordinary_bucket_counts.push(bucket_counts);
             }
-            let _ = crate::gen::runtime::wpda_codegen::prefix::emit_paren_dispatch_arms(
+            let _ = crate::gen::runtime::wpda_codegen::prefix::emit_special_opener_dispatch_arms(
                 &categories,
-                &def,
-                &per_cat,
+                &opener_plans,
+                &ordinary_bucket_counts,
                 &mut fork_model,
             );
             let domain = fork_model.census_keys();
@@ -3449,6 +3444,11 @@ mod tests {
         );
         let mut fork_model =
             crate::gen::runtime::wpda_codegen::fork_emission::ForkEmissionOrdinalModel::new();
+        let opener_plans = crate::gen::runtime::wpda_codegen::prefix::special_opener_plans(
+            &categories,
+            &def,
+            &per_cat,
+        );
         let indexed: Vec<(u16, &GrammarRule)> = per_cat[0]
             .iter()
             .enumerate()
@@ -3458,6 +3458,7 @@ mod tests {
             &def,
             0,
             &categories[0],
+            &opener_plans[0],
             &indexed,
             proc_dispositions,
             proc_members,
@@ -3540,7 +3541,7 @@ mod tests {
             proc_dispositions.get(&quoted),
             Some(&SpineDisposition::GroupFirst {
                 spine_id: SPINE_RULE_BASE + 1,
-                body_src_idx: 3,
+                body_src_idx: 6,
                 weight_rule_idx: quoted,
             }),
             "the Quoted group leads at `POutputQuoted` with the Name body",
@@ -3554,7 +3555,7 @@ mod tests {
             }),
         );
         // The lex-alt surface mirrors the dispositions (A3).
-        assert_eq!(bundle.lex_alt[0].grouped.len(), 15, "all 15 @-cohort members");
+        assert_eq!(bundle.lex_alt[0].grouped.len(), 17, "all factored Proc members");
 
         // ── the ROOT-EDGE arm (the F1 root-edge fix pin) ───────────────────
         let arms = normalized(&bundle.binder_arms);
@@ -3587,33 +3588,29 @@ mod tests {
         let quoted_arm1 = window(&arms, "(0u16,63489u16,1u8)=>", "(0u16,63489u16,2u8)=>");
         assert!(
             quoted_arm1.contains("factoring::parameter_replace(")
-                && quoted_arm1.contains(",3u16,_pos,0u8,lex_one,")
+                && quoted_arm1.contains(",6u16,_pos,0u8,lex_one,")
                 && quoted_arm1.contains("rule_at(0u16,63489u16,2u8"),
             "Quoted pre-root arm pushes the Name operand: {quoted_arm1}",
         );
-        // Typed commits (A4): rule 9 (`POutputNil`) binder-resumes at its final
-        // pos 6; rule 14 (`POutputNilEmpty`) nullary-commits into its
-        // MixfixLiteralRun tail complete.
-        assert!(arms.contains("rule_at(0u16,9u16,6u8"), "rule 9 commit coordinate present",);
+        // The unary rule resumes at position 6. The empty rule commits its completed literal tail.
+        assert!(arms.contains("rule_at(0u16,12u16,6u8"), "unary commit coordinate present",);
         assert!(
-            arms.contains("mixfix_marker(0u16,14u16,0u8,*outer_bp)")
+            arms.contains("mixfix_marker(0u16,17u16,0u8,*outer_bp)")
                 && arms.contains("sub_pos:4u8"),
-            "rule 14 nullary commit coordinate present",
+            "nullary commit coordinate present",
         );
 
         // ── engine-table rows ──────────────────────────────────────────────
-        // Indices re-derived 2026-07-29 (post-`PParInternal` deletion): the Nil
-        // group is {9,10,14,15,19,20}, Quoted {11,16,21}, Short
-        // {12,13,17,18,22,23}.
+        // These rows use the measured rule coordinates from the merged grammar.
         let owners = normalized(&bundle.trigger_spine_owner_fn);
-        assert!(owners.contains("(0u16,9u16)=>Some(63488u16)"));
-        assert!(owners.contains("(0u16,14u16)=>Some(63488u16)"));
-        assert!(owners.contains("(0u16,11u16)=>Some(63489u16)"));
-        assert!(owners.contains("(0u16,23u16)=>Some(63490u16)"));
+        assert!(owners.contains("(0u16,12u16)=>Some(63488u16)"));
+        assert!(owners.contains("(0u16,17u16)=>Some(63488u16)"));
+        assert!(owners.contains("(0u16,14u16)=>Some(63489u16)"));
+        assert!(owners.contains("(0u16,26u16)=>Some(63490u16)"));
         let members = normalized(&bundle.spine_members_fn);
-        assert!(members.contains("(0u16,63488u16)=>&[9u16,10u16,14u16,15u16,19u16,20u16]"));
-        assert!(members.contains("(0u16,63489u16)=>&[11u16,16u16,21u16]"));
-        assert!(members.contains("(0u16,63490u16)=>&[12u16,13u16,17u16,18u16,22u16,23u16]"));
+        assert!(members.contains("(0u16,63488u16)=>&[12u16,13u16,17u16,18u16,22u16,23u16]"));
+        assert!(members.contains("(0u16,63489u16)=>&[14u16,19u16,24u16]"));
+        assert!(members.contains("(0u16,63490u16)=>&[15u16,16u16,20u16,21u16,25u16,26u16]"));
         // H9 poison rows: union = the members' canonical expected_input_cats
         // (Term slots per category; CollectionDrain/other slots = ANY_CAT
         // 65535), arity = the u8::MAX poison.
@@ -3624,7 +3621,7 @@ mod tests {
             "Nil/Short union rows (Proc + CollectionDrain): {actions}",
         );
         assert!(
-            actions.contains("expected_input_cats:&[3u16,0u16,65535u16]"),
+            actions.contains("expected_input_cats:&[6u16,0u16,65535u16]"),
             "Quoted union row (Name first, then Proc + drain): {actions}",
         );
         // A7 rows: conjunction over members (all-true, asserted at build).
@@ -3711,7 +3708,7 @@ mod tests {
         }
         assert_eq!(bundle.lex_alt[ib as usize].grouped.len(), 3);
         // Proc@ dispositions unshifted (A2: per-category ordinals).
-        assert_eq!(bundle.dispositions[0].len(), 15, "the Proc@ cohort is untouched");
+        assert_eq!(bundle.dispositions[0].len(), 17, "Proc includes the send and for groups");
 
         let arms = normalized(&bundle.binder_arms);
         let parameter_branch = shared_transition_body("parameter_replace_branch");
@@ -3802,7 +3799,7 @@ mod tests {
             "ib spine action row present: {actions}",
         );
         assert!(
-            actions.contains("expected_input_cats:&[0u16,3u16,65535u16]"),
+            actions.contains(&format!("expected_input_cats:&[0u16,{name_src}u16,65535u16]")),
             "ib union row (Proc, Name, ANY_CAT): {actions}",
         );
         let leads = normalized(&bundle.leading_trigger_prelude);
@@ -3905,20 +3902,9 @@ mod tests {
     // §2.2 + amendments A-M4/A-M5).
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// P1 (GO/STOP): the two real cohort tries against the ACTUAL rholang
-    /// grammar — leaves {3,5,7}/{4,6,8}, divergences at depths 1 and 2,
-    /// rules 7/8 truncated at their rep, NO interior accepts, whole-slice
-    /// coverage, uniform result_src = 0, spine ids CONTINUING Proc's prefix
-    /// ordinals (3 prefix groups ⇒ `!` = 0xF803, `!!` = 0xF804), the D-1
-    /// floors (min l_bp 2/4), the AV5 identities (min member 3/4), the
-    /// A-M4 Fix-B evidence (both cohorts share "("), and the typed
-    /// MixfixRun commit coordinates.
-    ///
-    /// ⚠ The leaf numbers are ABSOLUTE `Proc` rule indices: `!` = {POutput,
-    /// POutputEmpty, POutput2Plus} = {3,5,7} and `!!` = {PPersistOutput,
-    /// PPersistOutputEmpty, PPersistOutput2Plus} = {4,6,8}. Re-derived
-    /// 2026-07-29 by dumping the regenerated rule list after `PParInternal`
-    /// was deleted from index 3; every index at or above 3 moved down one.
+    /// The two send groups retain their binding powers and commit coordinates.
+    /// Their spine identifiers follow the three send-prefix groups and the new for group.
+    /// Rule labels identify the measured unary, empty, and polyadic members.
     #[test]
     fn rholang_mixfix_send_cohorts_pin_two_groups() {
         let def = rholang();
@@ -3931,7 +3917,7 @@ mod tests {
             .iter()
             .map(|b| b.groups.len())
             .sum();
-        assert_eq!(proc_prefix_groups, 3, "Proc carries the three @-cohort groups");
+        assert_eq!(proc_prefix_groups, 4, "Proc carries three send groups and one for group");
         let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
         let name_fact = model
             .iter()
@@ -3944,17 +3930,17 @@ mod tests {
             .expect("the ! cohort exists");
         assert_eq!(
             bang.slice,
-            vec![(2u8, 0u16, 3u16), (6u8, 0u16, 5u16), (10u8, 0u16, 7u16)],
+            vec![(2u8, 0u16, 6u16), (6u8, 0u16, 8u16), (10u8, 0u16, 10u16)],
             "the ! slice mirrors mixfix_bp_name",
         );
         assert_eq!(bang.groups.len(), 1);
         assert!(bang.ineligible.is_empty() && bang.singletons.is_empty());
         let g = &bang.groups[0];
-        assert_eq!(g.spine_id, SPINE_RULE_BASE + 3, "continues Proc's prefix ordinals");
+        assert_eq!(g.spine_id, SPINE_RULE_BASE + 4, "continues Proc's prefix ordinals");
         assert_eq!(g.result_src_idx, 0);
         assert_eq!(g.min_l_bp, 2);
-        assert_eq!(g.min_member_rule_idx, 3);
-        assert_eq!(g.member_l_bps, vec![(2u8, 3u16), (6u8, 5u16), (10u8, 7u16)]);
+        assert_eq!(g.min_member_rule_idx, 6);
+        assert_eq!(g.member_l_bps, vec![(2u8, 6u16), (6u8, 8u16), (10u8, 10u16)]);
         assert_eq!(g.fixb_literal.as_deref(), Some("("), "A-M4 shared Fix-B evidence");
         assert_eq!(
             g.expected_cats_union,
@@ -3963,45 +3949,45 @@ mod tests {
         );
         assert_eq!(
             render(&g.roots[0]),
-            "L(()[P(0,0)[L())=>r3 L(,)=>r7] L())=>r5]",
+            "L(()[P(0,0)[L())=>r6 L(,)=>r10] L())=>r8]",
             "the §1.3 trie: divergence 1 = operand-vs-close, divergence 2 = close-vs-sep",
         );
         // Label-bound coordinates: a rule-index shift must fail HERE, loudly,
         // rather than silently selecting a neighbouring send rule.
-        for (idx, label) in [(3u16, "POutput"), (5u16, "POutputEmpty"), (7u16, "POutput2Plus")] {
+        for (idx, label) in [(6u16, "POutput"), (8u16, "POutputEmpty"), (10u16, "POutput2Plus")] {
             assert_eq!(
                 per_cat[0][idx as usize].label.to_string(),
                 label,
                 "the ! cohort's rule {idx} must be {label}",
             );
         }
-        let (_, m4) = g.roots[0].leaf_for(3).expect("POutput leafs");
+        let (_, m4) = g.roots[0].leaf_for(6).expect("POutput leafs");
         assert_eq!(
             m4.commit,
             MemberCommit::MixfixRun {
-                rule_idx: 3,
+                rule_idx: 6,
                 kind: 0,
                 completed_idx: 0,
                 sub_pos: 1
             },
         );
         assert!(!m4.has_post_spine_remainder, "POutput's ) is its final item");
-        let (_, m6) = g.roots[0].leaf_for(5).expect("POutputEmpty leafs");
+        let (_, m6) = g.roots[0].leaf_for(8).expect("POutputEmpty leafs");
         assert_eq!(
             m6.commit,
             MemberCommit::MixfixRun {
-                rule_idx: 5,
+                rule_idx: 8,
                 kind: 2,
                 completed_idx: 0,
                 sub_pos: 2
             },
         );
         assert!(!m6.has_post_spine_remainder);
-        let (_, m8) = g.roots[0].leaf_for(7).expect("POutput2Plus leafs");
+        let (_, m8) = g.roots[0].leaf_for(10).expect("POutput2Plus leafs");
         assert_eq!(
             m8.commit,
             MemberCommit::MixfixRun {
-                rule_idx: 7,
+                rule_idx: 10,
                 kind: 0,
                 completed_idx: 0,
                 sub_pos: 1
@@ -4020,16 +4006,16 @@ mod tests {
             .iter()
             .find(|b| b.trigger == "!!")
             .expect("the !! cohort exists");
-        assert_eq!(bangbang.slice, vec![(4u8, 0u16, 4u16), (8u8, 0u16, 6u16), (12u8, 0u16, 8u16)],);
+        assert_eq!(bangbang.slice, vec![(4u8, 0u16, 7u16), (8u8, 0u16, 9u16), (12u8, 0u16, 11u16)],);
         assert_eq!(bangbang.groups.len(), 1);
         let g2 = &bangbang.groups[0];
-        assert_eq!(g2.spine_id, SPINE_RULE_BASE + 4);
+        assert_eq!(g2.spine_id, SPINE_RULE_BASE + 5);
         assert_eq!(g2.min_l_bp, 4);
-        assert_eq!(g2.min_member_rule_idx, 4);
+        assert_eq!(g2.min_member_rule_idx, 7);
         for (idx, label) in [
-            (4u16, "PPersistOutput"),
-            (6u16, "PPersistOutputEmpty"),
-            (8u16, "PPersistOutput2Plus"),
+            (7u16, "PPersistOutput"),
+            (9u16, "PPersistOutputEmpty"),
+            (11u16, "PPersistOutput2Plus"),
         ] {
             assert_eq!(
                 per_cat[0][idx as usize].label.to_string(),
@@ -4039,7 +4025,7 @@ mod tests {
         }
         assert_eq!(
             render(&g2.roots[0]),
-            "L(()[P(0,0)[L())=>r4 L(,)=>r8] L())=>r6]",
+            "L(()[P(0,0)[L())=>r7 L(,)=>r11] L())=>r9]",
             "the !! trie is isomorphic",
         );
     }
@@ -4156,7 +4142,7 @@ mod tests {
             assert_eq!(gated.mixfix_groups.len(), 2);
             assert!(!gated.mixfix_fan_arms.is_empty());
             assert!(!gated.mixfix_prelude_arms.is_empty());
-            assert_eq!(rows, vec![(0u16, SPINE_RULE_BASE + 3), (0u16, SPINE_RULE_BASE + 4)],);
+            assert_eq!(rows, vec![(0u16, SPINE_RULE_BASE + 4), (0u16, SPINE_RULE_BASE + 5)],);
             assert_eq!(partition_groups, 2);
         } else {
             assert!(gated.mixfix_groups.is_empty());
@@ -4204,15 +4190,13 @@ mod tests {
     /// flips): the loop-v2 fan arm (D-1 guard on the A-M4 MEMBER id, the
     /// AV5 min-member weight, the spine push + flag), the three prelude
     /// arms per plan §2.2 (chain step via `__checked_literal_consume!`,
-    /// divergence 1 = strict operand Push + rule-5 commit CAR with the
-    /// B-alone/zero short-circuit, divergence 2 = rule-3/rule-7 commit CARs
+    /// divergence 1 = strict operand Push + rule-8 commit CAR with the
+    /// B-alone/zero short-circuit, divergence 2 = rule-6/rule-10 commit CARs
     /// with the singleton short-circuits + the Error miss shape), and the
     /// engine-table rows (owner/members/H9 union/weight; A7 rows ABSENT).
     ///
-    /// ⚠ Rule numbers here are ABSOLUTE `Proc` indices — 3 = `POutput`,
-    /// 5 = `POutputEmpty`, 7 = `POutput2Plus` for the `!` cohort, and their
-    /// persist twins 4/6/8 for `!!`. Re-derived 2026-07-29 by dumping the
-    /// regenerated rule list after `PParInternal` was deleted from index 3.
+    /// The 2026-10-21 measurement places the send rules at 6, 8, and 10.
+    /// The persistent send rules occupy 7, 9, and 11.
     #[test]
     fn mixfix_emission_pins_fan_arm_prelude_and_tables() {
         let def = rholang();
@@ -4221,10 +4205,7 @@ mod tests {
         let mixfix = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
         let bundle = build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
         assert_eq!(bundle.mixfix_groups.len(), 2);
-        // ★ #152: the three `Proc` coordinates are DERIVED from their labels. The doc comment
-        // above states "3 = `POutput`, 5 = `POutputEmpty`, 7 = `POutput2Plus` … and their
-        // persist twins 4/6/8" — and a comment that has to name the twins is exactly the
-        // situation in which a silent retarget lands on one.
+        // Rule labels keep these assertions attached to their intended constructors.
         let proc_rules = &per_cat[0];
         let output = rule_idx(proc_rules, "POutput");
         let output_empty = rule_idx(proc_rules, "POutputEmpty");
@@ -4232,10 +4213,10 @@ mod tests {
         assert_eq!(
             bundle.mixfix_groups[0],
             MixfixGroupEmission {
-                dispatch_cat_src_idx: 3,
+                dispatch_cat_src_idx: 6,
                 trigger: "!".to_string(),
                 result_src_idx: 0,
-                spine_id: SPINE_RULE_BASE + 3,
+                spine_id: SPINE_RULE_BASE + 4,
                 min_l_bp: 2,
                 min_member_rule_idx: output,
                 member_rule_idxs: vec![output, output_empty, output_2plus],
@@ -4247,22 +4228,22 @@ mod tests {
         assert!(group_body.contains("mixfix_marker(result_src,spine_id,0,cur_bp)"));
         assert!(group_body.contains("BP_TIER_MIXFIX,result_src,min_member"));
         assert!(group_body.contains("rule_idx:spine_id"));
-        let bang_arm = window(&fan, "(3u16,\"!\")", "(3u16,\"!!\")");
+        let bang_arm = window(&fan, "(6u16,\"!\")", "(6u16,\"!!\")");
         assert!(
             bang_arm.contains("if2u8>=*cur_bp")
                 && bang_arm.contains("__goal_admits(0u16)")
-                && bang_arm.contains("__method_name_admits(0u16,3u16)"),
+                && bang_arm.contains("__method_name_admits(0u16,6u16)"),
             "D-1 full-admission guard on the MEMBER id (A-M4): {bang_arm}",
         );
         assert!(
-            bang_arm.contains("factoring::mixfix_group_branch(0u16,63491u16,*cur_bp,3u16,lex_w,)")
+            bang_arm.contains("factoring::mixfix_group_branch(0u16,63492u16,*cur_bp,6u16,lex_w,)")
                 && bang_arm.contains("__mixfix_spine_pushed=true"),
             "spine push at the AV5 min-member weight: {bang_arm}",
         );
         assert!(
-            fan.contains("(3u16,\"!!\")")
+            fan.contains("(6u16,\"!!\")")
                 && fan
-                    .contains("factoring::mixfix_group_branch(0u16,63492u16,*cur_bp,4u16,lex_w,)")
+                    .contains("factoring::mixfix_group_branch(0u16,63493u16,*cur_bp,7u16,lex_w,)")
         );
         // ── the prelude arms (the ! group; !! isomorphic) ─────────────────
         let prelude = normalized(&bundle.mixfix_prelude_arms);
@@ -4276,16 +4257,16 @@ mod tests {
         assert!(shared_transition_body("append_literal_targets").contains("for__spine_npintargets"));
         assert!(shared_transition_body("mixfix_divergence").contains("consume_trigger:false"));
         let chain =
-            window(&prelude, "(0u16,63491u16,2u8,0u8,0u8)=>", "(0u16,63491u16,2u8,0u8,1u8)=>");
+            window(&prelude, "(0u16,63492u16,2u8,0u8,0u8)=>", "(0u16,63492u16,2u8,0u8,1u8)=>");
         assert!(
             chain.contains("__checked_literal_consume!(\"(\"") && chain.contains("sub_pos:1u8"),
             "pre-root chain step consumes the root edge: {chain}",
         );
         let div1 =
-            window(&prelude, "(0u16,63491u16,2u8,0u8,1u8)=>", "(0u16,63491u16,0u8,0u8,0u8)=>");
+            window(&prelude, "(0u16,63492u16,2u8,0u8,1u8)=>", "(0u16,63492u16,0u8,0u8,0u8)=>");
         assert!(
             div1.contains("__mixfix_literal_targets(tokens,_pos,\")\")"),
-            "divergence 1 gates the rule-5 commit on the close: {div1}",
+            "divergence 1 gates the rule-8 commit on the close: {div1}",
         );
         assert!(
             div1.contains("factoring::zero_one_operand(__spine_lit_total,||{")
@@ -4295,9 +4276,9 @@ mod tests {
         assert!(
             div1.contains("factoring::parameter_push_branch(0u16,_pos,")
                 && div1.contains("factoring::append_literal_targets(")
-                && div1.contains("mixfix_marker(0u16,5u16,0u8,__mixfix_continuation_bp,)")
+                && div1.contains("mixfix_marker(0u16,8u16,0u8,__mixfix_continuation_bp,)")
                 && div1.contains("kind:2u8,sub_pos:2u8"),
-            "divergence 1 fork = descent-first + rule-5 commit CAR: {div1}",
+            "divergence 1 fork = descent-first + rule-8 commit CAR: {div1}",
         );
         assert!(
             !div1.contains("factoring::singleton("),
@@ -4305,7 +4286,7 @@ mod tests {
              short-circuit: {div1}",
         );
         let div2 =
-            window(&prelude, "(0u16,63491u16,0u8,0u8,0u8)=>", "(0u16,63492u16,2u8,0u8,0u8)=>");
+            window(&prelude, "(0u16,63492u16,0u8,0u8,0u8)=>", "(0u16,63493u16,2u8,0u8,0u8)=>");
         assert!(
             div2.contains("__mixfix_literal_targets(tokens,_pos,\")\")")
                 && div2.contains("__mixfix_literal_targets(tokens,_pos,\",\")"),
@@ -4313,24 +4294,24 @@ mod tests {
         );
         assert!(
             div2.contains("factoring::singleton(__spine_lit_total,||{")
-                && div2.contains("mixfix_marker(0u16,3u16,0u8,__mixfix_continuation_bp,)")
-                && div2.contains("mixfix_marker(0u16,7u16,0u8,__mixfix_continuation_bp,)")
+                && div2.contains("mixfix_marker(0u16,6u16,0u8,__mixfix_continuation_bp,)")
+                && div2.contains("mixfix_marker(0u16,10u16,0u8,__mixfix_continuation_bp,)")
                 && div2.contains("kind:0u8,sub_pos:1u8"),
             "divergence 2 = the two commit CARs with singleton short-circuits: {div2}",
         );
         assert!(
-            div2.contains("factoring::zero_literal_only(__spine_lit_total,_pos,0u16,63491u16,)"),
+            div2.contains("factoring::zero_literal_only(__spine_lit_total,_pos,0u16,63492u16,)"),
             "divergence 2 zero-live miss shape: {div2}",
         );
         // ── engine-table rows ─────────────────────────────────────────────
         let owners = normalized(&bundle.trigger_spine_owner_fn);
         for (m, spine) in [
-            (3, "63491"),
-            (5, "63491"),
-            (7, "63491"),
-            (4, "63492"),
             (6, "63492"),
             (8, "63492"),
+            (10, "63492"),
+            (7, "63493"),
+            (9, "63493"),
+            (11, "63493"),
         ] {
             assert!(
                 owners.contains(&format!("(0u16,{m}u16)=>Some({spine}u16)")),
@@ -4338,28 +4319,28 @@ mod tests {
             );
         }
         let members = normalized(&bundle.spine_members_fn);
-        assert!(members.contains("(0u16,63491u16)=>&[3u16,5u16,7u16]"));
-        assert!(members.contains("(0u16,63492u16)=>&[4u16,6u16,8u16]"));
+        assert!(members.contains("(0u16,63492u16)=>&[6u16,8u16,10u16]"));
+        assert!(members.contains("(0u16,63493u16)=>&[7u16,9u16,11u16]"));
         let actions = normalized(&bundle.action_for_prelude);
         assert!(
-            actions.contains("(0u16,63491u16)=>")
-                && actions.contains("expected_input_cats:&[3u16,0u16,65535u16]"),
+            actions.contains("(0u16,63492u16)=>")
+                && actions.contains("expected_input_cats:&[6u16,0u16,65535u16]"),
             "H9 poison union row (Name LHS + Proc + rep ANY_CAT): {actions}",
         );
         let weights = normalized(&bundle.spine_weight_rule_fn);
-        assert!(weights.contains("(0u16,63491u16)=>3u16"));
-        assert!(weights.contains("(0u16,63492u16)=>4u16"));
+        assert!(weights.contains("(0u16,63492u16)=>6u16"));
+        assert!(weights.contains("(0u16,63493u16)=>7u16"));
         // A7-mixfix (A-M5): rows OMITTED — the members are operand-leading.
         let leads = normalized(&bundle.leading_trigger_prelude);
         assert!(
-            !leads.contains("63491") && !leads.contains("63492"),
+            !leads.contains("63492") && !leads.contains("63493"),
             "mixfix spine ids must NOT appear on the leading-trigger surface: {leads}",
         );
         // These two rows stay absent (rules 7/8 are Op-bearing ⇒ min 0),
         // independently of positive-span groups in closed data categories.
         let min_spans = normalized(&bundle.min_span_prelude);
-        assert!(!min_spans.contains("(0u16,63491u16)=>"));
         assert!(!min_spans.contains("(0u16,63492u16)=>"));
+        assert!(!min_spans.contains("(0u16,63493u16)=>"));
     }
 
     /// A-M5 operand-absorbability witness: a cohort whose post-operand

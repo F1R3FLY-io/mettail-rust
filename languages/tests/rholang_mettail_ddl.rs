@@ -3,10 +3,26 @@ use mettail_languages::rholang::{
     DdlOptionSection, DdlParam, DdlPath, DdlPremise, DdlPremiseInput, DdlPremises,
     DdlProjectionBinding, DdlProjectionDirection, DdlProjectionPremise, DdlProjectionPremises,
     DdlProjectionRowHead, DdlProjectionRule, DdlRegClassPiece, DdlRegPiece, DdlRewrite,
-    DdlRewriteBinding, DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
+    DdlRewriteBinding, DdlRewriteContextBinding, DdlRuleAst, DdlTermRule, DdlTheoryExpr, Proc,
 };
 use mettail_prattail::automata::TokenKind;
 use mettail_runtime::Language;
+
+#[test]
+fn ranked_ddl_facade_runs_on_a_256k_stack() {
+    std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
+        use mettail_prattail::wpda_runtime::{CursorBoundingMode, LatticeTokenSource, WpdaTokenSource};
+        let source = LatticeTokenSource::new(lex_dag("(Wrap x)").unwrap());
+        let mut position = 0;
+        let readings = mettail_languages::rholang::parse_DdlRuleAst_via_wpda_ranked_prefix_with_source_and_bounding_mode(
+            &source, &mut position, 0, 16, CursorBoundingMode::Unbounded,
+        ).unwrap();
+        assert_eq!(position, source.eof_node());
+        assert!(readings.iter().any(|(term, cost, rank)|
+            matches!(term, DdlRuleAst::DdlRuleAstSExp(name, items) if name == "Wrap" && items.len() == 1)
+            && cost.ticks().is_some() && !rank.is_empty()));
+    }).unwrap().join().unwrap();
+}
 
 #[test]
 fn projection_host_categories_are_the_generated_rholang_categories() {
@@ -1148,7 +1164,9 @@ fn authored_regex_rewrite_shapes_parse_structurally() {
     };
     assert_eq!(name, "Read");
     assert_eq!(context.len(), 3);
-    assert!(matches!(&context[0], DdlRewriteBinding::DdlRewriteBinding(name, _) if name == "p"));
+    assert!(
+        matches!(&context[0], DdlRewriteContextBinding::DdlRewriteContextBinding(name, _) if name == "p")
+    );
     let DdlPremises::DdlPremiseMore(first, rest) = premises.as_ref() else {
         panic!("both intrinsic premises must be retained in source order");
     };
@@ -1383,4 +1401,51 @@ fn ddl_comments_strings_and_flt_guest_text_keep_their_lexer_domains() {
             if matches!(left.as_ref(), Proc::DdlTheory(name, _, _) if name == "T")
                 && matches!(right.as_ref(), Proc::PFlt(_))
     ));
+}
+
+#[test]
+fn ddl_adjacent_ast_operands_parse_as_complete_terms() {
+    let mut failures = Vec::new();
+    for source in [
+        "{}",
+        "(Wrap {})",
+        "(subst x y)",
+        "(subst {} x)",
+        "(subst x {})",
+        "(subst {} {})",
+        "(subst (Wrap {}) (Wrap {}))",
+    ] {
+        if let Err(error) = DdlRuleAst::parse_via_wpda(source) {
+            let main = DdlRuleAst::__all_with_weights_monolithic(source);
+            failures.push(format!("{source:?}: {error}\nmain parser: {main:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn ddl_theory_application_keeps_infix_operands() {
+    let mut failures = Vec::new();
+    for source in [
+        "A()",
+        "free(A)",
+        "(A())",
+        "(free(A))",
+        "(Empty \\ Empty)",
+        "(free(A) \\ Empty)",
+        "(Empty \\ A())",
+        "free(A) \\ A()",
+        "(free(A) \\ A())",
+        "Empty Types{}",
+        "(free(A) \\ A()) Types{}",
+    ] {
+        if let Err(error) = DdlTheoryExpr::parse_via_wpda(source) {
+            let main = DdlTheoryExpr::__all_with_weights_monolithic(source);
+            failures.push(format!("{source:?}: {error}\nmain parser: {main:?}"));
+        }
+    }
+    if let Err(error) = DdlModuleItem::parse_via_wpda("theory free(A) \\ A()") {
+        failures.push(format!("module theory item: {error}"));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

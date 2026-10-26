@@ -145,6 +145,7 @@ mod owned_infix_reuse {
             language.types.push(mettail_ast::language::LangType {
                 name: Ident::new(name, Span::call_site()),
                 role: Default::default(),
+                admits_variables: true,
                 native_type: None,
                 collection_kind: None,
             });

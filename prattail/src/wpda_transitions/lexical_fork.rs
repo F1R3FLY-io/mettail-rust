@@ -31,6 +31,14 @@ pub fn prefix<'grammar, W: SemiringRef, K: Copy>(
     primary_is_contextual_keyword: impl FnOnce() -> bool,
     mut prefix_crosscat_lhs_has_dispatch_rule: impl FnMut(u16, &TokenKind) -> bool,
     mut prefix_crosscat_lhs_trigger_ahead: impl FnMut(u16, &dyn WpdaTokenSource, usize) -> bool,
+    mut prefix_crosscat_one_token_feasible: impl FnMut(
+        u16,
+        u16,
+        &TokenKind,
+        &dyn WpdaTokenSource,
+        usize,
+        usize,
+    ) -> bool,
     mut lex_one: impl FnMut() -> W,
     mut lex_w: impl FnMut(f64, u16, u16) -> W,
     mut lex_w_with_len: impl FnMut(u16, f64, u16, u16) -> W,
@@ -180,6 +188,22 @@ pub fn prefix<'grammar, W: SemiringRef, K: Copy>(
         if let Some(primary_kind) = tokens.peek_kind(*pos) {
             for info in lex_alt_rules_for_prefix(primary_src, &primary_kind) {
                 match info.kind {
+                    crate::wpda_runtime::LexAltRuleKind::CollectionOpen {
+                        element_src_idx,
+                        has_synth_paren,
+                    } => {
+                        let next_pos = tokens.next_pos(*pos, 0).unwrap_or(*pos + 1);
+                        __branches.push(super::collection_prefix::lexical(
+                            primary_src,
+                            info.rule_idx,
+                            element_src_idx,
+                            *cur_bp,
+                            has_synth_paren,
+                            next_pos,
+                            lex_w_alt_with_len(__open_len, 0.0, primary_src, info.rule_idx, 0),
+                        ));
+                        __primary_survived = true;
+                    },
                     crate::wpda_runtime::LexAltRuleKind::Atomic => {
                         let primary_text = tokens.peek_text(*pos).unwrap_or("").to_string();
                         let primary_next_pos = tokens.next_pos(*pos, 0).unwrap_or(*pos + 1);
@@ -396,7 +420,17 @@ pub fn prefix<'grammar, W: SemiringRef, K: Copy>(
                         // unconditionally (byte-identical to baseline).
                         let __ccl_keep = __ccl_trigger_scoped
                             || !crosscat_lhs_has_projection_fallback(primary_src, source_src_idx);
-                        if __ccl_keep && __crosscat_lhs_seen.insert(source_src_idx) {
+                        if __ccl_keep
+                            && prefix_crosscat_one_token_feasible(
+                                primary_src,
+                                source_src_idx,
+                                &primary_kind,
+                                tokens,
+                                *pos,
+                                0,
+                            )
+                            && __crosscat_lhs_seen.insert(source_src_idx)
+                        {
                             __branches.push(crate::wpda_walker::ForkBranch {
                                 symbol: StackSymbolV2::category_entry(source_src_idx),
                                 weight: lex_w_with_len(
@@ -512,6 +546,28 @@ pub fn prefix<'grammar, W: SemiringRef, K: Copy>(
             let __open_len: u16 = u16::try_from(alt.text.len()).expect("token length exceeds u16");
             for info in lex_alt_rules_for_prefix(primary_src, &alt.kind) {
                 match info.kind {
+                    crate::wpda_runtime::LexAltRuleKind::CollectionOpen {
+                        element_src_idx,
+                        has_synth_paren,
+                    } => {
+                        let next_pos = tokens.next_pos(*pos, sec_idx + 1).unwrap_or(*pos + 1);
+                        __branches.push(super::collection_prefix::lexical(
+                            primary_src,
+                            info.rule_idx,
+                            element_src_idx,
+                            *cur_bp,
+                            has_synth_paren,
+                            next_pos,
+                            lex_w_alt_with_len(
+                                __open_len,
+                                0.0,
+                                primary_src,
+                                info.rule_idx,
+                                alt_idx,
+                            ),
+                        ));
+                        __secondary_survived = true;
+                    },
                     crate::wpda_runtime::LexAltRuleKind::Atomic => {
                         let alt_next_pos = tokens.next_pos(*pos, sec_idx + 1).unwrap_or(*pos + 1);
                         let sym =
@@ -696,7 +752,17 @@ pub fn prefix<'grammar, W: SemiringRef, K: Copy>(
                         // trigger AND a projection fallback exists.
                         let __ccl_keep = __ccl_trigger_scoped
                             || !crosscat_lhs_has_projection_fallback(primary_src, source_src_idx);
-                        if __ccl_keep && __crosscat_lhs_seen.insert(source_src_idx) {
+                        if __ccl_keep
+                            && prefix_crosscat_one_token_feasible(
+                                primary_src,
+                                source_src_idx,
+                                &alt.kind,
+                                tokens,
+                                *pos,
+                                sec_idx + 1,
+                            )
+                            && __crosscat_lhs_seen.insert(source_src_idx)
+                        {
                             __secondary_survived = true;
                             __branches.push(crate::wpda_walker::ForkBranch {
                                 symbol: StackSymbolV2::category_entry(source_src_idx),
@@ -952,7 +1018,6 @@ pub fn infix<W: SemiringRef>(
         let mut __branches: Vec<crate::wpda_walker::ForkBranch<W>> =
             Vec::with_capacity(alts.len() + 1);
         let mut __primary_survived: bool = false;
-        let mut __primary_floor_blocked: bool = false;
 
         if let Some(primary_kind) = tokens.peek_kind(_pos) {
             let primary_text = tokens.peek_text(_pos).unwrap_or("").to_string();
@@ -986,8 +1051,6 @@ pub fn infix<W: SemiringRef>(
                                 },
                             });
                             __primary_survived = true;
-                        } else {
-                            __primary_floor_blocked = true;
                         }
                     },
                     crate::wpda_runtime::LexAltRuleKind::InfixOp { l_bp, r_bp, result_src_idx } => {
@@ -1027,8 +1090,6 @@ pub fn infix<W: SemiringRef>(
                                 },
                             });
                             __primary_survived = true;
-                        } else {
-                            __primary_floor_blocked = true;
                         }
                     },
                     crate::wpda_runtime::LexAltRuleKind::MixfixFirstTrigger {
@@ -1074,8 +1135,6 @@ pub fn infix<W: SemiringRef>(
                                 },
                             });
                             __primary_survived = true;
-                        } else {
-                            __primary_floor_blocked = true;
                         }
                     },
                     _ => {},
@@ -1083,33 +1142,10 @@ pub fn infix<W: SemiringRef>(
             }
         }
 
-        // Stage 4 (Lever-1 emit-both): emit the category_entry
-        // `Advance(Unwinding)` yield branch when EITHER the Pratt floor
-        // blocked every primary operator (the original max-munch boundary)
-        // OR a peeked lattice alternative's text equals a required structural
-        // delimiter of the INNERMOST enclosing collection frame
-        // (`frame_ctx`). The second trigger restores the no-candidate
-        // fall-through that this lex-fork otherwise PRE-EMPTS on a
-        // lattice-ambiguous multi-char close (e.g. the Pathmap `|}` close,
-        // whose leading `|` collides with the `PParInfix` operator): the
-        // element/value sub-parse never yields back to its `CollectionMarker`
-        // and the close never resumes. The yield is ADDED ALONGSIDE the
-        // operator branches (never instead) — the doomed operator fork dies
-        // under the runtime ambiguity budget while the yield pops the element
-        // to its `CollectionMarker`, which resumes its close. The match
-        // ranges over primary ∪ peek_alternatives. A single push DEDUPs the
-        // two triggers by `(symbol, new_state, action_kind)` — both produce
-        // the identical `category_entry(primary_src)` + `Advance` +
-        // `Unwinding` branch. Byte-identical on every existing passing input:
-        // single-char seps are non-ambiguous (lex-fork never runs at them);
-        // marker-framed elements are pre-empted by the CollectionMarker
-        // reroute BEFORE this lex-fork; the only ambiguous category_entry
-        // close with an operator secondary in the corpus is the Pathmap
-        // `|}` residual.
         let __delim_yield = frame_ctx.has_structural_frame()
             && (frame_ctx.matches_delim(tokens.peek_text(_pos).unwrap_or(""))
                 || alts.iter().any(|__a| frame_ctx.matches_delim(&__a.text)));
-        if (__primary_floor_blocked && !__primary_survived) || __delim_yield {
+        if !__primary_survived || __delim_yield {
             __branches.push(crate::wpda_walker::ForkBranch {
                 symbol: StackSymbolV2::category_entry(primary_src),
                 weight: lex_one(),
@@ -1244,4 +1280,285 @@ pub fn infix<W: SemiringRef>(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::automata::semiring::TropicalWeight;
+    use crate::wpda_runtime::{LexAltRuleKind, SymbolKind};
+    use crate::wpda_walker::ForkActionKind;
+    use proptest::prelude::*;
+
+    struct Source {
+        start: usize,
+        primary: String,
+        primary_target: usize,
+        alternatives: Vec<LexAlternative>,
+    }
+
+    impl WpdaTokenSource for Source {
+        fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+            (pos == self.start).then(|| TokenKind::Fixed(self.primary.clone()))
+        }
+        fn peek_text(&self, pos: usize) -> Option<&str> {
+            (pos == self.start).then_some(self.primary.as_str())
+        }
+        fn len(&self) -> usize {
+            self.primary_target + 1
+        }
+        fn peek_alternatives(&self, pos: usize) -> &[LexAlternative] {
+            if pos == self.start {
+                &self.alternatives
+            } else {
+                &[]
+            }
+        }
+        fn next_pos(&self, pos: usize, alternative: usize) -> Option<usize> {
+            if pos != self.start {
+                return None;
+            }
+            if alternative == 0 {
+                Some(self.primary_target)
+            } else {
+                self.alternatives
+                    .get(alternative - 1)
+                    .map(|alt| alt.end_byte)
+            }
+        }
+    }
+
+    fn dispatch(
+        source: &Source,
+        owner: u16,
+        element: u16,
+        bp: u8,
+        synth: bool,
+        rules: &[u16],
+    ) -> Option<WpdaStepAction<TropicalWeight>> {
+        prefix(
+            owner,
+            &source.start,
+            &bp,
+            None,
+            source,
+            FrameCtx::EMPTY,
+            |_, _, _| None,
+            |_, kind| match kind {
+                TokenKind::Fixed(text) if text == "open" => rules
+                    .iter()
+                    .map(|&rule_idx| LexAltRuleInfo {
+                        rule_idx,
+                        kind: LexAltRuleKind::CollectionOpen {
+                            element_src_idx: element,
+                            has_synth_paren: synth,
+                        },
+                    })
+                    .collect(),
+                TokenKind::Fixed(text) if text == "other" => vec![LexAltRuleInfo {
+                    rule_idx: 60_000,
+                    kind: LexAltRuleKind::Atomic,
+                }],
+                _ => Vec::new(),
+            },
+            |_, _, _| None,
+            |_, _, _| false,
+            || (),
+            |_, _, _, _, _| true,
+            |_, _, _, _, _| true,
+            |_, _| false,
+            |_, kind| matches!(kind, TokenKind::Fixed(text) if text == "open"),
+            || true,
+            |_, _| false,
+            |_, _, _| false,
+            |_, _, _, _, _, _| true,
+            || TropicalWeight::new(0.0),
+            |_, _, _| TropicalWeight::new(0.0),
+            |_, _, _, _| TropicalWeight::new(0.0),
+            |length, _, _, rule, alt| {
+                TropicalWeight::new(f64::from(length) + f64::from(rule) + f64::from(alt))
+            },
+            |_, _, _| TropicalWeight::new(0.0),
+            |_, _, _, _| TropicalWeight::new(0.0),
+        )
+    }
+
+    proptest! {
+        #[test]
+        fn collection_routes_preserve_evidence(
+            owner in 0u16..64, element in 0u16..64, bp in any::<u8>(),
+            synth in any::<bool>(), primary_collection in any::<bool>(),
+            start in 0usize..100, first_length in 1usize..100, second_length in 1usize..100,
+            rules in prop::collection::vec(0u16..1000, 1..8),
+        ) {
+            let (primary, secondary) = if primary_collection { ("open", "other") } else { ("other", "open") };
+            let source = Source {
+                start,
+                primary: primary.to_string(),
+                primary_target: start + first_length,
+                alternatives: vec![LexAlternative {
+                    kind: TokenKind::Fixed(secondary.to_string()),
+                    text: secondary.to_string(),
+                    end_byte: start + second_length,
+                    weight: TropicalWeight::new(0.0),
+                }],
+            };
+            let action = dispatch(&source, owner, element, bp, synth, &rules);
+            let Some(WpdaStepAction::Fork { branches, consume_trigger }) = action else {
+                return Err(TestCaseError::fail("collection and ordinary readings must remain in the fork"));
+            };
+            prop_assert!(!consume_trigger);
+            prop_assert_eq!(branches.len(), rules.len() + 1);
+            let openings: Vec<_> = branches.iter().filter(|branch| branch.symbol.kind == SymbolKind::CollectionMarker).collect();
+            prop_assert_eq!(openings.len(), rules.len());
+            let next_pos = start + if primary_collection { first_length } else { second_length };
+            for (branch, &rule) in openings.iter().zip(&rules) {
+                prop_assert_eq!(branch.symbol, StackSymbolV2::collection_marker(owner, rule, 0, bp));
+                prop_assert!(matches!(branch.action_kind, ForkActionKind::ConsumeAtAndPush { next_pos: target } if target == next_pos), "collection branch must consume its lexical edge");
+                prop_assert_eq!(branch.weight, TropicalWeight::new(4.0 + f64::from(rule) + if primary_collection { 0.0 } else { 1.0 }));
+                let expected = if synth {
+                    WpdaState::CollectionOpenParen { result_src_idx: owner, rule_idx: rule, element_src_idx: element, outer_bp: bp }
+                } else {
+                    WpdaState::PrefixDispatch { pos: next_pos, cur_bp: 0 }
+                };
+                prop_assert_eq!(&branch.new_state, &expected);
+            }
+            prop_assert_eq!(branches.iter().filter(|branch| branch.symbol.rule_index_in_category == 60_000).count(), 1);
+        }
+    }
+
+    #[test]
+    fn sole_primary_collection_retains_normal_dispatch() {
+        let source = Source {
+            start: 0,
+            primary: "open".to_string(),
+            primary_target: 4,
+            alternatives: vec![LexAlternative {
+                kind: TokenKind::Fixed("unrelated".to_string()),
+                text: "unrelated".to_string(),
+                end_byte: 9,
+                weight: TropicalWeight::new(0.0),
+            }],
+        };
+        assert!(dispatch(&source, 0, 1, 7, true, &[2]).is_none());
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn infix_return_preserves_primary_boundary_and_operator_edges(
+            owner in any::<u16>(), floor in any::<u8>(),
+            start in 0usize..100, primary_length in 1usize..100,
+            secondary_length in 1usize..100,
+            primary_rules in prop::collection::vec((0u8..3, any::<u8>(), any::<u8>(), any::<u16>(), any::<u16>()), 0..6),
+            secondary_rules in prop::collection::vec((0u8..3, any::<u8>(), any::<u8>(), any::<u16>(), any::<u16>()), 1..6),
+        ) {
+            let source = Source {
+                start,
+                primary: "primary".to_string(),
+                primary_target: start + primary_length,
+                alternatives: vec![LexAlternative {
+                    kind: TokenKind::Fixed("secondary".to_string()),
+                    text: "secondary".to_string(),
+                    end_byte: start + secondary_length,
+                    weight: TropicalWeight::new(0.0),
+                }],
+            };
+            for primary in [primary_rules.as_slice(), &[]] {
+                for delimiter in [None, Some("primary"), Some("secondary"), Some("unrelated")] {
+                    let frame = delimiter.map_or(FrameCtx::EMPTY, |close| FrameCtx {
+                        close, sep: "", kv_sep: None, has_frame: true,
+                    });
+                    let action = infix(
+                        owner, &floor, start, &source, frame,
+                        |category, kind| {
+                            assert_eq!(category, owner);
+                            let rules = match kind {
+                                TokenKind::Fixed(text) if text == "primary" => primary,
+                                TokenKind::Fixed(text) if text == "secondary" => secondary_rules.as_slice(),
+                                _ => &[],
+                            };
+                            rules.iter().map(|&(tier, l_bp, r_bp, result_src_idx, rule_idx)| LexAltRuleInfo {
+                                rule_idx,
+                                kind: match tier {
+                                    0 => LexAltRuleKind::InfixOp { l_bp, r_bp, result_src_idx },
+                                    1 => LexAltRuleKind::PostfixOp { l_bp, result_src_idx },
+                                    _ => LexAltRuleKind::MixfixFirstTrigger { l_bp, result_src_idx },
+                                },
+                            }).collect()
+                        },
+                        |_, info| info.rule_idx,
+                        |bias, category, rule, alt| TropicalWeight::new(bias + f64::from(category) + f64::from(rule) + f64::from(alt)),
+                        || TropicalWeight::new(0.0),
+                    );
+                    let primary_count = primary.iter().filter(|rule| rule.1 >= floor).count();
+                    let expected: Vec<_> = primary.iter().map(|rule| (0u16, rule))
+                        .chain(secondary_rules.iter().map(|rule| (1u16, rule)))
+                        .filter(|(_, rule)| rule.1 >= floor)
+                        .map(|(alt, &(tier, l_bp, r_bp, result, rule))| (alt, tier, l_bp, r_bp, result, rule))
+                        .collect();
+                    let should_return = primary_count == 0 || matches!(delimiter, Some("primary" | "secondary"));
+                    let Some(WpdaStepAction::Fork { branches, consume_trigger }) = action else {
+                        prop_assert!(!should_return);
+                        prop_assert_eq!(primary_count, 1);
+                        prop_assert_eq!(expected.len(), 1);
+                        continue;
+                    };
+                    prop_assert!(!consume_trigger);
+                    let returns: Vec<_> = branches.iter().filter(|branch| matches!(branch.action_kind, ForkActionKind::Advance)).collect();
+                    prop_assert_eq!(returns.len(), usize::from(should_return));
+                    for branch in returns {
+                        prop_assert_eq!(branch.symbol, StackSymbolV2::category_entry(owner));
+                        prop_assert_eq!(&branch.new_state, &WpdaState::Unwinding);
+                        prop_assert_eq!(branch.weight, TropicalWeight::new(0.0));
+                    }
+                    let mut observed = Vec::new();
+                    for branch in &branches {
+                        let (alt, tier, l_bp, r_bp, result, rule, trigger, next_pos) = match &branch.action_kind {
+                            ForkActionKind::Advance => continue,
+                            ForkActionKind::LexAltInfixOp { alt_idx, trigger, rule_idx, next_pos, l_bp, r_bp, result_src_idx, source_cat_src_idx } => {
+                                prop_assert_eq!(*source_cat_src_idx, owner);
+                                let expected_state = if *result_src_idx == owner {
+                                    WpdaState::PrefixDispatch { pos: *next_pos, cur_bp: *r_bp }
+                                } else {
+                                    WpdaState::CrossCatDelegate { source_src_idx: owner, inner_cur_bp: *r_bp }
+                                };
+                                prop_assert_eq!(&branch.new_state, &expected_state);
+                                (*alt_idx, 0, *l_bp, *r_bp, *result_src_idx, *rule_idx, trigger, *next_pos)
+                            },
+                            ForkActionKind::LexAltPostfixOp { alt_idx, trigger, rule_idx, next_pos, l_bp, result_src_idx } => {
+                                prop_assert_eq!(&branch.new_state, &WpdaState::Unwinding);
+                                (*alt_idx, 1, *l_bp, 0, *result_src_idx, *rule_idx, trigger, *next_pos)
+                            },
+                            ForkActionKind::LexAltMixfixOp { alt_idx, trigger, rule_idx, next_pos, l_bp, result_src_idx } => {
+                                prop_assert_eq!(&branch.new_state, &WpdaState::MixfixLiteralRun {
+                                    result_src_idx: *result_src_idx, rule_idx: *rule_idx, completed_idx: 0, kind: 2, sub_pos: 0,
+                                });
+                                (*alt_idx, 2, *l_bp, 0, *result_src_idx, *rule_idx, trigger, *next_pos)
+                            },
+                            other => return Err(TestCaseError::fail(format!("unexpected operator action {other:?}"))),
+                        };
+                        prop_assert_eq!(trigger.as_str(), if alt == 0 { "primary" } else { "secondary" });
+                        prop_assert_eq!(next_pos, start + if alt == 0 { primary_length } else { secondary_length });
+                        let bias = match tier {
+                            0 => crate::automata::lex_weight::BP_TIER_INFIX,
+                            1 => crate::automata::lex_weight::BP_TIER_POSTFIX,
+                            _ => crate::automata::lex_weight::BP_TIER_MIXFIX,
+                        };
+                        prop_assert_eq!(branch.weight, TropicalWeight::new(bias + f64::from(result) + f64::from(rule) + f64::from(alt)));
+                        prop_assert_eq!(branch.symbol, if tier == 2 {
+                            StackSymbolV2::mixfix_marker(result, rule, 0, floor)
+                        } else {
+                            StackSymbolV2::rule_at(result, rule, 0, Some(floor)).with_kind_return()
+                        });
+                        observed.push((alt, tier, l_bp, r_bp, result, rule));
+                    }
+                    let expected: Vec<_> = expected.into_iter().map(|(alt, tier, left, right, result, rule)|
+                        (alt, tier, left, if tier == 0 { right } else { 0 }, result, rule)).collect();
+                    prop_assert_eq!(observed, expected);
+                }
+            }
+        }
+    }
 }

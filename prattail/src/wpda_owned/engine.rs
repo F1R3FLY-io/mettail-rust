@@ -20,7 +20,9 @@ use crate::wpda_rule_analysis::binder::{
 use crate::wpda_rule_analysis::collection::assembly::has_binder_internal_collection_slot;
 use crate::wpda_rule_analysis::fork_emission::ForkEmissionOrdinalModel;
 use crate::wpda_rule_analysis::mixfix::group_ops_by_cat_terminal;
+use crate::wpda_rule_analysis::prefix::UnifiedBucket;
 use crate::wpda_rule_analysis::prefix_bucket::HolePrefixKind;
+use crate::wpda_rule_analysis::prefix_pattern::NeutralPattern;
 use crate::wpda_rule_analysis::rule_observation;
 use crate::wpda_runtime::{
     lex_one as one, lex_w as cost, lex_w_alt, lex_w_alt_with_len, lex_w_with_len,
@@ -30,10 +32,10 @@ use crate::wpda_runtime::{
     SemanticBuilder, StackSymbolV2, SymbolKind, WpdaState, WpdaTokenSource,
 };
 use crate::wpda_transitions::{
-    binder, collection_loop, control, infix, lexical_fork, mixfix, prefix, prefix_dispatch,
-    unwinding,
+    binder, collection_loop, collection_prefix, control, infix, lexical_fork, mixfix, prefix,
+    prefix_dispatch, unwinding,
 };
-use crate::wpda_walker::{ForkActionKind, TriggerMode, WpdaEngine, WpdaStepAction};
+use crate::wpda_walker::{ForkActionKind, ForkBranch, TriggerMode, WpdaEngine, WpdaStepAction};
 use std::any::Any;
 use std::collections::BTreeMap;
 
@@ -130,6 +132,43 @@ struct Part<'grammar> {
     capture: Option<&'grammar str>,
 }
 
+/// Grammar-owned alternatives for one fixed lexer token. The descriptor
+/// census, rather than a delimiter spelling, determines every route here.
+#[derive(Clone, Copy)]
+enum StructuralPrefixRoute {
+    Grouping {
+        source: u16,
+    },
+    Binder {
+        owner: u16,
+        rule: u16,
+        body: u16,
+    },
+    Collection {
+        rule: u16,
+        element: u16,
+        has_synth_paren: bool,
+    },
+    CollectionProjection {
+        rule: u16,
+        source: u16,
+    },
+}
+
+fn append_structural_route<'grammar>(
+    index: &mut BTreeMap<&'grammar str, Vec<StructuralPrefixRoute>>,
+    opener: &'grammar str,
+    route: StructuralPrefixRoute,
+    admit_slot: &mut impl FnMut(usize) -> Result<(), OwnedEngineError>,
+) -> Result<(), OwnedEngineError> {
+    if !index.contains_key(opener) {
+        admit_slot(1)?;
+    }
+    admit_slot(1)?;
+    index.entry(opener).or_default().push(route);
+    Ok(())
+}
+
 pub struct OwnedWpdaEngine<'grammar, P> {
     descriptors: &'grammar OwnedWpdaDescriptors<P>,
     actions: &'grammar dyn OwnedEngineActions,
@@ -139,6 +178,7 @@ pub struct OwnedWpdaEngine<'grammar, P> {
     rules: Vec<Vec<Rule<'grammar>>>,
     operators: Vec<BTreeMap<String, OperatorRows>>,
     parts: BTreeMap<(u16, u16), Vec<Part<'grammar>>>,
+    structural_prefixes: Vec<BTreeMap<&'grammar str, Vec<StructuralPrefixRoute>>>,
     fork_ordinals: ForkEmissionOrdinalModel,
 }
 
@@ -153,6 +193,7 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
         contextual_keywords: &'grammar [String],
         absorption: &'grammar AbsorptionRows,
         admit: impl FnOnce(&OwnedWpdaDescriptors<P>) -> Result<(), OwnedEngineError>,
+        mut admit_prefix_slot: impl FnMut(usize) -> Result<(), OwnedEngineError>,
     ) -> Result<Self, OwnedEngineError> {
         admit(descriptors)?;
         let categories = &descriptors.synthesis.categories;
@@ -172,13 +213,6 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
             || !descriptors.factoring_emission.mixfix_groups.is_empty()
         {
             return Err(unsupported(primary, 0, "factored spine routing"));
-        }
-        if descriptors
-            .collections
-            .iter()
-            .any(|row| !row.spec.close_resumes_via_unwinding)
-        {
-            return Err(unsupported(primary, 0, "standalone collection prefix routing"));
         }
         let reader = AuthoredRuleReader::new(&descriptors.synthesis.store)
             .map_err(|error| OwnedEngineError::Source(error.to_string()))?;
@@ -265,39 +299,144 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
             }
             rules.push(rows);
         }
+        // The base authored descriptor has already been admitted. Charge each
+        // map, key, and route *before* allocating this additional routing
+        // index; borrowed opener keys copy no source string bytes.
+        admit_prefix_slot(categories.len())?;
+        let mut structural_prefixes = Vec::with_capacity(categories.len());
         let mut fork_ordinals = ForkEmissionOrdinalModel::new();
         for category in 0..rules.len() {
             let category = u16::try_from(category).expect("descriptor category admission");
+            let mut by_opener = BTreeMap::new();
             let local_paren = rules[usize::from(category)]
                 .iter()
                 .any(|row| row.binder.is_some() && row.trigger == Some("("));
-            let sources = if local_paren {
-                vec![category]
+            let local_source = [category];
+            let sources: &[u16] = if local_paren {
+                &local_source
             } else {
-                descriptors.grouping_sources[usize::from(category)].clone()
+                &descriptors.grouping_sources[usize::from(category)]
             };
-            let mut paren_position =
-                u16::try_from(sources.len()).expect("descriptor grouping admission");
-            for owner in sources {
+            for &owner in sources {
+                append_structural_route(
+                    &mut by_opener,
+                    "(",
+                    StructuralPrefixRoute::Grouping { source: owner },
+                    &mut admit_prefix_slot,
+                )?;
+            }
+            for &owner in sources {
                 for (rule, row) in rules[usize::from(owner)].iter_mut().enumerate() {
                     if row.binder.is_some() && row.trigger == Some("(") {
                         row.represented = true;
-                        fork_ordinals.record_site2_row(
-                            owner,
-                            u16::try_from(rule).expect("descriptor rule admission"),
-                            paren_position,
-                            "paren-dispatch \"(\"",
-                        );
-                        paren_position += 1;
+                        let body = row
+                            .binder
+                            .as_ref()
+                            .and_then(binder_initial_body_cat)
+                            .and_then(|name| {
+                                categories.iter().position(|candidate| candidate == name)
+                            })
+                            .and_then(|index| u16::try_from(index).ok())
+                            .unwrap_or(owner);
+                        let rule = u16::try_from(rule).expect("descriptor rule admission");
+                        append_structural_route(
+                            &mut by_opener,
+                            "(",
+                            StructuralPrefixRoute::Binder { owner, rule, body },
+                            &mut admit_prefix_slot,
+                        )?;
                     }
                 }
             }
+            for row in descriptors
+                .collections
+                .iter()
+                .filter(|row| row.key.0 == category && !row.spec.close_resumes_via_unwinding)
+            {
+                let element = row.spec.element_src_idx.ok_or_else(|| {
+                    unsupported(category, row.key.1, "collection element category")
+                })?;
+                rules[usize::from(category)][usize::from(row.key.1)].represented = true;
+                append_structural_route(
+                    &mut by_opener,
+                    row.spec.open.as_str(),
+                    StructuralPrefixRoute::Collection {
+                        rule: row.key.1,
+                        element,
+                        has_synth_paren: row.spec.has_synth_paren,
+                    },
+                    &mut admit_prefix_slot,
+                )?;
+            }
+            // Specialize a transparent projection only when both the result
+            // and source categories own a collection at this exact token.
+            // Repeated result constructors with one opener still contribute
+            // each projection just once.
+            for (index, row) in descriptors.collections.iter().enumerate() {
+                if row.key.0 != category || row.spec.close_resumes_via_unwinding {
+                    continue;
+                }
+                let opener = row.spec.open.as_str();
+                if descriptors.collections[..index].iter().any(|prior| {
+                    prior.key.0 == category
+                        && !prior.spec.close_resumes_via_unwinding
+                        && prior.spec.open == opener
+                }) {
+                    continue;
+                }
+                for &(source, result, rule) in &descriptors.transparent_projections {
+                    if result != category
+                        || !descriptors.collections.iter().any(|source_row| {
+                            source_row.key.0 == source
+                                && !source_row.spec.close_resumes_via_unwinding
+                                && source_row.spec.open == opener
+                        })
+                    {
+                        continue;
+                    }
+                    rules[usize::from(category)][usize::from(rule)].represented = true;
+                    append_structural_route(
+                        &mut by_opener,
+                        opener,
+                        StructuralPrefixRoute::CollectionProjection { rule, source },
+                        &mut admit_prefix_slot,
+                    )?;
+                }
+            }
+            for (&opener, routes) in &by_opener {
+                for (position, route) in routes.iter().enumerate() {
+                    let key = match route {
+                        StructuralPrefixRoute::Grouping { .. } => None,
+                        StructuralPrefixRoute::Binder { owner, rule, .. } => Some((*owner, *rule)),
+                        StructuralPrefixRoute::Collection { rule, .. }
+                        | StructuralPrefixRoute::CollectionProjection { rule, .. } => {
+                            Some((category, *rule))
+                        },
+                    };
+                    if let Some((owner, rule)) = key {
+                        fork_ordinals.record_site2_row(
+                            owner,
+                            rule,
+                            u16::try_from(position).expect("descriptor prefix route admission"),
+                            &format!("prefix-dispatch {opener:?}"),
+                        );
+                    }
+                }
+            }
+            structural_prefixes.push(by_opener);
         }
         // The original bucket descriptor discriminants determine routes. No
         // source syntax is reclassified into a second transition language.
         for (category, (buckets, order)) in descriptors.prefixes.iter().enumerate() {
             let category = u16::try_from(category).expect("descriptor category admission");
             for key in order {
+                let bucket = &buckets[key];
+                let exact_opener = match (&bucket.pat, bucket.extra_guard.as_ref()) {
+                    (NeutralPattern::FixedKeyword, Some(NeutralPattern::FixedText(opener))) => {
+                        Some(opener.as_str())
+                    },
+                    _ => None,
+                };
                 for (position, desc) in buckets[key].descs.iter().enumerate() {
                     let rule_idx = match desc {
                         UnifiedDescriptor::Atomic(arm) => Some(arm.rule_idx),
@@ -309,12 +448,49 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                     };
                     if let Some(rule_idx) = rule_idx {
                         rules[usize::from(category)][usize::from(rule_idx)].represented = true;
-                        fork_ordinals.record_site2_row(
-                            category,
-                            rule_idx,
-                            u16::try_from(position).expect("descriptor bucket admission"),
-                            &format!("prefix-dispatch {key:?}"),
-                        );
+                        let mut matched_special = false;
+                        for (&opener, routes) in &structural_prefixes[usize::from(category)] {
+                            if !super::token_bindings::matches_prefix(
+                                &bucket.pat,
+                                bucket.extra_guard.as_ref(),
+                                &TokenKind::Fixed(opener.to_owned()),
+                            ) {
+                                continue;
+                            }
+                            matched_special = true;
+                            if matches!(desc, UnifiedDescriptor::CrossCatProjection { rule_idx, .. }
+                                if routes.iter().any(|route| matches!(route,
+                                    StructuralPrefixRoute::CollectionProjection { rule, .. }
+                                        if rule == rule_idx)))
+                            {
+                                continue;
+                            }
+                            let removed_before = bucket.descs[..position]
+                                .iter()
+                                .filter(|candidate| {
+                                    matches!(candidate,
+                                    UnifiedDescriptor::CrossCatProjection { rule_idx, .. }
+                                        if routes.iter().any(|route| matches!(route,
+                                            StructuralPrefixRoute::CollectionProjection { rule, .. }
+                                                if rule == rule_idx)))
+                                })
+                                .count();
+                            let ordinal = routes.len() + position - removed_before;
+                            fork_ordinals.record_site2_row(
+                                category,
+                                rule_idx,
+                                u16::try_from(ordinal).expect("descriptor prefix route admission"),
+                                &format!("special-opener-dispatch {opener:?}"),
+                            );
+                        }
+                        if !matched_special || exact_opener.is_none() {
+                            fork_ordinals.record_site2_row(
+                                category,
+                                rule_idx,
+                                u16::try_from(position).expect("descriptor bucket admission"),
+                                &format!("prefix-dispatch {key:?}"),
+                            );
+                        }
                     }
                     match desc {
                         UnifiedDescriptor::Atomic(_) | UnifiedDescriptor::BinderPrefix { .. } => {},
@@ -518,6 +694,7 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
             rules,
             operators,
             parts,
+            structural_prefixes,
             fork_ordinals,
         })
     }
@@ -585,6 +762,23 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                             kind: LexAltRuleKind::CrossCatProjection { source_src_idx: source },
                         });
                     }
+                }
+                continue;
+            }
+            if let Some(row) = self.descriptors.collections.iter().find(|row| {
+                row.key.0 == category && row.key.1 == rule && !row.spec.close_resumes_via_unwinding
+            }) {
+                if matches!(kind, TokenKind::Fixed(text) if text == &row.spec.open) {
+                    out.push(LexAltRuleInfo {
+                        rule_idx: rule,
+                        kind: LexAltRuleKind::CollectionOpen {
+                            element_src_idx: row
+                                .spec
+                                .element_src_idx
+                                .expect("admitted collection element"),
+                            has_synth_paren: row.spec.has_synth_paren,
+                        },
+                    });
                 }
                 continue;
             }
@@ -715,6 +909,7 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
             },
             |_, _| false,
             |_, _, _| false,
+            |_, _, _, _, _, _| true,
             one,
             cost,
             lex_w_with_len,
@@ -733,8 +928,14 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
         tokens: &dyn WpdaTokenSource,
         peek: Option<TokenKind>,
     ) -> WpdaStepAction<LexicographicWeight> {
-        if matches!(&peek, Some(TokenKind::Fixed(text)) if text == "(") {
-            return self.paren(category, pos, bp, tokens);
+        if let Some(TokenKind::Fixed(opener)) = &peek {
+            if let Some(routes) = self
+                .structural_prefixes
+                .get(usize::from(category))
+                .and_then(|index| index.get(opener.as_str()))
+            {
+                return self.structural_prefix_route(category, pos, bp, top, tokens, routes);
+            }
         }
         // Generated category routing observes peek_kind again at its own site.
         let peek = tokens.peek_kind(*pos);
@@ -810,66 +1011,234 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                 }
                 return prefix::unified_fork(bucket.descs.len(), |branches| {
                     for desc in &bucket.descs {
-                        match desc {
-                            UnifiedDescriptor::Atomic(arm) => prefix::push_atomic(
-                                branches,
-                                *bp,
-                                arm.category_src_idx,
-                                arm.rule_idx,
-                                cost,
-                            ),
-                            UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
-                                prefix::push_binder_prefix(
-                                    branches,
-                                    *bp,
-                                    category,
-                                    *rule_idx,
-                                    *body_src_idx,
-                                    cost,
-                                )
-                            },
-                            UnifiedDescriptor::LeadingCategory { rule_idx, source_src_idx } => {
-                                let Some(inner_bp) = self.leading_floor(category, *rule_idx, *bp)
-                                else {
-                                    continue;
-                                };
-                                prefix::push_leading_category_with_floor(
-                                    branches,
-                                    *bp,
-                                    pos,
-                                    category,
-                                    *rule_idx,
-                                    *source_src_idx,
-                                    inner_bp,
-                                    top.map(|node| node.symbol.kind),
-                                    cost,
-                                )
-                            },
-                            UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
-                                prefix::push_nullary_literal_run(
-                                    branches, bp, category, *rule_idx, cost,
-                                )
-                            },
-                            UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx } => {
-                                if self.projection_compatible(*source_src_idx, tokens, *pos) {
-                                    prefix::push_crosscat_projection(
-                                        branches,
-                                        *bp,
-                                        bp,
-                                        category,
-                                        *rule_idx,
-                                        *source_src_idx,
-                                        cost,
-                                    );
-                                }
-                            },
-                            _ => unreachable!("constructor rejects unsupported prefix rows"),
-                        }
+                        self.push_ordinary_prefix_branch(
+                            branches, desc, category, pos, bp, top, tokens,
+                        );
                     }
                 });
             }
         }
         WpdaStepAction::Error(format!("no prefix rule for category {category} at position {pos}"))
+    }
+
+    fn matching_prefix_bucket(
+        &self,
+        category: u16,
+        kind: &TokenKind,
+    ) -> Option<&UnifiedBucket<NeutralPattern, UnifiedDescriptor<NeutralPattern>>> {
+        let (buckets, order) = self.descriptors.prefixes.get(usize::from(category))?;
+        order.iter().map(|key| &buckets[key]).find(|bucket| {
+            super::token_bindings::matches_prefix(&bucket.pat, bucket.extra_guard.as_ref(), kind)
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_ordinary_prefix_branch(
+        &self,
+        branches: &mut Vec<ForkBranch<LexicographicWeight>>,
+        desc: &UnifiedDescriptor<NeutralPattern>,
+        category: u16,
+        pos: &usize,
+        bp: &u8,
+        top: Option<&WpdaGssNode>,
+        tokens: &dyn WpdaTokenSource,
+    ) {
+        match desc {
+            UnifiedDescriptor::Atomic(arm) => {
+                prefix::push_atomic(branches, *bp, arm.category_src_idx, arm.rule_idx, cost)
+            },
+            UnifiedDescriptor::BinderPrefix { rule_idx, body_src_idx } => {
+                prefix::push_binder_prefix(branches, *bp, category, *rule_idx, *body_src_idx, cost)
+            },
+            UnifiedDescriptor::LeadingCategory { rule_idx, source_src_idx } => {
+                if let Some(inner_bp) = self.leading_floor(category, *rule_idx, *bp) {
+                    prefix::push_leading_category_with_floor(
+                        branches,
+                        *bp,
+                        pos,
+                        category,
+                        *rule_idx,
+                        *source_src_idx,
+                        inner_bp,
+                        top.map(|node| node.symbol.kind),
+                        cost,
+                    );
+                }
+            },
+            UnifiedDescriptor::NullaryLiteralRun { rule_idx } => {
+                prefix::push_nullary_literal_run(branches, bp, category, *rule_idx, cost)
+            },
+            UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx } => {
+                if self.projection_compatible(*source_src_idx, tokens, *pos) {
+                    prefix::push_crosscat_projection(
+                        branches,
+                        *bp,
+                        bp,
+                        category,
+                        *rule_idx,
+                        *source_src_idx,
+                        cost,
+                    );
+                }
+            },
+            _ => unreachable!("constructor rejects unsupported prefix rows"),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn structural_prefix_route(
+        &self,
+        category: u16,
+        pos: &usize,
+        bp: &u8,
+        top: Option<&WpdaGssNode>,
+        tokens: &dyn WpdaTokenSource,
+        routes: &[StructuralPrefixRoute],
+    ) -> WpdaStepAction<LexicographicWeight> {
+        // The original category router makes a second token observation after
+        // PrefixDispatch's structural-opener match. Keep that observation and
+        // its first-matching-bucket order rather than caching the first peek.
+        let ordinary_peek = tokens.peek_kind(*pos);
+        let ordinary = ordinary_peek
+            .as_ref()
+            .and_then(|kind| self.matching_prefix_bucket(category, kind));
+        if ordinary.is_none() {
+            match routes {
+                [StructuralPrefixRoute::Grouping { source }] => {
+                    return prefix::paren_singleton(*source, bp, pos, tokens, one);
+                },
+                [StructuralPrefixRoute::Collection { rule, element, has_synth_paren }] => {
+                    return collection_prefix::singleton(category, *rule, bp, cost, || {
+                        if *has_synth_paren {
+                            WpdaState::CollectionOpenParen {
+                                result_src_idx: category,
+                                rule_idx: *rule,
+                                element_src_idx: *element,
+                                outer_bp: *bp,
+                            }
+                        } else {
+                            WpdaState::PrefixDispatch {
+                                pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
+                                cur_bp: 0,
+                            }
+                        }
+                    });
+                },
+                _ => {},
+            }
+        }
+        let ordinary_count = ordinary.map_or(0, |bucket| bucket.descs.len());
+        let mut branches = Vec::with_capacity(routes.len() + ordinary_count);
+        for route in routes {
+            match *route {
+                StructuralPrefixRoute::Grouping { source } => {
+                    branches.push(prefix::paren_grouping_branch(
+                        source,
+                        bp,
+                        pos,
+                        tokens,
+                        || {
+                            if source == category {
+                                one()
+                            } else {
+                                cost(
+                                    crate::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
+                                    source,
+                                    0,
+                                )
+                            }
+                        },
+                        || {
+                            if source == category {
+                                ForkActionKind::ConsumeAndPush {
+                                    trigger_mode: TriggerMode::Discard,
+                                }
+                            } else {
+                                ForkActionKind::ConsumeAndPushCrossCatLhs {
+                                    trigger_mode: TriggerMode::Discard,
+                                }
+                            }
+                        },
+                    ));
+                },
+                StructuralPrefixRoute::Binder { owner, rule, body } => {
+                    branches.push(prefix::paren_binder_branch(
+                        owner,
+                        rule,
+                        body,
+                        *bp,
+                        || {
+                            if owner == category {
+                                StackSymbolV2::rule_at(owner, rule, 1, Some(*bp))
+                            } else {
+                                StackSymbolV2::category_entry(owner)
+                            }
+                        },
+                        || {
+                            cost(
+                                if owner == category {
+                                    0.0
+                                } else {
+                                    crate::automata::lex_weight::BP_TIER_CROSSCAT_LHS
+                                },
+                                owner,
+                                rule,
+                            )
+                        },
+                        || {
+                            if owner == category {
+                                ForkActionKind::ConsumeAndPush {
+                                    trigger_mode: TriggerMode::ConsumeAsTriggerOnly,
+                                }
+                            } else {
+                                ForkActionKind::PushCrossCatLhs
+                            }
+                        },
+                    ));
+                },
+                StructuralPrefixRoute::Collection { rule, element, has_synth_paren } => {
+                    branches.push(collection_prefix::primary(category, rule, bp, cost, || {
+                        if has_synth_paren {
+                            WpdaState::CollectionOpenParen {
+                                result_src_idx: category,
+                                rule_idx: rule,
+                                element_src_idx: element,
+                                outer_bp: *bp,
+                            }
+                        } else {
+                            WpdaState::PrefixDispatch {
+                                pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
+                                cur_bp: 0,
+                            }
+                        }
+                    }));
+                },
+                StructuralPrefixRoute::CollectionProjection { rule, source } => {
+                    branches.push(collection_prefix::projection(category, rule, source, bp, cost));
+                },
+            }
+        }
+        if let Some(bucket) = ordinary {
+            for desc in &bucket.descs {
+                if matches!(desc, UnifiedDescriptor::CrossCatProjection { rule_idx, .. }
+                    if routes.iter().any(|route| matches!(route,
+                        StructuralPrefixRoute::CollectionProjection { rule, .. }
+                            if rule == rule_idx)))
+                {
+                    continue;
+                }
+                self.push_ordinary_prefix_branch(
+                    &mut branches,
+                    desc,
+                    category,
+                    pos,
+                    bp,
+                    top,
+                    tokens,
+                );
+            }
+        }
+        WpdaStepAction::Fork { branches, consume_trigger: false }
     }
 
     /// A structural FLT hole has no lexer token. Reuse the authored
@@ -952,113 +1321,6 @@ impl<'grammar, P> OwnedWpdaEngine<'grammar, P> {
                     .contains(&source)
             },
         )
-    }
-
-    fn paren(
-        &self,
-        category: u16,
-        pos: &usize,
-        bp: &u8,
-        tokens: &dyn WpdaTokenSource,
-    ) -> WpdaStepAction<LexicographicWeight> {
-        let Some(rows) = self.rules.get(usize::from(category)) else {
-            return WpdaStepAction::Error(format!("unknown category {category}"));
-        };
-        let local_paren = rows
-            .iter()
-            .any(|row| row.binder.is_some() && row.trigger == Some("("));
-        let original_sources = &self.descriptors.grouping_sources[usize::from(category)];
-        if !local_paren && original_sources.len() == 1 {
-            return prefix::paren_singleton(original_sources[0], bp, pos, tokens, one);
-        }
-        let sources = if local_paren {
-            vec![category]
-        } else {
-            original_sources.clone()
-        };
-        let binders: Vec<_> = sources
-            .iter()
-            .flat_map(|&owner| {
-                self.rules[usize::from(owner)]
-                    .iter()
-                    .enumerate()
-                    .filter_map(move |(rule, row)| {
-                        row.binder
-                            .as_ref()
-                            .filter(|_| row.trigger == Some("("))
-                            .map(|shape| (owner, rule, shape))
-                    })
-            })
-            .collect();
-        prefix::paren_fork(sources.len() + binders.len(), |branches| {
-            for source in sources {
-                branches.push(prefix::paren_grouping_branch(
-                    source,
-                    bp,
-                    pos,
-                    tokens,
-                    || {
-                        if source == category {
-                            one()
-                        } else {
-                            cost(
-                                crate::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
-                                source,
-                                0,
-                            )
-                        }
-                    },
-                    || {
-                        if source == category {
-                            ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard }
-                        } else {
-                            ForkActionKind::ConsumeAndPushCrossCatLhs {
-                                trigger_mode: TriggerMode::Discard,
-                            }
-                        }
-                    },
-                ));
-            }
-            for (owner, rule, shape) in binders {
-                let rule = u16::try_from(rule).expect("descriptor rule admission");
-                let body = binder_initial_body_cat(shape)
-                    .and_then(|name| self.category_index(name))
-                    .unwrap_or(owner);
-                branches.push(prefix::paren_binder_branch(
-                    owner,
-                    rule,
-                    body,
-                    *bp,
-                    || {
-                        if owner == category {
-                            StackSymbolV2::rule_at(owner, rule, 1, Some(*bp))
-                        } else {
-                            StackSymbolV2::category_entry(owner)
-                        }
-                    },
-                    || {
-                        cost(
-                            if owner == category {
-                                0.0
-                            } else {
-                                crate::automata::lex_weight::BP_TIER_CROSSCAT_LHS
-                            },
-                            owner,
-                            rule,
-                        )
-                    },
-                    || {
-                        if owner == category {
-                            ForkActionKind::ConsumeAndPush {
-                                trigger_mode: TriggerMode::ConsumeAsTriggerOnly,
-                            }
-                        } else {
-                            ForkActionKind::PushCrossCatLhs
-                        }
-                    },
-                ));
-            }
-        })
     }
 
     fn category_index(&self, name: &str) -> Option<u16> {

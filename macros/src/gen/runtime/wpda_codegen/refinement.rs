@@ -742,6 +742,7 @@ mod tests {
         lang.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: Some(i32_ty),
             collection_kind: None,
         });
@@ -888,6 +889,7 @@ mod tests {
         lang.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         });

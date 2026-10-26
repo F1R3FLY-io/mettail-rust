@@ -215,6 +215,7 @@ fn prefix_bucket_shared_compatibility_queries_remain_lazy() {
         lang.types.push(LangType {
             name: Ident::new(category, Span::call_site()),
             role: CategoryRole::Object,
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         });

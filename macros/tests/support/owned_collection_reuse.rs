@@ -69,6 +69,7 @@ mod owned_collection_reuse {
         language.types.push(mettail_ast::language::LangType {
             name: Ident::new("Home", Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: Some(CollectionCategory::Map(delimiters)),
         });

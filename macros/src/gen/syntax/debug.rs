@@ -1394,6 +1394,7 @@ mod tests {
         language.types.push(mettail_ast::language::LangType {
             name: format_ident!("Term"),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         });

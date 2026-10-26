@@ -50,6 +50,11 @@ use mettail_macros::language;
 // `CollectionType` can name, and `HashMap` is its only expressible instance; the gate refuses
 // both, by carrier and by residual respectively.
 //
+// (2026-10-20) This is no longer true. A `HashSet(T)` field is now
+// `mettail_runtime::HashSetLit<T>`, so `tests/definitions/sole_collection_carrier_demo.rs`
+// declares a `HashSet(Proc)` fold parameter (`SetFold`), and the gate refuses it by carrier.
+// The paragraph above is the record from before that change.
+//
 // `VecFold` is the ★ POSITIVE CONTROL: a fold on the SAME language, found by the SAME walk,
 // whose collection parameter IS lowered. Without it, "the gate declined `MapFold`" would be
 // indistinguishable from "the fold walk never ran".

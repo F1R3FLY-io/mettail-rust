@@ -122,6 +122,153 @@ mod tests {
     }
 
     #[test]
+    fn capture_free_sole_vec_collection_is_an_empty_zero_child_base() {
+        let language = language(
+            r#"
+            name: FiniteSoleVec,
+            types { data Item data Holder }
+            terms {
+                One . |- "one" : Item;
+                Hold . items:Vec(Item) |- "hold" "[" items.*sep(",") "]" : Holder;
+            }
+        "#,
+        );
+        assert!(classify_direct_variants(&format_ident!("Holder"), &language)
+            .leaves
+            .is_empty());
+        let context = FiniteWitnessContext::new(&language);
+        let holder = base(&context, "Holder");
+        assert!(
+            holder.contains("let __mettail_finite_0: Holder = Holder::Hold(vec![]);"),
+            "{holder}"
+        );
+        assert!(holder.contains("AnyTerm::WrapHolder(__mettail_finite_0)"), "{holder}");
+        assert!(!holder.contains("Item::One"), "{holder}");
+    }
+
+    #[test]
+    fn nonempty_list_is_a_required_head_and_an_empty_star_tail() {
+        let language = language(
+            r#"
+            name: FiniteNonemptyList,
+            types { data Item data Items }
+            terms {
+                One . |- "one" : Item;
+                More . head:Item, tail:Vec(Item) |- head tail.*sep("") : Items;
+            }
+        "#,
+        );
+        let context = FiniteWitnessContext::new(&language);
+        let items = base(&context, "Items");
+        assert!(items.contains("Item::One"), "{items}");
+        assert!(
+            items.contains("Items::More(std::sync::Arc::new(__mettail_finite_0), vec![])"),
+            "{items}"
+        );
+    }
+
+    #[test]
+    fn non_vec_sole_collections_keep_a_named_carrier_refusal() {
+        // Changed because FiniteConstructorWitnessAdapter.v
+        // (`admission_refuses_the_other_sole_carriers`) refuses every carrier
+        // except Vec, so this binding test now enumerates the model's carriers,
+        // PathMap(T) and HashMap(K, V) included. The code was:
+        // for (carrier, element) in [("HashBag", "Item"), ("HashBag", "Holder"), ("HashSet", "Item")]
+        for (carrier, field_type) in [
+            ("HashBag", "HashBag(Item)"),
+            ("HashBag", "HashBag(Holder)"),
+            ("HashSet", "HashSet(Item)"),
+            ("PathMap", "PathMap(Item)"),
+            ("HashMap", "HashMap(Item, Item)"),
+        ] {
+            let language = language(&format!(
+                r#"
+                name: FiniteSoleCarrier,
+                types {{ data Item data Holder }}
+                terms {{
+                    One . |- "one" : Item;
+                    Hold . items:{field_type} |- "hold" "[" items.*sep(",") "]" : Holder;
+                }}
+            "#
+            ));
+            let context = FiniteWitnessContext::new(&language);
+            let refusal = context
+                .base_for(&format_ident!("Holder"))
+                .expect_err("a non-Vec sole collection has no finite witness");
+            assert!(
+                refusal
+                    .contains(&format!("finite empty `{carrier}` sole collection is unsupported")),
+                "{field_type}: {refusal}"
+            );
+        }
+    }
+
+    #[test]
+    fn sole_vec_admission_keeps_the_element_category_checks() {
+        let language = language(
+            r#"
+            name: FiniteSoleNativeElement,
+            types { ![OpaqueCarrier] as Opaque data Holder }
+            terms {
+                Hold . items:Vec(Opaque) |- "hold" "[" items.*sep(",") "]" : Holder;
+            }
+        "#,
+        );
+        let context = FiniteWitnessContext::new(&language);
+        let refusal = context
+            .base_for(&format_ident!("Holder"))
+            .expect_err("a runtime-only element category has no surface construction");
+        assert!(refusal.contains("runtime-only native category `Opaque`"), "{refusal}");
+    }
+
+    #[test]
+    fn sole_vec_recipe_obeys_first_found_registration_order() {
+        let wrap = r#"Wrap . item:Item |- "wrap" item : Holder;"#;
+        let hold = r#"Hold . items:Vec(Item) |- "hold" "[" items.*sep(",") "]" : Holder;"#;
+        for (first, second, expected) in [
+            (wrap, hold, "Holder::Wrap(std::sync::Arc::new(__mettail_finite_0))"),
+            (hold, wrap, "Holder::Hold(vec![])"),
+        ] {
+            let language = language(&format!(
+                r#"
+                name: FiniteSoleOrder,
+                types {{ data Item data Holder }}
+                terms {{
+                    One . |- "one" : Item;
+                    {first}
+                    {second}
+                }}
+            "#
+            ));
+            let context = FiniteWitnessContext::new(&language);
+            let holder = base(&context, "Holder");
+            assert!(holder.contains(expected), "{first} then {second}: {holder}");
+        }
+    }
+
+    #[test]
+    fn plus_repetition_is_not_a_language_surface_form() {
+        let fixture = |repetition: &str| {
+            format!(
+                r#"
+                name: FiniteRepetitionForms,
+                types {{ data Item data Holder }}
+                terms {{
+                    One . |- "one" : Item;
+                    Hold . items:Vec(Item) |- "hold" items.{repetition}sep(",") : Holder;
+                }}
+            "#
+            )
+        };
+        syn::parse_str::<LanguageDef>(&fixture("*"))
+            .expect("the zero-or-more repetition is a surface form");
+        assert!(
+            syn::parse_str::<LanguageDef>(&fixture("+")).is_err(),
+            "a one-or-more repetition would need a cardinality check in the sole-Vec admission"
+        );
+    }
+
+    #[test]
     fn productive_cycle_uses_existing_exit_and_unproductive_cycle_returns_none() {
         let productive = language(
             r#"
@@ -475,7 +622,23 @@ impl CompiledRecipes {
             VariantKind::Binder { .. } | VariantKind::MultiBinder { .. } => {
                 return Ok(Err(format!("{location}: finite scope construction is unsupported")));
             },
-            VariantKind::Regular { .. } => {},
+            // Changed because a capture-free sole `Vec` collection
+            // (`VariantKind::Collection`, term_ops/subst.rs:3773-3786) is the one-field case
+            // of the canonical layout below: its payload is the bare carrier
+            // (types/enums.rs:529-531, :778), and `field_slot` already gives a regular rule's
+            // collection field that carrier empty, with no child (test_gen/unit_tests.rs:444).
+            // Other carriers keep a named refusal. The code was:
+            // VariantKind::Regular { .. } => {},
+            VariantKind::Regular { .. }
+            | VariantKind::Collection {
+                coll_type: mettail_ast::types::CollectionType::Vec,
+                ..
+            } => {},
+            VariantKind::Collection { coll_type, .. } => {
+                return Ok(Err(format!(
+                    "{location}: finite empty `{coll_type:?}` sole collection is unsupported",
+                )));
+            },
             _ => {
                 return Ok(Err(format!(
                     "{location}: non-regular constructor requires its existing specialized emitter",

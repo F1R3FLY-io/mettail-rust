@@ -15,6 +15,7 @@ fn category(name: &str, role: CategoryRole) -> LangType {
     LangType {
         name: ident(name),
         role,
+        admits_variables: !role.is_data(),
         native_type: None,
         collection_kind: None,
     }

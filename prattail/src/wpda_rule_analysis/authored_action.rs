@@ -149,13 +149,18 @@ fn derive_authored_action_shapes_with_reader<P>(
                                 }
                                 return Ok(AuthoredActionShape::Inputs(terms));
                             }
-                            if derive_authored_collection(reader.inner, rule.rule, |_, _, _| {
-                                Ok::<_, Infallible>(())
-                            })
-                            .map_err(AuthoredPrefixError::Collection)?
-                            .is_some()
+                            if let Some(shape) =
+                                derive_authored_collection(reader.inner, rule.rule, |_, _, _| {
+                                    Ok::<_, Infallible>(())
+                                })
+                                .map_err(AuthoredPrefixError::Collection)?
                             {
-                                return Ok(AuthoredActionShape::Unsupported("collection action"));
+                                return Ok(AuthoredActionShape::Inputs(vec![
+                                    AuthoredActionInput::Collection {
+                                        category: shape.element_cat,
+                                        kind: collection_kind(&shape.coll_kind),
+                                    },
+                                ]));
                             }
                             match context.atomic(rule)? {
                                 AtomicDescriptor::LiteralInteger

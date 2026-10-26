@@ -144,105 +144,27 @@ pub(crate) const FORROW_PROJ_GATE: bool = true;
 /// `false` ⇒ the exemption conjunct + the `__pos_has_ident_reading` decl are
 /// OMITTED ENTIRELY from the emission (the [`AT_QUOTED_BIND_GATE`] convention) ⇒
 /// the generated `wpda.rs` is TEXTUALLY BYTE-IDENTICAL (md5-verified) to the pre-fix
-/// baseline. `true` (SHIP DEFAULT — this IS the fix) ⇒ the exemption is folded into
-/// both `CrossCatProjection` arms' `__proj_keep`. FV: `KwAmbigProjExempt.v` (mirror
-/// `AtQuotedBindGate.v`: exempt_no_loss one-sided monotone — the gated keep-set is a
-/// strict SUPERSET of the F3 keep-set and every added branch is a keyword-literal
-/// projection whose F3 futility premise is false, so no reading is lost and the
-/// realized set only grows).
+/// baseline. With the switch enabled, both `CrossCatProjection` arms apply the
+/// exemption to `__proj_keep`. The exemption can only retain an additional branch.
+/// The repository contains neither `KwAmbigProjExempt.v` nor an `exempt_no_loss`
+/// theorem. The former citation did not establish a formal guarantee for this gate.
 pub(crate) const KWAMBIG_PROJ_EXEMPT_GATE: bool = true;
 
-/// AT_QUOTED_BIND_GATE — parse-time evidence gate for the `@`-quoted bind
-/// over-generation (2026-07-03). Kill-switch `const` (compile-time, folded into
-/// the generated CrossCatLhs push guard as a literal `true`/`false`, the same
-/// convention as [`FORROW_PROJ_GATE`]).
+/// Select scalar quoted bind patterns through the existing evidence gate.
 ///
-/// ## What over-generation
-/// A grammar with BOTH (i) a generic cross-category-LHS bind rule
-/// `result ::= source <bind-trigger> …` whose `source` FIRST-set contains a
-/// SIGIL `σ` (e.g. rholang `InputBind ::= Name "<-" Name`, `Name`'s FIRST
-/// includes `@` via `NQuoteShort "@" p`), AND (ii) a SIBLING rule
-/// `result ::= σ operand <same-bind-trigger> …` that begins with the SAME
-/// sigil (e.g. `InputBindQuoted ::= "@" pat "<-" n`) admits TWO readings of
-/// `σx <bind> …`: the whole-`source` reading `result(source=σx, …)` (parse `σx`
-/// as one `source` atom, then project `source → result`) and the direct
-/// sigil-triggered reading `result_quoted(operand=x, …)`. The whole-`source`
-/// reading is a GRAMMAR OVER-GENERATION with no canonical counterpart (proven
-/// for rholang against tree-sitter grammar.js + the interpreter + 100% corpus;
-/// `@a` in a bind LHS is UNAMBIGUOUSLY a quoted pattern = the scalar
-/// `InputBindQuoted`). Keeping it makes every such bind ≥2-way ambiguous, which
-/// under a `.*sep` repetition (`@a<-@b & …`) compounds multiplicatively (the
-/// measured ROOT-P `674@k0 → 146011@k1` fork explosion), while the no-sigil
-/// control (`x<-c & …`) stays flat.
+/// Both CrossCatLhs and LeadingCategory routes use the gate for their source.
+/// The string projection helper uses the same gate for a leading cross-category operand.
+/// The gate requires a declared leading sigil and source-specific bind triggers.
+/// Collection bracket pairs bound the scan. Binder repetition terminators do not change depth.
+/// An earlier polyadic trigger keeps the route.
 ///
-/// ## The gate
-/// At the RESULT-category PrefixDispatch fork on `σ`, the whole-`source` reading
-/// is carried by exactly one branch: the `PushCrossCatLhs` delegate
-/// `category_entry(source)` (parse `σ…` as a `source` atom). When `AT_QUOTED_BIND_GATE`
-/// is `true`, that branch is SUPPRESSED iff BOTH: (a) `σ` (this bucket's
-/// leading structural literal) is ALSO the leading literal of a sibling rule in
-/// the result category [compile-time, grammar-derived — the direct
-/// sigil-triggered rule that subsumes the whole-`source` reading exists]; AND
-/// (b) a bind-trigger is scoped-ahead in this row
-/// (`prefix_crosscat_lhs_trigger_ahead_scoped`, runtime — positive evidence a
-/// bind is being formed). The direct sigil-triggered rules (InputBindQuoted
-/// family) are UNTOUCHED, so `alts` collapses `2 → 1` to the scalar reading.
-///
-/// ## Soundness (one-sided monotone refutation, per
-/// `feedback_use_wpds_disambiguation_not_heuristics`)
-/// This is EVIDENCE rule-out of a PROVEN over-generation, NOT a weight-pick of
-/// a genuine ambiguity — the `σ`-quoting discriminator is STATIC + DEFINITIONAL
-/// (same class as `min_terminal_span` / `FORROW_PROJ_GATE`). Condition (a) is a
-/// strict grammar refinement: the delegate is dropped ONLY where a direct
-/// sigil-sibling provides the reading, so NO admitting parse is lost (`x<-c`
-/// dispatches on `Ident`, not a rule-leading sigil ⇒ inert; `a,b<-c` is a
-/// distinct polyadic rule ⇒ inert; a language with no sigil-sibling ⇒ inert =
-/// baseline). Gate-miss only fails to suppress (fail-open). FV:
-/// `AtQuotedBindGate.v` (T1 over-gen/non-Rholang, T2 no-legit-parse-lost,
-/// T3 single-valued+scalar-arity, T4 linear-frontier, T5 kill-switch-identity,
-/// T6 realize-backstop-inert-under-parse-gate).
-///
-/// When `false`, the gate folds to a literal `false` inside the suppression
-/// conjunct, so the CrossCatLhs push guard is byte-identical to the pre-gate
-/// emission (the `!(false && …) == true` fold). Flip to `false` to A/B off
-/// without reverting.
-///
-/// ★ 2026-07-03 EMPIRICAL STATUS (session da0842dc): the parse-time (C) gate is
-/// CORRECTNESS-COMPLETE and FV-backed (AtQuotedBindGate.v, zero-admission) —
-/// flipping this to `true` collapses `@a<-@b`/`@a<=@b`/`@a<-@b!?(c)` from
-/// alts=2 (over-generation) to alts=1 (the canonical scalar InputBindQuoted
-/// family), provably inert for every legit bind (x<-c / (x)<-c / polyadic
-/// a,b<-c all preserved), roundtrip-idempotent, ZERO regression (prattail
-/// 3604/0, gen_rholang_unit 157/0, rholang_tests 383/0). BUT the design's
-/// S0-G-LINEAR premise — that the `@` over-generation is the SOLE fork source,
-/// so removing it linearizes the `@a<-@b & …` frontier — was REFUTED live:
-/// gate-ON `branch_cursors_peak_pre_merge` still grows super-linearly
-/// (k0=516, k1=44869, k2=485589 — vs ungated k0=674, k1=146011; a ~3.3×
-/// constant-factor improvement but NOT linear; the flat control `x<-c` is
-/// 74→103). Decomposition proved the residual is the `@`-NQuoteShort CROSS-CAT
-/// PROJECTION frontier (`@a<-c` alone still explodes 63×/segment at alts=1) —
-/// the pre-existing OPEN-ENDED ROOT-P sppf-continuation / visited_proj_descriptors
-/// non-reconvergence (memory root-p-phase1-content-distinct: 100%
-/// content-distinct derivations). The ~14 ROOT-P `<-` timeouts DO NOT clear
-/// from this fix alone. Left OFF (byte-identical baseline) pending the user's
-/// decision on whether the correctness-only win (evidence-based disambiguation
-/// of `@a<-@b`, aligning Rholang with canonical Rholang) justifies enabling it
-/// independently of the perf residual. Flip THIS + the walker-side
-/// `AT_QUOTED_BIND_REALIZE_GATE` consts + `super::forks::AT_QUOTED_BIND_REALIZE_GATE`
-/// together to enable.
+/// `AtQuotedBindGate.v` proves the InputBind interpretation and source-isolation laws.
+/// Generated-parser properties check scalar, persistent, query, polyadic, and ordinary binds.
+/// These results do not establish a linear bound for the complete parser frontier.
+/// See `docs/design/quoted-bind-evidence.md` for the proof limits and test mapping.
+/// The disabled branch retains the ungated delegation behavior.
 pub(crate) const AT_QUOTED_BIND_GATE: bool = true;
 
-/// AT_QUOTED_BIND_GATE realize-backstop (option B) codegen kill-switch
-/// (2026-07-03). Gates emission of the two grammar-derived engine-impl helper
-/// methods (`sigil_quoted_bind_overgen_rule` / `sigil_quoted_source_atom_rule`,
-/// engine_impl.rs) that the walker's realize-time backstop consumes. MUST be
-/// flipped in lock-step with the walker-side `AT_QUOTED_BIND_REALIZE_GATE`
-/// const (wpda_walker.rs, in the realize loop): the walker const gates the
-/// DROP; this const gates the METADATA the drop reads. When BOTH are `false`
-/// (baseline) the generated engine impl is byte-identical (the trait defaults —
-/// `false` — apply) and the walker never calls the helpers. Defense-in-depth,
-/// INERT under the parse-time (C) gate. FV: `AtQuotedBindGate.{drop_set_sound,
-/// realize_inert_under_parse_gate}`.
 pub(crate) const AT_QUOTED_BIND_REALIZE_GATE: bool = true;
 
 /// CROSSCAT_LEX_COMPAT_GATE (option A — PRIMARY, emission-side bucket split;
@@ -656,6 +578,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(
             || { #primary_is_contextual_keyword },
             prefix_crosscat_lhs_has_dispatch_rule,
             prefix_crosscat_lhs_trigger_ahead,
+            prefix_crosscat_one_token_feasible,
             lex_one, lex_w, lex_w_with_len, lex_w_alt_with_len,
             |__open_len, primary_src, info| { #__s1_prefixop_weight_primary },
             |__open_len, primary_src, info, alt_idx| { #__s1_prefixop_weight_secondary },
@@ -913,7 +836,7 @@ mod tests {
             "two MixfixFirstTrigger sites must each observe identity separately for weight and action-kind",
         );
         assert!(
-            s.contains("__primary_floor_blocked") && s.contains("ForkActionKind :: Advance"),
+            s.contains("! __primary_survived") && s.contains("ForkActionKind :: Advance"),
             "missing max-munch Pratt-floor boundary branch: {}",
             s
         );

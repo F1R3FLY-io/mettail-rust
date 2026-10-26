@@ -382,6 +382,7 @@ fn fallible_workers_preserve_outputs_and_stop_at_every_reached_callback() {
         language.types.push(LangType {
             name: Ident::new(name, Span::call_site()),
             role,
+            admits_variables: !role.is_data(),
             native_type: None,
             collection_kind: None,
         });

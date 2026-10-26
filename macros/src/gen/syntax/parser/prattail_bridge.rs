@@ -113,10 +113,9 @@ pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, Stri
             // outside the caller's `use` scope.
             native_type: t.native_type.as_ref().map(native_type_to_full_string),
             is_primary: idx == 0,
-            // Closed data categories never receive synthesized Var/HOL forms.
-            // Object categories retain the existing generated variable surface,
-            // including native object sorts such as Int and Bool.
-            has_var: !t.is_data(),
+            // Admission is independent of semantic role: `noadmit` object
+            // categories remain semantic roots but have no synthetic Var/HOL.
+            has_var: t.admits_variables(),
         })
         .collect();
 
@@ -1319,6 +1318,36 @@ mod collection_projection_tests {
 
     fn parse_language(source: proc_macro2::TokenStream) -> LanguageDef {
         syn::parse2(source).expect("the collection projection fixture must parse")
+    }
+
+    #[test]
+    fn noadmit_object_projects_as_semantic_category_without_auto_var() {
+        let language = parse_language(quote! {
+            name: ClosedSignatureProjection,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types { Proc noadmit Signature },
+            terms {
+                Zero . |- "0" : Proc;
+                Ground . body:Proc |- body : Signature;
+            },
+        });
+        let specification = language_def_to_spec(&language).expect("project object admission");
+        let proc = specification
+            .types
+            .iter()
+            .find(|cat| cat.name == "Proc")
+            .unwrap();
+        let signature = specification
+            .types
+            .iter()
+            .find(|cat| cat.name == "Signature")
+            .unwrap();
+        assert!(proc.has_var);
+        assert!(!signature.has_var);
+        assert!(!language
+            .get_type(&syn::parse_quote!(Signature))
+            .unwrap()
+            .is_data());
     }
 
     #[test]

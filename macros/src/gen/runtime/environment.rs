@@ -45,10 +45,12 @@ use mettail_ast::language::LanguageDef;
 pub fn generate_environments(language: &LanguageDef) -> TokenStream {
     let language_name = &language.name;
 
-    // Native object categories can still carry generated variables. Closed
-    // structural data categories cannot, so giving them environment namespaces
-    // would expose a substitution operation that has no inhabitant to target.
-    let categories: Vec<_> = crate::gen::variable_types(language).collect();
+    // A semantic-root category may be bound by name in the host REPL even when
+    // `noadmit` removes its *object-language* variable constructor. Keep the
+    // environment namespace for every semantic root; the substitution-op
+    // axes below remain restricted independently to variable carriers.
+    // Structural Data categories have no semantic-root environment field.
+    let categories: Vec<_> = crate::gen::semantic_types(language).collect();
 
     if categories.is_empty() {
         return quote! {};
@@ -214,5 +216,31 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
         #(#category_envs)*
 
         #combined_env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closed_semantic_roots_can_be_bound_without_gaining_object_variables() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: ClosedEnvironment,
+                types { Name noadmit CostSig },
+                terms {
+                    N . |- "n" : Name;
+                    Ground . name:Name |- name : CostSig;
+                },
+                equations {},
+                rewrites {},
+            "#,
+        )
+        .expect("environment fixture parses");
+        let generated = generate_environments(&language).to_string();
+        assert!(generated.contains("pub costsig : CostSigEnv"));
+        assert!(generated.contains("pub name : NameEnv"));
+        assert!(!language.types[1].admits_variables());
     }
 }

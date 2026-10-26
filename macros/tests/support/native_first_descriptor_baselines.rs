@@ -20,6 +20,7 @@ fn declaration(native: Option<Type>) -> LangType {
     LangType {
         name: Ident::new("Value", Span::call_site()),
         role: CategoryRole::Object,
+        admits_variables: true,
         native_type: native,
         collection_kind: None,
     }

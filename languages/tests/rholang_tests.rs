@@ -4293,23 +4293,110 @@ mod flip_blocker_prefix_grouped_send {
         );
     }
 
-    /// Multiset pin: the n=4 payload row equals classic's reading count
-    /// (armg_d3_matrix.log: pure n=4 ≡ classic n=4, md5 EQ).
-    #[test]
-    fn bitnot_grouped_send_payload_multiset_matches_classic() {
-        fresh();
-        let readings =
-            Proc::parse_via_wpda_all("bitnot (a)!(@Nil!() / @Nil!())").expect("parse_all");
-        assert_eq!(readings.len(), 4, "classic multiset is n=4, got {}", readings.len());
+    fn nil_send_payloads() -> Vec<Proc> {
+        use std::sync::Arc;
+        let leaves = [
+            Proc::POutputNilEmpty,
+            Proc::POutputShortEmpty(Arc::new(Proc::PZero)),
+            Proc::POutputEmpty(Arc::new(Name::NQuoteNil)),
+        ];
+        leaves
+            .iter()
+            .flat_map(|left| {
+                leaves
+                    .iter()
+                    .map(move |right| Proc::Div(Arc::new(left.clone()), Arc::new(right.clone())))
+            })
+            .collect()
     }
 
-    /// Multiset pin: the nested-group row (double-LHS) equals classic n=2;
-    /// both group frames fire the reset (resets=2 receipt).
+    fn grouped_send_terms(
+        depth: usize,
+        name: &str,
+        payloads: &[Proc],
+    ) -> std::collections::BTreeSet<String> {
+        use mettail_runtime::{get_or_create_var, OrdVar, Var};
+        use std::sync::Arc;
+        let mut channel = Name::NVar(OrdVar(Var::Free(get_or_create_var(name))));
+        let mut terms = std::collections::BTreeSet::new();
+        for _ in 0..=depth {
+            for payload in payloads {
+                let term = Proc::BitNot(Arc::new(Proc::POutput(
+                    Arc::new(channel.clone()),
+                    Arc::new(payload.clone()),
+                )));
+                terms.insert(format!("{term:?}"));
+            }
+            channel = Name::NParen(Arc::new(channel));
+        }
+        terms
+    }
+
+    fn assert_grouped_send_terms(source: &str, expected: std::collections::BTreeSet<String>) {
+        let readings = Proc::parse_via_wpda_all(source).expect("grouped send parses");
+        let actual: std::collections::BTreeSet<_> =
+            readings.iter().map(|term| format!("{term:?}")).collect();
+        assert_eq!(readings.len(), actual.len(), "duplicate reading for {source:?}");
+        assert_eq!(actual, expected, "declared constructor combinations for {source:?}");
+    }
+
     #[test]
-    fn bitnot_nested_grouped_send_multiset_matches_classic() {
+    fn bitnot_grouped_send_payload_preserves_declared_combinations() {
+        fresh();
+        let expected = grouped_send_terms(1, "a", &nil_send_payloads());
+        assert_eq!(expected.len(), 18);
+        assert_grouped_send_terms("bitnot (a)!(@Nil!() / @Nil!())", expected);
+    }
+
+    #[test]
+    fn bitnot_nested_grouped_send_preserves_each_name_form() {
         fresh();
         let readings = Proc::parse_via_wpda_all("bitnot ((a))!(false)").expect("parse_all");
-        assert_eq!(readings.len(), 2, "classic multiset is n=2, got {}", readings.len());
+        let mut depths = Vec::new();
+        for reading in &readings {
+            let Proc::BitNot(body) = reading else {
+                panic!("{reading:?}")
+            };
+            let Proc::POutput(channel, _) = body.as_ref() else {
+                panic!("{body:?}")
+            };
+            let mut channel = channel.as_ref();
+            let mut depth = 0;
+            while let Name::NParen(inner) = channel {
+                depth += 1;
+                channel = inner;
+            }
+            assert!(matches!(channel, Name::NVar(_)), "{channel:?}");
+            depths.push(depth);
+        }
+        depths.sort_unstable();
+        assert_eq!(depths, [0, 1, 2]);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn grouped_send_constructor_combinations_match_the_grammar(
+            depth in 0usize..7,
+            suffix in 0u16..1000,
+            divided_payload in proptest::bool::ANY,
+        ) {
+            fresh();
+            let name = format!("channel{suffix}");
+            let (payload_source, payloads) = if divided_payload {
+                ("@Nil!() / @Nil!()", nil_send_payloads())
+            } else {
+                ("Nil", vec![Proc::PZero])
+            };
+            let source = format!(
+                "bitnot {}{name}{}!({payload_source})",
+                "(".repeat(depth), ")".repeat(depth),
+            );
+            let expected = grouped_send_terms(depth, &name, &payloads);
+            proptest::prop_assert_eq!(expected.len(), (depth + 1) * payloads.len());
+            assert_grouped_send_terms(&source, expected);
+        }
     }
 
     /// The hole nested inside a send payload (n=1 both arms).
@@ -4884,18 +4971,16 @@ mod ppar_internal_rule_is_deleted {
     fn the_keyword_left_the_token_enum_and_its_siblings_did_not() {
         let parser_src = artifact("parser.rs");
         assert!(
-            !parser_src.contains("Kw__ppar"),
-            "`Kw__ppar` is still in the generated token enum — the deletion did not apply"
+            !parser_src.contains("Kw_5f_5f_70_70_61_72"),
+            "The generated token enum still contains the deleted `__ppar` keyword"
         );
         assert!(
-            parser_src.contains("Kw__comm_where"),
-            "`Kw__comm_where` vanished — the deletion was over-broad and took a LIVE \
-             internal-keyword rule with it"
+            parser_src.contains("Kw_5f_5f_63_6f_6d_6d_5f_77_68_65_72_65"),
+            "The generated token enum must retain the declared `__comm_where` keyword"
         );
         assert!(
-            parser_src.contains("Kw__guard_then"),
-            "`Kw__guard_then` vanished — the deletion was over-broad and took a LIVE \
-             internal-keyword rule with it"
+            parser_src.contains("Kw_5f_5f_67_75_61_72_64_5f_74_68_65_6e"),
+            "The generated token enum must retain the declared `__guard_then` keyword"
         );
     }
 
@@ -4992,9 +5077,12 @@ mod ppar_internal_rule_is_deleted {
     #[test]
     fn the_sibling_internal_keyword_rules_still_have_a_surface() {
         let parser_src = artifact("parser.rs");
-        for keyword in ["__comm_where", "__guard_then"] {
+        for (keyword, token) in [
+            ("__comm_where", "Kw_5f_5f_63_6f_6d_6d_5f_77_68_65_72_65"),
+            ("__guard_then", "Kw_5f_5f_67_75_61_72_64_5f_74_68_65_6e"),
+        ] {
             assert!(
-                parser_src.contains(&format!("Token::Kw{keyword} => \"{keyword}\"")),
+                parser_src.contains(&format!("Token::{token} => \"{keyword}\"")),
                 "the `{keyword}` rule lost its token-text mapping — the deletion reached a \
                  LIVE internal-keyword rule"
             );

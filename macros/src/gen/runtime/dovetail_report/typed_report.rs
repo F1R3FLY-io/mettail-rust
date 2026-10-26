@@ -1313,7 +1313,7 @@ fn subst_native_rule(
 /// (E1.4 — the dropped-`Extractor`-scope-then-mutate discipline) The dispatch arm for a
 /// substitution rewrite. Mirrors the fold dispatch arm structure (gate operand classes, extract
 /// child derivations in ONE dropped `Extractor` scope, reconstruct, mutate via `__add`), but the
-/// "body" is the generated `substitute_<binder_var_cat>` / `multi_substitute_<binder_var_cat>`:
+/// "body" uses the generated `instantiate_scope_<binder_var_cat>` operation:
 ///
 ///  1. bind the scope class + each replacement class from `__subst`; gate the scope on
 ///     `__class_is_fold_value` (it must reduce to a binder VALUE, not an un-reduced redex) and
@@ -1323,9 +1323,8 @@ fn subst_native_rule(
 ///     mutable `__add` (A4 borrow discipline);
 ///  3. reconstruct the scope via `build_<binder_cat>_d` and each replacement via
 ///     `build_<binder_var_cat>_d`; `let binder_cat::binder_label(scope) = … else return None`;
-///  4. `scope.unbind()` → `(binder, body)` (single) / `(binders, body)` (multi); run
-///     `(*body).substitute_<binder_var_cat>(&binder.0, &arg)` (single) or, with an ARITY ASSERT,
-///     `multi_substitute_<binder_var_cat>(&vars, &args)` (multi);
+///  4. Instantiate the closed body with the ordered arguments. Check multi-binder arity.
+///     Shift argument references and decrement references beyond the removed scope.
 ///  5. re-add the resulting `body_cat` via `__mettail_dovetail_add_<body_cat>` and return its
 ///     e-class — the contractum the engine merges with the redex's class.
 fn subst_dispatch_arm(s: &SubstRule) -> TokenStream {
@@ -1380,14 +1379,10 @@ fn subst_dispatch_arm(s: &SubstRule) -> TokenStream {
         };
     };
 
-    // 3. reconstruct scope (must be the binder) + replacements. The reconstructed `body_cat`
-    //    impls `Drop`, so we match the binder variant BY REFERENCE and clone the inner `Scope`
-    //    (which `unbind` consumes by value) — mirroring the normalize.rs β assemble arm, which
-    //    likewise ref-matches to avoid moving out of a `Drop` category.
     let scope_reconstruct = quote! {
         let __scope_term = #binder_build(&__sd)?;
         let __scope = match &__scope_term {
-            #binder_cat::#binder_label(__s) => __s.clone(),
+            #binder_cat::#binder_label(__s) => __s,
             _ => return ::core::option::Option::None,
         };
     };
@@ -1403,30 +1398,21 @@ fn subst_dispatch_arm(s: &SubstRule) -> TokenStream {
         .map(|i| format_ident!("__arg_{i}"))
         .collect();
 
-    // 4. unbind + substitute (single vs multi).
+    let instantiate =
+        format_ident!("instantiate_scope_{}", sr.binder_var_cat.to_string().to_lowercase());
     let subst_body = if sr.multi {
-        let multi_subst =
-            format_ident!("multi_substitute_{}", to_snake(&sr.binder_var_cat.to_string()));
         let arity = sr.repl_vars.len();
         quote! {
-            let (__binders, __body) = __scope.unbind();
-            // (MF5/arity) A multi-binder substitution is well-typed only when the binder arity
-            // matches the replacement count; a mismatch defers (returns None) rather than
-            // panicking inside the engine closure.
-            if __binders.len() != #arity {
+            if __scope.unsafe_pattern().len() != #arity {
                 return ::core::option::Option::None;
             }
-            let __vars: ::std::vec::Vec<&::mettail_runtime::FreeVar<String>> =
-                __binders.iter().map(|__b| &__b.0).collect();
             let __args = vec![#(#arg_idents),*];
-            let __result = (*__body).#multi_subst(&__vars, &__args);
+            let __result = __scope.unsafe_body().#instantiate(&__args)?;
         }
     } else {
-        let single_subst = format_ident!("substitute_{}", to_snake(&sr.binder_var_cat.to_string()));
         let arg0 = &arg_idents[0];
         quote! {
-            let (__binder, __body) = __scope.unbind();
-            let __result = (*__body).#single_subst(&__binder.0, &#arg0);
+            let __result = __scope.unsafe_body().#instantiate(&[#arg0])?;
         }
     };
 
@@ -1525,15 +1511,12 @@ fn comm_native_rule(c: &CommRule, enum_id: &Ident) -> Result<TokenStream, String
 /// derivations in ONE dropped `Extractor` scope, reconstruct, mutate via the typed lowering), but
 /// realizes the communication reduct + AC splice:
 ///
-///  1. bind the continuation `cont` (the binder BODY class — the AcApp pattern binds it via the
-///     3-child binder shape), the sent name `Q`, and (from the AC match) the residual `rest`; gate
-///     `cont` on `__class_is_fold_value` and `Q` on `__class_has_normal_form`;
+///  1. Bind the continuation body, sent name, and residual bag from the matched input and output.
+///     Require a normal form for the sent name. The continuation need not be a value.
 ///  2. `kth(.., 0)`-extract the `cont`/`Q` child derivations in ONE `Extractor` scope that DROPS
 ///     before the mutable `instantiate` (A4 borrow discipline);
-///  3. reconstruct the body, rebuild its binder `Scope` with a FRESH binder (`reconstruct.rs`'s
-///     `Binder` arm — α-equivalent), `unbind` to freshen the bound variable, and reconstruct `Q`;
-///  4. `cont[Q/y]` = `body.substitute_<binder_var_cat>(&binder.0, &Q)` — the host-computed
-///     capture-avoiding substitution (model-b, exactly the Stage 3c binder reduct);
+///  3. Reconstruct the closed continuation body and the sent name.
+///  4. Instantiate the removed input scope with the sent name.
 ///  5. lower the reduct and splice `op{ r_0, …, r_{m-1}, ...rest }` into ONE flat canonical bag via
 ///     `instantiate` (whose `AcApp` RHS handling flattens the `rest` bag into the parallel), and
 ///     return the reduced bag's e-class — the contractum the engine merges with the redex bag, from
@@ -1557,7 +1540,8 @@ fn comm_dispatch_arm(c: &CommRule, enum_id: &Ident) -> TokenStream {
     let body_build = build_fn(&cr.body_cat);
     let arg_build = build_fn(&cr.binder_var_cat);
     let body_add = category_lowering_fn(&cr.body_cat);
-    let single_subst = format_ident!("substitute_{}", to_snake(&cr.binder_var_cat.to_string()));
+    let instantiate =
+        format_ident!("instantiate_scope_{}", cr.binder_var_cat.to_string().to_lowercase());
     let op_variant = op_variant_ident(&cr.op_cat, &cr.op_label);
     // (D10) The `m ≥ 1` reduct element patterns, in RHS order: the reserved `__comm_reduct` slot for
     // the host-computed substitution, a plain σ variable for every other element.
@@ -1578,9 +1562,6 @@ fn comm_dispatch_arm(c: &CommRule, enum_id: &Ident) -> TokenStream {
         #op_id => {
             // 1. Bind + gate the operand classes.
             let __ccls = *__subst.get(#scope_var)?;
-            if !__class_is_fold_value(__eg, __ccls) {
-                return ::core::option::Option::None;
-            }
             let __qcls = *__subst.get(#arg_var)?;
             if !__class_has_normal_form(__eg, __qcls) {
                 return ::core::option::Option::None;
@@ -1593,17 +1574,9 @@ fn comm_dispatch_arm(c: &CommRule, enum_id: &Ident) -> TokenStream {
                     __ex.kth(__eg.find(__qcls), 0).value?,
                 )
             };
-            // 3. Reconstruct the body, rebuild its binder scope (FRESH binder), unbind, reconstruct Q.
             let __body = #body_build(&__cont_d)?;
-            let __binder = ::mettail_runtime::Binder(::mettail_runtime::FreeVar::fresh_unnamed());
-            let __scope = ::mettail_runtime::Scope::from_parts_unsafe(
-                __binder,
-                ::std::sync::Arc::new(__body),
-            );
-            let (__b, __open_body) = __scope.unbind();
             let __arg = #arg_build(&__q_d)?;
-            // 4. cont[Q/y] — host-computed capture-avoiding substitution (model-b).
-            let __reduct = (*__open_body).#single_subst(&__b.0, &__arg);
+            let __reduct = __body.#instantiate(&[__arg])?;
             // 5. Splice op{ r_0, …, r_{m-1}, ...rest } into one flat canonical bag and return its
             //    class. The substitution slot is `__comm_reduct`; every other element comes from σ.
             let __reduct_class = #body_add(__eg, &__reduct);

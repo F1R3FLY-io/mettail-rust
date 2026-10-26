@@ -59,7 +59,7 @@ mod explicit_floor_tests {
             panic!("original leading-category action kind");
         };
         assert_eq!(replace_symbol, StackSymbolV2::rule_at(2, 3, 1, Some(1)));
-        assert_eq!(push_symbol, StackSymbolV2::category_entry(2));
+        assert_eq!(push_symbol, StackSymbolV2::category_entry_goal(2));
         assert_eq!(weight, lex_w(0.0, 2, 3));
         assert!(matches!(new_state, WpdaState::PrefixDispatch { pos: 11, cur_bp: 2 }));
         assert!(matches!(replace_symbol.kind, SymbolKind::RuleAt(1)));
@@ -104,12 +104,82 @@ mod explicit_floor_tests {
         let WpdaStepAction::Push { symbol, weight, new_state } = child else {
             panic!("second epsilon transition must enter the operand")
         };
-        assert_eq!(symbol, StackSymbolV2::category_entry(4));
+        assert_eq!(symbol, StackSymbolV2::category_entry_goal(4));
         assert_eq!(weight, crate::wpda_runtime::lex_one());
         assert_eq!(new_state, WpdaState::PrefixDispatch { pos: 11, cur_bp: 5 });
     }
 
+    fn leading_extension_is_admitted(
+        symbol: StackSymbolV2,
+        result: u16,
+        reachable: bool,
+        tier: u8,
+    ) -> bool {
+        let node = crate::gss::WpdaGssNode { pos: 0, symbol };
+        let kinds = [crate::automata::TokenKind::Fixed("~".into())];
+        let tokens = crate::wpda_runtime::SliceTokenSource::with_texts(&kinds, &["~"]);
+        let infix = [(1, 2, result, 7)];
+        let suffix = [(1, result, 7)];
+        let action = crate::wpda_transitions::infix::infix_loop::<_, false>(
+            symbol.category_src_idx,
+            &0,
+            Some(&node),
+            0,
+            &tokens,
+            |_, _, _| None,
+            |from, to| {
+                assert_eq!(from, result);
+                assert_eq!(Some(to), symbol.goal_src_idx);
+                reachable
+            },
+            |_| None,
+            |_, _| if tier == 0 { &infix } else { &[] },
+            |_, _| if tier == 1 { &suffix } else { &[] },
+            |_, _| if tier == 2 { &suffix } else { &[] },
+            |_, _, _| None,
+            |_, _| None,
+            |_, _, _| None,
+            lex_w,
+            |_, _, candidates, fallback, goal, method, branches| {
+                crate::wpda_transitions::mixfix::member_fan(
+                    candidates, &0, fallback, goal, method, lex_w, branches,
+                );
+                false
+            },
+        );
+        match action {
+            WpdaStepAction::ConsumeAndPush { symbol, .. } => {
+                assert_eq!(symbol.category_src_idx, result);
+                assert_eq!(symbol.rule_index_in_category, 7);
+                true
+            },
+            WpdaStepAction::Advance(WpdaState::Unwinding) => false,
+            other => panic!("unexpected single-candidate transition: {other:?}"),
+        }
+    }
+
     proptest! {
+        #[test]
+        fn leading_operand_goal_preserves_exact_reachable_extensions(
+            source in any::<u16>(), result in any::<u16>(), reachable in any::<bool>(),
+        ) {
+            let WpdaStepAction::Push { symbol, .. } = enter_leading_child(
+                source, 0, 0, crate::wpda_runtime::lex_one,
+            ) else {
+                prop_assert!(false, "leading operand must use a child entry");
+                return Ok(());
+            };
+            for tier in 0..3 {
+                prop_assert_eq!(leading_extension_is_admitted(symbol, result, reachable, tier), reachable);
+                prop_assert!(leading_extension_is_admitted(
+                    StackSymbolV2::category_entry(source), result, reachable, tier,
+                ));
+                let distinct = source.wrapping_add(1);
+                prop_assert!(!leading_extension_is_admitted(symbol, distinct, false, tier));
+                prop_assert!(leading_extension_is_admitted(symbol, distinct, true, tier));
+            }
+        }
+
         #[test]
         fn leading_route_is_frame_structural_and_preserves_authored_weight(
             outer_bp in any::<u8>(), inner_bp in any::<u8>(), pos in 0usize..1000,
@@ -144,6 +214,15 @@ mod explicit_floor_tests {
             prop_assert_eq!(&branches[0].new_state, &WpdaState::EnterLeadingChild { source_src_idx: source, inner_bp });
             prop_assert!(matches!(branches[0].action_kind, ForkActionKind::Push));
             let child = enter_leading_child(source, inner_bp, pos, crate::wpda_runtime::lex_one);
+            let WpdaStepAction::Push { symbol: child_symbol, weight: child_weight, .. } = &child else {
+                prop_assert!(false, "leading operand must use a child entry");
+                return Ok(());
+            };
+            prop_assert_eq!(child_symbol.goal_src_idx, Some(source));
+            let mut unrestricted_child = *child_symbol;
+            unrestricted_child.goal_src_idx = None;
+            prop_assert_eq!(unrestricted_child, StackSymbolV2::category_entry(source));
+            prop_assert_eq!(child_weight, &crate::wpda_runtime::lex_one());
             let child_preserves_position_and_floor = matches!(
                 child,
                 WpdaStepAction::Push {
@@ -162,9 +241,19 @@ mod explicit_floor_tests {
                 return Ok(());
             };
             prop_assert_eq!(replace_symbol, StackSymbolV2::rule_at(category, rule, 1, Some(outer_bp)));
-            prop_assert_eq!(push_symbol, StackSymbolV2::category_entry(source));
+            prop_assert_eq!(push_symbol, StackSymbolV2::category_entry_goal(source));
             prop_assert_eq!(weight, lex_w(0.0, category, rule));
-            prop_assert_eq!(new_state, WpdaState::PrefixDispatch { pos, cur_bp: inner_bp });
+            prop_assert_eq!(&new_state, &WpdaState::PrefixDispatch { pos, cur_bp: inner_bp });
+            let direct_fork = leading_category_branch_with_weight(
+                outer_bp, category, rule, source, inner_bp, None,
+                lex_w(0.0, category, rule), pos,
+            );
+            prop_assert_eq!(direct_fork.symbol, push_symbol);
+            prop_assert_eq!(direct_fork.weight, weight);
+            prop_assert_eq!(direct_fork.new_state, new_state);
+            prop_assert!(matches!(direct_fork.action_kind,
+                ForkActionKind::ReplaceAndPush { replace_symbol: continuation }
+                if continuation == replace_symbol), "direct fork must preserve its continuation");
         }
     }
 }
@@ -337,7 +426,7 @@ pub fn singleton_leading_category_with_floor<W: SemiringRef>(
                 1u8,
                 Some(_outer_bp),
             ),
-            push_symbol: StackSymbolV2::category_entry(source_src_idx),
+            push_symbol: StackSymbolV2::category_entry_goal(source_src_idx),
             weight: lex_w(0.0, category_src_idx, rule_idx),
             new_state: WpdaState::PrefixDispatch { pos: *pos, cur_bp: inner_bp },
         };
@@ -373,7 +462,7 @@ pub fn leading_category_branch_with_weight<W: SemiringRef>(
     let continuation = StackSymbolV2::rule_at(category_src_idx, rule_idx, 1, Some(outer_bp));
     if top_kind.is_none() {
         ForkBranch {
-            symbol: StackSymbolV2::category_entry(source_src_idx),
+            symbol: StackSymbolV2::category_entry_goal(source_src_idx),
             weight,
             new_state: WpdaState::PrefixDispatch { pos, cur_bp: inner_bp },
             action_kind: ForkActionKind::ReplaceAndPush { replace_symbol: continuation },
@@ -396,7 +485,7 @@ pub fn enter_leading_child<W: SemiringRef>(
     mut one: impl FnMut() -> W,
 ) -> WpdaStepAction<W> {
     WpdaStepAction::Push {
-        symbol: StackSymbolV2::category_entry(source_src_idx),
+        symbol: StackSymbolV2::category_entry_goal(source_src_idx),
         weight: one(),
         new_state: WpdaState::PrefixDispatch { pos, cur_bp: inner_bp },
     }

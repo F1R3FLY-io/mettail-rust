@@ -656,11 +656,19 @@ fn lower_terminal_reservation(spec: &LanguageSpec, terminal: &str) -> core::Rese
     }
 }
 
+fn is_identifier_start(first: char) -> bool {
+    first == '_' || first.is_alphabetic()
+}
+
+/// Whether a fixed terminal can overlap the start of a generic identifier,
+/// including a longer terminal such as `name!` with an `Ident` prefix.
+pub fn terminal_may_start_with_ident(value: &str) -> bool {
+    value.chars().next().is_some_and(is_identifier_start)
+}
+
 fn is_identifier_terminal(value: &str) -> bool {
     let mut characters = value.chars();
-    characters
-        .next()
-        .is_some_and(|first| first == '_' || first.is_alphabetic())
+    characters.next().is_some_and(is_identifier_start)
         && characters.all(|character| character == '_' || character.is_alphanumeric())
 }
 
@@ -787,22 +795,32 @@ fn lower_parser_configuration(spec: &LanguageSpec) -> Result<core::ParserConfigu
     })
 }
 
+/// The literal-token census of one rule. It is the census of the generated
+/// lexer (`pipeline::collect_terminals_recursive`), so every collection,
+/// binder-collection, separated-list and key/value separator gets a literal
+/// token, also when no `Terminal` item spells it.
 fn collect_terminals(items: &[SyntaxItemSpec], output: &mut BTreeSet<String>) {
-    let mut work: Vec<_> = items.iter().rev().collect();
-    while let Some(item) = work.pop() {
-        match item {
-            SyntaxItemSpec::Terminal(text) => {
-                output.insert(text.clone());
-            },
-            SyntaxItemSpec::Sep { body, .. } | SyntaxItemSpec::Zip { body, .. } => {
-                work.push(body);
-            },
-            SyntaxItemSpec::Map { body_items } | SyntaxItemSpec::Optional { inner: body_items } => {
-                work.extend(body_items.iter().rev());
-            },
-            _ => {},
-        }
-    }
+    output.extend(crate::pipeline::collect_terminals_recursive(items));
+    // Changed for the prefix-opener union parser fix: the walk below recorded
+    // only `Terminal` items. A separator that no `Terminal` spells, such as
+    // `;` in `xs.*sep(";")`, then had no literal token, and
+    // `compile_parser_image` refused the grammar with
+    // `MissingSeparatorToken`. The walk was:
+    // let mut work: Vec<_> = items.iter().rev().collect();
+    // while let Some(item) = work.pop() {
+    //     match item {
+    //         SyntaxItemSpec::Terminal(text) => {
+    //             output.insert(text.clone());
+    //         },
+    //         SyntaxItemSpec::Sep { body, .. } | SyntaxItemSpec::Zip { body, .. } => {
+    //             work.push(body);
+    //         },
+    //         SyntaxItemSpec::Map { body_items } | SyntaxItemSpec::Optional { inner: body_items } => {
+    //             work.extend(body_items.iter().rev());
+    //         },
+    //         _ => {},
+    //     }
+    // }
 }
 
 fn lower_items(
@@ -1011,6 +1029,16 @@ mod tests {
     };
 
     #[test]
+    fn fixed_terminal_prefix_check_includes_longer_ident_led_tokens() {
+        for terminal in ["name", "name!", "_name", "λ+"] {
+            assert!(terminal_may_start_with_ident(terminal), "{terminal}");
+        }
+        for terminal in ["", "#name", "(name", "::", "1name"] {
+            assert!(!terminal_may_start_with_ident(terminal), "{terminal}");
+        }
+    }
+
+    #[test]
     fn compile_time_frontend_reaches_grammar_core_without_source_actions() {
         let spec = LanguageSpec::new(
             "Tiny".into(),
@@ -1066,6 +1094,97 @@ mod tests {
                 .collect::<Vec<_>>(),
             "Core retains the original implicit and authored terminal roster in canonical order"
         );
+    }
+
+    /// A separator that no `Terminal` item spells must still reach the Core
+    /// token roster, or the runtime image refuses the grammar with
+    /// `MissingSeparatorToken`. `;` and `&` are not implicit structural
+    /// terminals, so only the separator census can supply them.
+    #[test]
+    fn separator_only_literals_reach_the_core_token_roster() {
+        let rule = |label: &str, syntax: Vec<SyntaxItemSpec>| RuleSpecInput {
+            authored: None,
+            label: label.into(),
+            category: "Expr".into(),
+            syntax,
+            associativity: Associativity::Left,
+            shares_level_with_previous: false,
+            prefix_precedence: None,
+            has_rust_code: false,
+            rust_code: None,
+            eval_mode: None,
+            source_location: None,
+            is_auto_injected: false,
+        };
+        let spec = LanguageSpec::new(
+            "Separators".into(),
+            vec![CategorySpec {
+                name: "Expr".into(),
+                native_type: None,
+                is_primary: true,
+                has_var: true,
+            }],
+            vec![
+                rule("Atom", vec![SyntaxItemSpec::Terminal("x".into())]),
+                rule(
+                    "Sequence",
+                    vec![
+                        SyntaxItemSpec::Terminal("<".into()),
+                        SyntaxItemSpec::Sep {
+                            body: Box::new(SyntaxItemSpec::NonTerminal {
+                                category: "Expr".into(),
+                                param_name: "xs".into(),
+                            }),
+                            separator: ";".into(),
+                            kind: CollectionKind::Vec,
+                        },
+                        SyntaxItemSpec::Terminal(">".into()),
+                    ],
+                ),
+                rule(
+                    "Bag",
+                    vec![
+                        SyntaxItemSpec::Terminal("{|".into()),
+                        SyntaxItemSpec::Collection {
+                            param_name: "ps".into(),
+                            element_category: "Expr".into(),
+                            separator: "&".into(),
+                            kind: CollectionKind::HashBag,
+                            key_val_separator: None,
+                        },
+                        SyntaxItemSpec::Terminal("|}".into()),
+                    ],
+                ),
+            ],
+        );
+        let core = spec.to_grammar_core().expect("valid core");
+        let literals: Vec<_> = core
+            .tokens
+            .iter()
+            .filter_map(|token| match &token.pattern {
+                core::TokenPattern::Literal(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        for separator in [";", "&"] {
+            assert!(
+                literals.iter().any(|literal| literal == separator),
+                "separator {separator:?} has no literal token: {literals:?}"
+            );
+        }
+        let bundle = crate::pipeline::extract_lexer_bundle(&spec);
+        let original = crate::pipeline::lexer_input_for_bundle(&bundle);
+        assert_eq!(
+            literals,
+            original
+                .terminals
+                .iter()
+                .map(|terminal| terminal.text.clone())
+                .collect::<Vec<_>>(),
+            "Core and the generated lexer share one terminal roster"
+        );
+        crate::runtime_backend::compile_parser_image(&core)
+            .expect("every separator resolves to a literal token");
     }
 
     #[test]

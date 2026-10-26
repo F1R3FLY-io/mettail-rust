@@ -530,6 +530,7 @@ mod tests {
             types: vec![mettail_ast::language::LangType {
                 name: Ident::new("Name", Span::call_site()),
                 role: Default::default(),
+                admits_variables: true,
                 native_type: None,
                 collection_kind: None,
             }],

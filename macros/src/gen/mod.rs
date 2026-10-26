@@ -72,8 +72,10 @@ pub(crate) fn semantic_transit_types(language: &LanguageDef) -> impl Iterator<It
         .filter(|lang_type| lang_type.supports(CategoryCapability::SemanticTransit))
 }
 
-/// Categories that can introduce free variables and therefore need a generated
-/// environment field or substitution-operation axis.
+/// Categories that can introduce object-language free variables and therefore
+/// need a generated substitution-operation axis. Host environment fields are
+/// separate: every semantic-root category can be stored under a REPL name,
+/// including a `noadmit` category with no object-variable constructor.
 pub(crate) fn variable_types(language: &LanguageDef) -> impl Iterator<Item = &LangType> {
     language
         .types
@@ -99,20 +101,27 @@ fn validate_category_capabilities(language: &LanguageDef) -> Result<(), String> 
         let variants = collect_category_variants(&lang_type.name, language);
         for variant in variants {
             match variant {
-                VariantKind::Var { .. } if lang_type.is_data() => {
-                    return Err(format!(
-                        "closed data category `{}` cannot declare the special variable form; use an ordinary structural constructor carrying token text",
-                        lang_type.name
-                    ));
+                VariantKind::Var { .. } if !lang_type.admits_variables() => {
+                    return Err(if lang_type.is_data() {
+                        format!(
+                            "closed data category `{}` cannot declare the special variable form; use an ordinary structural constructor carrying token text",
+                            lang_type.name
+                        )
+                    } else {
+                        format!(
+                            "object category `{}` declares `noadmit` but also declares a special variable form",
+                            lang_type.name
+                        )
+                    });
                 },
                 VariantKind::Binder { binder_cat, .. }
                 | VariantKind::MultiBinder { binder_cat, .. }
                     if language
                         .get_type(&binder_cat)
-                        .is_some_and(LangType::is_data) =>
+                        .is_some_and(|category| !category.admits_variables()) =>
                 {
                     return Err(format!(
-                        "closed data category `{binder_cat}` cannot be a binder sort; data may structurally contain scopes over object categories but cannot introduce a substitution namespace"
+                        "category `{binder_cat}` does not admit variables and cannot be a binder sort"
                     ));
                 },
                 _ => {},
@@ -955,15 +964,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             // function of the trimmed input (bug-2318 isolation locality), so
             // memoizing returns the IDENTICAL value; only WHEN sub-parses run
             // changes, never WHAT.
-            let parse_via_wpda_body = quote! {
-                    mettail_prattail::hang_dump::install_hang_dump_handler();
-                    #proj_prologue_single
-                    #proj_reject_capture
-                    #sep_prologue_single
-                    #infix_prologue_single
-                    #proj_reject_fire
-                    let dag = lex_dag(input).map_err(ParseError::from)?;
-                    if dag.has_ambiguity() {
+            let lex_context_dag = if language.mode_defs.is_empty() {
+                quote! {
+                    match lexer_mode {
+                        None => lex_dag(input),
+                        Some(name) => Err(format!("unknown lexer mode {:?}", name)),
+                    }
+                }
+            } else {
+                quote! { lex_dag_in_mode(input, lexer_mode) }
+            };
+
+            let parse_via_wpda_monolithic_body = quote! {
+                    let dag = (#lex_context_dag).map_err(ParseError::from)?;
+                    if dag.has_ambiguity() || lexer_mode.is_some() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
                         use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
                         let input_end_range =
@@ -986,7 +1000,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 .unwrap_or_else(|| "end of input".to_string())
                         };
                         let mut pos = 0usize;
-                        return match #parse_via_wpda_with_source_fn(&source, &mut pos, 0) {
+                        return match #parse_via_wpda_with_source_fn(&source, &mut pos, min_bp) {
                             Ok((v, _weight)) => {
                                 let eof_node = source.eof_node();
                                 if pos != eof_node {
@@ -1050,7 +1064,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         .map(|(t, r)| token_text(t, input, *r))
                         .collect();
                     let mut pos = 0usize;
-                    match #parse_via_wpda_fn(&kinds, &texts, &mut pos, 0) {
+                    match #parse_via_wpda_fn(&kinds, &texts, &mut pos, min_bp) {
                         Ok(v) => {
                             if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                                 return Err(ParseError::TrailingTokens {
@@ -1136,6 +1150,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             })
                         }
                     }
+            };
+            let parse_via_wpda_body = quote! {
+                    mettail_prattail::hang_dump::install_hang_dump_handler();
+                    #proj_prologue_single
+                    #proj_reject_capture
+                    #sep_prologue_single
+                    #infix_prologue_single
+                    #proj_reject_fire
+                    Self::__parse_via_wpda_monolithic_at_min_bp(input, 0)
             };
             // Assemble the `parse_via_wpda` entry. ON (iso-eligible + const): the
             // memoized wrapper + the renamed `parse_via_wpda_uncached` (the
@@ -1370,6 +1393,46 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let parse_via_wpda_method = quote! {
                 #parse_via_wpda_entry
 
+                #[doc(hidden)]
+                pub fn __parse_via_wpda_monolithic_at_min_bp(
+                    input: &str,
+                    min_bp: u8,
+                ) -> Result<#cat, ParseError> {
+                    Self::__parse_via_wpda_monolithic_in_context(input, min_bp, None)
+                }
+
+                #[doc(hidden)]
+                pub fn __parse_via_wpda_monolithic_in_context(
+                    input: &str,
+                    min_bp: u8,
+                    lexer_mode: Option<&str>,
+                ) -> Result<#cat, ParseError> {
+                    #parse_via_wpda_monolithic_body
+                }
+
+                pub fn parse_via_wpda_in_lexer_mode(
+                    input: &str,
+                    lexer_mode: Option<&str>,
+                ) -> Result<#cat, ParseError> {
+                    match lexer_mode {
+                        None => Self::parse_via_wpda(input),
+                        Some(_) => Self::__parse_via_wpda_monolithic_in_context(input, 0, lexer_mode),
+                    }
+                }
+
+                pub fn parse_via_wpda_all_with_weights_in_lexer_mode(
+                    input: &str,
+                    lexer_mode: Option<&str>,
+                ) -> Result<
+                    (Vec<#cat>, Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>),
+                    ParseError,
+                > {
+                    match lexer_mode {
+                        None => Self::parse_via_wpda_all_with_weights(input),
+                        Some(_) => Self::__all_with_weights_monolithic_in_context(input, 0, lexer_mode),
+                    }
+                }
+
                 /// Lazy raw-realization probe used only by
                 /// `parse_structured` to choose a surface-faithful
                 /// representative when the single-result WPDA parse lands on
@@ -1465,14 +1528,43 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     ),
                     ParseError,
                 > {
+                    Self::__all_with_weights_monolithic_at_min_bp(input, 0)
+                }
+
+                #[doc(hidden)]
+                pub fn __all_with_weights_monolithic_at_min_bp(
+                    input: &str,
+                    min_bp: u8,
+                ) -> Result<
+                    (
+                        Vec<#cat>,
+                        Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                    ),
+                    ParseError,
+                > {
+                    Self::__all_with_weights_monolithic_in_context(input, min_bp, None)
+                }
+
+                #[doc(hidden)]
+                pub fn __all_with_weights_monolithic_in_context(
+                    input: &str,
+                    min_bp: u8,
+                    lexer_mode: Option<&str>,
+                ) -> Result<
+                    (
+                        Vec<#cat>,
+                        Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                    ),
+                    ParseError,
+                > {
                     // M6c.4 + M6c.7.2 (2026-05-14): route through
                     // LatticeTokenSource when dag.has_ambiguity().
                     // Post-M6c.7.1 (lex_dag soft-fail), `lex_dag(input)?`
                     // only errors on TRUE primary-chain dead-ends —
                     // same conditions where `lex` also errors. So `?`
                     // is safe; we no longer need the `.ok()` band-aid.
-                    let dag = lex_dag(input).map_err(ParseError::from)?;
-                    if dag.has_ambiguity() {
+                    let dag = (#lex_context_dag).map_err(ParseError::from)?;
+                    if dag.has_ambiguity() || lexer_mode.is_some() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
                         use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
                         let input_end_range =
@@ -1495,7 +1587,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 .unwrap_or_else(|| "end of input".to_string())
                         };
                         let mut pos = 0usize;
-                        return match #parse_via_wpda_all_with_source_fn(&source, &mut pos, 0) {
+                        return match #parse_via_wpda_all_with_source_fn(&source, &mut pos, min_bp) {
                             Ok((terms, weights)) => {
                                 // M6c.8.3 (2026-05-14): use the source's
                                 // `eof_node()` instead of
@@ -1578,7 +1670,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         .map(|(t, r)| token_text(t, input, *r))
                         .collect();
                     let mut pos = 0usize;
-                    match #parse_via_wpda_all_fn(&kinds, &texts, &mut pos, 0) {
+                    match #parse_via_wpda_all_fn(&kinds, &texts, &mut pos, min_bp) {
                         Ok((terms, weights)) => {
                             if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                                 return Err(ParseError::TrailingTokens {
@@ -2391,7 +2483,7 @@ pub fn category_emits_parseable_auto_var(category: &Ident, language: &LanguageDe
     let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
         return false;
     };
-    if type_def.is_data() {
+    if !type_def.admits_variables() {
         return false;
     }
     let has_explicit_var = language
@@ -2409,7 +2501,7 @@ pub fn category_emits_implicit_var(category: &Ident, language: &LanguageDef) -> 
     let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
         return false;
     };
-    if type_def.is_data() {
+    if !type_def.admits_variables() {
         return false;
     }
     !language
@@ -2473,6 +2565,9 @@ mod category_capability_tests {
                 terms {
                     PZero . |- "0" : Proc;
                     PWrap . metadata:Meta, child:Proc |- "wrap" metadata child : Proc;
+                    PMetaBag . values:HashBag(Meta) |- "bag" "{" values.*sep(",") "}" : Proc;
+                    PMetaSet . values:HashSet(Meta) |- "set" "{" values.*sep(",") "}" : Proc;
+                    PMetaSeq . values:Vec(Meta) |- "seq" "[" values.*sep(",") "]" : Proc;
                     PBind . metadata:Meta, ^x.body:[Proc -> Proc]
                         |- "bind" metadata x "." body : Proc;
                     MProc . value:Proc |- "[" value "]" : Meta;
@@ -3165,36 +3260,42 @@ pub(crate) fn collection_literal_language_for_tests() -> mettail_ast::language::
         LangType {
             name: quote::format_ident!("Proc"),
             role: Default::default(),
+            admits_variables: true,
             native_type: None,
             collection_kind: None,
         },
         LangType {
             name: quote::format_ident!("List"),
             role: Default::default(),
+            admits_variables: true,
             native_type: native("Vec<Proc>"),
             collection_kind: Some(CollectionCategory::List(delims("[", "]", ",", None))),
         },
         LangType {
             name: quote::format_ident!("Bag"),
             role: Default::default(),
+            admits_variables: true,
             native_type: native("mettail_runtime::HashBag<Proc>"),
             collection_kind: Some(CollectionCategory::Bag(delims("{|", "|}", ",", None))),
         },
         LangType {
             name: quote::format_ident!("Set"),
             role: Default::default(),
+            admits_variables: true,
             native_type: native("mettail_runtime::HashSetLit<Proc>"),
             collection_kind: Some(CollectionCategory::Set(delims("Set(", ")", ",", None))),
         },
         LangType {
             name: quote::format_ident!("Map"),
             role: Default::default(),
+            admits_variables: true,
             native_type: native("mettail_runtime::HashMapLit<Proc, Proc>"),
             collection_kind: Some(CollectionCategory::Map(delims("{", "}", ",", Some(":")))),
         },
         LangType {
             name: quote::format_ident!("Pathmap"),
             role: Default::default(),
+            admits_variables: true,
             native_type: native("mettail_runtime::PathMapLit<Proc, Proc>"),
             collection_kind: Some(CollectionCategory::Pathmap(delims(
                 "pathmap(",
@@ -3207,6 +3308,7 @@ pub(crate) fn collection_literal_language_for_tests() -> mettail_ast::language::
         LangType {
             name: quote::format_ident!("Int"),
             role: Default::default(),
+            admits_variables: true,
             native_type: native("i32"),
             collection_kind: None,
         },

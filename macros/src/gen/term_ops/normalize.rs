@@ -36,8 +36,7 @@
 //!   arg_normalized = results[arg_slot].take()
 //!   if lam_normalized is an admitted Cat::Lam<Domain>(scope):
 //!     choose Domain from the checked constructor tag
-//!     (binder, body) = scope.unbind()
-//!     substituted = body.substitute_<domain>(&binder.0, &arg_normalized)
+//!     substituted = scope.unsafe_body().instantiate_scope_<domain>([arg_normalized])
 //!     sources.push(Box::new(AnyNorm::Wrap<Cat>(substituted)))
 //!     src_ptr = &*sources.last() -> Cat (stable)
 //!     stack.push(Visit<Cat> { src: src_ptr, slot })
@@ -56,8 +55,9 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
 use crate::gen::runtime::dovetail_report::semantic_adapter::{
-    SemanticAdapterLayout, SemanticCategoryLayout, SemanticCollectionProjection,
-    SemanticFieldLayout, SemanticFieldProjection, SemanticVariantLayout,
+    is_closed_data_category, SemanticAdapterLayout, SemanticCategoryLayout,
+    SemanticCollectionProjection, SemanticFieldLayout, SemanticFieldProjection,
+    SemanticVariantLayout,
 };
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::grammar::{GrammarItem, TermParam};
@@ -70,6 +70,32 @@ use std::collections::{HashMap, HashSet};
 use syn::Ident;
 
 use crate::gen::native_carrier::NativeRecursiveCarrier;
+
+/// Whether the auto-flatten helper `insert_into_<label>` exists for a sole-collection
+/// constructor of category `owner` whose collection holds `element`, and so whether an
+/// assemble site may call it.
+///
+/// The helper takes `&mut HashBag<owner>` and `elem: owner`, so it type-checks only when
+/// `element == owner`. Its body is `HashBag`-shaped, so it exists only for the unordered
+/// multiset carriers. One predicate decides both the emission (`generate_flatten_helpers`)
+/// and every call (the tagged normalize assemble, the rebuild kernel and the typed inverse),
+/// so no site can call a helper that was not emitted.
+///
+/// Transcribes `helper_applies` in
+/// `formal/rocq/rho_bridge/theories/BinderFloatCanonicalization.v` Part 5:
+/// `helper_applies_only_when_well_typed`, `every_call_has_an_emitted_well_typed_helper`, and
+/// `new_gate_equals_the_old_gate_on_same_category` (a same-category bag keeps its helper).
+pub(crate) fn collection_flatten_helper_applies(
+    owner: &Ident,
+    element: &Ident,
+    coll_type: &CollectionType,
+) -> bool {
+    element == owner
+        && matches!(
+            coll_type,
+            CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap
+        )
+}
 
 /// For each constructor with a collection field, generates a helper function that automatically flattens nested collections of the same type.
 pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
@@ -125,16 +151,29 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
         // errors per constructor in a language that could therefore never be declared. The
         // corpus has zero ordered whole-constructor collections (every one is a `HashBag`), so
         // gating on the container is byte-identical for every existing language.
-        let flattenable_collection = rule.items.iter().any(|item| {
-            matches!(
-                item,
-                GrammarItem::Collection {
-                    coll_type: CollectionType::HashBag
-                        | CollectionType::HashMap
-                        | CollectionType::PathMap,
-                    ..
-                }
-            )
+        //
+        // (2026-10-20) The element category decides too: see
+        // `collection_flatten_helper_applies`.
+        // Changed for sole-collection lane (element): the helper takes `&mut HashBag<Cat>` and
+        // `elem: Cat`, so a `HashBag(Name) : Proc` constructor got a helper that does not
+        // type-check (BinderFloatCanonicalization.v Part 5,
+        // `old_gate_emits_and_calls_an_ill_typed_helper`). The code was:
+        // let flattenable_collection = rule.items.iter().any(|item| {
+        //     matches!(
+        //         item,
+        //         GrammarItem::Collection {
+        //             coll_type: CollectionType::HashBag
+        //                 | CollectionType::HashMap
+        //                 | CollectionType::PathMap,
+        //             ..
+        //         }
+        //     )
+        // });
+        let flattenable_collection = rule.items.iter().any(|item| match item {
+            GrammarItem::Collection { coll_type, element_type, .. } => {
+                collection_flatten_helper_applies(&rule.category, element_type, coll_type)
+            },
+            _ => false,
         });
 
         if !flattenable_collection {
@@ -265,6 +304,11 @@ fn generate_non_native_normalize_pda(
             language,
             &semantic_layout,
         );
+    let host_dynamic_inverse =
+        crate::gen::runtime::dovetail_report::reconstruct::host_dynamic_inverse_support(
+            language,
+            &semantic_layout,
+        );
     let any_norm_term = generate_any_normalized_term_enum(non_native_cats);
     let norm_task =
         generate_norm_task_enum(non_native_cats, &semantic_layout, language, cancellation_pairs);
@@ -277,6 +321,7 @@ fn generate_non_native_normalize_pda(
 
     quote! {
         #shared_typed_assembly
+        #host_dynamic_inverse
         #any_norm_term
         #norm_task
         #tls
@@ -1140,6 +1185,15 @@ fn generate_visit_variant_arm(
             }
         },
         VariantKind::Collection { label, element_cat, coll_type } => {
+            if is_closed_data_category(language, element_cat) {
+                return quote! {
+                    #cat::#label(collection) => {
+                        results[slot] = Some(
+                            __MettailDovetailRebuildValue::#wrap(#cat::#label(collection.clone())),
+                        );
+                    }
+                };
+            }
             match variant.collection_projection() {
                 Some(SemanticCollectionProjection::AcBag)
                 | Some(SemanticCollectionProjection::OrderedSequence) => {
@@ -1380,8 +1434,19 @@ fn generate_fused_collection_visit_arm(
         SemanticCollectionProjection::AcBag => quote! {
             #cat::#label(ref collection) => {
                 let value_base = results.len();
-                results.resize_with(value_base + collection.len(), || None);
-                let value_count = collection.len();
+                // Changed for the fused AC bag frame (2026-10-20). The loop below visits each
+                // stored entry once, and the fused bag assembler consumes one result per stored
+                // entry, so the frame holds `distinct_len()` slots: `fused_bag_value_count` in
+                // TaggedNormalizationMachine.v, with `fused_bag_check_holds` and
+                // `fused_bag_visits_fill_exactly_the_reserved_slots`. `len()` is the total
+                // multiplicity, so a repeated element reserved a slot that no visit fills and
+                // failed the assembler's cursor check
+                // (`fused_bag_check_before_fails_on_a_repeated_element`). Without a repeated
+                // element both counts are equal (`fused_bag_value_count_unchanged_without_repeats`).
+                // results.resize_with(value_base + collection.len(), || None);
+                // let value_count = collection.len();
+                let value_count = collection.distinct_len();
+                results.resize_with(value_base + value_count, || None);
                 stack.push(NormTask::#assemble {
                     src,
                     constructor: #constructor,
@@ -2633,6 +2698,9 @@ fn generate_tagged_assemble_case(
             }
         },
         VariantKind::Collection { label, element_cat, coll_type } => {
+            if is_closed_data_category(language, element_cat) {
+                return None;
+            }
             match variant.collection_projection() {
                 Some(SemanticCollectionProjection::Opaque) | None => {
                     Some(generate_tagged_collection_assemble_case(
@@ -3157,6 +3225,16 @@ fn generate_tagged_collection_assemble_case(
     match coll_type {
         CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
             let helper_name = format_ident!("insert_into_{}", label.to_string().to_lowercase());
+            // Changed for sole-collection lane (element): the helper exists only when the
+            // element is the owner category (`collection_flatten_helper_applies`), so a
+            // cross-category bag inserts each element directly (BinderFloatCanonicalization.v
+            // Part 5, `assemble_insert` and `bag_arm_preserves_flatness`). The code was:
+            // #cat::#helper_name(&mut new_bag, value.clone());
+            let insert = if collection_flatten_helper_applies(cat, element_cat, coll_type) {
+                quote! { #cat::#helper_name(&mut new_bag, value.clone()); }
+            } else {
+                quote! { new_bag.insert(value.clone()); }
+            };
             quote! {
                 (#constructor_tag, #cat::#label(ref coll)) => {
                     let counts: Vec<usize> =
@@ -3175,7 +3253,7 @@ fn generate_tagged_collection_assemble_case(
                             .#take_element()
                             .expect("normalize: wrong category in hashbag slot");
                         for _ in 0..*count {
-                            #cat::#helper_name(&mut new_bag, value.clone());
+                            #insert
                         }
                     }
                     results[slot] = Some(
@@ -3213,8 +3291,12 @@ fn generate_tagged_collection_assemble_case(
                     Some(value_end),
                     "normalize: tagged set value-count mismatch",
                 );
-                let mut normalized =
-                    std::collections::HashSet::with_capacity(elements_count);
+                // Changed for sole-collection lane (carrier): a `HashSet(T)` field is
+                // `mettail_runtime::HashSetLit<T>` in the AST (`gen/types/enums.rs`), and
+                // `HashSetLit` has no `with_capacity`. The code was:
+                // let mut normalized =
+                //     std::collections::HashSet::with_capacity(elements_count);
+                let mut normalized = mettail_runtime::HashSetLit::new();
                 for index in 0..elements_count {
                     let value = results[value_base + index].take()
                         .expect("normalize: missing hashset element")
@@ -4283,7 +4365,8 @@ fn generate_tagged_beta_support(
     let apply_domain_arms: Vec<TokenStream> = apply_domains
         .iter()
         .map(|(constructor, domain)| {
-            let substitute = format_ident!("substitute_{}", domain.to_string().to_lowercase());
+            let apply = format_ident!("Apply{}", domain);
+            let substitute = format_ident!("instantiate_scope_{}", domain.to_string().to_lowercase());
             let take_domain =
                 crate::gen::runtime::dovetail_report::reconstruct::rebuild_value_take_method(
                     domain,
@@ -4293,11 +4376,15 @@ fn generate_tagged_beta_support(
                     let arg = argument
                         .#take_domain()
                         .expect("normalize beta: argument category mismatch");
-                    let (binder, body) = scope.unbind();
-                    let substituted = (*body).#substitute(&binder.0, &arg);
-                    drop(lam);
-                    drop(arg);
-                    #revisit(stack, sources, slot, substituted);
+                    if let Some(substituted) = scope.unsafe_body().#substitute(std::slice::from_ref(&arg)) {
+                        drop(lam);
+                        drop(arg);
+                        #revisit(stack, sources, slot, substituted);
+                    } else {
+                        results[slot] = Some(__MettailDovetailRebuildValue::#category_value(
+                            #cat::#apply(std::sync::Arc::new(lam), std::sync::Arc::new(arg)),
+                        ));
+                    }
                 }
             }
         })
@@ -4380,15 +4467,15 @@ fn generate_tagged_beta_support(
         .map(|(constructor, domain)| {
             let mapply = format_ident!("MApply{}", domain);
             let substitute =
-                format_ident!("multi_substitute_{}", domain.to_string().to_lowercase());
+                format_ident!("instantiate_scope_{}", domain.to_string().to_lowercase());
             let take_sequence = any_norm_take_sequence_function(domain);
             quote! {
                 #constructor => {
                     let arguments = #take_sequence(results, args_start, args_count);
-                    if let Some(scope) = scope {
-                        let (binders, body) = scope.unbind();
-                        let variables: Vec<_> = binders.iter().map(|binder| &binder.0).collect();
-                        let substituted = (*body).#substitute(&variables, &arguments);
+                    let substituted = scope
+                        .filter(|scope| scope.unsafe_pattern().len() == arguments.len())
+                        .and_then(|scope| scope.unsafe_body().#substitute(&arguments));
+                    if let Some(substituted) = substituted {
                         drop(lam);
                         #revisit(stack, sources, slot, substituted);
                     } else {
@@ -4915,6 +5002,10 @@ fn generate_norm_wrapper(cat: &Ident) -> TokenStream {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "sole_collection_lane_tests.rs"]
+pub(crate) mod sole_collection_lane_tests;
 
 #[cfg(test)]
 mod tests {

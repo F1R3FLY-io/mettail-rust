@@ -9,6 +9,8 @@ pub enum ReconstructionFailure {
     MissingNode,
     MissingAction { rule_idx: u32 },
     MissingLeafValue,
+    MissingRankEvidence,
+    InexactLocalCost,
     DependencyUnavailable { dependency: crate::sppf::SppfId },
     UnexpectedNodeKind,
     CyclicContainer,
@@ -28,6 +30,12 @@ impl fmt::Display for ReconstructionFailure {
             },
             Self::MissingLeafValue => {
                 formatter.write_str("forest leaf has no backing semantic value")
+            },
+            Self::MissingRankEvidence => {
+                formatter.write_str("the forest did not retain derivation evidence")
+            },
+            Self::InexactLocalCost => {
+                formatter.write_str("a local cost has no exact parser tick representation")
             },
             Self::DependencyUnavailable { dependency } => {
                 write!(formatter, "dependency {dependency} has no completed semantic family")

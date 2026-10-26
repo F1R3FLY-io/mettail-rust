@@ -566,17 +566,24 @@ pub fn try_build_per_category_rules<A: TrySynthesisAdapter>(
         for category in types {
             admit(&mut adapter, SynthesisEvent::Visit(SynthesisPhase::BinderNames))?;
             if !category.is_data {
-                category_names.push(copy(&mut adapter, &category.name)?);
+                category_names
+                    .push((copy(&mut adapter, &category.name)?, category.admits_variables));
             }
         }
-        // Original (home, dom) iteration: Apply followed by MApply per pair.
-        for home in &category_names {
+        // A semantic category can be the result of a higher-order term, but
+        // only a variable-admitting category can be its binding domain.
+        // Without `noadmit`, this is byte-identical to the historical full
+        // object-category cross-product.
+        for (home, _) in &category_names {
             admit(&mut adapter, SynthesisEvent::Visit(SynthesisPhase::Pairs))?;
             admit(&mut adapter, SynthesisEvent::CategoryLookup(home))?;
             let Some(&home_i) = cat_idx.get(home.as_str()) else {
                 continue;
             };
-            for dom in &category_names {
+            for (dom, admits_variables) in &category_names {
+                if !admits_variables {
+                    continue;
+                }
                 admit(&mut adapter, SynthesisEvent::Visit(SynthesisPhase::Pairs))?;
                 admit(&mut adapter, SynthesisEvent::Lowercase(dom))?;
                 let dom_lower = dom.to_lowercase();
@@ -666,9 +673,13 @@ pub fn try_build_per_category_rules<A: TrySynthesisAdapter>(
             }
         }
 
-        // 4b. Separate original lambda pass: one Lam<Home> per declared home
-        // entry, not one lambda for each (home, domain) pair.
-        for home in &category_names {
+        // 4b. Separate original lambda pass: one Lam<Home> per admitted home
+        // entry, not one lambda for each (home, domain) pair. A `noadmit` home
+        // cannot bind its own category even though it remains a semantic result.
+        for (home, admits_variables) in &category_names {
+            if !admits_variables {
+                continue;
+            }
             admit(&mut adapter, SynthesisEvent::Visit(SynthesisPhase::Lambdas))?;
             admit(&mut adapter, SynthesisEvent::CategoryLookup(home))?;
             let Some(&home_i) = cat_idx.get(home.as_str()) else {

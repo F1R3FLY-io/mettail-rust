@@ -44,11 +44,11 @@ use super::scan_site;
 /// per-category facade parser. It is hoisted to module scope so BOTH the
 /// facade's root-dedup (`__mettail_wpda_semantic_key`) AND the engine's
 /// per-node `WpdaEngine::semantic_fingerprint` override consume the SAME
-/// INJECTIVE-up-to-observational-equivalence byte key
-/// (`term.semantic_hash(..)` → `into_key()`): the FULL tagged
-/// length-prefixed byte stream (NOT `finish() -> u64`). Sharing one key
-/// definition is what makes per-node dedup byte-for-byte equivalent to the
-/// facade's root-only dedup (the output-identity theorem).
+/// parser-class byte key (`term.semantic_hash(..)` → `into_key()`).
+/// The key retains the full tagged, length-prefixed byte stream.
+/// Transparent conversions can share this key while producing different
+/// native values. The facade therefore aligns each matching class with
+/// the existing root election and retains the class minimum weight.
 pub(crate) fn emit_semantic_key_hasher() -> TokenStream {
     quote! {
         #[derive(Default)]
@@ -1283,6 +1283,7 @@ enum ProjSlot {
 /// (method-call) frames whose slot 0 is an OPERAND (the receiver) — those set
 /// `leading_receiver_gated`.
 struct ProjVariant {
+    leading_source: Option<u16>,
     /// Surface enum-constructor label (e.g. `"POutputNil"` / `"NQuoteShort"` /
     /// `"MGet"`).
     label: String,
@@ -1347,24 +1348,9 @@ struct ProjVariant {
     /// * **R2** — an open-ended frame may NOT set `__sigil_frame_matched` (see
     ///   `emit_proj_variant_arm`). Strictly a NARROWING: fewer rejects ⇒ more fall-through
     ///   to the authoritative walker (`ProjectionIsolation.v` `T7_fallthrough_is_monolithic`).
-    /// * **R3** — the open-ended `Op` slot must honour the operator's DECLARED BINDING
-    ///   POWER instead of swallowing the whole remaining span; see
-    ///   [`ProjVariant::open_ended_decline_labels`].
     open_ended: bool,
-    /// R3 — the DECLARE-BINDING-POWER decline set for the open-ended trailing operand
-    /// (empty unless [`ProjVariant::open_ended`]). Computed by the SAME
-    /// [`compute_receiver_decline_labels`] the ROOT-D method-frame receiver gate uses: the
-    /// labels of rules producing the operand's category whose syntax pattern is a BINARY
-    /// INFIX (`[Param, Literal, Param]`) or a UNARY PREFIX (`[Literal, Param]`).
-    ///
-    /// The reading is the same in both places, because it is the same fact: a prefix
-    /// operator binds TIGHTER than every infix operator of its category (Rholang declares
-    /// `NegProc` after `/` and `%` exactly so, and `NQuoteShort`/`POutputShort` carry an
-    /// explicit `prefix(220)`), so an operand whose own top constructor is an infix — or a
-    /// looser prefix — is NOT the operand: the frame stopped in the wrong place. `- 7 + 1`
-    /// sub-parses `7 + 1` to `Add(..)`, which is in this set, so the frame declines and the
-    /// walker resolves the input under the declared powers as `Add(NegProc(7), 1)`.
-    open_ended_decline_labels: Vec<String>,
+    open_ended_min_bp: Option<u8>,
+    open_ended_needs_bounded_entry: bool,
 }
 
 /// Grammar-derived shape of an `@`-projection category: the σ-led frame-variants.
@@ -1642,6 +1628,12 @@ fn derive_projection_iso_shape(
     let src_idx_of =
         |name: &str| -> Option<u16> { categories.iter().position(|c| c == name).map(|i| i as u16) };
     let result_src_idx = src_idx_of(cat_name)?;
+    let bp_table = super::infix::build_bp_table(language);
+    let extension_pairs = super::kind_dispatch::category_extension_reachability(
+        language,
+        &super::synthetic::build_per_category_rules(language, categories),
+        categories,
+    );
 
     let is_ident_shaped = |s: &str| s.chars().all(|c| c.is_alphanumeric() || c == '_');
 
@@ -1840,18 +1832,45 @@ fn derive_projection_iso_shape(
                 slots.last(),
                 Some(ProjSlot::Operand { .. }) | Some(ProjSlot::SepList { .. })
             );
-        // R3 — the declared-binding-power decline set for that trailing operand, from the
-        // SAME grammar-shape computation the ROOT-D receiver gate uses.
-        let open_ended_decline_labels = match (open_ended, slots.last()) {
-            (true, Some(ProjSlot::Operand { category })) => {
-                compute_receiver_decline_labels(language, category)
-            },
-            // A trailing `.*sep` LIST is element-wise: its elements are separator-delimited,
-            // so no single element swallows the remaining span and the binding-power hazard
-            // does not arise. Left empty ⇒ the gate is not emitted ⇒ byte-identical there.
-            _ => Vec::new(),
+        let (open_ended_min_bp, open_ended_needs_bounded_entry) = if open_ended {
+            match super::prefix::classify_atomic(&normalized, language) {
+                super::prefix::AtomicShape::CrossCatPrefixUnary { source_cat_name, .. }
+                | super::prefix::AtomicShape::PrefixOperator {
+                    operand_cat_name: source_cat_name,
+                    ..
+                } => {
+                    let floor = mettail_prattail::binding_power::compute_prefix_bp(
+                        &source_cat_name,
+                        normalized.prefix_bp,
+                        &bp_table,
+                    );
+                    let goal = src_idx_of(&source_cat_name)?;
+                    let restricts = bp_table.operators.iter().any(|operator| {
+                        operator.left_bp < floor
+                            && src_idx_of(&operator.result_category).is_some_and(|result| {
+                                result == goal || extension_pairs.contains(&(result, goal))
+                            })
+                    });
+                    (Some(floor), restricts)
+                },
+                _ => (None, false),
+            }
+        } else {
+            (None, false)
+        };
+        let leading_source = if super::forks::AT_QUOTED_BIND_GATE
+            && super::infix::classify_rule_public(&normalized)
+                .is_some_and(|info| info.is_cross_category)
+        {
+            match slots.first() {
+                Some(ProjSlot::Operand { category }) => src_idx_of(category),
+                _ => None,
+            }
+        } else {
+            None
         };
         variants.push(ProjVariant {
+            leading_source,
             label: normalized.label.to_string(),
             slots,
             leading_receiver_gated,
@@ -1861,7 +1880,8 @@ fn derive_projection_iso_shape(
             // literal) so the arm/helper can mark `__sigil_frame_matched`.
             sigil_led,
             open_ended,
-            open_ended_decline_labels,
+            open_ended_min_bp,
+            open_ended_needs_bounded_entry,
         });
     }
 
@@ -2642,6 +2662,17 @@ fn emit_proj_variant_arm(
 ) -> TokenStream {
     let label_ident = format_ident!("{}", variant.label);
     let variant_idx_lit = variant_idx as u16;
+    let quoted_bind_gate = variant.leading_source.map(|source| {
+        quote! {
+            if let Some(source) = __quoted_bind_source.get_or_init(|| {
+                lex_dag(input).ok().map(mettail_prattail::wpda_runtime::LatticeTokenSource::new)
+            }) {
+                if prefix_at_quoted_bind_gate_evidence(__RESULT_SRC_IDX, #source, source, 0) {
+                    break '__variant;
+                }
+            }
+        }
+    });
 
     // Emit the runtime skeleton (a slice of `__Slot`) for the matcher. A
     // `SepList` operand extracts the SAME bracket-delimited region as a scalar
@@ -2752,60 +2783,6 @@ fn emit_proj_variant_arm(
         None
     };
 
-    // ★ R3 (2026-07-26) — THE DECLARED-BINDING-POWER GATE AT THE OPEN-ENDED SLOT.
-    //
-    // An open-ended frame's trailing `Op` slot takes `(start, n)` — the WHOLE remaining
-    // span — because `__proj_skeleton_match_all` has no following literal to stop at.
-    // That is the matcher discarding a fact the grammar states: a unary prefix operator
-    // binds TIGHTER than the infix operators of its category. `rholang.rs` says it in
-    // prose for `NegProc` (*"declared after `/` and `%` so `-` binds tighter than
-    // division"*) and in an annotation for `NQuoteShort` / `POutputShort`
-    // (`prefix(220)`, *"well above any Proc-level infix BP"*). The frame honoured
-    // neither, so `- 7 + 1` was framed as `- ⟨7 + 1⟩` = `NegProc(Add(7, 1))` = −8, where
-    // the declared powers give `Add(NegProc(7), 1)` = −6 (and f1r3node agrees on −6).
-    //
-    // The condition is EXACTLY the one the ROOT-D method-frame receiver already uses, so
-    // it is expressed with the SAME `compute_receiver_decline_labels` computation rather
-    // than a second, parallel notion: a sub-parsed operand whose TOP CONSTRUCTOR is a
-    // binary infix (`[Param, Literal, Param]`) or a unary prefix (`[Literal, Param]`) of
-    // that category is not the operand — the frame stopped in the wrong place, and the
-    // reading belongs to the operator, not to the sigil.
-    //
-    // ★ SOUNDNESS. Dropping such readings can only EMPTY the frame's candidate set, which
-    // `break '__variant`s to the next variant and ultimately declines the helper — the
-    // `combine_run = None` fall-through of `ProjectionIsolation.v`
-    // `T7_fallthrough_is_monolithic`, where the AUTHORITATIVE walker (which does honour
-    // the declared powers, via the Pratt loop) decides. It cannot fabricate a reading and
-    // it cannot change any reading the walker would not itself have produced.
-    //
-    // ★ `#set_cap_hit` accompanies the decline for the same reason it accompanies the two
-    // ROOT-D gates: this is a STRUCTURAL decline (a binding-power fact), not a genuine
-    // operand parse error, so the enumeration is not "provably complete" and the
-    // authoritative reject must not escalate it to `Err`. `__cap_hit` can only SUPPRESS a
-    // reject, never fabricate one.
-    let open_ended_decline_pat: Option<TokenStream> = match (
-        variant.open_ended,
-        variant.open_ended_decline_labels.is_empty(),
-        variant.slots.last(),
-    ) {
-        (true, false, Some(ProjSlot::Operand { category })) => {
-            let ocat = format_ident!("{}", category);
-            let arms: Vec<TokenStream> = variant
-                .open_ended_decline_labels
-                .iter()
-                .map(|lbl| {
-                    let l = format_ident!("{}", lbl);
-                    quote! { #ocat::#l(..) }
-                })
-                .collect();
-            Some(quote! { #(#arms)|* })
-        },
-        _ => None,
-    };
-    // The operand index of that trailing slot: it is the LAST operand-bearing slot, and
-    // an open-ended variant's last slot IS operand-bearing, so it is `n_ops - 1`.
-    let open_ended_op_index: Option<usize> = open_ended_decline_pat.as_ref().map(|_| n_ops - 1);
-
     // Bind each operand: a `Scalar` sub-parses the whole region; a `Sep` splits
     // the region at the depth-0 separator, sub-parses each element, and cartesian-
     // combines into `Vec<Element>` combos. Both bind a `__op{oi}` : Vec<(value,
@@ -2856,28 +2833,26 @@ fn emit_proj_variant_arm(
                 } else {
                     quote! {}
                 };
-                // THE AST GATE, in its two instances. Both drop sub-parsed operand
-                // readings whose TOP CONSTRUCTOR is a binary infix or a unary prefix of
-                // the operand's category — the shape that proves the frame did not stop
-                // where the declared binding powers put the operand's edge. If none
-                // survive ⇒ decline the frame ⇒ fall through to the walker.
-                //
-                //   * ROOT-D (2026-07-06), at the LEADING RECEIVER of a method frame:
-                //     `Map() % @X . concat` is `Mod`, so `Map() % @X` is not the receiver.
-                //   * R3 (2026-07-26), at the TRAILING OPERAND of an OPEN-ENDED sigil
-                //     frame: `- 7 + 1` sub-parses `7 + 1` to `Add`, so `7 + 1` is not the
-                //     operand of `-`.
-                //
-                // They are MUTUALLY EXCLUSIVE by construction — a method frame's slot 0 is
-                // an operand, so its leading-`Lit` run is 0 and it can never be
-                // `open_ended` — which is why one `__pairs` binding serves both.
-                let is_open_ended_operand = open_ended_op_index == Some(oi);
-                let gate_pat: Option<&TokenStream> =
-                    match (is_gated_receiver, is_open_ended_operand) {
-                        (true, _) => decline_pat.as_ref(),
-                        (_, true) => open_ended_decline_pat.as_ref(),
-                        _ => None,
-                    };
+                let gate_pat = if is_gated_receiver {
+                    decline_pat.as_ref()
+                } else {
+                    None
+                };
+                let min_bp = if oi + 1 == n_ops {
+                    variant.open_ended_min_bp.unwrap_or(0)
+                } else {
+                    0
+                };
+                let single_parse = if min_bp == 0 || !variant.open_ended_needs_bounded_entry {
+                    quote! { #ocat::parse_via_wpda(__seg) }
+                } else {
+                    quote! { #ocat::__parse_via_wpda_monolithic_at_min_bp(__seg, #min_bp) }
+                };
+                let all_parse = if min_bp == 0 || !variant.open_ended_needs_bounded_entry {
+                    quote! { #ocat::parse_via_wpda_all_with_weights(__seg) }
+                } else {
+                    quote! { #ocat::__all_with_weights_monolithic_at_min_bp(__seg, #min_bp) }
+                };
                 let recv_ast_filter: TokenStream = match gate_pat {
                     Some(pat) => quote! {
                         let __pairs: Vec<(#ocat, __W)> = __t
@@ -2921,14 +2896,14 @@ fn emit_proj_variant_arm(
                         // delimited ⇒ their disambiguation is LOCAL ⇒ compositional).
                         // The ALL seam keeps the ambiguity-preserving all-path.
                         let (__t, __w): (Vec<#ocat>, Vec<__W>) = if __single_winner {
-                            match #ocat::parse_via_wpda(__seg) {
+                            match #single_parse {
                                 Ok(__one) => (vec![__one], vec![<__W as Semiring>::one()]),
                                 Err(_) => {
                                     break '__variant;
                                 }
                             }
                         } else {
-                            match #ocat::parse_via_wpda_all_with_weights(__seg) {
+                            match #all_parse {
                                 Ok(__v) => __v,
                                 Err(_) => {
                                     break '__variant;
@@ -3288,6 +3263,7 @@ fn emit_proj_variant_arm(
             for __ops_vec in __assignments.iter() {
                 let __ops: &[(usize, usize)] = &__ops_vec[..];
                 '__variant: {
+                    #quoted_bind_gate
                     #(#parse_binds)*
                     #body
                 }
@@ -3310,6 +3286,15 @@ fn emit_proj_variant_arm(
 fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShape) -> TokenStream {
     let helper_name = proj_isolation_helper_ident(&cat_ident.to_string());
     let result_src_idx = shape.result_src_idx;
+    let quoted_bind_source = shape
+        .variants
+        .iter()
+        .any(|v| v.leading_source.is_some())
+        .then(|| {
+            quote! {
+                let __quoted_bind_source = std::cell::OnceCell::new();
+            }
+        });
     // ROOT-D: this category carries method frames iff ANY variant is a gated
     // receiver-led frame. When it does NOT (every non-`Proc` rholang category and
     // EVERY calculator category), the matcher's greedy-last additions are elided ⇒
@@ -3467,6 +3452,22 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                         )
                     }
                     __Slot::Op => {
+                        if matches!(skel.get(k + 1), Some(__Slot::Op)) {
+                            let first = layout.token_boundaries.partition_point(|&end| end < i);
+                            let last = layout.token_boundaries.partition_point(|&end| end <= n);
+                            let mut out = Vec::new();
+                            for &end in &layout.token_boundaries[first..last] {
+                                let mut tails = go(
+                                    input, layout, bytes, n, skel, amb, k + 1, end,
+                                    leading_greedy_last,
+                                );
+                                for tail in &mut tails {
+                                    tail.insert(0, (i, end));
+                                }
+                                out.append(&mut tails);
+                            }
+                            return out;
+                        }
                         let next_lit: Option<(&'static str, &'static [u8], &'static [u8])> =
                             skel[k + 1..].iter().find_map(|s| match s {
                                 __Slot::Lit(l, pre, ext) => Some((*l, *pre, *ext)),
@@ -3828,6 +3829,8 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
             const __REALIZE_CAP: usize = 64;
             const __RESULT_SRC_IDX: u16 = #result_src_idx;
+
+            #quoted_bind_source
 
             // One skeleton slot: a fixed literal token or a cross-cat operand hole.
             //
@@ -4841,6 +4844,10 @@ pub(crate) fn emit_parse_fns(
         let prefix_with_source_bounded_fn_name =
             format_ident!("parse_{}_via_wpda_prefix_with_source_and_bounding_mode", cat_name);
         let prefix_fn_name = format_ident!("parse_{}_via_wpda_prefix", cat_name);
+        let ranked_prefix_with_source_bounded_fn_name = format_ident!(
+            "parse_{}_via_wpda_ranked_prefix_with_source_and_bounding_mode",
+            cat_name
+        );
         let surface_exact_with_source_fn_name =
             format_ident!("parse_{}_via_wpda_surface_exact_with_source", cat_name);
         let surface_exact_fn_name = format_ident!("parse_{}_via_wpda_surface_exact", cat_name);
@@ -5300,33 +5307,9 @@ pub(crate) fn emit_parse_fns(
                     mettail_prattail::wpda_runtime::RealizationError,
                 > {
                     type __W = mettail_prattail::automata::lex_weight::LexicographicWeight;
-                    // The facade's historical single-result raw-probe cap. The
-                    // ladder descends from here so the common path is
-                    // byte-identical.
-                    const RAW_PROBE_CAPS: &[usize] = &[128, 64, 32, 16, 8, 4, 2, 1];
                     let mut best: Option<(std::sync::Arc<dyn std::any::Any + Send + Sync>, __W)> = None;
                     for &root in roots {
-                        // First cap that ACTUALLY realizes this root wins for
-                        // this root; its own min-weight term is the candidate.
-                        let mut per_root: Option<(std::sync::Arc<dyn std::any::Any + Send + Sync>, __W)> = None;
-                        for &cap in RAW_PROBE_CAPS {
-                            // Task #10 item 2: single-result facade semantics
-                            // stated explicitly; the descending caps remain
-                            // pure enumeration bounds for the fallback path.
-                            let realized = walker.realize_root_to_terms_with_weights(
-                                root,
-                                Some(cap),
-                                mettail_prattail::wpda_walker::RealizeRequestMode::SingleResultElection,
-                            )?;
-                            if let Some((term, w)) = realized
-                                .into_iter()
-                                .min_by(|(_, a), (_, b)| a.cmp(b))
-                            {
-                                per_root = Some((term, w));
-                                break;
-                            }
-                        }
-                        if let Some((term, w)) = per_root {
+                        if let Some((term, w)) = walker.elect_root_to_term_with_weight(root)? {
                             let take = match &best {
                                 None => true,
                                 Some((_, bw)) => w.cmp(bw) == std::cmp::Ordering::Less,
@@ -5680,6 +5663,66 @@ pub(crate) fn emit_parse_fns(
                     max_alternatives,
                     mettail_prattail::wpda_runtime::CursorBoundingMode::Unbounded,
                 )
+            }
+
+
+            #[allow(non_snake_case)]
+            pub fn #ranked_prefix_with_source_bounded_fn_name(
+                source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                pos: &mut usize,
+                min_bp: u8,
+                max_alternatives: usize,
+                bounding_mode: mettail_prattail::wpda_runtime::CursorBoundingMode,
+            ) -> Result<Vec<(#cat_ident,
+                mettail_prattail::automata::semiring::ExactParseCost,
+                mettail_prattail::derivation_rank::CompleteDerivationRank)>, WpdaParseError> {
+                use mettail_prattail::wpda_runtime::WpdaResolveResult;
+                use mettail_prattail::wpda_walker::WpdaWalker;
+                use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                let mut walker = WpdaWalker::<LexicographicWeight, _>::new_for_category_with_rank_evidence(
+                    #engine_ident::default(), #cat_src_idx_u16, min_bp,
+                );
+                let mut recovery = mettail_prattail::recovery::RecoveryConfig::default();
+                recovery.max_recovery_depth = 0;
+                walker.set_recovery_config(recovery);
+                walker.set_bounding_mode(bounding_mode);
+                walker.run_to_end_of_input_env_aware(1_000_000, source)
+                    .map_err(|error| WpdaParseError::Incomplete { position: error.position })?;
+                let (roots, position) = match walker.resolve_at_end_of_input(source) {
+                    WpdaResolveResult::Accepted { roots, .. } => (roots, walker.position()),
+                    WpdaResolveResult::AcceptedWithTrailing { roots, position, .. } => (roots, position),
+                    WpdaResolveResult::RealizationFailed { error, position } =>
+                        return Err(WpdaParseError::RealizationFailed { error, position }),
+                    WpdaResolveResult::ParseError { message, position } =>
+                        return Err(WpdaParseError::ParseFailed { message, position, attempts: Vec::new() }),
+                    WpdaResolveResult::MaxStepsExceeded { position } =>
+                        return Err(WpdaParseError::Incomplete { position }),
+                    WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } =>
+                        return Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 }),
+                };
+                *pos = position;
+                if max_alternatives == 0 {
+                    return Ok(Vec::new());
+                }
+                let mut readings = Vec::new();
+                for root in roots {
+                    for (term, cost, rank) in walker.realize_root_complete_with_ranks(root, 4096)
+                        .map_err(|error| WpdaParseError::RealizationFailed { error, position })? {
+                        let term = std::sync::Arc::downcast::<#cat_ident>(term)
+                            .map_err(|_| WpdaParseError::EmptyResult)?;
+                        let term = std::sync::Arc::try_unwrap(term)
+                            .unwrap_or_else(|term| (*term).clone());
+                        readings.push((term, cost, rank));
+                    }
+                }
+                let prefix = mettail_prattail::derivation_rank::ranked_semantic_prefix(
+                    readings, max_alternatives, |term| {
+                        let mut key = __MettailWpdaSemanticKeyHasher::default();
+                        term.semantic_hash(&mut key);
+                        key.into_key()
+                    },
+                );
+                if prefix.is_empty() { Err(WpdaParseError::EmptyResult) } else { Ok(prefix) }
             }
 
             /// Source-generic bounded-prefix parser with explicit
@@ -6037,6 +6080,25 @@ pub(crate) fn emit_parse_fns(
                             }
                             let mut paired: Vec<_> =
                                 typed_terms.into_iter().zip(typed_weights.into_iter()).collect();
+                            let mut elected = Vec::new();
+                            for &root in &roots {
+                                if let Some((term, weight)) = walker.elect_root_to_term_with_weight(root)
+                                    .map_err(|error| WpdaParseError::RealizationFailed {
+                                        error, position: *pos,
+                                    })?
+                                {
+                                    let term = std::sync::Arc::downcast::<#cat_ident>(term)
+                                        .map_err(|_| WpdaParseError::EmptyResult)?;
+                                    let term = std::sync::Arc::try_unwrap(term)
+                                        .unwrap_or_else(|term| (*term).clone());
+                                    elected.push((term, weight));
+                                }
+                            }
+                            elected.sort_by(|(_, a), (_, b)| a.cmp(b));
+                            let elected: Vec<_> = elected.into_iter().map(|(term, _)| term).collect();
+                            mettail_prattail::wpda_runtime::align_semantic_class_representatives(
+                                &mut paired, &elected, __mettail_wpda_semantic_key,
+                            );
                             paired.sort_by(|(_, a), (_, b)| a.cmp(b));
                             let (typed_terms, typed_weights): (Vec<_>, Vec<_>) =
                                 paired.into_iter().unzip();
@@ -6137,6 +6199,25 @@ pub(crate) fn emit_parse_fns(
                             }
                             let mut paired: Vec<_> =
                                 typed_terms.into_iter().zip(typed_weights.into_iter()).collect();
+                            let mut elected = Vec::new();
+                            for &root in &roots {
+                                if let Some((term, weight)) = walker.elect_root_to_term_with_weight(root)
+                                    .map_err(|error| WpdaParseError::RealizationFailed {
+                                        error, position: *pos,
+                                    })?
+                                {
+                                    let term = std::sync::Arc::downcast::<#cat_ident>(term)
+                                        .map_err(|_| WpdaParseError::EmptyResult)?;
+                                    let term = std::sync::Arc::try_unwrap(term)
+                                        .unwrap_or_else(|term| (*term).clone());
+                                    elected.push((term, weight));
+                                }
+                            }
+                            elected.sort_by(|(_, a), (_, b)| a.cmp(b));
+                            let elected: Vec<_> = elected.into_iter().map(|(term, _)| term).collect();
+                            mettail_prattail::wpda_runtime::align_semantic_class_representatives(
+                                &mut paired, &elected, __mettail_wpda_semantic_key,
+                            );
                             paired.sort_by(|(_, a), (_, b)| a.cmp(b));
                             let (typed_terms, typed_weights): (Vec<_>, Vec<_>) =
                                 paired.into_iter().unzip();
@@ -6615,5 +6696,105 @@ pub(crate) fn emit_parse_fns(
         impl std::error::Error for WpdaParseError {}
 
         #(#fns)*
+    }
+}
+
+#[cfg(test)]
+mod operand_floor_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn operand_floor_uses_existing_result_reachability(
+            returns in any::<bool>(), floor in 3u8..=255,
+            suffix in "[a-z]{1,6}",
+        ) {
+            let source = format!("Source{suffix}");
+            let middle = format!("Middle{suffix}");
+            let bridge = format!("Bridge{suffix}");
+            let target = format!("Target{suffix}");
+            let returning = if returns {
+                format!(
+                    "BridgeValue . value:{middle} |- value : {bridge}; \
+                     SourceValue . value:{bridge} |- value : {source};",
+                )
+            } else {
+                String::new()
+            };
+            let language: LanguageDef = syn::parse_str(&format!(
+                "name: ReachableOperandFloor, \
+                 types {{ noadmit {source} noadmit {middle} noadmit {bridge} noadmit {target} }}, \
+                 terms {{ \
+                   SourceZero . |- \"z\" : {source}; MiddleZero . |- \"m\" : {middle}; \
+                   BridgeZero . |- \"b\" : {bridge}; TargetZero . |- \"t\" : {target}; \
+                   Change . left:{source}, right:{target} |- left \"!\" right : {middle}; \
+                   Prefix . value:{source} |- \"#\" value : {target} prefix({floor}); \
+                   {returning} \
+                 }}, equations {{}}, rewrites {{}},",
+            )).expect("category reachability language parses");
+            let categories = vec![source, middle, bridge, target.clone()];
+            let shape = derive_projection_iso_shape(
+                &language, &build_operand_reach(&language), &target, &categories,
+            ).expect("prefix shape exists");
+            let prefix = shape.variants.iter().find(|variant| variant.label == "Prefix")
+                .expect("prefix variant exists");
+            prop_assert_eq!(prefix.open_ended_min_bp, Some(floor));
+            prop_assert_eq!(prefix.open_ended_needs_bounded_entry, returns);
+        }
+
+        #[test]
+        fn projection_operand_floor_matches_parser_classification(
+            source_levels in 0usize..8, target_levels in 0usize..8,
+            explicit in prop_oneof![
+                Just(None), Just(Some(0u8)), Just(Some(1u8)), Just(Some(2u8)),
+                prop::option::of(any::<u8>()),
+            ],
+            suffix in "[a-z]{1,6}",
+        ) {
+            let source = format!("Source{suffix}");
+            let target = format!("Target{suffix}");
+            let mut rules = format!("SourceZero . |- \"z\" : {source}; TargetZero . |- \"w\" : {target};");
+            for (category, levels) in [(&source, source_levels), (&target, target_levels)] {
+                for index in 0..levels {
+                    rules.push_str(&format!(
+                        "{category}Op{index} . left:{category}, right:{category} |- left \"op{category}{index}\" right : {category};",
+                    ));
+                }
+            }
+            let annotation = explicit.map(|value| format!(" prefix({value})")).unwrap_or_default();
+            rules.push_str(&format!(
+                "Foreign . body:{source} |- \"#\" body : {target}{annotation}; \
+                 Local . body:{source} |- \"~\" body : {source}{annotation}; \
+                 Closed . body:{source} |- \"#\" \"[\" body \"]\" : {target};",
+            ));
+            let language: LanguageDef = syn::parse_str(&format!(
+                "name: OperandFloorFixture, types {{ noadmit {source} noadmit {target} }}, \
+                 terms {{ {rules} }}, equations {{}}, rewrites {{}},",
+            )).expect("operand floor language parses");
+            let reach = build_operand_reach(&language);
+            let categories = vec![source.clone(), target.clone()];
+            let source_max = if source_levels == 0 { 0 } else { 2 * source_levels + 1 };
+            let expected = explicit.unwrap_or((source_max + 2) as u8);
+            for (category, label) in [(&source, "Local"), (&target, "Foreign")] {
+                let shape = derive_projection_iso_shape(&language, &reach, category, &categories)
+                    .expect("prefix projection shape exists");
+                let variant = shape.variants.iter().find(|variant| variant.label == label)
+                    .expect("prefix variant exists");
+                prop_assert_eq!(variant.open_ended_min_bp, Some(expected));
+                prop_assert_eq!(
+                    variant.open_ended_needs_bounded_entry,
+                    source_levels > 0 && expected > 2,
+                );
+            }
+            let shape = derive_projection_iso_shape(&language, &reach, &target, &categories)
+                .expect("target shape exists");
+            let closed = shape.variants.iter().find(|variant| variant.label == "Closed")
+                .expect("closed variant exists");
+            prop_assert_eq!(closed.open_ended_min_bp, None);
+            prop_assert!(!closed.open_ended_needs_bounded_entry);
+        }
     }
 }

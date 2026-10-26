@@ -1701,11 +1701,34 @@ pub fn compute_mode_map(
     should_pop: impl Fn(u8, u32) -> bool,
     is_raw: impl Fn(u8) -> bool,
 ) -> Result<Vec<u8>, String> {
+    compute_mode_map_from(
+        input,
+        0,
+        char_class,
+        dfa_next,
+        is_accepting,
+        push_target,
+        should_pop,
+        is_raw,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn compute_mode_map_from(
+    input: &str,
+    initial_mode: u8,
+    char_class: impl Fn(u8, u8) -> u8,
+    dfa_next: impl Fn(u8, u32, u8) -> u32,
+    is_accepting: impl Fn(u8, u32) -> bool,
+    push_target: impl Fn(u8, u32) -> u8,
+    should_pop: impl Fn(u8, u32) -> bool,
+    is_raw: impl Fn(u8) -> bool,
+) -> Result<Vec<u8>, String> {
     let bytes = input.as_bytes();
     let n = bytes.len();
     // Preallocate the full map; every byte is assigned its enclosing mode.
-    let mut mode_at: Vec<u8> = vec![0u8; n];
-    let mut mode_stack: Vec<u8> = vec![0u8];
+    let mut mode_at: Vec<u8> = vec![initial_mode; n];
+    let mut mode_stack: Vec<u8> = vec![initial_mode];
     let mut pos: usize = 0;
 
     while pos < n {
@@ -1771,10 +1794,10 @@ pub fn compute_mode_map(
                     mode_stack.push(target);
                 }
                 if should_pop(mode, accept_state) {
-                    mode_stack.pop();
-                    if mode_stack.is_empty() {
-                        mode_stack.push(0u8);
+                    if mode_stack.len() == 1 {
+                        return Err(format!("unexpected mode closer at byte {start_pos}"));
                     }
+                    mode_stack.pop();
                 }
             },
             None => {
@@ -1788,11 +1811,9 @@ pub fn compute_mode_map(
         }
     }
 
-    // DUI end-of-input invariant: the mode stack must have returned to [0].
-    // A residual named mode means a guest-region opener was never balanced.
-    if mode_stack.len() != 1 || mode_stack[0] != 0 {
+    if mode_stack.as_slice() != [initial_mode] {
         return Err(format!(
-            "unterminated region: mode stack {:?} at end of input (expected [0]) — \
+            "unterminated region: mode stack {:?} at end of input (expected [{initial_mode}]) — \
              a guest-mode opener has no matching closer",
             mode_stack
         ));
@@ -3268,6 +3289,70 @@ mod tests {
 
     fn toy_to_kind(t: &crate::automata::TokenKind) -> crate::automata::TokenKind {
         t.clone()
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(128))]
+
+        #[test]
+        fn explicit_mode_entry_preserves_context_and_token_ownership(
+            entry in 1u8..4,
+            parts in proptest::collection::vec(
+                proptest::sample::select(vec!["a", "z", " ", "\t", "\n", "\0", "λ", "中"]),
+                1..20,
+            ),
+            depth in 0usize..12,
+        ) {
+            use proptest::prelude::*;
+            let text = parts.concat();
+            let map = compute_mode_map_from(
+                &text, entry, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, |_| true,
+            ).expect("balanced raw fragment");
+            prop_assert_eq!(&map, &vec![entry; text.len()]);
+            let (tokens, end) = lex_weighted_core_modal(
+                &text, None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, |_| true,
+                toy_stream_none,
+            ).expect("raw fragment tokens");
+            prop_assert_eq!(tokens.len(), 1);
+            prop_assert_eq!(&tokens[0].0, &tk("GuestChunk"));
+            prop_assert_eq!(tokens[0].1.start.byte_offset, 0);
+            prop_assert_eq!(tokens[0].1.end.byte_offset, text.len());
+            prop_assert_eq!(end.byte_offset, text.len());
+            prop_assert!(compute_mode_map_from(
+                "", entry, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, |_| true,
+            ).expect("empty fragment").is_empty());
+            let closer = match entry { 1 => "`", 2 => "}", _ => "```" };
+            for source in [format!("{closer}{text}"), format!("{text}{closer}")] {
+                prop_assert!(compute_mode_map_from(
+                    &source, entry, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, |_| true,
+                ).is_err());
+            }
+            let nested = format!("{}{}{}", "{".repeat(depth), text, "}".repeat(depth));
+            let nested_map = compute_mode_map_from(
+                &nested, 2, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, |_| true,
+            ).expect("balanced nested fragment");
+            prop_assert_eq!(&nested_map, &vec![2; nested.len()]);
+            prop_assert!(compute_mode_map_from(
+                &format!("{{{nested}"), 2, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, |_| true,
+            ).is_err(), "an unclosed nested region must reject");
+            let whole = format!("box{{{nested}}}");
+            let legacy = compute_mode_map(
+                &whole, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, |_| true,
+            ).expect("whole source");
+            let explicit = compute_mode_map_from(
+                &whole, 0, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, |_| true,
+            ).expect("explicit default");
+            prop_assert_eq!(legacy, explicit);
+            let layout = " \t\n";
+            let map = compute_mode_map_from(
+                layout, entry, toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, |_| false,
+            ).expect("ordinary layout");
+            let (tokens, _) = lex_weighted_core_modal(
+                layout, None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, |_| false,
+                toy_stream_none,
+            ).expect("ordinary tokens");
+            prop_assert!(tokens.is_empty());
+        }
     }
 
     #[test]

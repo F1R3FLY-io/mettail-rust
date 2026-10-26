@@ -1382,10 +1382,14 @@ fn generate_direct_recursive_build(
                         label = label_str,
                     )
                 },
+                // Changed for sole-collection lane (carrier): a `HashSet(T)` field is
+                // `mettail_runtime::HashSetLit<T>` in the AST (`gen/types/enums.rs`). The
+                // emitted line was:
+                // let mut set = std::collections::HashSet::new();
                 mettail_ast::types::CollectionType::HashSet => {
                     format!(
                         "            let num_elems = (reader.next_byte() % 4) as usize;\n\
-                                     let mut set = std::collections::HashSet::new();\n\
+                                     let mut set = mettail_runtime::HashSetLit::new();\n\
                                      for _ in 0..num_elems {{\n\
                                          set.insert(build_{fc}_from_tape(reader, child_depth));\n\
                                      }}\n\
@@ -1775,7 +1779,41 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         // non-wrapping, so short/shrunk tapes yield SIMPLE terms and proptest
         // shrinking converges on minimal counterexamples.
         if !is_runtime_only {
+            let (context_open, initial_parse, parse_entry, context_close) = if language
+                .mode_defs
+                .is_empty()
+            {
+                (
+                        String::new(),
+                        format!(
+                            "{cat}::parse(&displayed).unwrap_or_else(|error| panic!(\"arb_{cat_lower} produced unparseable surface term {{:?}}: {{:?}}\", displayed, error))",
+                        ),
+                        format!("{cat}::parse"),
+                        String::new(),
+                    )
+            } else {
+                let modes = language
+                    .mode_defs
+                    .iter()
+                    .map(|mode| format!("Some({:?})", mode.name.to_string()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (
+                        format!(
+                            "let mut __accepted_context = false;\n\
+                             for __lexer_mode in [None, {modes}] {{\n\
+                             let __parse = |source: &str| match __lexer_mode {{\n\
+                             None => {cat}::parse(source),\n\
+                             Some(_) => {cat}::parse_via_wpda_in_lexer_mode(source, __lexer_mode).map_err(|error| error.to_string()),\n\
+                             }};",
+                        ),
+                        "match __parse(&displayed) { Ok(parsed) => { __accepted_context = true; parsed }, Err(_) => continue }".to_string(),
+                        "__parse".to_string(),
+                        "}\nprop_assert!(__accepted_context, \"no declared lexer context admits {:?}\", displayed);".to_string(),
+                    )
+            };
             out.push_str(&format!(
+
             "    #[test]\n\
              \x20   fn {cat_lower}_display_parse_roundtrip(term in arb_{cat_lower}({depth})) {{\n\
              \x20       let displayed = format!(\"{{}}\", term);\n\
@@ -1795,13 +1833,11 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
              \x20       // Canonical-form idempotence:\n\
              \x20       //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that\n\
              \x20       //   the generator emits.\n\
-             \x20       let parsed = {cat}::parse(&displayed)\n\
-             \x20           .unwrap_or_else(|e| panic!(\n\
-             \x20               \"arb_{cat_lower} produced unparseable surface term {{:?}}: {{:?}}\",\n\
-             \x20               displayed, e));\n\
+             \x20       {context_open}\n\
+             \x20       let parsed = {initial_parse};\n\
              \x20       let canonical = format!(\"{{}}\", parsed);\n\
              \x20       if canonical.len() > 500 {{ return Ok(()); }}\n\
-             \x20       let reparsed = {cat}::parse(&canonical).unwrap_or_else(|e| panic!(\n\
+             \x20       let reparsed = {parse_entry}(&canonical).unwrap_or_else(|e| panic!(\n\
              \x20           \"Parse(Display(Parse(s))) should succeed for canonical form {{:?}}: {{:?}}\",\n\
              \x20           canonical, e));\n\
              \x20       let recanonical = format!(\"{{}}\", reparsed);\n\
@@ -1821,7 +1857,7 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
              \x20       let mut __surface = __first_surface.clone();\n\
              \x20       let mut __layers = 0usize;\n\
              \x20       for _ in 0..8 {{\n\
-             \x20           let __next_term = match {cat}::parse(&__surface) {{\n\
+             \x20           let __next_term = match {parse_entry}(&__surface) {{\n\
              \x20               Ok(t) => t,\n\
              \x20               Err(e) => {{\n\
              \x20                   prop_assert!(false,\n\
@@ -1840,9 +1876,9 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
              \x20            sheds one spelling per layer, which is the signature of a SURFACE \\\n\
              \x20            SYNONYM whose class has no declared canonical member. First surface \\\n\
              \x20            {{:?}}, fixpoint {{:?}}.\", __layers, __first_surface, __surface);\n\
+             \x20       {context_close}\n\
              \x20   }}\n\n",
             cat_lower = cat_lower,
-            cat = cat,
             depth = roundtrip_depth,
         ));
         }
@@ -2344,6 +2380,74 @@ mod tests {
             assert!(!source.contains("compile_error"));
             syn::parse_str::<syn::File>(source).expect("valid builder Rust syntax");
         }
+    }
+
+    #[test]
+    fn finite_fallback_supplies_an_empty_sole_vec_base_to_both_builders() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: FiniteSoleVecBase,
+            types { data Item data Holder },
+            terms {
+                One . |- "one" : Item;
+                Hold . items:Vec(Item) |- "hold" "[" items.*sep(",") "]" : Holder;
+            },
+            equations {}, rewrites {},
+        "#,
+        )
+        .expect("sole-vec fixture");
+        let category = quote::format_ident!("Holder");
+        let direct = classify_direct_variants(&category, &language);
+        assert!(direct.leaves.is_empty());
+        let witnesses = FiniteWitnessContext::new(&language);
+        let expected = classify_variants(&category, &language, &witnesses);
+        assert_eq!(expected.leaves.len(), 1);
+        assert_eq!(expected.leaves[0].0, "__finite_constructor_base");
+        assert!(
+            expected.leaves[0].1.contains("Holder::Hold(vec![])"),
+            "{}",
+            expected.leaves[0].1
+        );
+        assert_eq!(expected.recursive, direct.recursive);
+        let mut private = String::new();
+        let mut public = String::new();
+        generate_build_from_tape(&category, &language, &witnesses, &mut private);
+        generate_public_build_from_tape(&category, &language, &witnesses, &mut public);
+        for source in [&private, &public] {
+            assert!(source.contains(&expected.leaves[0].1));
+            assert!(!source.contains("compile_error"));
+            assert!(source.contains("% 2"), "{source}");
+            syn::parse_str::<syn::File>(source).expect("valid builder Rust syntax");
+        }
+    }
+
+    #[test]
+    fn sole_vec_admission_leaves_direct_bases_and_choices_unchanged() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+            name: SoleVecWithDirectBase,
+            types { Term },
+            terms {
+                Zero . |- "zero" : Term;
+                Boxed . xs:Vec(Term) |- "box" "(" xs.*sep(",") ")" : Term;
+            },
+            equations {}, rewrites {},
+        "#,
+        )
+        .expect("sole-vec direct-base fixture");
+        let category = quote::format_ident!("Term");
+        let before = classify_direct_variants(&category, &language);
+        assert!(!before.leaves.is_empty());
+        let witnesses = FiniteWitnessContext::new(&language);
+        let after = classify_variants(&category, &language, &witnesses);
+        assert_eq!(before.leaves, after.leaves);
+        assert_eq!(before.recursive, after.recursive);
+        let base = witnesses
+            .base_for(&category)
+            .expect("finite witness must not refuse")
+            .expect("finite witness must exist");
+        assert!(base.contains(&format!("({}).unwrap_term()", before.leaves[0].1)), "{base}");
+        assert!(!base.contains("Term::Boxed"), "{base}");
     }
 
     #[test]

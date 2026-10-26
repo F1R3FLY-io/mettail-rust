@@ -10,9 +10,10 @@
 //!
 //! Field-level non-category leaves (builtin/predicate/optional-None and unordered field-level
 //! collections) lower to the spine sentinels `FieldOpaque`/`FieldNone`; they are spine leaves a
-//! fold never reads back, so reconstruction returns `None` for them. (Rholang's collection
-//! folds read whole `List`/`Map`/`Bag` *category* values via the `Literal` arm, and AC soup via
-//! the `Collection`-variant arm — both reconstructable.)
+//! fold never reads back, so reconstruction returns `None` for them.
+//! Native collection literals use the separate `CollectionLiteral` arm.
+//! That arm lowers category-valued elements into child e-classes.
+//! The `Collection` arm preserves its declared sequence or associative-commutative carrier.
 //!
 //! ★ TWO field-level leaves are exceptions, and both are exceptions by KIND, not by blanket.
 //! The shape is the same each time: a lowering that carried the value's own bytes but had no
@@ -29,12 +30,11 @@
 //!   `FieldOpaque`, because their `Debug` does not agree with `Eq` and there is therefore no
 //!   stored order to invert to. See [`super::CollectionCarrier`] for the total classification.
 //!
-//! Nothing about INERTNESS changes in either case: every term operation still keys on
-//! `FieldInfo::is_opaque_leaf()` / `is_collection`, treats the kinds identically (no descent,
-//! no α-conversion, no substitution), and not one line under `crate::gen::term_ops` is touched
-//! by the carrier change. ⚠ In particular the ordered carrier makes collection ELEMENTS no more
-//! visible to congruence closure than before: the leaf holds the collection as ONE opaque
-//! payload, so no element is an e-class and no element is reduced.
+//! A `FieldSeq` payload remains one leaf in the e-graph.
+//! This property does not apply to native `CollectionLiteral` values with category-valued elements.
+//! Their elements are e-class children and can reduce through congruence closure.
+//! Native collections of scalar elements retain one exact payload.
+//! Term operations use their own field classification independently of this lowering.
 
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;

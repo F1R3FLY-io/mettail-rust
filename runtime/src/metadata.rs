@@ -80,6 +80,20 @@ pub trait LanguageMetadata: 'static + Send + Sync {
         None
     }
 
+    /// Canonical V2 exact-fragment profile for generated compound cost carriers.
+    /// This is data-only: it neither installs a codec nor authorizes funding.
+    /// A trusted host provider must independently bind the exact record and
+    /// check each nested value through its iterative typed lowering route.
+    fn generated_projection_host_compound_profile_record_v2(&self) -> Option<&'static [u8]> {
+        None
+    }
+
+    /// Exact generator refusal when no V2 compound cost-carrier fragment can
+    /// be derived from this checked definition and adapter layout.
+    fn generated_projection_host_compound_profile_refusal_v2(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Derived automata-facing model for parser/runtime planning.
     ///
     /// This is the stable metadata boundary that parser tables, Dovetail rule

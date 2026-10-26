@@ -317,6 +317,10 @@ pub trait TropicalDeltaWeight: SemiringRef {
 /// as before (all cursors share identical provenance, no
 /// discrimination).
 pub trait LexProvenance: SemiringRef {
+    fn lex_open_len(&self) -> u32 {
+        0
+    }
+
     /// Lex-Fork branch index stamped at emit time (alt_idx=0 for
     /// primary, alt_idx≥1 for secondaries).
     fn lex_alt_idx(&self) -> u16 {

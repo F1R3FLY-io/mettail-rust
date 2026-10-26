@@ -78,10 +78,11 @@ fn emit(
     super::super::fork_emission::ForkEmissionOrdinalModel,
 ) {
     let mut rows = super::super::fork_emission::ForkEmissionOrdinalModel::new();
-    let (arms, helpers) = emit_prefix_arms_for_category(
+    let (arms, helpers, _) = emit_prefix_arms_for_category(
         lang,
         owner,
         "Expr",
+        &std::collections::BTreeMap::new(),
         rules,
         &std::collections::HashMap::new(),
         &std::collections::HashMap::new(),

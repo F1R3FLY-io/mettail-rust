@@ -103,7 +103,16 @@ pub struct RelationDecl {
 #[allow(dead_code)]
 pub struct TypedParam {
     pub name: Ident,
-    pub ty: crate::types::TypeExpr,
+    pub ty: RuleContextType,
+}
+
+#[derive(Debug, Clone)]
+pub enum RuleContextType {
+    Ordinary(crate::types::TypeExpr),
+    RewriteFamily {
+        domains: Vec<crate::types::TypeExpr>,
+        result: crate::types::TypeExpr,
+    },
 }
 
 /// A premise in a propositional context (part of a conjunction)
@@ -942,6 +951,10 @@ pub struct LangType {
     pub name: Ident,
     /// Whether this is an object-language category or closed parser data.
     pub role: CategoryRole,
+    /// Whether this category admits implicit object-language variable terms.
+    /// This is independent of its semantic role: an object category may retain
+    /// semantic transit while admitting only its declared constructors.
+    pub admits_variables: bool,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
     pub native_type: Option<Type>,
     /// Optional collection category (List, Bag, Map) with delimiters for literal syntax.
@@ -1015,6 +1028,12 @@ impl LangType {
     #[inline]
     pub fn supports(&self, capability: CategoryCapability) -> bool {
         self.role.supports(capability)
+            && (capability != CategoryCapability::VariableCarrier || self.admits_variables)
+    }
+
+    #[inline]
+    pub fn admits_variables(&self) -> bool {
+        self.supports(CategoryCapability::VariableCarrier)
     }
 }
 

@@ -105,6 +105,74 @@ pub(in crate::gen::term_ops) fn actual_rholang() -> LanguageDef {
     language
 }
 
+#[test]
+fn actual_rholang_cost_host_fragment_uses_checked_adapter_without_full_signature_claim() {
+    use crate::gen::runtime::dovetail_report::semantic_adapter::{
+        derive_compound_host_profile_record_v2, SemanticAdapterLayout,
+    };
+    let language = actual_rholang();
+    let layout = SemanticAdapterLayout::derive(&language).expect("actual adapter layout");
+    let record = derive_compound_host_profile_record_v2(&language, &layout)
+        .unwrap_or_else(|reason| panic!("actual Rholang cost fragment refused: {reason}"));
+    record.validate().expect("canonical exact fragment");
+    // Changed because these pins disagreed with the generator and with the
+    // runtime. `derive_compound_host_profile_record_v2` emits one category
+    // route per required category and refuses unless it sees all 21 required
+    // routes, and rholang-runtime/src/host_profile.rs (`COMPOUND_ROUTES` and
+    // its category check) accepts exactly that roster. The test now pins the
+    // roster itself, not only its size. The code was:
+    // assert_eq!(record.payload.codec.descriptor.operators.len(), 18);
+    // assert_eq!(record.payload.codec.descriptor.categories.len(), 6);
+    const EXPECTED_CATEGORIES: [&str; 7] =
+        ["Proc", "CostSig", "CostStack", "CostStackChain", "Name", "InputBind", "ForRow"];
+    const EXPECTED_ROUTES: [(&str, &str); 21] = [
+        ("Proc", "PZero"),
+        ("Proc", "PUnit"),
+        ("Proc", "PCostSignedTerm"),
+        ("Proc", "PCostStackCons"),
+        ("Proc", "PForCostSigned"),
+        ("CostSig", "CostSigTransfer"),
+        ("CostSig", "CostSigCompound"),
+        ("CostSig", "CostSigGround"),
+        ("CostSig", "CostSigHash"),
+        ("CostStack", "CostStackLift"),
+        ("CostStack", "CostStackPar"),
+        ("CostStackChain", "CostStackChainEmpty"),
+        ("CostStackChain", "CostStackChainCons"),
+        ("CostStackChain", "CostStackChainGroup"),
+        ("Name", "NQuote"),
+        ("InputBind", "InputBindCostSigned"),
+        ("InputBind", "InputBindCostSignedEmpty"),
+        ("ForRow", "ForRowWhere"),
+        ("ForRow", "ForRowNoWhere"),
+        ("ForRow", "ForRowSingleWhere"),
+        ("ForRow", "ForRowSingleNoWhere"),
+    ];
+    let categories: Vec<&str> = record
+        .payload
+        .codec
+        .descriptor
+        .categories
+        .iter()
+        .map(|route| route.name.as_str())
+        .collect();
+    assert_eq!(categories, EXPECTED_CATEGORIES);
+    let expected_operators: std::collections::BTreeSet<String> = EXPECTED_ROUTES
+        .iter()
+        .map(|(category, constructor)| format!("{}::{category}::{constructor}", language.name))
+        .collect();
+    let actual_operators: std::collections::BTreeSet<String> = record
+        .payload
+        .codec
+        .descriptor
+        .operators
+        .iter()
+        .map(|route| route.label.clone())
+        .collect();
+    assert_eq!(actual_operators, expected_operators);
+    assert_eq!(record.payload.codec.descriptor.operators.len(), EXPECTED_ROUTES.len());
+}
+
 // Qualified source types remain in the capture. This compares carrier shape
 // only, not arbitrary aliases or namespace semantics.
 fn shape(ty: &syn::Type) -> String {
@@ -744,7 +812,7 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
             }
         }
     }
-    assert_eq!(rows.len(), 1990, "bounded actual Rholang constructor snapshot");
+    assert_eq!(rows.len(), 2324, "bounded actual Rholang constructor snapshot");
     assert_eq!(
         capture
             .lines()
@@ -753,9 +821,18 @@ fn actual_rholang_comparison_census_matches_enum_indices_and_carriers() {
         rows.len(),
         "operational census includes projected and unprojected constructors"
     );
+    // Changed with the constructor snapshot above. No binder syntax was added
+    // since a36d7f44, so only the higher-order families grew: 24 result
+    // categories x 21 domains = 504 single scopes (one `Lam` each), and 504
+    // `MLam` plus PNew and PNewUris = 506 multi scopes. The code was:
+    // assert_eq!(
+    //     (single_scopes, multi_scopes, refused),
+    //     (441, 443, 10),
+    //     "bounded scope/refusal snapshot must be reviewed if the actual language changes"
+    // );
     assert_eq!(
         (single_scopes, multi_scopes, refused),
-        (441, 443, 10),
+        (504, 506, 10),
         "bounded scope/refusal snapshot must be reviewed if the actual language changes"
     );
     assert_eq!(

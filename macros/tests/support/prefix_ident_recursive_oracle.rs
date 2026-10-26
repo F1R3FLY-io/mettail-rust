@@ -113,6 +113,7 @@ fn iterative_var_only_analysis_handles_20k_projection_depth_on_a_256k_stack() {
                 language.types.push(LangType {
                     name: category.clone(),
                     role: Default::default(),
+                    admits_variables: true,
                     native_type: None,
                     collection_kind: None,
                 });

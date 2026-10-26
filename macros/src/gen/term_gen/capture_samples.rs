@@ -96,13 +96,38 @@ fn resolved_pattern<'a>(spec: &'a LanguageSpec, capture: &str) -> Result<&'a str
             return Ok(&token.pattern);
         }
     }
+    // Added because a lexer-mode token (for example the `pop` token that
+    // closes a `raw mode` body) is captured by the same predicate but is
+    // declared only in `spec.modes`; the loop above never saw it. A name
+    // declared in several modes resolves only if every declaration has one
+    // pattern. Different patterns are a contextual lexer concern, so this
+    // context-free sampler refuses them instead of choosing one.
+    let mut mode_pattern: Option<&'a str> = None;
+    for token in spec.modes.iter().flat_map(|mode| mode.token_specs.iter()) {
+        if token_kind_matches_capture_name(capture, &TokenKind::Custom(token.name.clone())) {
+            match mode_pattern {
+                None => mode_pattern = Some(&token.pattern),
+                Some(previous) if previous == token.pattern => {},
+                Some(previous) => {
+                    return Err(format!(
+                        "lexer modes declare this capture kind with different patterns \
+                         {previous:?} and {:?}",
+                        token.pattern
+                    ));
+                },
+            }
+        }
+    }
+    if let Some(pattern) = mode_pattern {
+        return Ok(pattern);
+    }
     Err("no resolved lexical pattern for this capture kind".to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::language::TokenDef;
+    use mettail_ast::language::{ModeDef, TokenDef};
     use quote::{format_ident, quote};
 
     fn declared_token(name: &str, pattern: &str, from_literals: bool) -> TokenDef {
@@ -168,6 +193,87 @@ mod tests {
                 .as_ptr(),
             spec.custom_tokens[0].pattern.as_ptr(),
         ));
+    }
+
+    fn mode_token(name: &str, pattern: &str, is_pop: bool) -> TokenDef {
+        TokenDef {
+            is_pop,
+            ..declared_token(name, pattern, false)
+        }
+    }
+
+    fn raw_mode(name: &str, tokens: Vec<TokenDef>) -> ModeDef {
+        ModeDef {
+            name: format_ident!("{name}"),
+            token_defs: tokens,
+            raw: true,
+        }
+    }
+
+    fn language_with_modes(modes: Vec<ModeDef>) -> LanguageDef {
+        let mut language = crate::gen::empty_language_for_tests();
+        let mut open = declared_token("Open", "<<", false);
+        open.push_mode = Some(format_ident!("first"));
+        language.token_defs.push(open);
+        language.mode_defs = modes;
+        language
+    }
+
+    #[test]
+    fn capture_sampling_resolves_a_raw_mode_pop_token() {
+        let language = language_with_modes(vec![raw_mode(
+            "first",
+            vec![mode_token("End", ";", true), mode_token("Text", "[a-z]+", false)],
+        )]);
+        let sampling = CaptureSamplingContext::new(&language);
+        assert_eq!(sampling.sample("End").expect("mode pop token sample"), ";");
+        let text = sampling.sample("Text").expect("mode token sample");
+        assert!(pattern_admits("[a-z]+", &text));
+        let spec = sampling
+            .resolved
+            .get()
+            .expect("resolved spec")
+            .as_ref()
+            .expect("valid spec");
+        assert!(std::ptr::eq(
+            resolved_pattern(spec, "End")
+                .expect("mode pattern")
+                .as_ptr(),
+            spec.modes[0].token_specs[0].pattern.as_ptr(),
+        ));
+    }
+
+    #[test]
+    fn capture_sampling_accepts_one_name_with_one_pattern_in_several_modes() {
+        let hole = "\\$\\{[^}]*\\}";
+        let language = language_with_modes(vec![
+            raw_mode(
+                "first",
+                vec![mode_token("Hole", hole, false), mode_token("CloseA", "`", true)],
+            ),
+            raw_mode(
+                "second",
+                vec![mode_token("Hole", hole, false), mode_token("CloseB", "~", true)],
+            ),
+        ]);
+        let sampling = CaptureSamplingContext::new(&language);
+        let sample = sampling.sample("Hole").expect("shared mode token sample");
+        assert!(pattern_admits(hole, &sample));
+    }
+
+    #[test]
+    fn capture_sampling_refuses_one_name_with_different_mode_patterns() {
+        let language = language_with_modes(vec![
+            raw_mode("first", vec![mode_token("Chunk", "[^`$]+", false)]),
+            raw_mode("second", vec![mode_token("Chunk", "[^{}$]+", false)]),
+        ]);
+        let sampling = CaptureSamplingContext::new(&language);
+        let error = sampling
+            .sample("Chunk")
+            .expect_err("a mode token name with two patterns must refuse");
+        assert!(error.contains("TestLang") && error.contains("Chunk"), "{error}");
+        assert!(error.contains("different patterns"), "{error}");
+        assert_eq!(sampling.sample("Chunk").expect_err("cached refusal"), error);
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub use model::*;
 mod lifecycle;
 mod parse;
 pub use parse::*;
+mod rule_context;
 
 #[cfg(test)]
 mod tests;

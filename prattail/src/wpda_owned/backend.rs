@@ -173,15 +173,19 @@ impl RuntimeParserBackend for PreparedBackend {
             })
         })
         .map_err(preparation_error)?;
+        budget
+            .actions_and_routing(&self.descriptors)
+            .map_err(preparation_error)?;
         let engine = OwnedWpdaEngine::new(
             &self.descriptors,
             &actions,
             primary,
             &self.contextual_keywords,
             &self.absorption,
-            |descriptors| {
+            |_| Ok(()),
+            |slots| {
                 budget
-                    .actions_and_routing(descriptors)
+                    .prefix_route_slots(slots)
                     .map_err(|error| super::engine::OwnedEngineError::Source(format!("{error:?}")))
             },
         )
@@ -265,9 +269,6 @@ fn realization_error(error: RealizationError) -> RuntimeError {
     match error {
         RealizationError::Resource(error) => resource_error(error),
         RealizationError::ResultOverflow { .. } => RuntimeError::SemanticResultLimit,
-        RealizationError::SemanticKey(KeyError::ResourceExhausted { limit, requested }) => {
-            RuntimeError::SemanticKeyEntryLimit { limit, requested }
-        },
         RealizationError::SemanticKey(KeyError::KeyBytesExhausted { limit, requested }) => {
             RuntimeError::SemanticKeyByteLimit { limit, requested }
         },

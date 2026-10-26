@@ -156,10 +156,10 @@ fn child_role(annotation: &str, incoming: Role) -> Role {
 fn actual_rholang_source_profile_covers_exact_constructors_and_original_slots() {
     let language = actual_rholang();
     let table = profile();
-    assert_eq!(table.len(), 196, "approved constructor inventory changed");
+    assert_eq!(table.len(), 244, "approved constructor inventory changed");
     assert_eq!(
         table.values().map(Vec::len).sum::<usize>(),
-        329,
+        408,
         "approved original field-slot inventory changed"
     );
     let declarations =
@@ -245,7 +245,7 @@ fn actual_rholang_source_profile_covers_exact_constructors_and_original_slots() 
             }
         }
     }
-    assert_eq!(constructors, 2042, "actual generated constructor snapshot changed");
+    assert_eq!(constructors, 2324, "actual generated constructor snapshot changed");
     assert_eq!(visited.len(), table.len(), "no invented or stale approved constructor");
     for category in [
         "DdlModuleItem",
@@ -272,6 +272,8 @@ fn actual_rholang_source_profile_covers_exact_constructors_and_original_slots() 
         "DdlFreshness",
         "DdlRewrite",
         "DdlRewriteBinding",
+        "DdlRewriteContextBinding",
+        "DdlRewriteContextType",
         "DdlPremises",
         "DdlPremise",
         "DdlPremiseInput",
@@ -306,21 +308,40 @@ fn source_profile_context_crossings_and_refusals_are_explicit() {
         ("Proc", "CastSet"),
         ("Set", "SetLit"),
         ("Proc", "CastPathmap"),
-        ("Proc", "PLookahead"),
+        // Changed because these five constructors are now approved rows, so
+        // refusing them contradicts the policy table. 8fa426b4 admitted
+        // PLookahead ("Add exact term-child source-profile rows for
+        // PLookaheadAll and bounded PLookahead"), 7f14e45e admitted Add, and
+        // the checked query-bind preparation admits the three query binds
+        // (rholang-runtime/src/rholang_ast/preparation_source.rs,
+        // `bind_patterns` and `query_returns`). They are pinned positively
+        // below. The code was:
+        // ("Proc", "PLookahead"),
         ("Int", "BoolToInt"),
         ("Int", "IVar"),
-        ("InputBind", "InputBindQuery"),
-        ("InputBind", "InputBindEmptyQuery"),
-        ("InputBind", "InputBindQuotedQuery"),
+        // ("InputBind", "InputBindQuery"),
+        // ("InputBind", "InputBindEmptyQuery"),
+        // ("InputBind", "InputBindQuotedQuery"),
         ("ForRow", "FVar"),
         ("Map", "MVar"),
         ("Proc", "LamProc"),
-        ("Proc", "Add"),
+        // ("Proc", "Add"),
         ("Proc", "PPersistOutputQuoted"),
         ("Map", "MapEmpty"),
     ] {
         assert!(!table.contains_key(&(category, label)), "refuse {category}::{label}");
     }
+    assert_eq!(table[&("Proc", "PLookahead")], ["Arc<Proc>@T", "Arc<Proc>@T"]);
+    assert_eq!(table[&("Proc", "Add")], ["Arc<Proc>@T", "Arc<Proc>@T"]);
+    assert_eq!(
+        table[&("InputBind", "InputBindQuery")],
+        ["Arc<Name>@PN", "Arc<Name>@N", "Vec<Proc>@T"]
+    );
+    assert_eq!(table[&("InputBind", "InputBindEmptyQuery")], ["Arc<Name>@N", "Vec<Proc>@T"]);
+    assert_eq!(
+        table[&("InputBind", "InputBindQuotedQuery")],
+        ["Arc<Proc>@P", "Arc<Name>@N", "Vec<Proc>@T"]
+    );
     assert_eq!(table[&("DdlSort", "DdlSortSet")], ["String"]);
     assert_eq!(table[&("Proc", "MapEmpty")], Vec::<&str>::new());
     for incoming in [Role::Term, Role::Pattern, Role::Guard] {

@@ -4,7 +4,7 @@
 //! (`needs_typed_dovetail_path`, gated `!should_emit_binder_congruence`). `dovetail_report_for` must
 //! FIRE the nested rule and record a `rewrite_justification` whose σ binds every LHS variable — the
 //! provenance the nested structural-AC σ-injection reconstructs `⟦operand⟧` + `⟦reduct⟧` from.
-#![cfg(feature = "in-out-demo")]
+#![cfg(feature = "dovetail-codegen")]
 
 // Task #11 (extended 2026-07-26): `InOutDemo` is a DEMONSTRATION grammar, not a production
 // language, so its definition lives in `languages/tests/definitions/inoutdemo.rs` rather than in

@@ -75,11 +75,11 @@ impl OwnedSemanticKeys {
         let mut transaction = cache.transaction_for_root(owner.clone());
         // SAFETY: tasks borrow only immutable syntax descendants of owner.
         // Each physical value has one source-checked category/field observation;
-        // the transaction retains owner through every cached identity's life.
+        // the transaction retains owner while this traversal borrows descendants.
         let mut sink = unsafe { ComposingSemanticSink::new(&mut transaction) };
         self.walk(&owner.syntax, category, &mut sink)?;
         let term_key = sink.into_result()?;
-        transaction.commit()?;
+        transaction.commit();
         // Original generated WpdaEngine root framing, after category key commit.
         let mut builder = SemanticKeyBuilder::with_max_bytes(cache.max_key_bytes());
         builder.write_u16(owner.category);
@@ -301,10 +301,8 @@ mod tests {
         assert_eq!(direct_key.as_bytes(), flat.into_key());
 
         let mut no_entries = ContentKeyCache::with_max_entries(0);
-        assert!(matches!(
-            keys.content_key(&direct, &mut no_entries),
-            Err(ContentKeyCacheError::ResourceExhausted { limit: 0, .. })
-        ));
+        assert_eq!(keys.content_key(&direct, &mut no_entries), Ok(Some(direct_key)));
+        assert!(no_entries.is_empty());
         let mut no_bytes = ContentKeyCache::with_limits(64, 0);
         assert!(matches!(
             keys.content_key(&direct, &mut no_bytes),

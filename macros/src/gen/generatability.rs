@@ -743,7 +743,6 @@ mod tests {
         let rows = ledger();
         let report = render(&rows, languages);
         println!("{report}");
-
         // ── anti-vacuity floors, asserted BEFORE any verdict ────────────────────────────
         assert!(
             languages >= 50,
@@ -824,6 +823,38 @@ mod tests {
         // evidence: A moves 16 → 47, B 38 → 81, C 32 → 73, A∩B 12 → 43,
         // A∩C 0 → 11, and B∩C 4 → 21. Its intersection listings name the contributing
         // `Rholang::Ddl*` rules individually; no DDL-specific classifier or exemption remains.
+        //
+        // ★ 2026-10-20 RE-DERIVATION OF THE DDL AND COST-SIGNATURE GROWTH.
+        // The 2026-08-26 report measured the old tuple over 52 bundled languages. The
+        // classifier code in this file has no change since `c387f4cc`. The per-gap counts
+        // reconcile exactly with the gap of each rule unchanged, so each movement is a
+        // corpus edit:
+        //
+        // * `c387f4cc` added `CrossCategoryBinderInverseDemo`, `CrossCategoryPrattFloorDemo`
+        //   and `StructuralCollectionDemo`. They refuse nothing, so only the language
+        //   count moves (52 → 55).
+        // * On 2026-08-31, `DdlRuleAstCollectionRemainder` moved its `remainder@Ident`
+        //   capture into the new data category `DdlRuleAstRemainderTail`. The rule leaves
+        //   A and B and stays in C. The depth-zero `DdlRuleAstTailRemainder` enters A∩B,
+        //   and `DdlRuleAstTailMore` enters C.
+        // * On 2026-10-01, `DdlRuleAstRemainderOnly` moved its capture into the new
+        //   depth-zero rule `DdlRuleAstRemainderName`. The rule leaves A and B. Its new
+        //   category operand puts it in C.
+        // * 61 Rholang rules with refusals are new since `c387f4cc`, and
+        //   `DdlRuleAstRemainderName` is one of them. They are:
+        //   - DDL regex pieces, tokens, carriers, `noadmit` declarations and limits
+        //   - DDL projections, typed rewrites, typed rule-AST forms, term attributes and
+        //     theory options
+        //   - the cost-signature and cost-stack forms (`CostSig*`, `CostStack*`,
+        //     `InputBindCostSigned*`, `PCostSignedTerm`, `PCostStackCons`, `PForCostSigned`)
+        //
+        //   They add 33 to A (15 DeclaredTokenKindCapture, 18 NoRecursiveField), 48 to B
+        //   (3 CollectionElementSetup, 45 NoStaticLeafForField) and 25 to C
+        //   (24 ClosedDataCategory, and `PForCostSigned` as Class2CollectionArity).
+        //
+        // A: 47 − 2 + 1 + 33 = 79. B: 81 − 2 + 1 + 48 = 128. C: 73 + 2 + 25 = 100.
+        // A∩B: 43 − 2 + 1 + 33 = 75. A∩C: 11 − 1 + 10 = 20. B∩C: 21 − 1 + 12 = 32.
+        // The intersection listings above name each rule that enters or leaves a pair.
         let pair = |a: Generator, b: Generator| {
             refused_by(&rows, a)
                 .intersection(&refused_by(&rows, b))
@@ -838,7 +869,9 @@ mod tests {
                 pair(Generator::TapeBuilder, Generator::RandomTerm),
                 pair(Generator::UnitTest, Generator::RandomTerm),
             ),
-            (47, 81, 73, 43, 11, 21),
+            // The collection fixtures and corrected leaf classifier change this census.
+            // docs/design/test-framework.md records the measured changes.
+            (79, 168, 101, 75, 20, 45),
             "the ledger moved. These are MEASUREMENTS, not budgets: re-derive what changed and \
              why before touching this tuple, exactly as #150's own transcribed \
              `A∩B=3, A∩C=0, B∩C=2` had to be re-derived.{report}"

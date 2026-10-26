@@ -424,7 +424,11 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                     CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                         quote! { mettail_runtime::HashBag }
                     },
-                    CollectionType::HashSet => quote! { std::collections::HashSet },
+                    // Changed for sole-collection lane (carrier): std `HashSet` has no
+                    // `BoundTerm`, `Hash` or `Ord`, and the parser action, Debug and reflect
+                    // code already build `mettail_runtime::HashSetLit`. The code was:
+                    // CollectionType::HashSet => quote! { std::collections::HashSet },
+                    CollectionType::HashSet => quote! { mettail_runtime::HashSetLit },
                     CollectionType::Vec => quote! { Vec },
                 };
                 quote! { #label(#coll_type_ident<#element_type>) }
@@ -774,7 +778,11 @@ fn type_expr_to_field_type(
                     CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
                         quote! { mettail_runtime::HashBag<#elem_type> }
                     },
-                    CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
+                    // Changed for sole-collection lane (carrier): std `HashSet` has no
+                    // `BoundTerm`, `Hash` or `Ord`, and the parser action, Debug and reflect
+                    // code already build `mettail_runtime::HashSetLit`. The code was:
+                    // CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
+                    CollectionType::HashSet => quote! { mettail_runtime::HashSetLit<#elem_type> },
                     CollectionType::Vec => quote! { Vec<#elem_type> },
                 }
             },

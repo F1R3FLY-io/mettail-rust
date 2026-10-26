@@ -440,6 +440,13 @@ pub struct Sppf<W: SemiringRef> {
     /// the silent-collision soundness risk. Memory cost is negligible
     /// (~16-24 bytes per typical entry).
     dedup_packing: FxHashMap<(u32, Vec<SppfId>), SppfId>,
+    retained_packing_weights: Option<
+        FxHashMap<
+            (u32, Vec<SppfId>, Option<(u32, crate::derivation_rank::RankFragment)>),
+            Vec<SppfId>,
+        >,
+    >,
+    packing_lexical_positions: FxHashMap<SppfId, (u32, crate::derivation_rank::RankFragment)>,
     dedup_epsilon: FxHashMap<u32, SppfId>,
     /// Collection-accumulation fix (2026-05-29): CollectionId nodes are now
     /// derivation-local (they carry their own collected element `items`).
@@ -498,6 +505,8 @@ impl<W: SemiringRef> Default for Sppf<W> {
             dedup_terminal: FxHashMap::default(),
             dedup_symbol: FxHashMap::default(),
             dedup_packing: FxHashMap::default(),
+            retained_packing_weights: None,
+            packing_lexical_positions: FxHashMap::default(),
             dedup_epsilon: FxHashMap::default(),
             dedup_collection_id: FxHashMap::default(),
             dedup_opt_absent: FxHashMap::default(),
@@ -526,6 +535,24 @@ impl<W: SemiringRef> Sppf<W> {
     /// Create an empty SPPF.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn retaining_packing_evidence() -> Self {
+        Self {
+            retained_packing_weights: Some(FxHashMap::default()),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn retains_packing_evidence(&self) -> bool {
+        self.retained_packing_weights.is_some()
+    }
+
+    pub(crate) fn packing_lexical_position(
+        &self,
+        packing: SppfId,
+    ) -> Option<(u32, crate::derivation_rank::RankFragment)> {
+        self.packing_lexical_positions.get(&packing).copied()
     }
 
     // ── intern_* ────────────────────────────────────────────────────────────
@@ -780,6 +807,44 @@ impl<W: SemiringRef> Sppf<W> {
         weight: W,
         limit: Option<usize>,
     ) -> Result<SppfId, ForestNodeLimit> {
+        self.try_intern_packing_with_lexical_position(rule_idx, children, weight, None, limit)
+    }
+
+    pub(crate) fn try_intern_packing_with_lexical_position(
+        &mut self,
+        rule_idx: u32,
+        children: Vec<SppfId>,
+        weight: W,
+        lexical_position: Option<(u32, crate::derivation_rank::RankFragment)>,
+        limit: Option<usize>,
+    ) -> Result<SppfId, ForestNodeLimit> {
+        if let Some(variants) = &self.retained_packing_weights {
+            let key = (rule_idx, children.clone(), lexical_position);
+            if let Some(id) = variants.get(&key).and_then(|ids| {
+                ids.iter().copied().find(|&id| {
+                    matches!(self.node(id), Some(SppfNode::Packing { weight: prior, .. }) if *prior == weight)
+                })
+            }) {
+                return Ok(id);
+            }
+            self.reserve_node(limit)?;
+            let id = self.nodes.len() as SppfId;
+            self.dedup_packing
+                .entry((rule_idx, children.clone()))
+                .or_insert(id);
+            self.nodes
+                .push(SppfNode::Packing { rule_idx, children, weight });
+            self.retained_packing_weights
+                .as_mut()
+                .expect("retention is enabled")
+                .entry(key)
+                .or_default()
+                .push(id);
+            if let Some(position) = lexical_position {
+                self.packing_lexical_positions.insert(id, position);
+            }
+            return Ok(id);
+        }
         // Phase C R6: full-list key, no hash truncation.
         let key = (rule_idx, children.clone());
         if let Some(&id) = self.dedup_packing.get(&key) {
@@ -1273,6 +1338,13 @@ impl<W: SemiringRef> Sppf<W> {
         self.dedup_terminal.retain(|_, &mut id| id < n);
         self.dedup_symbol.retain(|_, &mut id| id < n);
         self.dedup_packing.retain(|_, &mut id| id < n);
+        if let Some(variants) = &mut self.retained_packing_weights {
+            variants.retain(|_, ids| {
+                ids.retain(|&id| id < n);
+                !ids.is_empty()
+            });
+        }
+        self.packing_lexical_positions.retain(|&id, _| id < n);
         self.dedup_epsilon.retain(|_, &mut id| id < n);
         self.dedup_collection_id.retain(|_, &mut id| id < n);
         self.dedup_opt_absent.retain(|_, &mut id| id < n);
@@ -2549,5 +2621,48 @@ mod tests {
         assert!(factored.in_scc_children.is_empty());
         // Terminals weren't in memo → identity contribution.
         assert_eq!(factored.outside_product, one());
+    }
+}
+
+#[cfg(test)]
+mod ranked_evidence_tests {
+    use super::*;
+    use crate::automata::semiring::ExactParseCost;
+    use crate::derivation_rank::RankFragment;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn packing_retention_preserves_cost_rank_and_checkpoint_identity(
+            first_cost in 0u64..100,
+            second_cost in 0u64..100,
+            first_position in 0u32..8,
+            second_position in 0u32..8,
+            first_alt in 0u16..8,
+            second_alt in 0u16..8,
+        ) {
+            let mut forest = Sppf::<ExactParseCost>::retaining_packing_evidence();
+            let first_cost = ExactParseCost::from_ticks(first_cost).unwrap();
+            let second_cost = ExactParseCost::from_ticks(second_cost).unwrap();
+            let first_rank = Some((first_position, RankFragment::lexical_only(None, first_alt)));
+            let second_rank = Some((second_position, RankFragment::lexical_only(None, second_alt)));
+            let first = forest.try_intern_packing_with_lexical_position(9, vec![], first_cost, first_rank, None).unwrap();
+            let checkpoint = forest.checkpoint();
+            let second = forest.try_intern_packing_with_lexical_position(9, vec![], second_cost, second_rank, None).unwrap();
+            prop_assert_eq!(first == second, first_cost == second_cost && first_rank == second_rank);
+            for (id, expected_cost, expected_rank) in [(first, first_cost, first_rank), (second, second_cost, second_rank)] {
+                prop_assert_eq!(forest.packing_lexical_position(id), expected_rank);
+                let SppfNode::Packing { weight, .. } = forest.node(id).unwrap() else { unreachable!() };
+                prop_assert_eq!(*weight, expected_cost);
+            }
+            let repeated = forest.try_intern_packing_with_lexical_position(9, vec![], second_cost, second_rank, Some(forest.len())).unwrap();
+            prop_assert_eq!(repeated, second);
+            forest.restore_to_checkpoint(checkpoint);
+            prop_assert_eq!(forest.packing_lexical_position(first), first_rank);
+            let restored = forest.try_intern_packing_with_lexical_position(9, vec![], second_cost, second_rank, None).unwrap();
+            prop_assert_eq!(restored, second);
+        }
     }
 }

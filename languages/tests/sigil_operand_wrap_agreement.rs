@@ -465,26 +465,29 @@ fn a_sigil_led_prefix_application_does_not_delimit_the_frame_it_leads() {
     assert_eq!(canonical, recanonical, "the canonical surface must be a `Display` fixpoint");
 }
 
-/// ★ THE CONTRAST, so the repair stays MINIMAL. A sigil-led prefix whose operand is in a
-/// DIFFERENT category (`PDrop . n:Name |- "*" n : Proc`) does not join `Proc`'s precedence
-/// ladder: `@*a.get(Nil)` parses, and re-introducing a bracket there would be the too-eager
-/// direction the file's second test guards. Measured 2026-07-27 over the whole sigil-led
-/// cohort: of the sixteen `Proc` rules whose sample renders sigil-led, fifteen keep a postfix
-/// tail after `@` and only `NegProc` — the sole SAME-category unary prefix among them — does
-/// not.
 #[cfg(feature = "rholang")]
 #[test]
-fn a_cross_category_sigil_prefix_still_delimits_the_frame_it_leads() {
+fn a_cross_category_prefix_preserves_the_enclosing_operand_floor() {
     use mettail_languages::rholang::{Name, Proc};
-    let inner = Proc::parse("*a.get(Nil)").expect("`*a.get(Nil)` parses at Proc");
-    let quoted = Name::NQuote(std::sync::Arc::new(inner));
-    assert_eq!(
-        format!("{quoted}"),
-        "@*a.get(Nil)",
-        "a cross-category sigil prefix keeps the BARE spelling — the bracket would be the \
-         too-eager direction"
-    );
-    assert!(Name::parse("@*a.get(Nil)").is_ok(), "and that bare spelling parses");
+    let inner = Proc::parse("*a.get(Nil)").expect("method receiver parses at Proc");
+    let expected = Name::NQuoteShort(std::sync::Arc::new(inner.clone()));
+    let quoted = Name::NQuote(std::sync::Arc::new(inner.clone()));
+    let bare = "@*a.get(Nil)";
+    assert!(Name::__all_with_weights_monolithic(bare).is_err());
+    assert!(Name::parse_via_wpda_all_with_weights(bare).is_err());
+    assert!(Name::parse(bare).is_err());
+    let grouped = "@(*a.get(Nil))";
+    let (readings, _) = Name::__all_with_weights_monolithic(grouped)
+        .expect("grouped operand parses in the main parser");
+    assert!(readings.contains(&quoted));
+    assert_eq!(Name::parse(grouped).expect("grouped operand parses in the facade"), expected);
+    let canonical = quoted.to_string();
+    let reparsed = Name::parse(&canonical).expect("canonical grouped operand parses");
+    match &reparsed {
+        Name::NQuote(payload) | Name::NQuoteShort(payload) => assert_eq!(payload.as_ref(), &inner),
+        other => panic!("expected a quote with the complete method payload, got {other:?}"),
+    }
+    assert_eq!(reparsed.to_string(), canonical);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════

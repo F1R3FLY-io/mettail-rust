@@ -1209,8 +1209,19 @@ fn generate_pure_collection_case(
         mettail_ast::types::CollectionType::Vec => {
             (quote! { ::std::vec::Vec::new() }, quote! { push })
         },
+        // Changed for sole-collection lane (carrier): a `HashSet(T)` field is
+        // `mettail_runtime::HashSetLit<T>` in the AST (`gen/types/enums.rs`), so a set is
+        // built as a set, not as a bag. The code was:
+        // mettail_ast::types::CollectionType::HashBag
+        // | mettail_ast::types::CollectionType::HashSet
+        // | mettail_ast::types::CollectionType::HashMap
+        // | mettail_ast::types::CollectionType::PathMap => {
+        //     (quote! { mettail_runtime::HashBag::new() }, quote! { insert })
+        // },
+        mettail_ast::types::CollectionType::HashSet => {
+            (quote! { mettail_runtime::HashSetLit::new() }, quote! { insert })
+        },
         mettail_ast::types::CollectionType::HashBag
-        | mettail_ast::types::CollectionType::HashSet
         | mettail_ast::types::CollectionType::HashMap
         | mettail_ast::types::CollectionType::PathMap => {
             (quote! { mettail_runtime::HashBag::new() }, quote! { insert })

@@ -40,6 +40,7 @@ mod owned_descriptor_reuse {
         language.types.push(LangType {
             name: id("IntList"),
             role: CategoryRole::Object,
+            admits_variables: true,
             native_type: Some(syn::parse_quote!(Vec<Int>)),
             collection_kind: Some(CollectionCategory::List(CollectionDelimiters {
                 open: "[".into(),

@@ -66,14 +66,13 @@
 //! accepts exactly `HashBag` / `HashSet` / `Vec` (`ast/src/grammar.rs:1454-1466`,
 //! error `"expected HashBag, HashSet, or Vec"`). `Vec` *is* the ordered,
 //! duplicate-preserving carrier the paper's `List` denotes, so `Vec` is what we
-//! use — but NOT as the sole parameter of the production, because that spelling
-//! does not survive codegen. Four spellings were tried; here is each and its
-//! exact failure, so the next reader need not repeat them:
+//! use. This grammar retains the arity split described below to preserve its
+//! constructor identities. The following failures describe the original implementation:
 //!
 //! 1. `JArr . Value ::= Vec(Value) sep "," delim "[" "]" ;` (BNF form) and
 //!    2. `JArr . vs:Vec(Value) |- "[" vs.*sep(",") "]" : Value ;` (judgement form)
-//!    — both **miscompile**. A rule whose SOLE parameter is a collection takes the
-//!    "collection-literal" codegen lane, and that lane hardcodes the `HashBag`
+//!    — both originally failed to compile. A rule whose SOLE parameter is a collection takes the
+//!    sole-collection codegen lane. That lane previously hardcoded the `HashBag`
 //!    carrier: `target/generated/json/term_generation.rs:86,93,107,128` build
 //!    `Value::JArr(bag)` with `bag: HashBag<Value>` for a `Vec<Value>` field,
 //!    `random_generation.rs:138` does the same for `JObj`, and `flatten.rs:15,39`
@@ -81,15 +80,16 @@
 //!    (item, multiplicity) shape) over a `Vec` field. Every existing
 //!    single-collection-param rule in the tree (`rholang` / `ambient` /
 //!    `commdemo` `PPar`) is a `HashBag`, so the bug is latent — and it is an
-//!    EMITTER bug (`macros/src/gen/…`), not a `grammar.rs` one. Reported, not
-//!    fixed unilaterally.
-//! 3. `JObj . Value ::= HashBag(Field) sep "," delim "{" "}" ;` — **miscompiles**
-//!    for a second, independent reason: the collection-literal lane also assumes
+//!    emitter defect (`macros/src/gen/…`). The current carrier-specific generation
+//!    supports sole `Vec` fields in both declaration forms.
+//! 3. `JObj . Value ::= HashBag(Field) sep "," delim "{" "}" ;` originally failed
+//!    for a second reason: the sole-collection lane also assumed
 //!    the element category IS the rule's own category (again, every existing use
 //!    is `HashBag(Proc) : Proc`), so `flatten.rs:17` pushes a `Field` into a
 //!    `Vec<Value>` and `normalize.rs:4181` calls
-//!    `insert_into_jobj(&mut HashBag<Value>, Field)`.
-//! 4. A native list carrier — `![Vec<Value>] as List { open_parts: ["["], … }`
+//!    `insert_into_jobj(&mut HashBag<Value>, Field)`. The current helper gate requires
+//!    the element category to equal the owner category. Cross-category bags insert directly.
+//! 4. The original native-list experiment used `![Vec<Value>] as List { open_parts: ["["], … }`
 //!    plus the injection `JArr . l:List |- l : Value ;` (the `rholang.rs:57`
 //!    idiom) — compiles and parses **in isolation**, but a native collection
 //!    alias may only be *named* `List` / `Bag` / `Map` / `Set` / `Pathmap`
@@ -103,7 +103,11 @@
 //!    `ast_enums.rs` and from `metadata().terms()` — the fold-alias/canonical
 //!    pairing pass, `ast/src/grammar_shapes.rs`).
 //!
-//! **The spelling that works — and what we use — is the arity split**, i.e. the
+//! The current `SoleCollectionCarrierDemo` fixture covers the repaired shapes in items 1–3.
+//! Its integration tests check parsing, normalization, multiplicity, display, and readback.
+//! Item 4 records a historical experiment. This repair does not establish its current status.
+//!
+//! **This grammar uses the arity split**, i.e. the
 //! `rholang.rs` `POutput` / `POutput2Plus` idiom, in which a `Vec(T)` slot is a
 //! *non-sole* parameter (Class 2). Such a slot is fully supported and may be
 //! heterogeneous (`rholang.rs:449-455` `InputBindQuery . … args:Vec(Proc) :

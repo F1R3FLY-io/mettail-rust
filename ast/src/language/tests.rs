@@ -468,6 +468,52 @@ fn category_roles_partition_structural_and_semantic_capabilities() {
     }
 }
 
+#[test]
+fn noadmit_preserves_object_semantics_and_only_removes_variable_admission() {
+    let language = parse_lang(quote::quote! {
+        name: CategoryAdmission,
+        types { Proc noadmit CostSig data Meta noadmit ![String] as Text }
+        terms { Zero . |- "0" : Proc; }
+    });
+    let proc = language
+        .get_type(&ident("Proc"))
+        .expect("ordinary object category");
+    let signature = language
+        .get_type(&ident("CostSig"))
+        .expect("closed object category");
+    let data = language
+        .get_type(&ident("Meta"))
+        .expect("structural data category");
+    let text = language
+        .get_type(&ident("Text"))
+        .expect("native closed object category");
+
+    assert!(proc.admits_variables());
+    assert!(proc.supports(CategoryCapability::SemanticRoot));
+    assert!(!signature.admits_variables());
+    assert!(signature.supports(CategoryCapability::SemanticTransit));
+    assert!(signature.supports(CategoryCapability::SemanticRoot));
+    assert!(!signature.supports(CategoryCapability::VariableCarrier));
+    assert!(signature.supports(CategoryCapability::StructuralLifecycle));
+    assert!(!data.admits_variables());
+    assert!(!data.supports(CategoryCapability::SemanticTransit));
+    assert!(!text.admits_variables());
+    assert!(text.supports(CategoryCapability::SemanticRoot));
+}
+
+#[test]
+fn standalone_noadmit_remains_a_valid_category_name() {
+    let language = parse_lang(quote::quote! {
+        name: ContextualNoAdmit,
+        types { Proc noadmit }
+        terms { Zero . |- "0" : Proc; }
+    });
+    assert!(language
+        .get_type(&ident("noadmit"))
+        .expect("named category")
+        .admits_variables());
+}
+
 /// Phase 5: After dropping the guard, the thread-local must be cleared.
 #[test]
 fn connective_map_guard_restores_on_drop() {

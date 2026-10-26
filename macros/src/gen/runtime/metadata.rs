@@ -17,8 +17,8 @@ use quote::{format_ident, quote};
 use syn::{LitByteStr, LitStr};
 
 use crate::gen::runtime::dovetail_report::semantic_adapter::{
-    derive_scalar_host_profile_record, derive_semantic_artifacts, SemanticAdapterLayout,
-    SemanticAdapterLayoutError,
+    derive_compound_host_profile_record_v2, derive_scalar_host_profile_record,
+    derive_semantic_artifacts, SemanticAdapterLayout, SemanticAdapterLayoutError,
 };
 
 fn collection_type_name(coll_type: &CollectionType) -> &'static str {
@@ -121,6 +121,8 @@ pub fn generate_metadata(
     let semantic_artifact_methods =
         generate_semantic_artifact_methods(language, adapter_layout.as_ref());
     let host_profile_methods = generate_host_profile_methods(language, adapter_layout.as_ref());
+    let compound_host_profile_methods =
+        generate_compound_host_profile_methods(language, adapter_layout.as_ref());
 
     Ok(quote! {
         /// Static metadata for the #name language
@@ -143,6 +145,7 @@ pub fn generate_metadata(
 
             #semantic_artifact_methods
             #host_profile_methods
+            #compound_host_profile_methods
 
             fn types(&self) -> &'static [mettail_runtime::TypeDef] {
                 #type_defs
@@ -314,6 +317,38 @@ fn generate_host_profile_methods(
             let refusal = LitStr::new(&reason, Span::call_site());
             quote! {
                 fn generated_projection_host_profile_refusal_v1(&self) -> Option<&'static str> {
+                    Some(#refusal)
+                }
+            }
+        },
+    }
+}
+
+fn generate_compound_host_profile_methods(
+    language: &LanguageDef,
+    layout: Result<&SemanticAdapterLayout, &SemanticAdapterLayoutError>,
+) -> TokenStream {
+    let result = layout
+        .map_err(|error| error.to_string())
+        .and_then(|layout| derive_compound_host_profile_record_v2(language, layout))
+        .and_then(|record| {
+            record
+                .canonical_bytes()
+                .map_err(|error| format!("{error:?}"))
+        });
+    match result {
+        Ok(bytes) => {
+            let bytes = LitByteStr::new(&bytes, Span::call_site());
+            quote! {
+                fn generated_projection_host_compound_profile_record_v2(&self) -> Option<&'static [u8]> {
+                    Some(#bytes)
+                }
+            }
+        },
+        Err(reason) => {
+            let refusal = LitStr::new(&reason, Span::call_site());
+            quote! {
+                fn generated_projection_host_compound_profile_refusal_v2(&self) -> Option<&'static str> {
                     Some(#refusal)
                 }
             }

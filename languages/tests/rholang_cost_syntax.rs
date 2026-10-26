@@ -3,8 +3,8 @@
 
 use mettail_languages::rholang::source_profile::{RholangSourceProfile, SourceRole};
 use mettail_languages::rholang::{
-    CostSig, CostStack, CostStackChain, InputBind, Proc, SourceConstructor, SourceProfile,
-    source_constructor,
+    source_constructor, CostSig, CostStack, CostStackChain, InputBind, Proc, SourceConstructor,
+    SourceProfile,
 };
 
 #[test]
@@ -63,14 +63,76 @@ fn stack_has_full_signature_grammar_but_keeps_the_cell() {
 }
 
 #[test]
+fn ungrouped_transfer_composition_preserves_cost_signature_rhs() {
+    let source = "alice -o bob :: ()";
+    let direct_stacks = CostStack::parse_via_wpda_all(source).expect("all ungrouped cost stacks");
+    assert!(direct_stacks
+        .iter()
+        .any(|stack| matches!(stack, CostStack::CostStackLift(..))));
+    let selected = Proc::parse(source).expect("transfer-headed cost stack");
+    assert!(matches!(selected, Proc::PCostStackCons(..)));
+    let all = Proc::parse_via_wpda_all(source).expect("all transfer-headed readings");
+    assert!(all.iter().any(|term| matches!(
+        term,
+        Proc::PCostStackCons(sig, _)
+            if matches!(sig.as_ref(), CostSig::CostSigTransfer(..))
+    )));
+}
+
+#[test]
+fn ungrouped_transfer_stack_cells_preserve_head_category_across_names() {
+    for left in ["alice", "bob", "carol"] {
+        for right in ["dave", "erin", "frank"] {
+            let source = format!("{left} -o {right} :: ()");
+            let readings = Proc::parse_via_wpda_all(&source).expect("ungrouped transfer stack");
+            assert!(
+                readings.iter().any(|term| matches!(term,
+                    Proc::PCostStackCons(sig, _)
+                        if matches!(sig.as_ref(), CostSig::CostSigTransfer(..)))),
+                "missing transfer-headed stack reading for {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn right_associative_transfer_remains_inside_ungrouped_stack_head() {
+    let readings = Proc::parse_via_wpda_all("alice -o bob -o carol :: ()")
+        .expect("right-associative transfer stack");
+    let has_right_associative_head = readings.iter().any(|term| match term {
+        Proc::PCostStackCons(sig, _) => match sig.as_ref() {
+            CostSig::CostSigTransfer(_, right) => {
+                matches!(right.as_ref(), CostSig::CostSigTransfer(..))
+            },
+            _ => false,
+        },
+        _ => false,
+    });
+    assert!(
+        has_right_associative_head,
+        "ungrouped stack lost right-associative CostSig head"
+    );
+}
+
+#[test]
+fn hash_signature_with_parallel_body_remains_a_cost_stack_source() {
+    let source = "#(Nil | Nil) :: ()";
+    let selected = Proc::parse(source).expect("hash-headed cost stack");
+    assert!(matches!(selected, Proc::PCostStackCons(..)));
+    let all = Proc::parse_via_wpda_all(source).expect("all hash-headed readings");
+    assert!(all.iter().any(|term| matches!(
+        term,
+        Proc::PCostStackCons(sig, _)
+            if matches!(sig.as_ref(), CostSig::CostSigHash(..))
+    )));
+}
+
+#[test]
 fn empty_stack_tail_parses_independently() {
     let tail = CostStack::parse_via_wpda_all("()").expect("empty stack tail");
-    assert!(
-        tail.iter()
-            .any(|node| matches!(node,
+    assert!(tail.iter().any(|node| matches!(node,
                 CostStack::CostStackLift(chain)
-                    if matches!(chain.as_ref(), CostStackChain::CostStackChainEmpty)))
-    );
+                    if matches!(chain.as_ref(), CostStackChain::CostStackChainEmpty))));
 }
 
 #[test]
@@ -112,8 +174,7 @@ fn nested_parallel_stack_tail_retains_one_shared_prefix() {
     let grouped_siblings = CostStack::parse_via_wpda_all("(bob :: () | carol :: ())")
         .expect("grouped stack parallel precedence");
     let source = "alice :: (bob :: () | carol :: ())";
-    let readings = CostStack::parse_via_wpda_all(source)
-        .expect("Appendix C stack parallel parses");
+    let readings = CostStack::parse_via_wpda_all(source).expect("Appendix C stack parallel parses");
     let elected = Proc::parse(source).expect("process root stack reading");
     assert!(
         siblings.iter().any(has_two_cons_branches),
@@ -128,12 +189,15 @@ fn nested_parallel_stack_tail_retains_one_shared_prefix() {
         "no canonical shared-prefix stack reading: {readings:#?}"
     );
 
-    assert!(matches!(
-        elected,
-        Proc::PCostStackCons(_, ref tail)
-            if matches!(tail.as_ref(), CostStackChain::CostStackChainGroup(inner)
-                if has_two_cons_branches(inner))
-    ), "elected process lost the shared prefix: {elected:#?}");
+    assert!(
+        matches!(
+            elected,
+            Proc::PCostStackCons(_, ref tail)
+                if matches!(tail.as_ref(), CostStackChain::CostStackChainGroup(inner)
+                    if has_two_cons_branches(inner))
+        ),
+        "elected process lost the shared prefix: {elected:#?}"
+    );
 }
 
 #[test]
@@ -198,10 +262,10 @@ fn cost_surface_is_structurally_admitted_by_the_closed_public_source_profile() {
 
 #[test]
 fn cost_source_profile_keeps_each_original_child_in_its_structural_role() {
-    use SourceRole::{Name, NamePattern, Term};
     use source_constructor::{
         CostSig as Sig, CostStack as Stack, CostStackChain as Chain, InputBind as Bind, Proc as P,
     };
+    use SourceRole::{Name, NamePattern, Term};
 
     let cases: &[(SourceConstructor, &[SourceRole])] = &[
         (SourceConstructor::Proc(P::PUnit), &[]),
@@ -235,4 +299,41 @@ fn cost_source_profile_keeps_each_original_child_in_its_structural_role() {
             .collect();
         assert_eq!(actual, expected, "wrong child roles for {constructor:?}");
     }
+}
+
+#[test]
+fn signed_term_delimiters_preserve_complete_operator_bodies() {
+    let mut failures = Vec::new();
+    for source in [
+        "{%Nil%}[@Nil]",
+        "{%Nil == Nil%}[@Nil]",
+        "{%Nil - Nil%}[@Nil]",
+        "{%Nil == Nil %}[@Nil]",
+    ] {
+        if let Err(error) = mettail_languages::rholang::Proc::parse(source) {
+            failures.push(format!("{source:?}: {error}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn nested_signed_operator_terms_preserve_the_complete_body() {
+    use mettail_languages::rholang::{Int, Name};
+    use std::sync::Arc;
+
+    let signed = Arc::new(Proc::PCostSignedTerm(
+        Arc::new(Proc::Eq(Arc::new(Proc::PZero), Arc::new(Proc::PZero))),
+        Arc::new(CostSig::CostSigGround(Arc::new(Name::NQuoteNil))),
+    ));
+    let hash = CostSig::CostSigHash(Arc::clone(&signed));
+    let source = hash.to_string();
+    let (readings, _) = CostSig::__all_with_weights_monolithic(&source).expect("hash main parser");
+    assert!(readings.contains(&hash), "signed hash body missing: {source:?}");
+    assert_eq!(CostSig::parse(&source).expect("hash facade"), hash);
+    let cast = Proc::IntBinProc(signed, Arc::new(Int::parse("a").expect("integer variable")));
+    let source = cast.to_string();
+    let (readings, _) = Proc::__all_with_weights_monolithic(&source).expect("cast main parser");
+    assert!(readings.contains(&cast), "signed cast body missing: {source:?}");
+    assert_eq!(Proc::parse(&source).expect("cast facade"), cast);
 }

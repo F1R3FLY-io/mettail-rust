@@ -298,144 +298,44 @@ pub fn emit_rule_leads_with_literal_body(per_cat: &[Vec<(u16, &GrammarRule)>]) -
     }
 }
 
-/// AT_QUOTED_BIND_GATE realize-backstop (option B, 2026-07-03). Emit the body
-/// of `WpdaEngine::sigil_quoted_bind_overgen_rule(src_idx, rule_idx) -> bool`.
-///
-/// The DROP-SET: a rule `R` in category `C` is a generic whole-source bind rule
-/// that a sigil-quoted sibling subsumes iff (a) `R.syntax_pattern[0]` is a
-/// `Param` (the whole-`source` LHS — NOT a leading literal), (b) `R` carries at
-/// least one interior bind-trigger literal `T`, and (c) `C` contains a
-/// SIGIL-LED sibling `R'` (`R'.syntax_pattern[0]` a `Literal`) that ALSO carries
-/// `T` as an interior literal. For rholang InputBind this selects rule 7
-/// `InputBind (lhs "<-" n)`, rule 8 `InputBindPersistent (lhs "<=" n)`, and
-/// rule 0 `InputBindQuery (lhs "<-" n "!" "?" …)` — each subsumed by
-/// InputBindQuoted / …Persistent / …Query respectively. Polyadic rules
-/// (`lhs "," …`) are EXCLUDED: their bind position follows a `,` that no
-/// sigil-led sibling carries, so no `R'` matches. Grammar-derived; empty ⇒
-/// default `false`.
-pub fn emit_sigil_quoted_bind_overgen_rule_body(
-    per_cat: &[Vec<(u16, &GrammarRule)>],
-) -> TokenStream {
-    use mettail_ast::grammar::SyntaxExpr;
-    // Per category: the set of interior literals carried by SIGIL-LED rules
-    // (sp[0] == Literal). These are the bind-trigger positions a quoted sibling
-    // provides.
-    let mut arms: Vec<TokenStream> = Vec::new();
-    for (ci, rules) in per_cat.iter().enumerate() {
-        let cat_u16 = ci as u16;
-        // sigil-led interior literals for THIS category.
-        let mut sigil_interior: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
-        for (_ri, rule) in rules {
-            let Some(sp) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            if !matches!(sp.first(), Some(SyntaxExpr::Literal(_))) {
-                continue;
-            }
-            for (i, e) in sp.iter().enumerate() {
-                if i == 0 {
-                    continue;
-                }
-                if let SyntaxExpr::Literal(t) = e {
-                    sigil_interior.insert(t.clone());
-                }
-            }
-        }
-        if sigil_interior.is_empty() {
-            continue;
-        }
-        for (rule_idx, rule) in rules {
-            let Some(sp) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            // (a) whole-source: first syntax element is a Param.
-            if !matches!(sp.first(), Some(SyntaxExpr::Param(_))) {
-                continue;
-            }
-            // (b)+(c): some interior literal of R is also carried by a
-            // sigil-led sibling of the same category.
-            let has_shared_bind_trigger = sp.iter().enumerate().any(|(i, e)| {
-                i > 0 && matches!(e, SyntaxExpr::Literal(t) if sigil_interior.contains(t))
-            });
-            if has_shared_bind_trigger {
-                let r = *rule_idx;
-                arms.push(quote! { (#cat_u16, #r) => true, });
-            }
-        }
-    }
-    if arms.is_empty() {
-        quote! { false }
-    } else {
-        quote! {
-            match (src_idx, rule_idx) {
-                #(#arms)*
-                _ => false,
-            }
-        }
-    }
-}
-
-/// AT_QUOTED_BIND_GATE realize-backstop companion (option B, 2026-07-03). Emit
-/// the body of `WpdaEngine::sigil_quoted_source_atom_rule(src_idx, rule_idx) ->
-/// bool`.
-///
-/// The SIGIL-ATOM set: a rule `R` in category `S` whose `syntax_pattern[0]` is
-/// a Literal `σ` that ALSO leads a sibling rule in a DIFFERENT result category
-/// `C ≠ S` (so `σ` both makes `σ…` an `S` atom and directly triggers a rule in
-/// `C`). For rholang this selects `NQuoteShort . p:Proc |- "@" p : Name` and
-/// `NQuote . p:Proc |- "@" "(" p ")" : Name` (both `@`-led in Name, and `@`
-/// also leads InputBindQuoted in InputBind). The realize backstop uses this to
-/// decide whether a whole-source packing's `children[0]` is `σ`-quoted.
-/// Grammar-derived; empty ⇒ default `false`.
-pub fn emit_sigil_quoted_source_atom_rule_body(
+pub fn emit_sigil_quoted_bind_rule_pair_body(
     categories: &[String],
     per_cat: &[Vec<(u16, &GrammarRule)>],
     language: &LanguageDef,
 ) -> TokenStream {
-    use mettail_ast::grammar::SyntaxExpr;
-    // For each category, the leading literals of its rules (grammar-wide).
-    let mut leads_by_cat: Vec<std::collections::BTreeSet<String>> =
-        vec![std::collections::BTreeSet::new(); categories.len()];
-    for (ci, rules) in per_cat.iter().enumerate() {
-        for (_ri, rule) in rules {
-            if let Some(sp) = rule.syntax_pattern.as_ref() {
-                if let Some(SyntaxExpr::Literal(t)) = sp.first() {
-                    leads_by_cat[ci].insert(t.clone());
-                }
-            }
-        }
-    }
-    let _ = language;
-    let mut arms: Vec<TokenStream> = Vec::new();
-    for (ci, rules) in per_cat.iter().enumerate() {
-        for (rule_idx, rule) in rules {
-            let Some(sp) = rule.syntax_pattern.as_ref() else {
-                continue;
-            };
-            let Some(SyntaxExpr::Literal(sigil)) = sp.first() else {
-                continue;
-            };
-            // σ must lead a sibling in a DIFFERENT category.
-            let leads_elsewhere = leads_by_cat
+    let mut pairs = std::collections::BTreeSet::new();
+    for family in super::kind_dispatch::quoted_bind_families(language) {
+        let Some(result) = categories.iter().position(|name| name == &family.result) else {
+            continue;
+        };
+        let Some(source) = categories.iter().position(|name| name == &family.source) else {
+            continue;
+        };
+        for (whole_label, atom_label) in family.rule_pairs {
+            let Some((whole, _)) = per_cat[result]
                 .iter()
-                .enumerate()
-                .any(|(cj, leads)| cj != ci && leads.contains(sigil));
-            if leads_elsewhere {
-                let cat_u16 = ci as u16;
-                let r = *rule_idx;
-                arms.push(quote! { (#cat_u16, #r) => true, });
-            }
+                .find(|(_, rule)| rule.label == whole_label)
+            else {
+                continue;
+            };
+            let Some((atom, _)) = per_cat[source]
+                .iter()
+                .find(|(_, rule)| rule.label == atom_label)
+            else {
+                continue;
+            };
+            pairs.insert((result as u16, *whole, source as u16, *atom));
         }
     }
-    if arms.is_empty() {
-        quote! { false }
-    } else {
+    let arms = pairs.into_iter().map(|(result, whole, source, atom)| {
         quote! {
-            match (src_idx, rule_idx) {
-                #(#arms)*
-                _ => false,
-            }
+            (#result, #whole, #source, #atom) => true,
+        }
+    });
+    quote! {
+        match (result_src_idx, whole_rule_idx, source_src_idx, atom_rule_idx) {
+            #(#arms)*
+            _ => false,
         }
     }
 }
@@ -1238,7 +1138,7 @@ fn emit_collection_action_entry(
     // container type that matches the AST variant's payload:
     //   Vec → std::vec::Vec<E>
     //   HashBag → mettail_runtime::HashBag<E>
-    //   HashSet → std::collections::HashSet<E>
+    //   HashSet → mettail_runtime::HashSetLit<E>
     //   HashMap → mettail_runtime::HashMapLit<K, V>  (NOT std::HashMap;
     //     `Map::MapLit(HashMapLit)` per ast_enums.rs:750. The wrapper
     //     gives deterministic Hash/Ord required by Ascent relations.)
@@ -2344,6 +2244,7 @@ mod tests {
         lang.types.push(LangType {
             name: Ident::new("Int", Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: Some(parse_quote!(i32)),
             collection_kind: None,
         });
@@ -2481,6 +2382,7 @@ mod tests {
         lang.types.push(LangType {
             name: Ident::new(cat, Span::call_site()),
             role: Default::default(),
+            admits_variables: true,
             native_type: Some(native),
             collection_kind: None,
         });
