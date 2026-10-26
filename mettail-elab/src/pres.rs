@@ -576,7 +576,7 @@ impl Presentation {
                 let bindings =
                     r.rw.context
                         .iter()
-                        .map(|binding| format!("{}:{}", binding.name, binding.sort.render()))
+                        .map(|binding| format!("{}:{}", binding.name, binding.render_sort()))
                         .collect::<Vec<_>>();
                 line.push_str(&format!("({})", bindings.join(", ")));
             }

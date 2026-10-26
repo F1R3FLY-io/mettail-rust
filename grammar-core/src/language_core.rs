@@ -242,17 +242,25 @@ impl TheoryCoreV1 {
                 &equation.arena,
                 equation.left,
                 equation.right,
+                None,
                 false,
                 &validation,
                 &mut errors,
             );
         }
         for rewrite in &self.rewrites {
+            let grade = self.cost.as_ref().and_then(|cost| {
+                cost.grade_rules
+                    .iter()
+                    .find(|grade| grade.rewrite == rewrite.name)
+                    .map(|grade| (grade.term, cost.signature_sort.as_str()))
+            });
             validate_rule_arena(
                 &rewrite.name,
                 &rewrite.arena,
                 rewrite.left,
                 rewrite.right,
+                grade,
                 true,
                 &validation,
                 &mut errors,
@@ -383,6 +391,88 @@ impl TheoryCoreV1 {
                 &sorts,
                 &mut errors,
             );
+            // The signature product and unit are constructors in the source
+            // theory, not names a runtime may interpret as implicit fuel.
+            for (name, domain, kind) in [
+                (cost.unit.as_str(), Vec::new(), "cost signature unit"),
+                (
+                    cost.product.as_str(),
+                    vec![cost.signature_sort.as_str(), cost.signature_sort.as_str()],
+                    "cost signature product",
+                ),
+            ] {
+                match self
+                    .constructors
+                    .iter()
+                    .find(|constructor| constructor.name == name)
+                {
+                    None => errors.push(TheoryValidationError::UnknownReference {
+                        kind,
+                        name: name.to_string(),
+                    }),
+                    Some(constructor)
+                        if constructor.codomain != cost.signature_sort
+                            || constructor
+                                .domain
+                                .iter()
+                                .map(String::as_str)
+                                .collect::<Vec<_>>()
+                                != domain =>
+                    {
+                        errors.push(TheoryValidationError::SortMismatch {
+                            owner: format!("{kind} `{name}`"),
+                            expected: format!("{:?} -> {}", domain, cost.signature_sort),
+                            actual: format!("{:?} -> {}", constructor.domain, constructor.codomain),
+                        });
+                    },
+                    Some(_) => {},
+                }
+            }
+            // Cost signatures are keys, not a second reduction system. The
+            // monoid laws may be equations, but a directed rewrite of Sig
+            // would make the resource consumed by a step time-dependent.
+            for rewrite in &self.rewrites {
+                if rewrite
+                    .arena
+                    .terms
+                    .get(rewrite.left.0 as usize)
+                    .is_some_and(|term| term.sort == cost.signature_sort)
+                {
+                    errors.push(TheoryValidationError::CostSignatureRewrite {
+                        rewrite: rewrite.name.clone(),
+                    });
+                }
+            }
+            unique_names(
+                cost.grade_rules.iter().map(|grade| grade.rewrite.as_str()),
+                "cost grade rule",
+                &mut errors,
+            );
+            let rewrite_names: BTreeSet<&str> = self
+                .rewrites
+                .iter()
+                .map(|rewrite| rewrite.name.as_str())
+                .collect();
+            let graded_names: BTreeSet<&str> = cost
+                .grade_rules
+                .iter()
+                .map(|grade| grade.rewrite.as_str())
+                .collect();
+            for grade in &cost.grade_rules {
+                if !rewrite_names.contains(grade.rewrite.as_str()) {
+                    errors.push(TheoryValidationError::UnknownReference {
+                        kind: "costed rewrite",
+                        name: grade.rewrite.clone(),
+                    });
+                }
+            }
+            for rewrite in &self.rewrites {
+                if !graded_names.contains(rewrite.name.as_str()) {
+                    errors.push(TheoryValidationError::MissingCostGrade {
+                        rewrite: rewrite.name.clone(),
+                    });
+                }
+            }
         }
         if let Some(projection) = &self.resource_projection {
             require_sorts(
@@ -695,10 +785,21 @@ pub struct CostDeclV1 {
     pub product: String,
     pub unit: String,
     pub rules: Vec<String>,
+    /// The exact consumed-signature term for each directed rewrite. A root
+    /// refers to a node in that rewrite's arena, so grade construction uses
+    /// the same checked substitution as the successor; no effect class or
+    /// parser weight may manufacture a grade.
+    pub grade_rules: Vec<CostGradeRuleV1>,
     pub eta: String,
     pub mu: String,
     pub map: String,
     pub laws: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CostGradeRuleV1 {
+    pub rewrite: String,
+    pub term: TheoryTermId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -784,6 +885,12 @@ pub enum TheoryValidationError {
     StructuralProfileContainsOslfData,
     ContinuedRequiresInteractive,
     CostRequiresContinued,
+    MissingCostGrade {
+        rewrite: String,
+    },
+    CostSignatureRewrite {
+        rewrite: String,
+    },
     DuplicateName {
         kind: &'static str,
         name: String,
@@ -1210,28 +1317,25 @@ fn validate_signature(
     for constructor in &theory.constructors {
         require_sorts(constructor.domain.iter().map(String::as_str), sorts, errors);
         require_sort(&constructor.codomain, sorts, errors);
-        let Some(production) = grammar_constructors.get(constructor.name.as_str()) else {
-            errors.push(TheoryValidationError::UnknownReference {
-                kind: "grammar constructor",
-                name: constructor.name.clone(),
-            });
-            continue;
-        };
-        if grammar
-            .categories
-            .get(production.result.0 as usize)
-            .map(|category| category.name.as_str())
-            != Some(constructor.codomain.as_str())
-        {
-            errors.push(TheoryValidationError::SortMismatch {
-                owner: format!("constructor `{}`", constructor.name),
-                expected: grammar
-                    .categories
-                    .get(production.result.0 as usize)
-                    .map(|category| category.name.clone())
-                    .unwrap_or_default(),
-                actual: constructor.codomain.clone(),
-            });
+        // Semantic constructors need not have concrete grammar productions.
+        // A binding, when present, must still agree with the source signature.
+        if let Some(production) = grammar_constructors.get(constructor.name.as_str()) {
+            if grammar
+                .categories
+                .get(production.result.0 as usize)
+                .map(|category| category.name.as_str())
+                != Some(constructor.codomain.as_str())
+            {
+                errors.push(TheoryValidationError::SortMismatch {
+                    owner: format!("constructor `{}`", constructor.name),
+                    expected: grammar
+                        .categories
+                        .get(production.result.0 as usize)
+                        .map(|category| category.name.clone())
+                        .unwrap_or_default(),
+                    actual: constructor.codomain.clone(),
+                });
+            }
         }
     }
     if theory.profile == TheoryProfileV1::Oslf {
@@ -1336,6 +1440,7 @@ fn validate_rule_arena(
     arena: &TheoryRuleArenaV1,
     left: TheoryTermId,
     right: TheoryTermId,
+    grade: Option<(TheoryTermId, &str)>,
     allow_transition: bool,
     validation: &TheoryValidationContext<'_>,
     errors: &mut Vec<TheoryValidationError>,
@@ -1370,6 +1475,18 @@ fn validate_rule_arena(
         });
     }
     let mut term_roots = vec![left, right];
+    if let Some((grade_term, expected_sort)) = grade {
+        if let Some(grade_node) = term_node(rule, &arena.terms, grade_term, errors) {
+            if grade_node.sort != expected_sort {
+                errors.push(TheoryValidationError::SortMismatch {
+                    owner: format!("rewrite `{rule}` resource grade"),
+                    expected: expected_sort.to_string(),
+                    actual: grade_node.sort.clone(),
+                });
+            }
+            term_roots.push(grade_term);
+        }
+    }
     for premise in &arena.premises {
         if let TheoryPremiseFormV1::Judgment(atom) = &premise.form {
             term_roots.extend(atom.terms.iter().copied());
@@ -1446,7 +1563,14 @@ fn validate_rule_arena(
             errors.push(TheoryValidationError::UnreachablePremise(index as u32));
         }
     }
-    for variable in right_occurrences.keys() {
+    let grade_occurrences = grade.map(|(grade_term, _)| {
+        variable_occurrences(grade_term, &arena.terms, &comprehension_bound_occurrences)
+    });
+    for variable in right_occurrences.keys().chain(
+        grade_occurrences
+            .iter()
+            .flat_map(|occurrences| occurrences.keys()),
+    ) {
         if !available.contains(variable) {
             let name = arena
                 .variables
@@ -2711,6 +2835,7 @@ mod tests {
             product: "product".into(),
             unit: "unit".into(),
             rules: vec![],
+            grade_rules: vec![],
             eta: "eta".into(),
             mu: "mu".into(),
             map: "map".into(),
@@ -2783,6 +2908,18 @@ mod tests {
         .into_iter()
         .map(opaque_sort)
         .collect();
+        theory.constructors.extend([
+            TheoryConstructorV1 {
+                name: "SigUnit".into(),
+                domain: Vec::new(),
+                codomain: "Sig".into(),
+            },
+            TheoryConstructorV1 {
+                name: "SigProduct".into(),
+                domain: vec!["Sig".into(), "Sig".into()],
+                codomain: "Sig".into(),
+            },
+        ]);
         theory.effects.push(EffectDeclV1 {
             name: "pure".into(),
             class: SemanticEffectClassV1::Pure,
@@ -2823,9 +2960,10 @@ mod tests {
             stack_sort: "Stack".into(),
             wrapped_sort: "Wrapped".into(),
             located_sort: "Located".into(),
-            product: "product".into(),
-            unit: "unit".into(),
+            product: "SigProduct".into(),
+            unit: "SigUnit".into(),
             rules: Vec::new(),
+            grade_rules: Vec::new(),
             eta: "eta".into(),
             mu: "mu".into(),
             map: "map".into(),
@@ -2839,6 +2977,213 @@ mod tests {
             proof: "projection_is_exact".into(),
         });
         theory
+    }
+
+    fn costed_rewrite_theory() -> TheoryCoreV1 {
+        let mut theory = costed_action_theory();
+        theory.constructors.extend([TheoryConstructorV1 {
+            name: "ExprAtom".into(),
+            domain: Vec::new(),
+            codomain: "Expr".into(),
+        }]);
+        theory.rewrites.push(TheoryRewriteV1 {
+            name: "step_rule".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: Vec::new(),
+                terms: vec![
+                    TheoryTermNodeV1 {
+                        sort: "Expr".into(),
+                        form: TheoryTermFormV1::Constructor {
+                            constructor: "ExprAtom".into(),
+                            arguments: Vec::new(),
+                        },
+                    },
+                    TheoryTermNodeV1 {
+                        sort: "Sig".into(),
+                        form: TheoryTermFormV1::Constructor {
+                            constructor: "SigUnit".into(),
+                            arguments: Vec::new(),
+                        },
+                    },
+                ],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            },
+            left: TheoryTermId(0),
+            right: TheoryTermId(0),
+        });
+        theory
+    }
+
+    #[test]
+    fn costed_rewrite_needs_a_checked_grade_root() {
+        let grammar = GrammarCoreV1::new("Guest");
+        let mut theory = costed_rewrite_theory();
+        assert!(theory
+            .validation_errors(&grammar)
+            .iter()
+            .any(|error| matches!(
+                error,
+                TheoryValidationError::MissingCostGrade { rewrite } if rewrite == "step_rule"
+            )));
+
+        theory
+            .cost
+            .as_mut()
+            .unwrap()
+            .grade_rules
+            .push(CostGradeRuleV1 {
+                rewrite: "step_rule".into(),
+                term: TheoryTermId(1),
+            });
+        assert_eq!(theory.validation_errors(&grammar), Vec::new());
+
+        theory.cost.as_mut().unwrap().grade_rules[0].term = TheoryTermId(0);
+        assert!(theory
+            .validation_errors(&grammar)
+            .iter()
+            .any(|error| matches!(
+                error,
+                TheoryValidationError::SortMismatch { owner, expected, actual }
+                    if owner == "rewrite `step_rule` resource grade"
+                        && expected == "Sig" && actual == "Expr"
+            )));
+    }
+
+    #[test]
+    fn cost_grade_cannot_reference_a_nonexistent_rewrite() {
+        let grammar = GrammarCoreV1::new("Guest");
+        let mut theory = costed_rewrite_theory();
+        theory
+            .cost
+            .as_mut()
+            .unwrap()
+            .grade_rules
+            .push(CostGradeRuleV1 {
+                rewrite: "other_rule".into(),
+                term: TheoryTermId(1),
+            });
+        let errors = theory.validation_errors(&grammar);
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::UnknownReference { kind: "costed rewrite", name }
+                if name == "other_rule"
+        )));
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            TheoryValidationError::MissingCostGrade { rewrite } if rewrite == "step_rule"
+        )));
+    }
+
+    #[test]
+    fn cost_grade_may_only_use_variables_bound_by_the_same_rule() {
+        let grammar = GrammarCoreV1::new("Guest");
+        let mut theory = costed_rewrite_theory();
+        theory.rewrites[0].arena.variables.push(TheoryVariableV1 {
+            id: TheoryVariableId(0),
+            name: "unmatched_signature".into(),
+            sort: "Sig".into(),
+            role: TheoryVariableRoleV1::Input,
+        });
+        theory.rewrites[0].arena.terms[1].form = TheoryTermFormV1::Variable(TheoryVariableId(0));
+        theory
+            .cost
+            .as_mut()
+            .unwrap()
+            .grade_rules
+            .push(CostGradeRuleV1 {
+                rewrite: "step_rule".into(),
+                term: TheoryTermId(1),
+            });
+        assert!(theory
+            .validation_errors(&grammar)
+            .iter()
+            .any(|error| matches!(
+                error,
+                TheoryValidationError::UnboundVariable { rule, variable }
+                    if rule == "step_rule" && variable == "unmatched_signature"
+            )));
+    }
+
+    #[test]
+    fn cost_signature_operations_must_have_the_declared_sort_and_arity() {
+        let grammar = GrammarCoreV1::new("Guest");
+        let mut theory = costed_action_theory();
+        assert!(theory.validation_errors(&grammar).is_empty());
+
+        theory
+            .constructors
+            .retain(|constructor| constructor.name != "SigUnit");
+        assert!(theory
+            .validation_errors(&grammar)
+            .iter()
+            .any(|error| matches!(
+                error,
+                TheoryValidationError::UnknownReference {
+                    kind: "cost signature unit",
+                    name
+                } if name == "SigUnit"
+            )));
+
+        theory.constructors.push(TheoryConstructorV1 {
+            name: "SigUnit".into(),
+            domain: Vec::new(),
+            codomain: "Sig".into(),
+        });
+        theory
+            .constructors
+            .iter_mut()
+            .find(|constructor| constructor.name == "SigProduct")
+            .unwrap()
+            .domain = vec!["Sig".into()];
+        assert!(theory
+            .validation_errors(&grammar)
+            .iter()
+            .any(|error| matches!(
+                error,
+                TheoryValidationError::SortMismatch { owner, .. }
+                    if owner == "cost signature product `SigProduct`"
+            )));
+    }
+
+    #[test]
+    fn cost_signature_sort_cannot_be_a_directed_rewrite_domain() {
+        let grammar = GrammarCoreV1::new("Guest");
+        let mut theory = costed_action_theory();
+        theory.rewrites.push(TheoryRewriteV1 {
+            name: "rewrite_sig".into(),
+            arena: TheoryRuleArenaV1 {
+                variables: Vec::new(),
+                terms: vec![TheoryTermNodeV1 {
+                    sort: "Sig".into(),
+                    form: TheoryTermFormV1::Constructor {
+                        constructor: "SigUnit".into(),
+                        arguments: Vec::new(),
+                    },
+                }],
+                premises: Vec::new(),
+                premise_roots: Vec::new(),
+            },
+            left: TheoryTermId(0),
+            right: TheoryTermId(0),
+        });
+        theory
+            .cost
+            .as_mut()
+            .unwrap()
+            .grade_rules
+            .push(CostGradeRuleV1 {
+                rewrite: "rewrite_sig".into(),
+                term: TheoryTermId(0),
+            });
+        assert!(theory
+            .validation_errors(&grammar)
+            .iter()
+            .any(|error| matches!(
+                error,
+                TheoryValidationError::CostSignatureRewrite { rewrite }
+                    if rewrite == "rewrite_sig"
+            )));
     }
 
     #[test]
@@ -3258,6 +3603,7 @@ mod tests {
             &arena,
             TheoryTermId(1),
             TheoryTermId(1),
+            None,
             true,
             &validation,
             &mut errors,
@@ -3270,6 +3616,7 @@ mod tests {
             &arena,
             TheoryTermId(1),
             TheoryTermId(0),
+            None,
             true,
             &validation,
             &mut escaping,

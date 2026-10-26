@@ -1,0 +1,33 @@
+@startuml
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam activity {
+  BackgroundColor #E8F1FF
+  BorderColor #315E93
+  FontColor #17324F
+  DiamondBackgroundColor #FFF2D8
+  DiamondBorderColor #9B6A18
+  ArrowColor #315E93
+}
+skinparam defaultFontName DejaVu Sans
+
+start
+:Cross-category source edge
+<color:#315E93>R, S, K</color>;
+if (One-token source certificate?) then (yes)
+  :Advance the selected lexical edge;
+  if (Successor observation known?) then (yes)
+    :Inspect every successor alternative;
+    if (Target or source-extension operator?) then (yes)
+      :Keep delegate; <<#DDF4E2>>
+    else (no)
+      :Reject impossible delegate; <<#FBE5E5>>
+    endif
+  else (unknown)
+    :Keep delegate; <<#DDF4E2>>
+  endif
+else (unknown)
+  :Keep delegate; <<#DDF4E2>>
+endif
+stop
+@enduml

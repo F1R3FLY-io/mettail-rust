@@ -106,3 +106,56 @@ Print Assumptions rejection_stops_before_earlier_source_drains.
 Print Assumptions fault_preserves_post_drain_state.
 Print Assumptions two_slots_keep_source_indices_and_reverse_callback_order.
 End OwnedCollectionAction.
+
+Module StandaloneCollectionSelection.
+
+Inductive Carrier := BagCarrier | SetCarrier | SequenceCarrier | MapCarrier | PathMapCarrier.
+Inductive Input := TermInput : nat -> Input | CollectionInput : nat -> Carrier -> Input.
+Inductive Action := Inputs : list Input -> Action | OtherAction : nat -> Action | Unsupported.
+
+Definition before (binder : option Action) (collection : option (nat * Carrier))
+    (fallback : Action) : Action :=
+  match binder with
+  | Some action => action
+  | None => match collection with Some _ => Unsupported | None => fallback end
+  end.
+
+Definition select (binder : option Action) (collection : option (nat * Carrier))
+    (fallback : Action) : Action :=
+  match binder with
+  | Some action => action
+  | None => match collection with
+      | Some (element, kind) => Inputs [CollectionInput element kind]
+      | None => fallback
+      end
+  end.
+
+Theorem before_rejects_standalone_collection : forall element kind fallback,
+  before None (Some (element, kind)) fallback = Unsupported.
+Proof. reflexivity. Qed.
+
+Theorem standalone_has_one_ordered_input : forall element kind fallback,
+  select None (Some (element, kind)) fallback = Inputs [CollectionInput element kind].
+Proof. reflexivity. Qed.
+
+Theorem binder_priority_is_unchanged : forall action collection fallback,
+  select (Some action) collection fallback = before (Some action) collection fallback.
+Proof. reflexivity. Qed.
+
+Theorem noncollection_fallback_is_unchanged : forall fallback,
+  select None None fallback = before None None fallback.
+Proof. reflexivity. Qed.
+
+Theorem selected_collection_preserves_element_and_kind :
+  forall element kind fallback actual_element actual_kind,
+  select None (Some (element, kind)) fallback = Inputs [CollectionInput actual_element actual_kind] ->
+  element = actual_element /\ kind = actual_kind.
+Proof. intros. inversion H. auto. Qed.
+
+Print Assumptions before_rejects_standalone_collection.
+Print Assumptions standalone_has_one_ordered_input.
+Print Assumptions binder_priority_is_unchanged.
+Print Assumptions noncollection_fallback_is_unchanged.
+Print Assumptions selected_collection_preserves_element_and_kind.
+
+End StandaloneCollectionSelection.

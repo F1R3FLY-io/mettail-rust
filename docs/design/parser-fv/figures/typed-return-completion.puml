@@ -1,0 +1,31 @@
+@startuml
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam activity {
+  BackgroundColor #E8F1FF
+  BorderColor #315E93
+  FontColor #17324F
+  DiamondBackgroundColor #FFF2D8
+  DiamondBorderColor #9B6A18
+  ArrowColor #315E93
+}
+skinparam defaultFontName DejaVu Sans
+
+start
+:Pending binary Return\nwith a completed right operand;
+if (Certified operator outcomes\nand enclosing floor?) then (yes)
+  if (Every outcome foreign\nto the right-operand categories?) then (yes)
+    fork
+      :Keep every original operator branch; <<#DDF4E2>>
+    fork again
+      :Add one zero-consume Return completion; <<#DDEBFF>>
+      :Existing GSS/SPPF pop resumes\nat the saved enclosing floor; <<#DDEBFF>>
+    end fork
+  else (mixed or compatible)
+    :Keep original branches only; <<#DDF4E2>>
+  endif
+else (unknown)
+  :Keep original action unchanged; <<#DDF4E2>>
+endif
+stop
+@enduml

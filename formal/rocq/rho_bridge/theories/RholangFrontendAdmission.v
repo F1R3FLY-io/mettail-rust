@@ -19,6 +19,7 @@ Inductive Position := Term | Name | Pattern | Guard | Declaration.
 Inductive Form :=
 | Zero | Parallel | Send | Fresh | Receive | VariableForm | Quote | Drop
 | Scalar | ListValue | MapValue | Method | Ddl | Flt | BooleanOp
+| CostTerm | CostSignature | CostStack | SignedBind
 | Unsupported (category constructor : string).
 
 Inductive Obligation :=
@@ -41,11 +42,15 @@ Definition classify_form (p : Position) (f : Form) : FormResult :=
     | Term, Zero | Term, Parallel | Term, Send | Term, Fresh | Term, Receive
     | Term, VariableForm | Term, Drop | Term, Scalar | Term, ListValue
     | Term, MapValue | Term, Method | Term, BooleanOp
+    | Term, CostSignature | Term, CostStack | Term, SignedBind
     | Name, VariableForm | Name, Quote | Name, Scalar
     | Pattern, VariableForm | Pattern, Quote | Pattern, Scalar
     | Pattern, ListValue | Pattern, MapValue
     | Guard, VariableForm | Guard, Scalar | Guard, Method | Guard, BooleanOp =>
         Supported [ResolveScope; ValidateStructure]
+    | Term, CostTerm => Supported
+        [ResolveScope; ValidateStructure; CheckLiveAuthority;
+         ProjectResources; FundCommit]
     | Term, Ddl | Declaration, Ddl =>
         Supported [ResolveScope; ValidateStructure; BindProvider]
     | Term, Flt => Supported
@@ -70,6 +75,80 @@ Theorem unsupported_constructor_rejected : forall p category constructor,
   classify_form p (Unsupported category constructor) =
     UnsupportedForm p (Unsupported category constructor).
 Proof. reflexivity. Qed.
+
+(** Classifying cost syntax is not a funding certificate. A signature, stack,
+    or signed input bind retains its structural children and still needs the
+    live authority/resource gates on the enclosing executable cost term. *)
+Theorem cost_signature_classification_is_not_funding :
+  classify_form Term CostSignature =
+    Supported [ResolveScope; ValidateStructure] /\
+  classify_form Term CostStack =
+    Supported [ResolveScope; ValidateStructure] /\
+  classify_form Term SignedBind =
+    Supported [ResolveScope; ValidateStructure].
+Proof. repeat split; reflexivity. Qed.
+
+Theorem executable_cost_term_retains_live_funding_obligations :
+  classify_form Term CostTerm =
+    Supported [ResolveScope; ValidateStructure; CheckLiveAuthority;
+               ProjectResources; FundCommit].
+Proof. reflexivity. Qed.
+
+(** Exact child-category and role contract for the Cost(Rho) source rows. The
+    generated Rust constructor census and the direct source-profile role test
+    are the separate correspondence obligations for this finite model. *)
+Inductive CostSourceCtor :=
+| CUnit | CSignedTerm | CStackProc | CSigTransfer | CSigCompound
+| CSigGround | CSigHash | CSigGroup | CStackEmpty | CStackCons
+| CStackGroup | CSignedFor | CSignedBind | CSignedEmptyBind.
+
+Inductive CostChildCategory :=
+| ChildProc | ChildName | ChildSignature | ChildStack | ChildForRows.
+Inductive CostChildRole :=
+| RoleTerm | RoleName | RoleNamePattern | RoleInherited.
+
+Definition cost_source_fields (c : CostSourceCtor) :
+    list (CostChildCategory * CostChildRole) :=
+  match c with
+  | CUnit | CStackEmpty => []
+  | CSignedTerm => [(ChildProc, RoleTerm); (ChildSignature, RoleTerm)]
+  | CStackProc | CStackCons =>
+      [(ChildSignature, RoleTerm); (ChildStack, RoleTerm)]
+  | CSigTransfer | CSigCompound =>
+      [(ChildSignature, RoleTerm); (ChildSignature, RoleTerm)]
+  | CSigGround => [(ChildName, RoleName)]
+  | CSigHash => [(ChildProc, RoleTerm)]
+  | CSigGroup => [(ChildSignature, RoleInherited)]
+  | CStackGroup => [(ChildStack, RoleInherited)]
+  | CSignedFor => [(ChildForRows, RoleInherited); (ChildProc, RoleTerm)]
+  | CSignedBind =>
+      [(ChildName, RoleNamePattern); (ChildName, RoleName);
+       (ChildSignature, RoleTerm)]
+  | CSignedEmptyBind =>
+      [(ChildName, RoleName); (ChildSignature, RoleTerm)]
+  end.
+
+Definition valid_cost_field (field : CostChildCategory * CostChildRole) : Prop :=
+  match field with
+  | (ChildProc, RoleTerm)
+  | (ChildName, RoleName)
+  | (ChildName, RoleNamePattern)
+  | (ChildSignature, RoleTerm)
+  | (ChildSignature, RoleInherited)
+  | (ChildStack, RoleTerm)
+  | (ChildStack, RoleInherited)
+  | (ChildForRows, RoleInherited) => True
+  | _ => False
+  end.
+
+Theorem cost_source_fields_have_category_appropriate_roles : forall c,
+  Forall valid_cost_field (cost_source_fields c).
+Proof. intros c; destruct c; simpl; repeat constructor. Qed.
+
+Theorem quoted_name_principal_and_hashed_section_have_distinct_child_roles :
+  cost_source_fields CSigGround = [(ChildName, RoleName)] /\
+  cost_source_fields CSigHash = [(ChildProc, RoleTerm)].
+Proof. split; reflexivity. Qed.
 
 Inductive Reference := Bound (index : nat) | External (name : string).
 Inductive Atom := IntegerAtom (value : Z) | TextAtom (value : string)
@@ -547,6 +626,10 @@ Proof. reflexivity. Qed.
 
 Print Assumptions form_classification_total.
 Print Assumptions unsupported_constructor_rejected.
+Print Assumptions cost_signature_classification_is_not_funding.
+Print Assumptions executable_cost_term_retains_live_funding_obligations.
+Print Assumptions cost_source_fields_have_category_appropriate_roles.
+Print Assumptions quoted_name_principal_and_hashed_section_have_distinct_child_roles.
 Print Assumptions erasure_retains_semantic_structure.
 Print Assumptions annotation_invariance.
 Print Assumptions erasure_retains_occurrence_multiplicity.

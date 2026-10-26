@@ -16,6 +16,7 @@ pub const PROJECTED_LANGUAGE_CORE_ABI_V1: u16 = 1;
 pub const PROJECTED_THEORY_IMAGE_ABI_V1: u16 = 1;
 pub const PROJECTION_HOST_PROFILE_ABI_V1: u16 = 1;
 pub const PROJECTION_HOST_CODEC_ABI_V1: u16 = 1;
+pub const FUNDING_PROJECTION_SELECTOR_ABI_V2: u16 = 2;
 
 const HOST_SIGNATURE_DOMAIN_V1: &[u8] = b"mettail-projection-host-signature/1\0";
 const HOST_CODEC_DOMAIN_V1: &[u8] = b"mettail-projection-host-codec/1\0";
@@ -157,6 +158,76 @@ fn host_commitment(domain: &[u8], bytes: &[u8]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// Shared closed-signature check for independently versioned host profiles.
+/// Keeping it separate preserves V1's behavior while allowing a V2 compound
+/// profile to reuse precisely the same sort/constructor closure rules.
+pub(crate) fn validate_host_signature_roster(
+    sorts: &[TheorySortV1],
+    constructors: &[TheoryConstructorV1],
+) -> Result<(), ProjectionHostProfileErrorV1> {
+    use ProjectionHostProfileErrorV1 as Error;
+    if sorts.is_empty() {
+        return Err(Error::EmptySorts);
+    }
+    let mut sort_names = BTreeSet::new();
+    for sort in sorts {
+        if sort.name.is_empty() {
+            return Err(Error::EmptySortName);
+        }
+        if !sort_names.insert(sort.name.as_str()) {
+            return Err(Error::DuplicateSort(sort.name.clone()));
+        }
+    }
+    let require_sort = |name: &str| {
+        if sort_names.contains(name) {
+            Ok(())
+        } else {
+            Err(Error::UnknownSort(name.to_owned()))
+        }
+    };
+    for sort in sorts {
+        match &sort.kind {
+            TheorySortKindV1::Syntax { .. } => {},
+            TheorySortKindV1::Collection { key, element, .. } => {
+                if let Some(key) = key {
+                    require_sort(key)?;
+                }
+                require_sort(element)?;
+            },
+            TheorySortKindV1::Function { domain, codomain, .. } => {
+                require_sort(domain)?;
+                require_sort(codomain)?;
+            },
+            TheorySortKindV1::Product { factors } => {
+                if factors.is_empty() {
+                    return Err(Error::EmptyProduct(sort.name.clone()));
+                }
+                for factor in factors {
+                    require_sort(factor)?;
+                }
+            },
+            TheorySortKindV1::Opaque { abi } if abi.is_empty() => {
+                return Err(Error::EmptyOpaqueAbi(sort.name.clone()));
+            },
+            TheorySortKindV1::Opaque { .. } => {},
+        }
+    }
+    let mut constructor_names = BTreeSet::new();
+    for constructor in constructors {
+        if constructor.name.is_empty() {
+            return Err(Error::EmptyConstructorName);
+        }
+        if !constructor_names.insert(constructor.name.as_str()) {
+            return Err(Error::DuplicateConstructor(constructor.name.clone()));
+        }
+        for domain in &constructor.domain {
+            require_sort(domain)?;
+        }
+        require_sort(&constructor.codomain)?;
+    }
+    Ok(())
+}
+
 impl ProjectionHostProfilePayloadV1 {
     /// Check closure of the declared signature roster, without asserting that
     /// its grammar or codec claims match an installed host implementation.
@@ -187,67 +258,7 @@ impl ProjectionHostProfilePayloadV1 {
         if self.codec.implementation_commitment == [0; 32] {
             return Err(Error::MissingImplementationCommitment);
         }
-        if self.sorts.is_empty() {
-            return Err(Error::EmptySorts);
-        }
-
-        let mut sort_names = BTreeSet::new();
-        for sort in &self.sorts {
-            if sort.name.is_empty() {
-                return Err(Error::EmptySortName);
-            }
-            if !sort_names.insert(sort.name.as_str()) {
-                return Err(Error::DuplicateSort(sort.name.clone()));
-            }
-        }
-        let require_sort = |name: &str| {
-            if sort_names.contains(name) {
-                Ok(())
-            } else {
-                Err(Error::UnknownSort(name.to_owned()))
-            }
-        };
-        for sort in &self.sorts {
-            match &sort.kind {
-                TheorySortKindV1::Syntax { .. } => {},
-                TheorySortKindV1::Collection { key, element, .. } => {
-                    if let Some(key) = key {
-                        require_sort(key)?;
-                    }
-                    require_sort(element)?;
-                },
-                TheorySortKindV1::Function { domain, codomain, .. } => {
-                    require_sort(domain)?;
-                    require_sort(codomain)?;
-                },
-                TheorySortKindV1::Product { factors } => {
-                    if factors.is_empty() {
-                        return Err(Error::EmptyProduct(sort.name.clone()));
-                    }
-                    for factor in factors {
-                        require_sort(factor)?;
-                    }
-                },
-                TheorySortKindV1::Opaque { abi } if abi.is_empty() => {
-                    return Err(Error::EmptyOpaqueAbi(sort.name.clone()));
-                },
-                TheorySortKindV1::Opaque { .. } => {},
-            }
-        }
-        let mut constructor_names = BTreeSet::new();
-        for constructor in &self.constructors {
-            if constructor.name.is_empty() {
-                return Err(Error::EmptyConstructorName);
-            }
-            if !constructor_names.insert(constructor.name.as_str()) {
-                return Err(Error::DuplicateConstructor(constructor.name.clone()));
-            }
-            for domain in &constructor.domain {
-                require_sort(domain)?;
-            }
-            require_sort(&constructor.codomain)?;
-        }
-        Ok(())
+        validate_host_signature_roster(&self.sorts, &self.constructors)
     }
 
     /// Deterministic postcard payload bytes. These bind exact vector order,
@@ -406,6 +417,118 @@ pub struct ProjectedLanguageCoreV1 {
     pub projections: Vec<TheoryProjectionV1>,
 }
 
+/// A separately versioned declaration selecting one existing GuestToHost
+/// relation as the interpretation of a Cost(G) grade. It does not alter the
+/// V1 language or projected-language encoding and is not funding authority:
+/// installation must independently bind the trusted host codec, proof checker,
+/// resource-logic implementation, and exact semantic images.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FundingProjectionSelectorV2 {
+    pub abi: u16,
+    pub projection_name: String,
+    pub guest_grade_sort: String,
+    pub host_demand_category: String,
+    pub resource_logic_abi: String,
+    pub bound_verifier_abi: String,
+    pub projection_proof_abi: String,
+    pub projection_proof_commitment: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FundingProjectionSelectorErrorV2 {
+    UnsupportedAbi(u16),
+    InvalidProjectedCore(ProjectionCoreHeaderError),
+    NotCosted,
+    EmptyCommitment(&'static str),
+    EmptyName(&'static str),
+    GradeSortMismatch,
+    MissingProjection,
+    AmbiguousProjection,
+    MissingGuestToHostDirection,
+    ProjectionInputSortMismatch,
+    ProjectionOutputCategoryMismatch,
+}
+
+impl FundingProjectionSelectorV2 {
+    /// Validate the authored declaration only. No caller-supplied ABI string
+    /// or proof digest is accepted as an installed host implementation here.
+    pub fn validate_declaration(
+        &self,
+        projected: &ProjectedLanguageCoreV1,
+    ) -> Result<usize, FundingProjectionSelectorErrorV2> {
+        use FundingProjectionSelectorErrorV2 as Error;
+        if self.abi != FUNDING_PROJECTION_SELECTOR_ABI_V2 {
+            return Err(Error::UnsupportedAbi(self.abi));
+        }
+        projected
+            .validate_header()
+            .map_err(Error::InvalidProjectedCore)?;
+        for (name, value) in [
+            ("projection", self.projection_name.as_str()),
+            ("guest grade sort", self.guest_grade_sort.as_str()),
+            ("host demand category", self.host_demand_category.as_str()),
+            ("resource logic ABI", self.resource_logic_abi.as_str()),
+            ("bound verifier ABI", self.bound_verifier_abi.as_str()),
+            ("projection proof ABI", self.projection_proof_abi.as_str()),
+        ] {
+            if value.is_empty() {
+                return Err(Error::EmptyName(name));
+            }
+        }
+        if self.projection_proof_commitment == [0; 32] {
+            return Err(Error::EmptyCommitment("projection proof"));
+        }
+        let cost = projected
+            .base
+            .theory
+            .cost
+            .as_ref()
+            .ok_or(Error::NotCosted)?;
+        if self.guest_grade_sort != cost.signature_sort {
+            return Err(Error::GradeSortMismatch);
+        }
+        let mut selected = projected
+            .projections
+            .iter()
+            .enumerate()
+            .filter(|(_, projection)| projection.name == self.projection_name);
+        let (index, projection) = selected.next().ok_or(Error::MissingProjection)?;
+        if selected.next().is_some() {
+            return Err(Error::AmbiguousProjection);
+        }
+        if !projection
+            .directions
+            .contains(&ProjectionDirectionV1::GuestToHost)
+        {
+            return Err(Error::MissingGuestToHostDirection);
+        }
+        if projection.guest_category != self.guest_grade_sort {
+            return Err(Error::ProjectionInputSortMismatch);
+        }
+        if projection.host.category != self.host_demand_category {
+            return Err(Error::ProjectionOutputCategoryMismatch);
+        }
+        Ok(index)
+    }
+
+    /// V2's authored identity commits to the complete unchanged V1 projected
+    /// artifact; the compiled base/image and trusted host profile are bound
+    /// separately by the installed commitment after validation.
+    pub fn fingerprint(
+        &self,
+        projected: &ProjectedLanguageCoreV1,
+    ) -> Result<[u8; 32], postcard::Error> {
+        let projected_fingerprint = projected.fingerprint()?;
+        let bytes = postcard::to_allocvec(self)?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"mettail-funding-projection-selector/2\0");
+        hasher.update(&projected_fingerprint);
+        hasher.update(&(bytes.len() as u64).to_be_bytes());
+        hasher.update(&bytes);
+        Ok(*hasher.finalize().as_bytes())
+    }
+}
+
 /// The source occurrence and the exact flat-program entry remain paired;
 /// neither the set automaton nor a request may collapse equal-pattern rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -506,10 +629,16 @@ impl ProjectedLanguageCoreV1 {
             }
             if !self
                 .base
-                .grammar
-                .categories
+                .theory
+                .sorts
                 .iter()
-                .any(|category| category.name == projection.guest_category)
+                .any(|sort| sort.name == projection.guest_category)
+                && !self
+                    .base
+                    .grammar
+                    .categories
+                    .iter()
+                    .any(|category| category.name == projection.guest_category)
             {
                 return Err(ProjectionCoreHeaderError::UnknownGuestCategory(
                     projection.guest_category.clone(),
@@ -565,7 +694,10 @@ impl ProjectedLanguageCoreV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Carrier, Category, CategoryId, GrammarCoreV1};
+    use crate::{
+        Carrier, Category, CategoryId, GrammarCoreV1, TheoryProfileV1, TheorySortKindV1,
+        TheorySortV1,
+    };
 
     fn host_profile() -> ProjectionHostProfilePayloadV1 {
         ProjectionHostProfilePayloadV1 {
@@ -788,5 +920,50 @@ mod tests {
             missing_direction.validate_header(),
             Err(ProjectionCoreHeaderError::EmptyDirections("Boolean".into()))
         );
+
+        // An internal Cost(G) grade may be an opaque theory sort without a
+        // parser category. Projection headers resolve the semantic sort, not
+        // just the surface grammar's category roster.
+        let mut opaque_grade = projected.clone();
+        opaque_grade.base.theory.profile = TheoryProfileV1::Oslf;
+        opaque_grade.base.theory.sorts = vec![
+            TheorySortV1 {
+                name: "Bool".into(),
+                kind: TheorySortKindV1::Syntax { literal: None },
+            },
+            TheorySortV1 {
+                name: "Sig".into(),
+                kind: TheorySortKindV1::Opaque { abi: "test/grade/1".into() },
+            },
+        ];
+        opaque_grade.projections[0].guest_category = "Sig".into();
+        assert!(opaque_grade.validate_header().is_ok());
+
+        // V1 remains independently decodable and non-funding even when a
+        // separate V2 selector is authored. The selector cannot attach to an
+        // uncosted theory or change V1's bytes/fingerprint.
+        let selector = FundingProjectionSelectorV2 {
+            abi: FUNDING_PROJECTION_SELECTOR_ABI_V2,
+            projection_name: "Boolean".into(),
+            guest_grade_sort: "Bool".into(),
+            host_demand_category: "Bool".into(),
+            resource_logic_abi: "test/resource-logic/1".into(),
+            bound_verifier_abi: "test/bound-verifier/1".into(),
+            projection_proof_abi: "test/projection-proof/1".into(),
+            projection_proof_commitment: [7; 32],
+        };
+        assert_eq!(
+            selector.validate_declaration(&projected),
+            Err(FundingProjectionSelectorErrorV2::NotCosted)
+        );
+        assert_eq!(
+            postcard::to_allocvec(&projected).unwrap(),
+            postcard::to_allocvec(&decoded).unwrap()
+        );
+        let selector_fingerprint = selector.fingerprint(&projected).unwrap();
+        assert_ne!(selector_fingerprint, projected.fingerprint().unwrap());
+        let mut another_selector = selector.clone();
+        another_selector.bound_verifier_abi.push_str("-changed");
+        assert_ne!(another_selector.fingerprint(&projected).unwrap(), selector_fingerprint);
     }
 }

@@ -161,7 +161,7 @@ execution.
 
 ## 5. Trie-native delivery
 
-`rholang-runtime/src/speculation/delivery.rs:1580-1715` constructs all three results as set-mode
+`rholang-runtime/src/speculation/delivery.rs` constructs all three results as set-mode
 EPathMaps. `EPathMap::from_set_iter` encodes each completed trace entry directly into
 `PathMap<()>`; the target retains neither a `Vec<Par>` member list nor a redundant value copy.
 
@@ -188,6 +188,39 @@ creating a process path.
 *Figure 3. Reification canonicalizes each path member, and PathMap canonicalizes the unordered
 collection of members. Both stages are required for scheduler-invariant output. Source:
 [lookahead-groundness-and-ordering.puml](figures/lookahead-groundness-and-ordering.puml).*
+
+### 5.1 Cost-authority boundary for reification
+
+A waiting continuation persists its receive patterns and an **aggregate cost authority**: the
+funding evidence associated with the whole continuation. It does not persist the individual cost
+signature for each receive bind. The aggregate cannot be inverted to reconstruct those signatures.
+Emitting the reconstructed receive with absent signatures would therefore change the meaning of a
+possibly signed receive.
+
+The current reifier uses the following failure-atomic rule:
+
+```text
+for each retained waiting continuation:
+    reject an empty channel group, mismatched channel/pattern counts, or a system continuation
+    if aggregate cost authority is present:
+        return UnreifiableCostAuthority before constructing any receive bind
+    otherwise reconstruct the ordinary unsigned receive binds
+publish the result collections only if every required reification succeeded
+```
+
+This is deliberately conservative: an ordinary receive can also carry aggregate funding authority,
+so presence of authority is **not** a test for whether a bind was signed. Such a receive is refused
+for speculative publication until its individual signatures can be preserved. The ordinary runtime
+execution path is unaffected. A future lossless carrier must be versioned with the continuation's
+stored bytes and event identity; silently adding an optional field or inferring signatures from the
+aggregate would not preserve historical replay.
+
+The safety property is: whenever a retained configuration is published, none of its waiting
+continuations had aggregate authority that the reifier discarded. The
+[Rocq model](../../../formal/rocq/rho_bridge/theories/SpeculativeCostAuthority.v) proves this for a
+whole continuation roster, and `reify_tests` checks ordinary success, typed refusal, publication
+error propagation, and generated rosters. The proof models this fail-closed boundary, not the future
+lossless storage format or the Rust implementation's byte equivalence.
 
 ---
 

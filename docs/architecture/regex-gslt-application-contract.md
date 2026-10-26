@@ -327,6 +327,17 @@ settlement remain distinct. A pure regex theory does not acquire a Cost(G)
 profile or funding authority by declaring one. The existing host funding gate
 and its checked projection must govern the actual public-node execution.
 
+### Resting-communication boundary
+
+A standalone lookahead sandbox can fire a message and a receive that are
+already at rest. Before the store changes, `commit_enabled_rendezvous` checks
+each datum of the candidate again with the matcher's `get` hook.
+`commit_enabled_rendezvous` then calls the `prepare_commit` hook, so an
+installed predicate decides as in ordinary play (node
+`rspace++/src/rspace/rspace/ops_resting.rs`). A space that is not CostV2
+refuses the commit. No host work is metered (DR-131 extension to F1R3Lang,
+user decision 1 of 2026-10-16). COMMs and stored bytes are the only charges.
+
 ## Required observable cases
 
 Spans below are public byte offsets. Pattern spelling follows the profile above;
@@ -384,6 +395,27 @@ Public-node acceptance additionally requires these distinct cases:
 The [nullable/derivative rule correspondence](regex-gslt-rule-correspondence.md)
 maps the current inline declaration to its checked continuation models and
 concrete tests, with explicit limits on what that evidence establishes.
+
+The isolated nullable/derivative integration test passed all 26 cases on October 21, 2026.
+The test used the action-bearing fixture and the generated Rholang entrypoint.
+It compared each complete structural result with the declared expected term.
+The LLVM test build took 579.83 seconds to run.
+
+Parsing took 1.52 seconds, and installation took approximately 51 seconds.
+Uncached term construction took approximately 16.5 seconds per term.
+Cached expected terms took less than one millisecond, and semantic execution took milliseconds per case.
+These measurements establish finite completion for this test. They do not identify the cause of an earlier full-suite timeout.
+
+Run the isolated test with the same compiler configuration:
+
+```sh
+cargo test --locked \
+  --config 'profile.test.package.rholang-runtime.codegen-backend="llvm"' \
+  -p rholang-runtime --no-default-features \
+  --features rholang-runtime,source-oracle --lib \
+  practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_entrypoint \
+  -- --nocapture
+```
 
 The six existing `RegexGslt` models provide the signature, derivatives, search,
 replacement, rule interpretation and finite oracles. The existing

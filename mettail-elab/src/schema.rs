@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod authored_capture;
 #[cfg(test)]
 mod authored_declarations_tests;
+pub(crate) mod rule_context;
 mod token_observations;
 
 const TOP_LEVEL_KEYS: &[&str] = &[
@@ -2364,6 +2365,7 @@ fn decode_cost(value: &RhoValue, path: &str) -> Result<core::CostDeclV1, ValueDe
             "product",
             "unit",
             "rules",
+            "grade_rules",
             "eta",
             "mu",
             "map",
@@ -2380,11 +2382,38 @@ fn decode_cost(value: &RhoValue, path: &str) -> Result<core::CostDeclV1, ValueDe
         product: required_nonempty_string(values, "product", path)?,
         unit: required_nonempty_string(values, "unit", path)?,
         rules: decode_required_string_list(values, "rules", path)?,
+        grade_rules: decode_cost_grade_rules(
+            values.get("grade_rules"),
+            &format!("{path}.grade_rules"),
+        )?,
         eta: required_nonempty_string(values, "eta", path)?,
         mu: required_nonempty_string(values, "mu", path)?,
         map: required_nonempty_string(values, "map", path)?,
         laws: decode_required_string_list(values, "laws", path)?,
     })
+}
+
+fn decode_cost_grade_rules(
+    value: Option<&RhoValue>,
+    path: &str,
+) -> Result<Vec<core::CostGradeRuleV1>, ValueDecodeError> {
+    let mut output = Vec::new();
+    for (index, row) in value
+        .map(|value| expect_list(value, path))
+        .transpose()?
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
+        let row_path = format!("{path}[{index}]");
+        let pair = expect_list(row, &row_path)?;
+        require_len(pair, 2, &row_path)?;
+        output.push(core::CostGradeRuleV1 {
+            rewrite: expect_nonempty_string(&pair[0], &format!("{row_path}[0]"))?.to_string(),
+            term: core::TheoryTermId(expect_u32(&pair[1], &format!("{row_path}[1]"))?),
+        });
+    }
+    Ok(output)
 }
 
 fn decode_resource_projection(
@@ -3700,7 +3729,11 @@ fn validate_semantic_rule(
                 expect_string(&entry[1], &format!("{entry_path}[1]"))?,
                 &format!("{entry_path}[1]"),
             )?;
-            decode_type_expr(&entry[2], &format!("{entry_path}[2]"))?;
+            rule_context::decode_rule_context_type(
+                &entry[2],
+                &format!("{entry_path}[2]"),
+                rewrite,
+            )?;
         }
     }
     if let Some(premises) = values.get("premises") {
@@ -6254,6 +6287,20 @@ mod tests {
         )
     }
 
+    #[test]
+    fn cost_grade_roots_decode_as_typed_rule_arena_references() {
+        let value = l([l([s("step_rule"), RhoValue::Integer(3)])]);
+        assert_eq!(
+            decode_cost_grade_rules(Some(&value), "$.theory.cost.grade_rules").unwrap(),
+            vec![core::CostGradeRuleV1 {
+                rewrite: "step_rule".into(),
+                term: core::TheoryTermId(3),
+            }]
+        );
+        let invalid = l([l([s("step_rule"), RhoValue::Integer(-1)])]);
+        assert!(decode_cost_grade_rules(Some(&invalid), "$.theory.cost.grade_rules").is_err());
+    }
+
     fn term(label: &str, category: &str, terminal: &str) -> RhoValue {
         m([
             ("label", s(label)),
@@ -6977,12 +7024,41 @@ mod tests {
                 ),
                 (
                     "terms",
-                    l([m([
-                        ("label", s("Wrap")),
-                        ("category", s("Datum")),
-                        ("context", l([l([s("param"), s("x"), s("Datum")])])),
-                        ("syntax", l([s("x")])),
-                    ])]),
+                    l([
+                        m([
+                            ("label", s("Wrap")),
+                            ("category", s("Datum")),
+                            ("context", l([l([s("param"), s("x"), s("Datum")])])),
+                            ("syntax", l([s("x")])),
+                        ]),
+                        m([
+                            ("label", s("unit")),
+                            ("category", s("Sig")),
+                            ("syntax", l([l([s("lit"), s("unit")])])),
+                        ]),
+                        m([
+                            ("label", s("product")),
+                            ("category", s("Sig")),
+                            (
+                                "context",
+                                l([
+                                    l([s("param"), s("x"), s("Sig")]),
+                                    l([s("param"), s("y"), s("Sig")]),
+                                ]),
+                            ),
+                            (
+                                "syntax",
+                                l([
+                                    l([s("lit"), s("product")]),
+                                    l([s("lit"), s("(")]),
+                                    s("x"),
+                                    l([s("lit"), s(",")]),
+                                    s("y"),
+                                    l([s("lit"), s(")")]),
+                                ]),
+                            ),
+                        ]),
+                    ]),
                 ),
                 ("oslf", oslf),
             ],

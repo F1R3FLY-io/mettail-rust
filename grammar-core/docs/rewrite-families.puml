@@ -1,0 +1,22 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+left to right direction
+rectangle "Authored patterns\nand signature" as source #D9EAF7
+rectangle "Borrowed reader\nand name census" as reader #D9EAF7
+rectangle "Shared scope and\ncontext checks" as checker #DDF0DC
+rectangle "Complete edit plan" as plan #DDF0DC
+rectangle "Private normalized\nrule batch" as batch #FFF0C2
+rectangle "Existing validation\nand transition compiler" as compiler #FFF0C2
+rectangle "Publish complete\nnormalized batch" as published #DDF0DC
+rectangle "Refusal\nNo publication" as refusal #F8D7DA
+source --> reader
+reader --> checker
+checker --> plan : valid rule
+checker --> refusal : invalid rule
+plan --> batch
+batch --> compiler
+compiler --> published : valid batch
+compiler --> refusal : invalid result
+@enduml

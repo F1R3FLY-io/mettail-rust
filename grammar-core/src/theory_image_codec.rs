@@ -62,6 +62,59 @@ impl ImageSink for HashSink<'_> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AccountedTheoryFingerprintError {
+    Image { error: TheoryImageError, work: u64 },
+    WorkBudgetExhausted { work: u64 },
+    Cancelled { work: u64 },
+}
+
+impl AccountedTheoryFingerprintError {
+    pub fn work(&self) -> u64 {
+        match self {
+            Self::Image { work, .. }
+            | Self::WorkBudgetExhausted { work }
+            | Self::Cancelled { work } => *work,
+        }
+    }
+}
+
+/// Hash the same canonical bytes as `HashSink`, but authorize each encoded
+/// chunk before hashing it. The encoder is shared; this is not a second wire
+/// algorithm or a preparatory unmetered length traversal.
+struct AccountedHashSink<'a, C> {
+    hasher: &'a mut blake3::Hasher,
+    work: u64,
+    limit: u64,
+    is_cancelled: C,
+    failure: Option<AccountedTheoryFingerprintError>,
+}
+
+impl<C: FnMut() -> bool> ImageSink for AccountedHashSink<'_, C> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), TheoryImageError> {
+        if (self.is_cancelled)() {
+            self.failure = Some(AccountedTheoryFingerprintError::Cancelled { work: self.work });
+            return Err(TheoryImageError::LimitExceeded("accounted fingerprint"));
+        }
+        let Some(next) = u64::try_from(bytes.len())
+            .ok()
+            .and_then(|length| self.work.checked_add(length))
+        else {
+            self.failure =
+                Some(AccountedTheoryFingerprintError::WorkBudgetExhausted { work: self.work });
+            return Err(TheoryImageError::LimitExceeded("accounted fingerprint"));
+        };
+        if next > self.limit {
+            self.failure =
+                Some(AccountedTheoryFingerprintError::WorkBudgetExhausted { work: self.work });
+            return Err(TheoryImageError::LimitExceeded("accounted fingerprint"));
+        }
+        self.work = next;
+        self.hasher.update(bytes);
+        Ok(())
+    }
+}
+
 impl TheorySemanticImageV1 {
     /// Return a domain-separated commitment without materializing a serialized
     /// copy of the image.
@@ -70,6 +123,36 @@ impl TheorySemanticImageV1 {
         hasher.update(b"mettail-theory-semantic-image/3\0");
         encode_image(self, &mut HashSink(&mut hasher))?;
         Ok(*hasher.finalize().as_bytes())
+    }
+
+    /// The exact ordinary fingerprint with charge-before-hash work measured
+    /// in encoded bytes. Both canonical header and image body consume budget;
+    /// cancellation is checked at each encoder write. The caller must include
+    /// the returned work in its aggregate before publishing any result.
+    pub fn fingerprint_accounted<C: FnMut() -> bool>(
+        &self,
+        limit: u64,
+        is_cancelled: C,
+    ) -> Result<([u8; 32], u64), AccountedTheoryFingerprintError> {
+        let mut hasher = blake3::Hasher::new();
+        let mut sink = AccountedHashSink {
+            hasher: &mut hasher,
+            work: 0,
+            limit,
+            is_cancelled,
+            failure: None,
+        };
+        let result = sink
+            .write(b"mettail-theory-semantic-image/3\0")
+            .and_then(|()| encode_image(self, &mut sink));
+        if let Some(failure) = sink.failure.take() {
+            return Err(failure);
+        }
+        result
+            .map_err(|error| AccountedTheoryFingerprintError::Image { error, work: sink.work })?;
+        let work = sink.work;
+        drop(sink);
+        Ok((*hasher.finalize().as_bytes(), work))
     }
 
     /// Validate and encode the image in the canonical flat wire format.
@@ -2091,6 +2174,59 @@ mod exact_literal_codec_tests {
         assert_eq!(
             decode_literal(&mut ImageReader::new(&encoded), limits, &mut DecodeTotals::default()),
             Err(TheoryImageError::LimitExceeded("literal bytes"))
+        );
+    }
+}
+
+#[cfg(test)]
+mod accounted_fingerprint_tests {
+    use super::*;
+
+    fn empty_image() -> TheorySemanticImageV1 {
+        TheorySemanticImageV1 {
+            abi: THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
+            compiler_abi: 0,
+            primitive_substrate_abi: 0,
+            language_fingerprint: [1; 32],
+            grammar_fingerprint: [2; 32],
+            theory_fingerprint: [3; 32],
+            resource_profile: TheoryResourceProfileV1::Uncosted,
+            sorts: Vec::new(),
+            constructors: Vec::new(),
+            rules: Vec::new(),
+            patterns: TheoryPatternAutomatonV1::default(),
+            judgments: Vec::new(),
+            judgment_rules: Vec::new(),
+            judgment_patterns: TheoryJudgmentPatternAutomatonV1::default(),
+            actions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn accounted_fingerprint_reuses_exact_canonical_encoding() {
+        let image = empty_image();
+        let ordinary = image.fingerprint().unwrap();
+        let (accounted, work) = image.fingerprint_accounted(u64::MAX, || false).unwrap();
+        assert_eq!(accounted, ordinary);
+        assert!(work > 0);
+        assert!(matches!(
+            image.fingerprint_accounted(work - 1, || false),
+            Err(AccountedTheoryFingerprintError::WorkBudgetExhausted { work: consumed })
+                if consumed <= work - 1
+        ));
+        assert_eq!(image.fingerprint_accounted(work, || false), Ok((ordinary, work)));
+    }
+
+    #[test]
+    fn accounted_fingerprint_refuses_before_unfunded_or_cancelled_hashing() {
+        let image = empty_image();
+        assert_eq!(
+            image.fingerprint_accounted(0, || false),
+            Err(AccountedTheoryFingerprintError::WorkBudgetExhausted { work: 0 })
+        );
+        assert_eq!(
+            image.fingerprint_accounted(u64::MAX, || true),
+            Err(AccountedTheoryFingerprintError::Cancelled { work: 0 })
         );
     }
 }

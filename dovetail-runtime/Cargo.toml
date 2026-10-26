@@ -13,6 +13,8 @@ name = "mettail_dovetail_runtime"
 dovetail = { path = "../dovetail" }
 mettail-grammar-core = { path = "../grammar-core" }
 mettail-runtime = { package = "runtime", path = "../runtime" }
+rigail = { path = "../rigail" }
 
 [dev-dependencies]
-rigail = { path = "../rigail" }
+mettail-elab = { path = "../mettail-elab" }
+proptest = "1"

@@ -3,9 +3,11 @@
   runtime semantic-transition boundary.
 
   The matcher, premise machine, capture-avoiding substitution engine, and
-  equality engine produce [RuleCandidate] values.  Their local correctness is
-  supplied by ExecutableTheoryImage, the Dovetail set-automaton proofs, and the
-  de-Bruijn substitution development.  This file proves the composition rule
+  equality engine produce [RuleCandidate] values.  ExecutableTheoryImage,
+  the Dovetail set-automaton proofs, and the de-Bruijn substitution development
+  establish component contracts; importing them does not establish that every
+  runtime candidate has an authored source derivation. That correspondence is
+  a separate obligation. This file proves the publication rule
   which is easy to lose in an implementation: candidates are private until
   their complete fingerprint/capability/receipt envelope has been checked.
   Exhaustion and cancellation discard the private accumulator, so neither a

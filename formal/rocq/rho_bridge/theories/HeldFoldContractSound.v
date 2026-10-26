@@ -56,6 +56,7 @@
 
 From Stdlib Require Import List.
 From Stdlib Require Import PeanoNat.
+From Stdlib Require Import Lia.
 
 Import ListNotations.
 
@@ -260,3 +261,182 @@ Section StatementOnlyFences.
       context_observation <> generated_observation.
 
 End StatementOnlyFences.
+
+Module AlternativeFoldAllocation.
+
+Record Key := key {
+  position : nat;
+  operation : nat;
+  width_identity : nat;
+  language : nat
+}.
+
+Definition key_eq_dec : forall (a b : Key), {a = b} + {a <> b}.
+Proof. decide equality; apply Nat.eq_dec. Defined.
+
+Fixpoint lookup (wanted : Key) (registry : list Key) : option nat :=
+  match registry with
+  | [] => None
+  | candidate :: rest =>
+      if key_eq_dec wanted candidate then Some 0
+      else option_map S (lookup wanted rest)
+  end.
+
+Definition register_fresh (base : nat) (wanted : Key) (registry : list Key)
+    : option (nat * list Key) :=
+  if base + length registry <? 256
+  then Some (base + length registry, registry ++ [wanted])
+  else None.
+
+Definition register (base : nat) (wanted : Key) (registry : list Key)
+    : option (nat * list Key) :=
+  match lookup wanted registry with
+  | Some index => Some (base + index, registry)
+  | None => register_fresh base wanted registry
+  end.
+
+Theorem sequential_allocation_gives_twins_different_indices : forall wanted,
+  register_fresh 0 wanted [] = Some (0, [wanted]) /\
+  register_fresh 0 wanted [wanted] = Some (1, [wanted; wanted]).
+Proof. intros. split; reflexivity. Qed.
+
+Theorem equivalent_alternative_reuses_the_first_index : forall wanted,
+  register 0 wanted [wanted] = Some (0, [wanted]).
+Proof.
+  intros. unfold register. simpl.
+  destruct (key_eq_dec wanted wanted); congruence.
+Qed.
+
+Lemma lookup_descriptor : forall registry wanted index,
+  lookup wanted registry = Some index -> nth_error registry index = Some wanted.
+Proof.
+  induction registry as [|candidate rest IH]; intros wanted index H; simpl in H.
+  - discriminate.
+  - destruct (key_eq_dec wanted candidate) as [E|E].
+    + inversion H; subst. reflexivity.
+    + destruct (lookup wanted rest) as [i|] eqn:L; simpl in H; try discriminate.
+      inversion H; subst. simpl. eapply IH; eauto.
+Qed.
+
+Lemma lookup_append_fresh : forall registry wanted,
+  lookup wanted registry = None ->
+  lookup wanted (registry ++ [wanted]) = Some (length registry).
+Proof.
+  induction registry as [|candidate rest IH]; intros wanted H; simpl in *.
+  - destruct (key_eq_dec wanted wanted); congruence.
+  - destruct (key_eq_dec wanted candidate); try discriminate.
+    destruct (lookup wanted rest) eqn:L; simpl in H; try discriminate.
+    rewrite (IH wanted L). reflexivity.
+Qed.
+
+Theorem identical_site_reuses_its_index : forall base wanted registry index,
+  lookup wanted registry = Some index ->
+  register base wanted registry = Some (base + index, registry).
+Proof. intros. unfold register. now rewrite H. Qed.
+
+Theorem registration_has_the_requested_descriptor : forall base wanted registry index next,
+  register base wanted registry = Some (index, next) ->
+  exists offset, index = base + offset /\ nth_error next offset = Some wanted.
+Proof.
+  intros base wanted registry index next H. unfold register, register_fresh in H.
+  destruct (lookup wanted registry) as [offset|] eqn:L.
+  - inversion H; subst. exists offset. split; [reflexivity|].
+    now apply lookup_descriptor.
+  - destruct (base + length registry <? 256); try discriminate.
+    inversion H; subst. exists (length registry). split; [reflexivity|].
+    rewrite nth_error_app2; [rewrite Nat.sub_diag; reflexivity|lia].
+Qed.
+
+Theorem registration_preserves_existing_descriptors : forall base wanted registry index next,
+  register base wanted registry = Some (index, next) ->
+  forall offset descriptor, nth_error registry offset = Some descriptor ->
+  nth_error next offset = Some descriptor.
+Proof.
+  intros base wanted registry index next H offset descriptor D. unfold register, register_fresh in H.
+  destruct (lookup wanted registry).
+  - inversion H; subst. exact D.
+  - destruct (base + length registry <? 256); try discriminate.
+    inversion H; subst. rewrite nth_error_app1; [exact D|].
+    apply nth_error_Some. rewrite D. discriminate.
+Qed.
+
+Theorem different_site_keys_cannot_alias : forall registry left right i j,
+  lookup left registry = Some i -> lookup right registry = Some j ->
+  left <> right -> i <> j.
+Proof.
+  intros registry left right i j L R E Same. subst j.
+  apply lookup_descriptor in L. apply lookup_descriptor in R. congruence.
+Qed.
+
+Theorem internal_fold_positions_remain_distinct : forall registry left right i j,
+  lookup left registry = Some i -> lookup right registry = Some j ->
+  position left <> position right -> i <> j.
+Proof.
+  intros. eapply different_site_keys_cannot_alias; eauto. congruence.
+Qed.
+
+Theorem different_contracts_cannot_alias : forall registry left right i j,
+  lookup left registry = Some i -> lookup right registry = Some j ->
+  (operation left <> operation right \/ width_identity left <> width_identity right \/
+   language left <> language right) -> i <> j.
+Proof.
+  intros. eapply different_site_keys_cannot_alias; eauto.
+  intros E. subst right. tauto.
+Qed.
+
+Theorem fresh_registration_is_reused : forall base wanted registry,
+  lookup wanted registry = None -> base + length registry < 256 ->
+  register base wanted (registry ++ [wanted]) =
+    Some (base + length registry, registry ++ [wanted]).
+Proof.
+  intros. apply identical_site_reuses_its_index. now apply lookup_append_fresh.
+Qed.
+
+Theorem exhausted_fresh_registration_is_rejected : forall base wanted registry,
+  lookup wanted registry = None -> 256 <= base + length registry ->
+  register base wanted registry = None.
+Proof.
+  intros. unfold register, register_fresh. rewrite H.
+  apply Nat.ltb_ge in H0. now rewrite H0.
+Qed.
+
+Theorem registration_index_is_in_range : forall base wanted registry index next,
+  base + length registry <= 256 ->
+  register base wanted registry = Some (index, next) -> index < 256.
+Proof.
+  intros base wanted registry index next B H. unfold register, register_fresh in H.
+  destruct (lookup wanted registry) as [offset|] eqn:L.
+  - injection H as Index Next. subst index next. apply lookup_descriptor in L.
+    assert (offset < length registry) by (apply nth_error_Some; rewrite L; discriminate).
+    lia.
+  - destruct (base + length registry <? 256) eqn:E; try discriminate.
+    apply Nat.ltb_lt in E. inversion H; subst. exact E.
+Qed.
+
+Theorem registration_preserves_capacity : forall base wanted registry index next,
+  base + length registry <= 256 ->
+  register base wanted registry = Some (index, next) -> base + length next <= 256.
+Proof.
+  intros base wanted registry index next B H. unfold register, register_fresh in H.
+  destruct (lookup wanted registry).
+  - inversion H; subst. exact B.
+  - destruct (base + length registry <? 256) eqn:E; try discriminate.
+    apply Nat.ltb_lt in E. inversion H; subst. rewrite app_length. simpl. lia.
+Qed.
+
+Print Assumptions registration_index_is_in_range.
+Print Assumptions registration_preserves_capacity.
+Print Assumptions sequential_allocation_gives_twins_different_indices.
+Print Assumptions equivalent_alternative_reuses_the_first_index.
+Print Assumptions lookup_descriptor.
+Print Assumptions lookup_append_fresh.
+Print Assumptions identical_site_reuses_its_index.
+Print Assumptions registration_has_the_requested_descriptor.
+Print Assumptions registration_preserves_existing_descriptors.
+Print Assumptions different_site_keys_cannot_alias.
+Print Assumptions internal_fold_positions_remain_distinct.
+Print Assumptions different_contracts_cannot_alias.
+Print Assumptions fresh_registration_is_reused.
+Print Assumptions exhausted_fresh_registration_is_rejected.
+
+End AlternativeFoldAllocation.

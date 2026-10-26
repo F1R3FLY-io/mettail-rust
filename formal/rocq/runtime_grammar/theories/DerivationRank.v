@@ -810,12 +810,11 @@ Qed.
 
 (** * Public compatibility ordering versus rank-aware ordering
 
-    The generated facade uses one iterative realization loop for both public
-    surfaces.  The legacy surface keeps the first equal-cost representative
-    and performs a stable cost-only sort.  The rank-aware surface additionally
-    refines equal-cost choices by complete derivation rank.  [rank_precedes]
-    abstracts the already-proved total rank order: the compatibility theorem
-    is intentionally independent of its implementation. *)
+    These laws compare scalar-only selection with complete-rank selection.
+    The generated legacy facades retain their LexicographicWeight policies.
+    The ranked facade uses the existing extractor with retained derivation
+    evidence. These lemmas do not equate the two facade result orders.
+    [rank_precedes] abstracts the total rank order proved above. *)
 
 Definition representative_replaces
     (order_by_rank : bool) (old_cost new_cost : nat)

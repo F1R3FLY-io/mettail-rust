@@ -84,7 +84,6 @@ pub struct RuntimeTemplateHole {
 pub enum RuntimeError {
     Image(String),
     UnexpectedWeightProfile,
-    SemanticKeyEntryLimit { limit: usize, requested: usize },
     SemanticKeyByteLimit { limit: usize, requested: usize },
     InputTooLarge,
     Lex { byte: usize },
@@ -411,30 +410,24 @@ impl<'a> RuntimeParser<'a> {
         host: &'a dyn RuntimeHost,
         policy: RuntimePolicy,
     ) -> Result<Self, RuntimeError> {
-        image
-            .verify_executable(grammar, compiler_abi, unicode_abi)
-            .map_err(|error| RuntimeError::Image(format!("{error:?}")))?;
+        let admission = crate::RuntimeParserAdmission::verify(
+            grammar,
+            image,
+            compiler_abi,
+            unicode_abi,
+            crate::ParserImageAdmissionLimits::default(),
+        )
+        .map_err(|error| RuntimeError::Image(format!("{error:?}")))?;
         let requirements = runtime_capability_requirements(grammar, image.core_fingerprint)
             .map_err(RuntimeError::Capability)?;
         let bindings =
             RuntimeCapabilityBindings::bind(&requirements, |key| host.capability_manifest(key))
                 .map_err(RuntimeError::Capability)?;
-        Self::new_with_policy_and_bindings(
-            grammar,
-            image,
-            compiler_abi,
-            unicode_abi,
-            host,
-            policy,
-            bindings,
-        )
+        Self::from_admission_with_bindings(admission, host, policy, bindings)
     }
 
-    pub(crate) fn new_with_policy_and_bindings(
-        grammar: &'a GrammarCoreV1,
-        image: &'a ParserImageV1,
-        compiler_abi: &str,
-        unicode_abi: &str,
+    pub(crate) fn from_admission_with_bindings(
+        admission: crate::RuntimeParserAdmission<'a>,
         host: &'a dyn RuntimeHost,
         policy: RuntimePolicy,
         capability_bindings: RuntimeCapabilityBindings,
@@ -447,9 +440,8 @@ impl<'a> RuntimeParser<'a> {
         if policy.max_foreign_nesting == 0 {
             return Err(RuntimeError::InvalidRuntimePolicy("max_foreign_nesting must be positive"));
         }
-        image
-            .verify_executable(grammar, compiler_abi, unicode_abi)
-            .map_err(|error| RuntimeError::Image(format!("{error:?}")))?;
+        let grammar = admission.grammar();
+        let image = admission.image();
         Ok(Self {
             grammar,
             image,
@@ -2568,6 +2560,102 @@ mod tests {
             limits: grammar.limits,
         };
         (grammar, image)
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+
+        #[test]
+        fn admitted_parser_preserves_results_limits_and_single_verification(
+            number in 0u32..1_000_000,
+            source in "[0-9x ]{0,16}",
+            input_limit in 0u32..24,
+            lexer_work in 0u64..128,
+            policy_case in 0u8..3,
+        ) {
+            use proptest::prelude::*;
+            let (grammar, image) = integer_grammar();
+            let host = DefaultRuntimeHost;
+            let before = crate::image::executable_verification_count();
+            let admission = crate::RuntimeParserAdmission::verify(
+                &grammar, &image, "test", "test", crate::ParserImageAdmissionLimits::default(),
+            ).expect("valid image admission");
+            prop_assert_eq!(crate::image::executable_verification_count(), before + 1);
+            prop_assert!(std::ptr::eq(admission.grammar(), &grammar));
+            prop_assert!(std::ptr::eq(admission.image(), &image));
+            let parser = RuntimeParser::from_admission_with_bindings(
+                admission, &host, RuntimePolicy::default(), RuntimeCapabilityBindings::default(),
+            ).expect("admitted parser");
+            let parsed = parser.parse(&number.to_string()).expect("complete integer parse");
+            prop_assert_eq!(parsed.len(), 1);
+            let DynamicValue::Term(term) = &parsed[0].value else {
+                return Err(TestCaseError::fail("integer constructor was lost"));
+            };
+            prop_assert_eq!(&term.fields, &vec![DynamicValue::Integer(i128::from(number))]);
+            prop_assert_eq!(&parsed[0].syntax, &parsed[0].value);
+            let text_pieces = [RuntimeTemplatePiece::Text(number.to_string())];
+            let hole_pieces = [RuntimeTemplatePiece::Hole(0)];
+            let holes = [RuntimeTemplateHole { id: 0, category: Some(CategoryId(0)) }];
+            prop_assert_eq!(parser.parse_template(&text_pieces, &[], Some(CategoryId(0))), Ok(parsed));
+            let hole_parse = parser.parse_template(&hole_pieces, &holes, Some(CategoryId(0)))
+                .expect("complete structural hole parse");
+            prop_assert_eq!(hole_parse.len(), 1);
+            prop_assert_eq!(&hole_parse[0].value,
+                &DynamicValue::TemplateHole { id: 0, category: CategoryId(0) });
+            prop_assert_eq!(crate::image::executable_verification_count(), before + 1);
+
+            let policy = RuntimePolicy {
+                max_input_bytes: input_limit,
+                max_lexer_work: lexer_work,
+                max_lexer_mode_depth: u16::from(policy_case != 1),
+                max_foreign_nesting: u16::from(policy_case != 2),
+                ..RuntimePolicy::default()
+            };
+            let admission = crate::RuntimeParserAdmission::verify(
+                &grammar, &image, "test", "test", crate::ParserImageAdmissionLimits::default(),
+            ).expect("independent checked receipt");
+            let checked = crate::image::executable_verification_count();
+            let reused = RuntimeParser::from_admission_with_bindings(
+                admission, &host, policy, RuntimeCapabilityBindings::default(),
+            ).map(|parser| {
+                (parser.parse(&source),
+                 parser.parse_template(&text_pieces, &[], Some(CategoryId(0))),
+                 parser.parse_template(&hole_pieces, &holes, Some(CategoryId(0))))
+            });
+            prop_assert_eq!(crate::image::executable_verification_count(), checked);
+            let fresh = RuntimeParser::new_with_policy(&grammar, &image, "test", "test", &host, policy)
+                .map(|parser| {
+                    (parser.parse(&source),
+                     parser.parse_template(&text_pieces, &[], Some(CategoryId(0))),
+                     parser.parse_template(&hole_pieces, &holes, Some(CategoryId(0))))
+                });
+            prop_assert_eq!(reused, fresh);
+            prop_assert_eq!(crate::image::executable_verification_count(), checked + 1);
+        }
+
+        #[test]
+        fn parser_admission_refuses_changed_artifacts(name in "[A-Z][a-z]{0,8}") {
+            use proptest::prelude::*;
+            let (mut grammar, mut image) = integer_grammar();
+            grammar.name = name;
+            image.core_fingerprint = grammar.fingerprint().expect("renamed grammar");
+            for mutation in 0..7 {
+                let mut changed = image.clone();
+                match mutation {
+                    0 => changed.magic[0] ^= 1,
+                    1 => changed.compiler_abi.push('x'),
+                    2 => changed.unicode_version.push('x'),
+                    3 => changed.core_fingerprint[0] ^= 1,
+                    4 => changed.engine.nonterminal_count += 1,
+                    5 => changed.lexer.transitions[0].target = u32::MAX,
+                    _ => changed.exact = false,
+                }
+                prop_assert!(crate::RuntimeParserAdmission::verify(
+                    &grammar, &changed, "test", "test", crate::ParserImageAdmissionLimits::default(),
+                ).is_err());
+                prop_assert!(RuntimeParser::new(&grammar, &changed, "test", "test", &DefaultRuntimeHost).is_err());
+            }
+        }
     }
 
     fn tagged_integer_grammar() -> (GrammarCoreV1, ParserImageV1) {

@@ -13,7 +13,14 @@
     census and supplies the same visit, ordinary-assembly, and special-step
     functions to both representations.  All pending work remains a list (the
     model of the heap-backed Rust [Vec]); no native call-stack recursion is
-    introduced by the factoring. *)
+    introduced by the factoring.
+
+    The last section (added 2026-10-20) models how the fused visit of an AC
+    bag constructor sizes its frame, and how the tagged assembly of the same
+    constructor checks that frame.  Before 2026-10-20 the frame counted every
+    occurrence of an element, but the visit and the assembly see one stored
+    entry per distinct element, so a bag with a repeated element failed the
+    assembly check ([fused_bag_check_before_fails_on_a_repeated_element]). *)
 
 From Stdlib Require Import List Arith.PeanoNat Lia.
 Import ListNotations.
@@ -327,6 +334,171 @@ Module TaggedNormalizationMachine.
 
   End Tasks.
 
+  (** ** Fused AC bag frames (added 2026-10-20)
+
+      Rust: the [AcBag] arm of [generate_fused_collection_visit_arm] in
+      [macros/src/gen/term_ops/normalize.rs] emits the visit.  The tagged
+      assembly of the same constructor (the [__result_cursor] loop that the
+      generated [norm_assemble_<cat>] runs) consumes the frame.
+
+      A [HashBag] stores one entry for each distinct element, with a positive
+      multiplicity.  [HashBag::len] is the total multiplicity
+      ([runtime/src/hashbag.rs], [total_count]).  [HashBag::distinct_len] and
+      [HashBag::iter] both see one item for each stored entry.
+
+      The visit reserves [value_count] result slots from [value_base], and it
+      pushes one child visit for each entry: the [i]-th entry goes to slot
+      [value_base + i].  The assembly walks the same entries, takes one result
+      for each entry, and then requires that its cursor ends at
+      [value_base + value_count].  A bag is modeled by the multiplicities of
+      its stored entries, in iteration order. *)
+
+  Definition Bag : Type := list nat.
+
+  (** [HashBag::len]. *)
+  Definition bag_total (bag : Bag) : nat := fold_right Nat.add 0 bag.
+
+  (** [HashBag::distinct_len]: one item for each stored entry. *)
+  Definition bag_distinct (bag : Bag) : nat := length bag.
+
+  Definition positive_multiplicities (bag : Bag) : Prop :=
+    Forall (fun multiplicity => 0 < multiplicity) bag.
+
+  Definition no_repeated_element (bag : Bag) : Prop :=
+    Forall (fun multiplicity => multiplicity = 1) bag.
+
+  (** The slot of each child visit:
+      [for (__fused_index, ..) in collection.iter().enumerate()]. *)
+  Definition fused_bag_visit_slots (value_base : nat) (bag : Bag) : list nat :=
+    seq value_base (length bag).
+
+  (** The assembly cursor after its loop: one step for each entry. *)
+  Definition fused_bag_cursor (value_base : nat) (bag : Bag) : nat :=
+    value_base + length bag.
+
+  (** [assert_eq!(__result_cursor, value_end)], where
+      [value_end = value_base + value_count]. *)
+  Definition fused_bag_check (value_base value_count : nat) (bag : Bag) : bool :=
+    Nat.eqb (fused_bag_cursor value_base bag) (value_base + value_count).
+
+  (** Before 2026-10-20: [value_count = collection.len()]. *)
+  Definition fused_bag_value_count_before (bag : Bag) : nat := bag_total bag.
+
+  (** After 2026-10-20: [value_count = collection.distinct_len()]. *)
+  Definition fused_bag_value_count (bag : Bag) : nat := bag_distinct bag.
+
+  Lemma bag_total_bounds_length : forall bag,
+      positive_multiplicities bag -> length bag <= bag_total bag.
+  Proof.
+    unfold bag_total.
+    induction bag as [|multiplicity rest IH]; intros Hpositive; cbn; [lia |].
+    inversion Hpositive as [|? ? Hhead Htail]; subst.
+    specialize (IH Htail). lia.
+  Qed.
+
+  Lemma bag_total_is_length_iff : forall bag,
+      positive_multiplicities bag ->
+      (bag_total bag = length bag <-> no_repeated_element bag).
+  Proof.
+    induction bag as [|multiplicity rest IH]; intros Hpositive.
+    - split; intros _; [constructor | reflexivity].
+    - inversion Hpositive as [|? ? Hhead Htail]; subst.
+      pose proof (bag_total_bounds_length Htail) as Hbound.
+      change (bag_total (multiplicity :: rest)) with (multiplicity + bag_total rest).
+      change (length (multiplicity :: rest)) with (S (length rest)).
+      split.
+      + intros Heq.
+        assert (multiplicity = 1) as Hone by lia.
+        assert (bag_total rest = length rest) as Hrest by lia.
+        constructor; [exact Hone | exact (proj1 (IH Htail) Hrest)].
+      + intros Hnone. inversion Hnone as [|? ? Hone Hrest]; subst.
+        pose proof (proj2 (IH Htail) Hrest) as Hlength. lia.
+  Qed.
+
+  (** The check before 2026-10-20 holds exactly when no element repeats. *)
+  Theorem fused_bag_check_before_holds_only_without_repeats :
+    forall value_base bag,
+      positive_multiplicities bag ->
+      (fused_bag_check value_base (fused_bag_value_count_before bag) bag = true <->
+       no_repeated_element bag).
+  Proof.
+    intros value_base bag Hpositive.
+    unfold fused_bag_check, fused_bag_cursor, fused_bag_value_count_before.
+    rewrite Nat.eqb_eq, <- (bag_total_is_length_iff Hpositive).
+    split; intros; lia.
+  Qed.
+
+  (** Counterexample: [par{0|0}] is one entry with multiplicity 2. *)
+  Theorem fused_bag_check_before_fails_on_a_repeated_element :
+    forall value_base,
+      fused_bag_check value_base (fused_bag_value_count_before [2]) [2] = false.
+  Proof.
+    intros value_base. unfold fused_bag_check, fused_bag_cursor,
+      fused_bag_value_count_before, bag_total.
+    apply Nat.eqb_neq. cbn [length fold_right]. lia.
+  Qed.
+
+  (** The same frame reserves a slot that no child visit fills, so the
+      slot stays [None]. *)
+  Theorem fused_bag_slots_before_leave_a_reserved_slot_unvisited :
+    forall value_base,
+      value_base + 1 < value_base + fused_bag_value_count_before [2] /\
+      ~ In (value_base + 1) (fused_bag_visit_slots value_base [2]).
+  Proof.
+    intros value_base. split.
+    - unfold fused_bag_value_count_before, bag_total. cbn [fold_right]. lia.
+    - unfold fused_bag_visit_slots. cbn [length seq In]. intros [Heq | []]. lia.
+  Qed.
+
+  (** The corrected frame passes the check for every bag. *)
+  Theorem fused_bag_check_holds : forall value_base bag,
+      fused_bag_check value_base (fused_bag_value_count bag) bag = true.
+  Proof.
+    intros value_base bag.
+    unfold fused_bag_check, fused_bag_cursor, fused_bag_value_count, bag_distinct.
+    apply Nat.eqb_refl.
+  Qed.
+
+  (** The child visits fill exactly the reserved slots, each one once. *)
+  Theorem fused_bag_visits_fill_exactly_the_reserved_slots :
+    forall value_base bag,
+      fused_bag_visit_slots value_base bag =
+        seq value_base (fused_bag_value_count bag) /\
+      NoDup (fused_bag_visit_slots value_base bag).
+  Proof.
+    intros value_base bag. split; [reflexivity |].
+    apply seq_NoDup.
+  Qed.
+
+  (** Positive control: without a repeated element the corrected frame is
+      the frame before 2026-10-20. *)
+  Theorem fused_bag_value_count_unchanged_without_repeats : forall bag,
+      positive_multiplicities bag -> no_repeated_element bag ->
+      fused_bag_value_count bag = fused_bag_value_count_before bag.
+  Proof.
+    intros bag Hpositive Hnone.
+    unfold fused_bag_value_count, fused_bag_value_count_before, bag_distinct.
+    symmetry. exact (proj2 (bag_total_is_length_iff Hpositive) Hnone).
+  Qed.
+
+  (** The shared assembly receives each entry's result repeated by its
+      multiplicity ([for _ in 1..__multiplicity { values.push(..) }] and one
+      more push), so it sees the total multiplicity of the bag. *)
+  Definition fused_bag_shared_values {Value : Type}
+      (results : list Value) (bag : Bag) : list Value :=
+    flat_map (fun entry => repeat (fst entry) (snd entry)) (combine results bag).
+
+  Theorem fused_bag_shared_values_have_the_total_multiplicity :
+    forall (Value : Type) (results : list Value) bag,
+      length results = length bag ->
+      length (fused_bag_shared_values results bag) = bag_total bag.
+  Proof.
+    intros Value results. induction results as [|result rest IH];
+      intros [|multiplicity bag] Hlength; cbn in *; try discriminate; [reflexivity |].
+    unfold fused_bag_shared_values in *. cbn.
+    rewrite length_app, repeat_length. f_equal. apply IH. lia.
+  Qed.
+
   Print Assumptions frame_values_have_exact_length.
   Print Assumptions frame_partition_recombines.
   Print Assumptions decode_encode_task.
@@ -337,5 +509,12 @@ Module TaggedNormalizationMachine.
   Print Assumptions failure_preserved.
   Print Assumptions finite_run_preserved.
   Print Assumptions successful_results_and_sources_preserved.
+  Print Assumptions fused_bag_check_before_holds_only_without_repeats.
+  Print Assumptions fused_bag_check_before_fails_on_a_repeated_element.
+  Print Assumptions fused_bag_slots_before_leave_a_reserved_slot_unvisited.
+  Print Assumptions fused_bag_check_holds.
+  Print Assumptions fused_bag_visits_fill_exactly_the_reserved_slots.
+  Print Assumptions fused_bag_value_count_unchanged_without_repeats.
+  Print Assumptions fused_bag_shared_values_have_the_total_multiplicity.
 
 End TaggedNormalizationMachine.

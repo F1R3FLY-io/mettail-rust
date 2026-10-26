@@ -139,9 +139,11 @@ proves the modeled field/refusal and bounded-charge laws. The
 proves complete association, lexical separation, URI precedence and hereditary
 worklist admission. Concrete schema classification, child-table correspondence
 and cancellation are checked against the Rust tests; these models are not a
-proof of all Rust code. Import-only bounds also do not replace whole-preparation
-accounting for repeated source-scope copies and output construction. The checked
-frontend must compose that separate budget before exposing this path publicly.
+proof of all Rust code. Caller-import bounds apply to the admitted input map.
+Public preparation also retains source admission, parser limits, cancellation,
+and checked lowering. Its reservation callback checks cancellation without
+debiting host-work or payload allowances. Semantic-policy callers retain their
+separate checked budgets.
 
 Public source preparation must preserve the node's existing order: negative
 initial budget rejects before frontend invocation; preparation failure performs
@@ -204,10 +206,12 @@ the application contract**, not that fixture alone.
 | Source family | Existing structural reuse | Required preserved meaning and focused checks |
 |---|---|---|
 | `PZero` | `lower_arm_p_zero` | Empty process, not an error placeholder |
+| `PUnit` | Checked `UnitTuple` construction | `()` is an empty tuple value, not `Nil` or an empty cost stack at the process root |
 | `PPar`, `PParInfix` | `ParFold`, `ParPair` | Source parallel composition and multiplicity; not parser ambiguity |
 | Ordinary, quoted and polyadic sends | `desugar_surface_sugar_node`, send continuations | Existing name/quote semantics, argument versus list shape, persistence and payload order |
 | `PNew`, `PNewUris` | `extend_env`, `unbind_uri_scope`, `New` continuation | Exact binder/URI association, shadowing, duplicate and invalid URI rejection |
 | `PForUser`, receive rows and joins | `ForRows`, `for_source`, `for_pattern`, `assemble_receive` | Exact receive-slot order, persistence, nested continuation scope, all-or-none join behavior |
+| `PCostSignedTerm`, `PCostStackCons`, `PForCostSigned`, signed input binds, `CostSig` and `CostStack` | Closed source-profile rows and the existing cost jobs/continuations | Preserve signed body, principal, stack-cell and receive-continuation structure; structural admission alone is not a funding decision |
 | Name quote/drop and variables | `enter_name`, variable handlers | Bound-name/process distinction, exact lexical lookup and quote/drop forwarding, stable unresolved-reference rejection; caller URI injections are handled by `new` |
 | Quoted nested list patterns | `enter_pattern`, `PatListLit` | Literal tests and each capture in `[1,0,[[term,receipt]],usage]`; no dropped/reordered binding |
 | Int, Bool, String | Existing scalar handlers and decoders | Exact scalar value and closed/open metadata; checked numeric range, no double string decoding |
@@ -241,7 +245,8 @@ arbitrary future constructors with a similar name.
 
 | Family | Existing constructors and structural owner | Child-position obligations |
 |---|---|---|
-| Core processes | `PZero`, `PPar`, `PParInfix`, `PDrop`, `PVar`, `PNew`, `PNewUris`, `PForUser` in `Drive::enter_proc` | Parallel members and bodies are terms; drop operands are names; receive sources, patterns, guards and continuations have distinct contexts |
+| Core processes | `PZero`, `PUnit`, `PPar`, `PParInfix`, `PDrop`, `PVar`, `PNew`, `PNewUris`, `PForUser` in `Drive::enter_proc` | Parallel members and bodies are terms; `PUnit` has no children and remains distinct from `PZero`; drop operands are names; receive sources, patterns, guards and continuations have distinct contexts |
+| Cost processes and categories | `PCostSignedTerm`, `PCostStackCons`, `PForCostSigned`; `CostSigGround`, `CostSigHash`, `CostSigCompound`, `CostSigTransfer`, `CostSigGroup`; `CostStackEmpty`, `CostStackCons`, `CostStackGroup` | Retain each declared `Proc`, `Name`, `CostSig` and `CostStack` child in its original slot; a signature or stack cell is not erased into its body or converted into funding authority |
 | Direct sends | `POutput`, `PPersistOutput`, `POutputShort`, `PPersistOutputShort` | Ordinary channels are names; short quoted channels are processes; each payload retains its existing arity encoding |
 | Empty/polyadic sends | `POutputEmpty`, `PPersistOutputEmpty`, `POutput2Plus`, `PPersistOutput2Plus`, `POutputShortEmpty`, `PPersistOutputShortEmpty`, `POutputShort2Plus`, `PPersistOutputShort2Plus` in `desugar_surface_sugar_node` | Reuse the empty/list payload construction, with distinct origins for generated list and quote nodes |
 | Quoted-name/Nil sends | `POutputNil`, `PPersistOutputNil`, `POutputNilEmpty`, `PPersistOutputNilEmpty`, `POutputNil2Plus`, `PPersistOutputNil2Plus`, `POutputQuoted`, `POutputQuotedEmpty`, `POutputQuoted2Plus` in the same desugarer | Preserve the existing name-to-process conversion; do not invent additional quoting |
@@ -262,6 +267,59 @@ Their enum-to-slot mapping is part of the
 receive implementation gate: no hand-written second parser or inference from
 the displayed receive text. Query/other row forms outside the admitted profile
 must reject by their exact constructor until their own semantics are admitted.
+
+### Cost(Rho) source classification is not funding
+
+The [closed source-profile table](../../languages/src/rholang/source_profile_policy.rs)
+names generated constructor identities and every original field slot. Its
+roles are interpretation contexts, not replacements for the field's generated
+category: `T` means term, `N` name, `PN` name-pattern, `G` guard and `I`
+inherits the parent's role. The generated
+[checked source visitor](../../macros/src/gen/term_ops/checked_source.rs)
+checks the complete field mask and visits category children on an explicit
+worklist. It reserves logical work and retained slots before dispatch,
+projection, child push and batch reversal; an unsupported constructor, field
+carrier or malformed policy fails with its exact constructor and occurrence
+coordinate. This is a resource-checked observation of the parsed structure,
+not another parse, semantic evaluation or authority check.
+
+| Source constructor | Child category and role, in source order |
+|---|---|
+| `PUnit` | No children; `()` is a process-level unit tuple, whereas `Nil` is `PZero` |
+| `PCostSignedTerm` | `Proc` body `T`; `CostSig` signature `T` |
+| `PCostStackCons` | `CostSig` head `T`; `CostStack` tail `T` |
+| `CostSigTransfer`, `CostSigCompound` | Left and right `CostSig` children `T` |
+| `CostSigGround`, `CostSigHash`, `CostSigGroup` | Respectively `Name` principal `N`, `Proc` section `T`, grouped `CostSig` `I` |
+| `CostStackEmpty`, `CostStackCons`, `CostStackGroup` | No children; or `CostSig` `T` then `CostStack` `T`; or grouped `CostStack` `I`, respectively |
+| `PForCostSigned` | Receive-row vector `I`, then `Proc` continuation `T`; each row keeps its ordinary bind and optional guard roles |
+| `InputBindCostSigned`, `InputBindCostSignedEmpty` | Respectively `Name` pattern `PN`, `Name` channel `N`, `CostSig` `T`; or `Name` channel `N`, `CostSig` `T` |
+
+For example, the existing grammar parses `()` as `PUnit` at a `Proc` root,
+but parses `()` as `CostStackEmpty` in a stack-tail position. It parses
+`{% Nil %}[@Nil]` with a quoted `Name` principal and
+`{% Nil %}[#(Nil)]` with a quoted-process `CostSigHash` section. The
+[cost lowering tests](../../rholang-runtime/tests/rholang_cost_lowering.rs)
+pin their distinct host wire variants (`Name` versus `Quote`) even when the
+underlying process is the same. Collapsing both to a generic quoted principal
+would lose security-relevant signature identity.
+
+The profile also accepts the *structure* of `{% Nil %}[alice -o bob]` and
+`for({% value <- channel %}[alice]){% Nil %}`. The first still fails
+`UnfundableCostSignature` without a checked transfer rewrite; the second
+currently fails `CostPlanUnavailable` because a standalone signed continuation
+requires a fingerprint-bound plan. An ordinary signed bind remains a distinct
+source node even when its surrounding receive is lowerable. A bare
+`alice :: ()` retains a nonempty stack cell as evidence; it does not mint
+funding. These refusals must not be weakened by treating profile success as a
+`CostTransitionPlan`, a live signature check or a resource certificate.
+
+The [admission model](../../formal/rocq/rho_bridge/theories/RholangFrontendAdmission.v)
+separates modeled `CostSignature`, `CostStack` and `SignedBind` classification
+from `CostTerm`: the former retain scope/structure obligations, while the
+latter additionally retains live-authority, resource-projection and funded-
+commit obligations. Its proof does not establish the exact Rust child-role
+table, source-parser coverage, host signature validity or funding. Those need
+their own source-correspondence and host-admission checks.
 
 The structural DDL child closure already has a separate exhaustive owner,
 [`DdlLowerPlan`](../../rholang-runtime/src/ddl_ast.rs):
@@ -317,10 +375,12 @@ cut, first-reading election or executable parallelization resolves ambiguity.
 These are stable typed diagnostic families, not arbitrary panic/debug strings.
 Error formatting must be bounded. Required but unimplemented application forms
 remain blockers of this profile. Other forms, including unsupported numeric
-folds or source-level cost annotations, retain their campaign implementation
-owners and must receive explicit rejections until admitted; no fallback to the
-legacy parser or omission of their auxiliary machinery is permitted. This does
-not waive the existing metered funding path for ordinary unsigned source.
+folds, must receive explicit rejections until admitted. Cost(Rho) source
+constructors are now structurally classified, but transfer and signed-
+continuation funding forms still fail closed without their checked plans; no
+fallback to the legacy parser or omission of their auxiliary machinery is
+permitted. This does not waive the existing metered funding path for ordinary
+unsigned source.
 
 ## Session and dependency boundaries
 
@@ -414,17 +474,22 @@ compatibility publication and index rules above; a finite state model alone does
 not prove Rust cleanup, memory bounds or source admission.
 These are required semantics, not an implementation-complete claim. Even a
 successful low-level bundle is **not a public source admission certificate**:
-caller imports, preparation resource budgets, checked frontend adaptation,
-provider binding and qualified FLT `where` integration remain required sibling
-obligations before public activation.
+source admission, caller-import bounds, parser limits, checked frontend adaptation,
+provider binding, and qualified FLT `where` integration remain required obligations.
+Public execution also requires the existing guest semantic funding and authority checks.
 
 ### Direct driver storage reservations
 
-The direct driver's storage layer borrows a reservation callback from the
-existing `ReflectedCodecBudget`. The live session owner supplies that callback;
-there is no global meter, new worklist implementation or second lowering pass.
-Legacy internal entry retains its explicit unmetered policy. Neither that entry
-nor the storage-metered entry alone may certify public preparation.
+The direct driver borrows a reservation callback from its caller.
+The public frontend supplies a callback that refuses only when cancellation is set.
+Semantic-policy callers can supply `ReflectedCodecBudget` with finite work and
+payload allowances. Both policies use the same checked operations and owned
+session. Legacy internal entry retains its explicit unmetered policy.
+No storage policy alone certifies public preparation.
+
+The following charge table and allowance rules apply to `ReflectedCodecBudget`
+callers. Public preparation retains the reservation points for cancellation checks.
+It does not debit these logical charges.
 
 A **work unit** is a declared logical operation charge. A **slot** is one
 temporary roster, pending-job or value-stack position, represented by four
@@ -445,12 +510,14 @@ does not replenish either allowance.
 | Shared consuming `n`-value reduction | `2 + n` | `1 + n` |
 | Temporary roster with admitted upper bound `n` | `n` | `n` |
 
-Check variable sums, arities and the multiplication by four before reservation.
-The shared meter polls cancellation and checks both remaining dimensions before
-changing either balance. Only then may the storage operation execute. A later
-shape or constructor failure retains earlier charges, preserves any unconsumed
-prefix and publishes no substitute result. The driver propagates the error to
-the existing owned-session cleanup.
+Both policies check variable sums, arities, and multiplication by four before
+reservation. Both policies poll cancellation before the storage operation.
+For paid callers, the meter checks both remaining dimensions before changing
+either balance. A later failure retains earlier paid charges.
+
+A shape or constructor failure preserves any unconsumed prefix and publishes
+no substitute result. The driver propagates the error through owned-session cleanup.
+The public callback does not suppress checked arithmetic, allocation, or shape errors.
 
 Child scheduling reserves the roster before allocating or advancing its
 iterator, polls cancellation before every advance, rejects an exceeded bound
@@ -470,15 +537,58 @@ also establish refusal before mutation, checked arithmetic, retained charges,
 ordered values, byte-equivalent successful lowering and clean subsequent
 sessions.
 
-Storage reservation is only one part of complete preparation accounting.
-Scope opening and copying, source analyses, sorting comparisons, constructed
-values and metadata, caller-import copies, DDL construction and FLT/service
-side outputs still require their own precharges through the same allowance.
-Charging the push of an already constructed `Par` does **not** pay for its
-construction. Public activation requires that composition; generic allocator
-failure and panic recovery are not claims of this storage contract.
+The same model contains a cancellation-only specialization for public preparation.
+Admission depends only on the cancellation flag. After admission, the operation
+retains its exact result, including any underlying failure. A successful paid
+operation therefore has the same result through public preparation.
+A zero paid allowance can refuse a request that public preparation accepts.
+
+The generated properties below exercise the actual public adapter and its
+existing checked paid path. P1 and P2 use bounded scalar, list, send, and parallel
+trees. P3 generates unresolved variables and unsupported source forms.
+
+| Property | Implementation behavior | Cases |
+|---|---|---:|
+| P1: `public_preparation_preserves_checked_operation_results` | Exact protobuf bytes and guard report, zero paid allowance refusal, inactive session | 64 |
+| P2: `public_preparation_cancellation_never_publishes_and_releases_the_session` | Sampled actual cancellation polls, no artifact, clean session, exact retry result | 64 |
+| P3: `public_preparation_retains_checked_operation_failures` | Exact checked error, clean session, successful subsequent request | 32 |
+
+These properties reside in
+[`prepared_frontend_tests.rs`](../../rholang-runtime/src/rholang_ast/prepared_frontend_tests.rs).
+The following table maps every new law to its behavioral property.
+
+| Cancellation specialization law | Property |
+|---|---|
+| `cancellation_only_reservation_exact` | P1, P2 |
+| `cancellation_only_reservation_ignores_amounts` | P1 |
+| `cancellation_only_cancel_has_no_result` | P2 |
+| `cancellation_only_success_is_exact_operation` | P1, P3 |
+| `cancellation_only_result_exact` | P1, P2, P3 |
+| `cancellation_only_action_ignores_amounts` | P1 |
+| `cancellation_only_retains_underlying_refusal` | P3 |
+| `cancellation_only_agrees_with_successful_paid_operation` | P1 |
+| `paid_ceiling_is_not_public_cancellation` | P1 |
+
+The amount laws quantify all natural numbers in the functional model.
+The properties vary real request shapes and payload lengths through the existing
+public API. They do not prove all Rust executions or expose independent amount inputs.
+The 12 original paid laws retain their existing paid-path tests in
+[`preparation_tests.rs`](../../rholang-runtime/src/rholang_ast/preparation_tests.rs)
+and [`session_tests.rs`](../../rholang-runtime/src/rholang_ast/session_tests.rs).
+Those tests include examples and generated properties with distinct coverage.
+
+For paid callers, storage reservation remains one part of complete preparation
+accounting. Scope copies, source analyses, sorting, constructed values, caller-import
+copies, and DDL or FLT outputs require their own precharges.
+Charging a completed `Par` push does not pay for its construction.
+Public preparation does not impose these host-work allowances.
+Neither policy establishes generic allocator recovery or cancellation between polling points.
 
 ### Derived lexical environments
+
+The environment charge table and retained-charge rules below apply to
+`ReflectedCodecBudget` callers. Public preparation uses the same environment
+operations, checked arithmetic, and cancellation points without debiting these allowances.
 
 Environment admission wraps the existing `extend_env`, `extend_slots`,
 `in_pattern_position` and empty-context helpers. It does not change variable
@@ -542,8 +652,63 @@ exact aggregate charges, iteration-order independence without cancellation,
 retained charges on refusal and unchanged successful helper results. Concrete
 Rust tests establish the borrowed-input, polling, arithmetic and publication
 correspondence; the functional proof alone does not establish heap separation.
-Scope opening/closing, source AST copies and other source walkers remain
-separate parts of complete bounded preparation.
+For paid callers, scope opening, scope closing, source AST copies, and other
+source walkers remain separate parts of complete bounded preparation.
+
+### Standalone authority
+
+Public host-work removal does not grant consensus or replay authority.
+The standalone sandbox constructor selects a local CostV2 space.
+Construction alone grants no RestingCOMM authority.
+`fund_from_standalone` grants that authority only to a standalone sandbox.
+Ordinary `fund_from` clears any previous local grant.
+These funding operations preserve the source host budget.
+
+The node rejects native configuration and replay binding for a budget with
+local authority. A native budget also rejects a local authority grant.
+Refusal preserves the current authority and remaining cost.
+Successful native configuration resets token funding.
+P5 records that native baseline before testing refusal of a local grant.
+
+The unchanged
+[authority model](../../formal/rocq/runtime_grammar/theories/HostCostV2Authority.v)
+separates local, consensus, and replay admission.
+P4, `standalone_funding_preserves_local_authority_origin`, runs 64 generated cases
+in [`speculation.rs`](../../rholang-runtime/src/speculation.rs).
+P5, `local_authority_never_enters_native_or_replay_execution`, runs 128 generated
+cases in the node's `rholang/src/rust/interpreter/accounting/native_runtime/replay_authority/tests.rs`.
+P4 varies funding and grant/reset sequences.
+P5 varies funding and all three event codec epochs through the existing constructors.
+
+| Authority law | Behavioral coverage |
+|---|---|
+| `admitted_local_is_trusted_and_live` | P4 constructor origin and P5 native/replay exclusion |
+| `local_context_never_authorizes_consensus` | P4 origin and P5 native-entry refusal |
+| `local_context_never_authorizes_replay` | P5 replay-binding refusal |
+| `local_cost_v2_is_live_only_even_when_ids_alias` | P4 and P5 constructor separation |
+| `untrusted_local_is_refused` | P4 ordinary sandbox refusal and absence of a construction-only grant |
+| `admitted_consensus_has_approved_exact_policy` | Existing sealed-policy, adoption-version, and native-epoch properties |
+| `approved_consensus_cost_v2_is_admitted` | Existing activated version-seven policy and epoch properties |
+| `unapproved_or_old_epoch_or_wrong_root_is_refused` | Existing version/epoch properties and authenticated-genesis refusal examples |
+
+The existing node properties reside in
+`casper/src/rust/util/rholang/costacc/genesis_resource_policy/tests.rs`:
+
+- `adopted_epoch_and_commitment_follow_the_sealed_record`
+- `adopted_event_epoch_is_exactly_policy_versioned`
+- `adopted_version_passes_adopt_and_unadopted_mismatch_fails`
+- `joined_anchor_version_adopts_only_the_genesis_version`
+
+That suite also tests authenticated and foreign genesis contexts with examples.
+The node's `formal/rocq/cost_accounted_rho/PROOF_ARTIFACTS.md` maps the existing adoption laws.
+The existing one-shot host-binding test in `server.rs` retains its separate coverage.
+
+The model uses abstract numeric owner and root identities.
+The sandbox API exposes constructor ownership boundaries instead of numeric local identities.
+P4 and P5 check those actual boundaries without adding an identity API.
+Consensus authority also depends on the existing authenticated-genesis checks.
+These properties do not prove complete Rust execution, funding conservation,
+event encoding, or Cost(G) settlement.
 
 ### Subsequent neutral dependency boundary
 

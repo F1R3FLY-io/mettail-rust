@@ -2,8 +2,8 @@
 
 use crate::ast::{
     Ast, Binding, CollKind, Equation, Item, NativeLiteral, ProjectionBinding, ProjectionBody,
-    ProjectionDecl, ProjectionDirection, ProjectionPremise, RewriteBinding, RewriteDecl,
-    RewritePremise, Sort, TermAssociativity, TermRule,
+    ProjectionDecl, ProjectionDirection, ProjectionPremise, RewriteBinding, RewriteContextBinding,
+    RewriteDecl, RewritePremise, Sort, TermAssociativity, TermRule,
 };
 use crate::lex::Span;
 use crate::pres::{CatEntry, ElemId, EqEntry, Presentation, RwEntry, TermEntry};
@@ -636,7 +636,13 @@ pub fn presentation_to_value(
             if !entry.rw.context.is_empty() {
                 fields.insert(
                     "context".into(),
-                    list(entry.rw.context.iter().map(rewrite_binding_to_value)),
+                    list(
+                        entry
+                            .rw
+                            .context
+                            .iter()
+                            .map(rewrite_context_binding_to_value),
+                    ),
                 );
             }
             if !entry.rw.premises.is_empty() {
@@ -682,6 +688,10 @@ pub fn presentation_to_value(
 
 fn rewrite_binding_to_value(binding: &RewriteBinding) -> RhoValue {
     list([string("typed"), string(binding.name.clone()), sort_to_value(&binding.sort)])
+}
+
+fn rewrite_context_binding_to_value(binding: &RewriteContextBinding) -> RhoValue {
+    list([string("typed"), string(binding.name.clone()), binding.sort().clone()])
 }
 
 fn rewrite_premise_to_value(premise: &RewritePremise) -> RhoValue {
@@ -1157,7 +1167,9 @@ fn legacy_value_to_presentation(
                         .to_string(),
                     context: item
                         .get("context")
-                        .map(|value| decode_rewrite_bindings(value, &format!("{path}.context")))
+                        .map(|value| {
+                            decode_rewrite_context_bindings(value, &format!("{path}.context"))
+                        })
                         .transpose()?
                         .unwrap_or_default(),
                     premises: item
@@ -1208,6 +1220,29 @@ fn decode_rewrite_bindings(
         .iter()
         .enumerate()
         .map(|(index, value)| decode_rewrite_binding(value, &format!("{path}[{index}]")))
+        .collect()
+}
+
+fn decode_rewrite_context_bindings(
+    value: &RhoValue,
+    path: &str,
+) -> Result<Vec<RewriteContextBinding>, ValueDecodeError> {
+    expect_list(value, path.into())?
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let entry_path = format!("{path}[{index}]");
+            let fields = expect_list(value, entry_path.clone())?;
+            require_len(fields, 3, &entry_path)?;
+            if expect_string(&fields[0], format!("{entry_path}[0]"))? != "typed" {
+                return Err(ValueDecodeError::new(&entry_path, "expected `typed` binding"));
+            }
+            RewriteContextBinding::try_new_at(
+                expect_string(&fields[1], format!("{entry_path}[1]"))?.to_string(),
+                fields[2].clone(),
+                &format!("{entry_path}[2]"),
+            )
+        })
         .collect()
 }
 
@@ -1822,7 +1857,7 @@ fn binding_to_value(binding: &Binding) -> RhoValue {
     }
 }
 
-fn sort_to_value(sort: &Sort) -> RhoValue {
+pub(crate) fn sort_to_value(sort: &Sort) -> RhoValue {
     match sort {
         Sort::Cat(category) => string(category.clone()),
         Sort::Coll { kind, of } => list([
@@ -2236,6 +2271,9 @@ mod tests {
     fn authored_rewrites_preserve_legacy_records_and_optional_fields() {
         let span = Span { line: 1, col: 1 };
         let typed = |name: &str, sort: Sort| RewriteBinding { name: name.into(), sort };
+        let context = |name: &str, sort: Sort| {
+            RewriteContextBinding::try_new(name.into(), sort_to_value(&sort)).unwrap()
+        };
         let immediate = RewriteDecl {
             name: "Immediate".into(),
             context: Vec::new(),
@@ -2247,8 +2285,8 @@ mod tests {
         let ordered = RewriteDecl {
             name: "Ordered".into(),
             context: vec![
-                typed("pieces", Sort::Coll { kind: CollKind::List, of: "Text".into() }),
-                typed("i", Sort::Cat("Nat".into())),
+                context("pieces", Sort::Coll { kind: CollKind::List, of: "Text".into() }),
+                context("i", Sort::Cat("Nat".into())),
             ],
             premises: vec![
                 RewritePremise::Intrinsic {

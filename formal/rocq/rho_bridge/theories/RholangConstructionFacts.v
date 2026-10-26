@@ -95,12 +95,14 @@ Qed.
     enum whose remaining variants silently fail. Wider families retain their
     separate construction and source-admission obligations. *)
 Inductive Primitive :=
-| EmptyPrimitive | IntegerPrimitive (number : Z) | BooleanPrimitive (flag : bool)
+| EmptyPrimitive | UnitPrimitive
+| IntegerPrimitive (number : Z) | BooleanPrimitive (flag : bool)
 | TextPrimitive (payload : string) | AppendPrimitive
 | BoundPrimitive (scope index : nat) | WildcardPrimitive (connective : bool).
 Definition primitive_operation (primitive : Primitive) : ConstructOp :=
   match primitive with
   | EmptyPrimitive => EmptyOp | IntegerPrimitive number => IntegerOp number
+  | UnitPrimitive => UnitOp
   | BooleanPrimitive flag => BooleanOp flag | TextPrimitive payload => TextOp payload
   | AppendPrimitive => AppendOp
   | BoundPrimitive scope index => BoundOp scope index
@@ -110,6 +112,7 @@ Definition primitive_fact (primitive : Primitive) (children : list ConstructionF
     : option ConstructionFact :=
   match primitive, children with
   | EmptyPrimitive, [] => Some (fact_of empty)
+  | UnitPrimitive, [] => Some (fact_of unit_tuple)
   | IntegerPrimitive number, [] =>
     match integer number with Constructed value => Some (fact_of value) | _ => None end
   | BooleanPrimitive flag, [] => Some (fact_of (boolean flag))
@@ -200,6 +203,12 @@ Example empty_append_text_is_still_single_text : forall payload,
   Some {| head_shape := OneText; structural_summary := closed_summary |}.
 Proof. reflexivity. Qed.
 
+Example unit_is_not_nil_and_is_not_a_string :
+  primitive_fact UnitPrimitive [] =
+    Some {| head_shape := OtherHeads; structural_summary := closed_summary |} /\
+  primitive_fact UnitPrimitive [] <> primitive_fact EmptyPrimitive [].
+Proof. split; [reflexivity | discriminate]. Qed.
+
 Print Assumptions append_shape_is_exact.
 Print Assumptions cached_text_observation_exact.
 Print Assumptions append_fact_is_exact.
@@ -212,3 +221,4 @@ Print Assumptions mapped_cache_preserves_first_missing_reference.
 Print Assumptions mapped_cache_preserves_ordered_constructed_children.
 Print Assumptions shared_child_retains_both_edges_and_is_not_single_text.
 Print Assumptions empty_append_text_is_still_single_text.
+Print Assumptions unit_is_not_nil_and_is_not_a_string.

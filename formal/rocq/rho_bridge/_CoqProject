@@ -8,6 +8,9 @@
 # Zero-Admitted / zero-Axiom (the project gate).
 
 -Q theories RhoBridge
+# NativePrefixSupply imports the focused CostAccountedRho closure. Makefile adds
+# its configurable native load path and target-only source snapshots when it
+# generates CoqMakefile; NATIVE_COST_ACCOUNTED_RHO selects the native checkout.
 # Stage 5 CAPSTONE (iii) thread — build-wiring OPTION (a): the cross-project load path
 # so a RhoBridge theory (WholeGsltInRhoOpCorrespondenceOptimalViaSameClts) can
 # `From AdvancedAutomata Require Import InRhoSameCLTSWeakBisim` and discharge the
@@ -32,8 +35,14 @@
 theories/BridgeInertness.v
 theories/HostRhoMachineReuse.v
 theories/MettaGsltPresentation.v
+theories/AuthoredCostInterpretation.v
 theories/CostGradeFundingBoundary.v
+theories/FiniteCostGradeFold.v
+theories/FiniteHostTemplate.v
+theories/CostTraceFundingTransport.v
 theories/MettaFundingLawsConformance.v
+theories/NativePrefixSupply.v
+theories/NativePrefixCut.v
 theories/RhoLoweringTotalOrRejects.v
 theories/RhoScalarOperatorTyping.v
 theories/RhoRejectedCoverage.v
@@ -183,6 +192,7 @@ theories/SimulationReportBoundary.v
 theories/CommReductionCorrespondence.v
 theories/RhoCommScheduleFamily.v
 theories/RholangCostSurface.v
+theories/RholangCostPreparation.v
 theories/LinearCommCorrespondence.v
 theories/EndToEndCommCorrespondence.v
 theories/RhoGroundingAndNames.v
@@ -470,3 +480,5 @@ theories/LookaheadTraceDelivery.v
 theories/LookaheadUnsignedBound.v
 theories/CaptureTokenSamplingAdapter.v
 theories/FiniteConstructorWitnessAdapter.v
+theories/MonikerScopeInstantiation.v
+theories/CommContinuationReadiness.v

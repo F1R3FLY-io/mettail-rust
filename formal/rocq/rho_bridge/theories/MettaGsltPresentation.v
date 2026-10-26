@@ -8,13 +8,13 @@
  * fabricated and none is missed — the lane structure the funding analysis
  * relies on is preserved by the MeTTaIL re-presentation.
  *
- * Model: the host `Sig` is a binary tree of `Ground` leaves and `And` (split/join,
- * ⊗) nodes (f1r3node-rust rholang/.../accounting/mod.rs:1260; the
- * `ResourceSignature::split_join_decompositions` impl, resource_logic.rs:89-99,
- * recurses on `Sig::And`). `MettaSig` wraps `Sig` and delegates `key` and
- * `split_join_decompositions` to it (rholang-adapter `gslt.rs`), so the host's
- * decomposition algebra IS MeTTaIL's — this file proves that algebra
- * sound+complete (and structurally terminating, as a Coq `Fixpoint`).
+ * Model: a finite binary signature tree has Ground leaves and And nodes.
+ * Keys are parameters: the proof holds for the host's key function without
+ * implementing another hash or assuming injectivity. The result characterizes
+ * emitted key triples, not unique subterm identity when keys collide.
+ * `MettaSig` delegates `key` and `split_join_decompositions` to the host in
+ * rholang-adapter/src/gslt.rs. Executable parity tests check that delegation;
+ * this model proves soundness and completeness of the stated tree traversal.
  *
  * Rocq 9.1 compatible. No Admitted, no Axioms, no Assumptions.
  *)
@@ -29,18 +29,13 @@ Section MettaGsltPresentation.
     | Ground : nat -> Sig
     | And    : Sig -> Sig -> Sig.
 
-  (* The lane key (modelling `Sig::key`/`lane_hash`: distinct shapes ⇒ distinct
-     keys; here a structural key suffices to state soundness/completeness). *)
-  Fixpoint sig_key (s : Sig) : nat :=
-    match s with
-    | Ground k => k
-    | And l r  => 1 + sig_key l + sig_key r
-    end.
+  Variable Key : Type.
+  Variable sig_key : Sig -> Key.
 
   (* `split_join_decompositions`: for each `And` node, emit its (compound, left,
      right) lane-key decomposition, then recurse into both operands — exactly the
      host impl (resource_logic.rs:89-99), which `MettaSig` delegates to. *)
-  Fixpoint decompositions (s : Sig) : list (nat * nat * nat) :=
+  Fixpoint decompositions (s : Sig) : list (Key * Key * Key) :=
     match s with
     | Ground _ => []
     | And l r  =>
@@ -106,3 +101,7 @@ Section MettaGsltPresentation.
   Qed.
 
 End MettaGsltPresentation.
+
+Print Assumptions decompositions_sound.
+Print Assumptions decompositions_complete.
+Print Assumptions decompositions_characterization.

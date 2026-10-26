@@ -310,3 +310,147 @@ Section LexForkKeywordReservation.
   Qed.
 
 End LexForkKeywordReservation.
+
+Module CollectionOpenFork.
+
+Record CollectionEdge := {
+  owner : nat;
+  rule : nat;
+  element : nat;
+  continuation : nat;
+  synthetic_paren : bool;
+  alternative : nat;
+  target : nat;
+  edge_weight : nat
+}.
+
+Inductive OpenState :=
+| ExpectParen (result rule_id element_id outer_bp : nat)
+| ParseElement (position binding_power : nat).
+
+Record CollectionBranch := {
+  marker_owner : nat;
+  marker_rule : nat;
+  marker_slot : nat;
+  marker_continuation : nat;
+  next_state : OpenState;
+  consume_target : nat;
+  branch_weight : nat
+}.
+
+Definition open_branch (edge : CollectionEdge) : CollectionBranch :=
+  {| marker_owner := owner edge;
+     marker_rule := rule edge;
+     marker_slot := 0;
+     marker_continuation := continuation edge;
+     next_state := if synthetic_paren edge
+                   then ExpectParen (owner edge) (rule edge) (element edge) (continuation edge)
+                   else ParseElement (target edge) 0;
+     consume_target := target edge;
+     branch_weight := edge_weight edge |}.
+
+Inductive Route := Ordinary (witness : nat) | Collection (edge : CollectionEdge).
+Inductive Branch := OrdinaryBranch (witness : nat) | CollectionOpening (branch : CollectionBranch).
+
+Definition emit_before (routes : list Route) : list Branch :=
+  flat_map (fun route => match route with
+            | Ordinary witness => [OrdinaryBranch witness]
+            | Collection _ => []
+            end) routes.
+
+Definition emit (routes : list Route) : list Branch :=
+  map (fun route => match route with
+       | Ordinary witness => OrdinaryBranch witness
+       | Collection edge => CollectionOpening (open_branch edge)
+       end) routes.
+
+Definition fall_through (delimiter_yield : bool) (count : nat)
+    (primary_survived primary_dispatch same_length contextual crosscat secondary_survived : bool)
+    : bool :=
+  negb delimiter_yield &&
+  (Nat.eqb count 0 || (Nat.eqb count 1 && primary_survived) ||
+   (primary_dispatch && same_length && (negb contextual || negb primary_survived)) ||
+   (crosscat && same_length && negb secondary_survived)).
+
+Theorem mixed_length_collection_was_lost : forall edge,
+  emit_before [Collection edge; Ordinary 1; Ordinary 2] =
+    [OrdinaryBranch 1; OrdinaryBranch 2] /\
+  fall_through false 2 false true false false false true = false.
+Proof. intros; split; reflexivity. Qed.
+
+Theorem mixed_length_collection_is_retained : forall edge,
+  In (CollectionOpening (open_branch edge))
+     (emit [Collection edge; Ordinary 1; Ordinary 2]) /\
+  fall_through false 3 true true false false false true = false.
+Proof. intros; split; [left |]; reflexivity. Qed.
+
+Theorem collection_no_loss : forall routes edge,
+  In (Collection edge) routes -> In (CollectionOpening (open_branch edge)) (emit routes).
+Proof. intros routes edge IN. apply in_map with (f := fun route => match route with
+  | Ordinary witness => OrdinaryBranch witness
+  | Collection value => CollectionOpening (open_branch value) end) in IN. exact IN. Qed.
+
+Theorem ordinary_no_loss : forall routes witness,
+  In (Ordinary witness) routes -> In (OrdinaryBranch witness) (emit routes).
+Proof. intros routes witness IN. apply in_map with (f := fun route => match route with
+  | Ordinary value => OrdinaryBranch value
+  | Collection edge => CollectionOpening (open_branch edge) end) in IN. exact IN. Qed.
+
+Theorem collection_no_invention : forall routes branch,
+  In (CollectionOpening branch) (emit routes) ->
+  exists edge, In (Collection edge) routes /\ branch = open_branch edge.
+Proof.
+  intros routes branch IN. apply in_map_iff in IN.
+  destruct IN as [[witness|edge] [EQ IN]]; [discriminate |].
+  inversion EQ; subst. exists edge. auto.
+Qed.
+
+Theorem rule_order_preserved : forall left right,
+  emit (left ++ right) = emit left ++ emit right.
+Proof. intros. apply map_app. Qed.
+
+Theorem collection_marker_preserved : forall edge,
+  marker_owner (open_branch edge) = owner edge /\
+  marker_rule (open_branch edge) = rule edge /\
+  marker_slot (open_branch edge) = 0 /\
+  marker_continuation (open_branch edge) = continuation edge.
+Proof. intros. repeat split; reflexivity. Qed.
+
+Theorem collection_edge_preserved : forall edge,
+  consume_target (open_branch edge) = target edge /\
+  branch_weight (open_branch edge) = edge_weight edge.
+Proof. intros. split; reflexivity. Qed.
+
+Theorem synthetic_paren_is_required : forall edge,
+  synthetic_paren edge = true ->
+  next_state (open_branch edge) =
+    ExpectParen (owner edge) (rule edge) (element edge) (continuation edge).
+Proof. intros edge SYNTH. cbn. rewrite SYNTH. reflexivity. Qed.
+
+Theorem direct_opener_starts_element : forall edge,
+  synthetic_paren edge = false ->
+  next_state (open_branch edge) = ParseElement (target edge) 0.
+Proof. intros edge DIRECT. cbn. rewrite DIRECT. reflexivity. Qed.
+
+Theorem primary_only_uses_normal_dispatch : forall contextual,
+  fall_through false 1 true true true contextual false false = true.
+Proof. intros. reflexivity. Qed.
+
+Theorem contextual_same_length_keeps_both :
+  fall_through false 2 true true true true false true = false.
+Proof. reflexivity. Qed.
+
+Print Assumptions mixed_length_collection_was_lost.
+Print Assumptions mixed_length_collection_is_retained.
+Print Assumptions collection_no_loss.
+Print Assumptions ordinary_no_loss.
+Print Assumptions collection_no_invention.
+Print Assumptions rule_order_preserved.
+Print Assumptions collection_marker_preserved.
+Print Assumptions collection_edge_preserved.
+Print Assumptions synthetic_paren_is_required.
+Print Assumptions direct_opener_starts_element.
+Print Assumptions primary_only_uses_normal_dispatch.
+Print Assumptions contextual_same_length_keeps_both.
+
+End CollectionOpenFork.

@@ -25,8 +25,9 @@
  *   current common path (byte-identical); `None` => FALL THROUGH to a
  *   fresh-walker EXHAUSTIVE run + re-resolve + M6 min-weight select (the
  *   factored `__mettail_wpda_exhaustive_retry`). The recovered term is the
- *   global min-weight realizing root — the SAME canonical policy as the `_all`
- *   facades.
+ *   global min-weight realizing root. The historical all-results fold instead
+ *   selected each class representative by weight. The alignment model below
+ *   records that difference and preserves class weights during correction.
  *
  * THE MODEL. A parse of a fixed input is characterised by two sets of accepting
  * roots: the DEMAND set `droots` (what the early-stopping driver stopped on) and
@@ -87,6 +88,134 @@ From Stdlib Require Import Lia.
 From Stdlib Require Import Bool.
 From Stdlib Require Import List.
 Import ListNotations.
+
+Module RankedPrefix.
+
+Record Reading := reading {
+  semantic_class : nat;
+  exact_cost : nat;
+  complete_rank : nat
+}.
+
+Definition precedes (a b : Reading) : bool :=
+  (exact_cost a <? exact_cost b) ||
+  ((exact_cost a =? exact_cost b) && (complete_rank a <? complete_rank b)).
+
+Definition choose (old new : Reading) : Reading :=
+  if precedes new old then new else old.
+
+Fixpoint retain (candidate : Reading) (classes : list Reading) : list Reading :=
+  match classes with
+  | [] => [candidate]
+  | prior :: rest =>
+      if semantic_class candidate =? semantic_class prior
+      then choose prior candidate :: rest
+      else prior :: retain candidate rest
+  end.
+
+Definition prefix (limit : nat) (ordered_classes : list Reading) :=
+  firstn limit ordered_classes.
+
+Definition publish (exhausted : bool) (limit : nat)
+    (ordered_classes : list Reading) : option (list Reading) :=
+  if exhausted then Some (prefix limit ordered_classes) else None.
+
+Lemma choose_is_actual : forall old new,
+  choose old new = old \/ choose old new = new.
+Proof.
+  intros. unfold choose. destruct (precedes new old); auto.
+Qed.
+
+Lemma choose_preserves_class : forall old new,
+  semantic_class old = semantic_class new ->
+  semantic_class (choose old new) = semantic_class old.
+Proof.
+  intros old new H. destruct (choose_is_actual old new) as [E | E]; rewrite E; auto.
+Qed.
+
+Lemma choose_minimum_cost : forall old new,
+  exact_cost (choose old new) = Nat.min (exact_cost old) (exact_cost new).
+Proof.
+  intros old new. unfold choose, precedes.
+  destruct (exact_cost new <? exact_cost old) eqn:L.
+  - apply Nat.ltb_lt in L. simpl. lia.
+  - apply Nat.ltb_ge in L. simpl.
+    destruct ((exact_cost new =? exact_cost old) &&
+      (complete_rank new <? complete_rank old)) eqn:E.
+    + apply andb_true_iff in E. destruct E as [E _].
+      apply Nat.eqb_eq in E. lia.
+    + lia.
+Qed.
+
+Lemma equal_cost_selects_minimum_rank : forall old new,
+  exact_cost old = exact_cost new ->
+  complete_rank (choose old new) = Nat.min (complete_rank old) (complete_rank new).
+Proof.
+  intros old new E. unfold choose, precedes. rewrite E, Nat.ltb_irrefl, Nat.eqb_refl.
+  simpl. destruct (complete_rank new <? complete_rank old) eqn:L.
+  - apply Nat.ltb_lt in L. lia.
+  - apply Nat.ltb_ge in L. lia.
+Qed.
+
+Lemma unequal_cost_ignores_rank : forall old new,
+  exact_cost new < exact_cost old -> choose old new = new.
+Proof.
+  intros old new H. unfold choose, precedes.
+  assert ((exact_cost new <? exact_cost old) = true) by (apply Nat.ltb_lt; exact H).
+  rewrite H0. reflexivity.
+Qed.
+
+Lemma retain_preserves_classes : forall candidate classes,
+  map semantic_class (retain candidate classes) =
+  if existsb (fun old => semantic_class candidate =? semantic_class old) classes
+  then map semantic_class classes
+  else map semantic_class classes ++ [semantic_class candidate].
+Proof.
+  intros candidate classes. induction classes as [|prior rest IH]; simpl; auto.
+  destruct (semantic_class candidate =? semantic_class prior) eqn:E; simpl.
+  - apply Nat.eqb_eq in E. rewrite choose_preserves_class by lia. reflexivity.
+  - rewrite IH. destruct (existsb _ rest); reflexivity.
+Qed.
+
+Lemma prefix_is_bounded : forall limit classes,
+  length (prefix limit classes) <= limit.
+Proof. intros. unfold prefix. rewrite length_firstn. lia. Qed.
+
+Lemma prefix_contains_only_realized : forall limit classes r,
+  In r (prefix limit classes) -> In r classes.
+Proof.
+  intros limit classes r H. unfold prefix in H.
+  rewrite <- (firstn_skipn limit classes). apply in_or_app. now left.
+Qed.
+
+Lemma complete_prefix_is_all : forall limit classes,
+  length classes <= limit -> prefix limit classes = classes.
+Proof. intros. unfold prefix. now apply firstn_all2. Qed.
+
+Lemma insufficient_evidence_is_not_success : forall limit classes,
+  publish false limit classes = None.
+Proof. reflexivity. Qed.
+
+Example cost_only_aggregation_loses_the_rank_witness :
+  let first := reading 7 1 9 in
+  let second := reading 7 1 2 in
+  choose first second = second /\
+  complete_rank first <> complete_rank (choose first second).
+Proof. cbn. auto. Qed.
+
+Print Assumptions choose_is_actual.
+Print Assumptions choose_preserves_class.
+Print Assumptions choose_minimum_cost.
+Print Assumptions equal_cost_selects_minimum_rank.
+Print Assumptions unequal_cost_ignores_rank.
+Print Assumptions retain_preserves_classes.
+Print Assumptions prefix_is_bounded.
+Print Assumptions prefix_contains_only_realized.
+Print Assumptions complete_prefix_is_all.
+Print Assumptions insufficient_evidence_is_not_success.
+Print Assumptions cost_only_aggregation_loses_the_rank_witness.
+
+End RankedPrefix.
 
 Section FacadeDriverFallThrough.
 
@@ -439,3 +568,108 @@ Print Assumptions overlay_on_m6_select.
 Print Assumptions gate_off_is_pre.
 Print Assumptions gate_on_is_post.
 Print Assumptions gate_on_preserves_common.
+
+Record LexW := {
+  lw_open_len : nat;
+  lw_primary : nat;
+  lw_lex_alt : nat;
+  lw_src : nat;
+  lw_rule : nat
+}.
+
+Definition lexw_cmp (a b : LexW) : comparison :=
+  match Nat.compare (lw_primary a) (lw_primary b) with
+  | Eq => match Nat.compare (lw_open_len b) (lw_open_len a) with
+    | Eq => match Nat.compare (lw_lex_alt a) (lw_lex_alt b) with
+      | Eq => match Nat.compare (lw_src a) (lw_src b) with
+        | Eq => Nat.compare (lw_rule a) (lw_rule b)
+        | c => c end
+      | c => c end
+    | c => c end
+  | c => c end.
+
+Definition lexw_ltb a b :=
+  match lexw_cmp a b with Lt => true | _ => false end.
+
+Fixpoint insert_class {T K : Type} (keq : K -> K -> bool) (key : T -> K)
+    (acc : list (T * LexW)) (term : T) (weight : LexW) : list (T * LexW) :=
+  match acc with
+  | [] => [(term, weight)]
+  | (kept, best) :: rest =>
+    if keq (key kept) (key term)
+    then (if lexw_ltb weight best then (term, weight) else (kept, best)) :: rest
+    else (kept, best) :: insert_class keq key rest term weight
+  end.
+
+Definition all_fold {T K : Type} (keq : K -> K -> bool) (key : T -> K)
+    (terms : list (T * LexW)) : list (T * LexW) :=
+  fold_left (fun acc pair => insert_class keq key acc (fst pair) (snd pair)) terms [].
+
+Definition align {T K : Type} (keq : K -> K -> bool) (key : T -> K)
+    (elected : list T) (classes : list (T * LexW)) : list (T * LexW) :=
+  map (fun pair =>
+    match find (fun candidate => keq (key candidate) (key (fst pair))) elected with
+    | Some representative => (representative, snd pair)
+    | None => pair
+    end) classes.
+
+Theorem align_preserves_count : forall (T K : Type) keq (key : T -> K) elected classes,
+  length (align keq key elected classes) = length classes.
+Proof. intros; unfold align; apply length_map. Qed.
+
+Theorem align_preserves_weights : forall (T K : Type) keq (key : T -> K) elected classes,
+  map snd (align keq key elected classes) = map snd classes.
+Proof.
+  intros T K keq key elected classes; induction classes as [|[term weight] rest IH].
+  - reflexivity.
+  - unfold align in *; simpl in *.
+    destruct (find (fun candidate => keq (key candidate) (key term)) elected);
+      simpl; now rewrite IH.
+Qed.
+
+Theorem align_preserves_keys : forall (T K : Type) keq (key : T -> K) elected classes,
+  (forall a b, keq a b = true -> a = b) ->
+  map (fun pair => key (fst pair)) (align keq key elected classes) =
+  map (fun pair => key (fst pair)) classes.
+Proof.
+  intros T K keq key elected classes sound.
+  induction classes as [|[term weight] rest IH]; [reflexivity|].
+  unfold align in *; simpl in *.
+  destruct (find (fun candidate => keq (key candidate) (key term)) elected)
+    as [representative|] eqn:found; simpl; rewrite IH; [|reflexivity].
+  apply find_some in found as [_ same]; apply sound in same; now rewrite same.
+Qed.
+
+Theorem aligned_representative_is_elected :
+  forall (T K : Type) keq (key : T -> K) elected classes term weight representative,
+  find (fun candidate => keq (key candidate) (key term)) elected = Some representative ->
+  In (term, weight) classes ->
+  In (representative, weight) (align keq key elected classes).
+Proof.
+  intros T K keq key elected classes term weight representative selected present.
+  unfold align; apply in_map_iff.
+  exists (term, weight); split; [simpl; now rewrite selected|exact present].
+Qed.
+
+Theorem alignment_preserves_unmatched_class :
+  forall (T K : Type) keq (key : T -> K) elected classes term weight,
+  find (fun candidate => keq (key candidate) (key term)) elected = None ->
+  In (term, weight) classes -> In (term, weight) (align keq key elected classes).
+Proof.
+  intros T K keq key elected classes term weight absent present.
+  unfold align; apply in_map_iff.
+  exists (term, weight); split; [simpl; now rewrite absent|exact present].
+Qed.
+
+Theorem alignment_uses_first_matching_election :
+  forall (T K : Type) keq (key : T -> K) elected original term weight,
+  keq (key term) (key original) = true ->
+  align keq key (term :: elected) [(original, weight)] = [(term, weight)].
+Proof. intros; unfold align; simpl; now rewrite H. Qed.
+
+Print Assumptions align_preserves_count.
+Print Assumptions align_preserves_weights.
+Print Assumptions align_preserves_keys.
+Print Assumptions aligned_representative_is_elected.
+Print Assumptions alignment_preserves_unmatched_class.
+Print Assumptions alignment_uses_first_matching_election.

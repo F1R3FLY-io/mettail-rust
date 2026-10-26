@@ -11,6 +11,9 @@
 use crate::canonical::RhoValue;
 use crate::lex::Span;
 
+mod rewrite_context;
+pub use rewrite_context::RewriteContextBinding;
+
 pub type Ident = String;
 pub type Label = String;
 pub type Cat = String;
@@ -409,7 +412,7 @@ pub struct Equation {
 pub struct RewriteDecl {
     pub name: Ident,
     /// Ordered typed variables available before the first premise.
-    pub context: Vec<RewriteBinding>,
+    pub context: Vec<RewriteContextBinding>,
     /// Premises are evaluated in source order; intrinsic outputs extend the
     /// environment for following premises and the right-hand side.
     pub premises: Vec<RewritePremise>,

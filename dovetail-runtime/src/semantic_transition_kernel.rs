@@ -15,22 +15,30 @@ use dovetail::set_automaton::{
 };
 use dovetail::{egraph::EClassId, egraph::EGraph, egraph::EGraphConfig, egraph::ENode};
 use mettail_grammar_core::{
-    CollectionKind, LanguageRight, LanguageRights, PathMapModeV1, ProjectedTheorySemanticImageV1,
-    ProjectionDirectionV1, ProjectionRelationBodyImageV1, SemanticEffectClassV1,
-    SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1, TheoryActionId,
-    TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId, TheoryImageError,
-    TheoryImageIntrinsicV1, TheoryImageOperatorV1, TheoryImageTermFormV1, TheoryJudgmentId,
-    TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId, TheoryLimitsV1,
-    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1, TheoryPatternStateFormV1,
-    TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1,
-    TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1, TheorySemanticImageV1,
-    TheorySortId, TheorySortKindImageV1, TheoryVariableId, PROJECTED_THEORY_IMAGE_ABI_V1,
+    AccountedTheoryFingerprintError, CollectionKind, LanguageRight, LanguageRights, PathMapModeV1,
+    ProjectedTheorySemanticImageV1, ProjectionDirectionV1, ProjectionRelationBodyImageV1,
+    SemanticEffectClassV1, SemanticNormalizationBranchingV1, TheoryActionExecutionImageV1,
+    TheoryActionId, TheoryConstructorId, TheoryConstructorImageV1, TheoryEffectId,
+    TheoryImageError, TheoryImageIntrinsicV1, TheoryImageOperatorV1, TheoryImageTermFormV1,
+    TheoryJudgmentId, TheoryJudgmentPatternAutomatonV1, TheoryJudgmentRuleProgramId,
+    TheoryLimitsV1, TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternAutomatonV1,
+    TheoryPatternStateFormV1, TheoryPatternStateId, TheoryPatternStateV1, TheoryResourceProfileV1,
+    TheoryRuleDispositionV1, TheoryRuleOriginV1, TheoryRuleProgramId, TheoryRuleProgramV1,
+    TheorySemanticImageV1, TheorySortId, TheorySortKindImageV1, TheoryVariableId,
+    VerifiedCostImageV1, VerifiedProjectedImageV1, PROJECTED_THEORY_IMAGE_ABI_V1,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 const THEORY_OPERATOR_DISCRIMINANT: u32 = u32::MAX;
 const THEORY_OPERATOR_DOMAIN: &[u8] = b"mettail-theory-machine-operator/1";
 const THEORY_PATHMAP_MODE_DOMAIN: &[u8] = b"mettail-theory-pathmap-mode/1";
+
+mod equation_section;
+pub use equation_section::{
+    EquationSectionCarrierAdmission, EquationSectionFailure, EquationSectionFailureKind,
+    EquationSectionLimits, EquationSectionPhaseReport, EquationSectionReport,
+    SourceEquationSection, VerifiedEquationSectionCarrier,
+};
 
 /// Inject one closed theory-image operator into the shared semantic-machine
 /// carrier.  The stable discriminant selects the theory namespace and the two
@@ -704,6 +712,71 @@ impl SemanticTransitionInput {
     pub fn admission_work(&self) -> u64 {
         self.admission_work
     }
+
+    /// Begin a read-only walk whose child tokens remain tied to this exact
+    /// admitted input. No caller-supplied raw e-class identifier is accepted.
+    pub fn root_subroot(&self) -> SemanticReachableSubroot<'_> {
+        SemanticReachableSubroot { input: self, root: self.root }
+    }
+}
+
+/// An owner-bound position in an already admitted exact tree. Its private
+/// fields prevent stale numeric e-class IDs from being reused against a
+/// different input whose IDs happen to collide. Only `child` creates another
+/// token, so every token remains reachable from the authenticated root.
+#[derive(Clone, Copy)]
+pub struct SemanticReachableSubroot<'a> {
+    input: &'a SemanticTransitionInput,
+    root: EClassId,
+}
+
+impl<'a> SemanticReachableSubroot<'a> {
+    pub fn operator(&self) -> Option<&FramedSemanticOperator> {
+        let [node] = self.input.egraph.nodes(self.root) else {
+            return None;
+        };
+        Some(&node.op)
+    }
+
+    /// Read only the exact source constructor tag from the same framed
+    /// operator encoding used by the semantic matcher. This does not choose a
+    /// normal form or interpret a grade; the checked finite roster determines
+    /// whether the returned ID is a unit, product, or generator.
+    pub fn constructor(&self) -> Option<TheoryConstructorId> {
+        let bytes = exact_theory_operator_bytes(self.operator()?)?;
+        let [0, a, b, c, d] = bytes else {
+            return None;
+        };
+        Some(TheoryConstructorId(u32::from_le_bytes([*a, *b, *c, *d])))
+    }
+
+    pub fn child_count(&self) -> Option<usize> {
+        let [node] = self.input.egraph.nodes(self.root) else {
+            return None;
+        };
+        Some(node.children.len())
+    }
+
+    pub fn child(&self, index: usize) -> Option<Self> {
+        let [node] = self.input.egraph.nodes(self.root) else {
+            return None;
+        };
+        let root = *node.children.get(index)?;
+        Some(Self { input: self.input, root })
+    }
+
+    /// Re-admit this exact reachable descendant using the shared projected
+    /// e-graph and exact-key driver. This grants no funding authority: callers
+    /// must retain the source grade receipt and check the selected projection
+    /// receipt for the generator. Reported work is operation-local even on
+    /// refusal and must be absorbed by the outer budget before another leaf.
+    pub fn admit<C: FnMut() -> bool>(
+        &self,
+        limits: SemanticInputLimits,
+        is_cancelled: C,
+    ) -> (SemanticInputDecision, u64) {
+        admit_existing_root(&self.input.egraph, self.root, limits, is_cancelled)
+    }
 }
 
 pub enum SemanticInputDecision {
@@ -791,6 +864,10 @@ enum SemanticExecutionSelection {
 
 struct SemanticExecutionRequest<'a> {
     image: &'a TheorySemanticImageV1,
+    cost_image: Option<VerifiedCostImageV1<'a>>,
+    /// Only the selected projected-image interpreter may dispatch appended
+    /// rules without a second guest grade. This is not funding authority.
+    projection_base_rule_count: Option<u32>,
     selection: SemanticExecutionSelection,
     granted_rights: &'a LanguageRights,
     input: SemanticTransitionInput,
@@ -809,6 +886,7 @@ pub struct SemanticTransitionMatcher {
     judgment_automaton: SetAutomaton<FramedSemanticOperator>,
     ordinary_rule_count: u32,
     projected_execution_fingerprint: Option<[u8; 32]>,
+    installed_projected_image: Option<VerifiedProjectedImageV1>,
 }
 
 #[derive(Clone, Copy)]
@@ -863,6 +941,7 @@ impl SemanticTransitionMatcher {
             ordinary_rule_count: u32::try_from(image.rules.len())
                 .map_err(|_| TheoryPatternRestoreError::IdentifierOverflow)?,
             projected_execution_fingerprint: None,
+            installed_projected_image: None,
         })
     }
 
@@ -886,13 +965,35 @@ impl SemanticTransitionMatcher {
         Ok(matcher)
     }
 
+    /// Restore an installed immutable projected image without rehashing it on
+    /// every request. The sealed witness is minted only by successful table
+    /// installation; requests for an equal but different image take the
+    /// accounted generic fingerprint path below.
+    pub fn restore_projected_verified(
+        witness: VerifiedProjectedImageV1,
+    ) -> Result<Self, ProjectedMatcherRestoreError> {
+        let image = witness.image();
+        if image.abi != PROJECTED_THEORY_IMAGE_ABI_V1
+            || image.base_rule_count as usize > image.execution.rules.len()
+            || image.execution.language_fingerprint != image.projected_language_fingerprint
+        {
+            return Err(ProjectedMatcherRestoreError::InvalidImage);
+        }
+        let mut matcher =
+            Self::restore(&image.execution).map_err(ProjectedMatcherRestoreError::Pattern)?;
+        matcher.ordinary_rule_count = image.base_rule_count;
+        matcher.projected_execution_fingerprint = Some(witness.execution_fingerprint());
+        matcher.installed_projected_image = Some(witness);
+        Ok(matcher)
+    }
+
     /// Execute a selected cross-sort relation through the existing bounded
     /// one-step action machine. The private action is a backend dispatch key,
     /// never part of the resulting projection receipt or the guest theory.
     pub fn execute_rule_projection_accounted<C>(
         &self,
         request: SemanticProjectionExecutionRequest<'_>,
-        is_cancelled: C,
+        mut is_cancelled: C,
     ) -> (SemanticProjectionDecision, u64)
     where
         C: FnMut() -> bool,
@@ -918,10 +1019,79 @@ impl SemanticTransitionMatcher {
         if image.abi != PROJECTED_THEORY_IMAGE_ABI_V1
             || image.execution.language_fingerprint != image.projected_language_fingerprint
             || self.ordinary_rule_count != image.base_rule_count
-            || image.execution.fingerprint().ok() != self.projected_execution_fingerprint
         {
             return invalid(input.admission_work);
         }
+        let Some(remaining) = limits.work.checked_sub(input.admission_work) else {
+            return (
+                SemanticProjectionDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                    work: input.admission_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                input.admission_work,
+            );
+        };
+        let (fingerprint, hash_work) = if let Some(witness) = self
+            .installed_projected_image
+            .as_ref()
+            .filter(|witness| witness.same_image(image))
+        {
+            (witness.execution_fingerprint(), 0)
+        } else {
+            match image
+                .execution
+                .fingerprint_accounted(remaining, &mut is_cancelled)
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    let charged_work = input.admission_work.saturating_add(error.work());
+                    let reason = match &error {
+                        AccountedTheoryFingerprintError::WorkBudgetExhausted { .. } => {
+                            SemanticMatchUndetermined::WorkBudgetExhausted
+                        },
+                        AccountedTheoryFingerprintError::Cancelled { .. } => {
+                            SemanticMatchUndetermined::Cancelled
+                        },
+                        AccountedTheoryFingerprintError::Image { .. } => {
+                            SemanticMatchUndetermined::InvalidImageEvidence
+                        },
+                    };
+                    return (
+                        SemanticProjectionDecision::Undetermined {
+                            reason,
+                            work: charged_work,
+                            stats: SetAutomatonStats::default(),
+                        },
+                        charged_work,
+                    );
+                },
+            }
+        };
+        let Some(after_hash) = input.admission_work.checked_add(hash_work) else {
+            return invalid(input.admission_work);
+        };
+        input.admission_work = after_hash;
+        if Some(fingerprint) != self.projected_execution_fingerprint {
+            return invalid(after_hash);
+        }
+        let Some(after_relation_scan) = u64::try_from(image.relations.len())
+            .ok()
+            .and_then(|count| input.admission_work.checked_add(count))
+        else {
+            return invalid(input.admission_work);
+        };
+        if after_relation_scan > limits.work {
+            return (
+                SemanticProjectionDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                    work: input.admission_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                input.admission_work,
+            );
+        }
+        input.admission_work = after_relation_scan;
         let mut selected = image.relations.iter().filter(|relation| {
             relation.projection == projection && relation.direction == direction
         });
@@ -956,18 +1126,13 @@ impl SemanticTransitionMatcher {
         else {
             return invalid(input.admission_work);
         };
-        if rows.is_empty()
-            || action.transitions.len() != rows.len()
-            || !action
-                .transitions
-                .iter()
-                .zip(rows)
-                .all(|(id, row)| *id == row.program)
-        {
-            return invalid(input.admission_work);
-        }
         let Some(preflight_work) = u64::try_from(rows.len())
             .ok()
+            .and_then(|rows| {
+                u64::try_from(image.execution.rules.len())
+                    .ok()
+                    .and_then(|origins| rows.checked_add(origins))
+            })
             .and_then(|count| input.admission_work.checked_add(count))
         else {
             return invalid(input.admission_work);
@@ -981,6 +1146,17 @@ impl SemanticTransitionMatcher {
                 },
                 input.admission_work,
             );
+        }
+        input.admission_work = preflight_work;
+        if rows.is_empty()
+            || action.transitions.len() != rows.len()
+            || !action
+                .transitions
+                .iter()
+                .zip(rows)
+                .all(|(id, row)| *id == row.program)
+        {
+            return invalid(input.admission_work);
         }
         let mut origins = Vec::new();
         if origins
@@ -1007,15 +1183,18 @@ impl SemanticTransitionMatcher {
                 return invalid(preflight_work);
             }
         }
-        input.admission_work = preflight_work;
-        let (decision, work) = self.execute_action_accounted(
-            SemanticActionExecutionRequest {
+        let mut guards = UnavailableGuardEvaluator;
+        let (decision, work) = self.execute_entry_with_guards_accounted(
+            SemanticExecutionRequest {
                 image: &image.execution,
-                action: action_id,
+                cost_image: None,
+                projection_base_rule_count: Some(image.base_rule_count),
+                selection: SemanticExecutionSelection::Action(action_id),
                 granted_rights,
                 input,
                 limits,
             },
+            &mut guards,
             is_cancelled,
         );
         let SemanticTransitionDecision::Proven(proven) = decision else {
@@ -1054,6 +1233,7 @@ impl SemanticTransitionMatcher {
                 output_sort,
                 substitution,
                 receipt,
+                grade_root: _,
             } = transition;
             let Some(source_occurrence) = origins.get(receipt.rule.0 as usize).copied().flatten()
             else {
@@ -1109,7 +1289,7 @@ impl SemanticTransitionMatcher {
     pub(crate) fn match_projection_relation_accounted<C>(
         &self,
         request: SemanticProjectionMatchRequest<'_>,
-        is_cancelled: C,
+        mut is_cancelled: C,
     ) -> (SemanticMatchDecision, u64, SetAutomatonStats)
     where
         C: FnMut() -> bool,
@@ -1133,7 +1313,6 @@ impl SemanticTransitionMatcher {
         if image.abi != PROJECTED_THEORY_IMAGE_ABI_V1
             || image.execution.language_fingerprint != image.projected_language_fingerprint
             || self.ordinary_rule_count != image.base_rule_count
-            || image.execution.fingerprint().ok() != self.projected_execution_fingerprint
         {
             return (
                 SemanticMatchDecision::Undetermined {
@@ -1145,6 +1324,79 @@ impl SemanticTransitionMatcher {
                 SetAutomatonStats::default(),
             );
         }
+        let (fingerprint, hash_work) = if let Some(witness) = self
+            .installed_projected_image
+            .as_ref()
+            .filter(|witness| witness.same_image(image))
+        {
+            (witness.execution_fingerprint(), 0)
+        } else {
+            match image
+                .execution
+                .fingerprint_accounted(limits.work, &mut is_cancelled)
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    let reason = match &error {
+                        AccountedTheoryFingerprintError::WorkBudgetExhausted { .. } => {
+                            SemanticMatchUndetermined::WorkBudgetExhausted
+                        },
+                        AccountedTheoryFingerprintError::Cancelled { .. } => {
+                            SemanticMatchUndetermined::Cancelled
+                        },
+                        AccountedTheoryFingerprintError::Image { .. } => {
+                            SemanticMatchUndetermined::InvalidImageEvidence
+                        },
+                    };
+                    let work = error.work();
+                    return (
+                        SemanticMatchDecision::Undetermined {
+                            reason,
+                            work,
+                            stats: SetAutomatonStats::default(),
+                        },
+                        work,
+                        SetAutomatonStats::default(),
+                    );
+                },
+            }
+        };
+        if Some(fingerprint) != self.projected_execution_fingerprint {
+            return (
+                SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work: hash_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                hash_work,
+                SetAutomatonStats::default(),
+            );
+        }
+        let Some(relation_work) = u64::try_from(image.relations.len())
+            .ok()
+            .and_then(|count| hash_work.checked_add(count))
+        else {
+            return (
+                SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work: hash_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                hash_work,
+                SetAutomatonStats::default(),
+            );
+        };
+        if relation_work > limits.work {
+            return (
+                SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                    work: hash_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                hash_work,
+                SetAutomatonStats::default(),
+            );
+        }
         let Some(relation) = image
             .relations
             .iter()
@@ -1152,17 +1404,50 @@ impl SemanticTransitionMatcher {
         else {
             return (
                 SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
-                0,
+                relation_work,
                 SetAutomatonStats::default(),
             );
         };
         let ProjectionRelationBodyImageV1::Rules(rows) = &relation.body else {
             return (
                 SemanticMatchDecision::Refuted(SemanticMatchRefutation::RequestRejected),
-                0,
+                relation_work,
                 SetAutomatonStats::default(),
             );
         };
+        // Charge the relation scan, row inspection, and full selected-program
+        // bitmap before allocating or traversing them. Hashing above is also
+        // charged, so no generic projected-image path gets a free validation.
+        let Some(setup_work) = u64::try_from(rows.len())
+            .ok()
+            .and_then(|count| {
+                u64::try_from(image.execution.rules.len())
+                    .ok()
+                    .and_then(|rules| count.checked_add(rules))
+            })
+            .and_then(|count| relation_work.checked_add(count))
+        else {
+            return (
+                SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work: relation_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                relation_work,
+                SetAutomatonStats::default(),
+            );
+        };
+        if setup_work > limits.work {
+            return (
+                SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                    work: relation_work,
+                    stats: SetAutomatonStats::default(),
+                },
+                relation_work,
+                SetAutomatonStats::default(),
+            );
+        }
         let mut selected = Vec::new();
         if selected
             .try_reserve_exact(image.execution.rules.len())
@@ -1171,10 +1456,10 @@ impl SemanticTransitionMatcher {
             return (
                 SemanticMatchDecision::Undetermined {
                     reason: SemanticMatchUndetermined::AllocationFailed,
-                    work: 0,
+                    work: setup_work,
                     stats: SetAutomatonStats::default(),
                 },
-                0,
+                setup_work,
                 SetAutomatonStats::default(),
             );
         }
@@ -1192,10 +1477,10 @@ impl SemanticTransitionMatcher {
                 return (
                     SemanticMatchDecision::Undetermined {
                         reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                        work: 0,
+                        work: setup_work,
                         stats: SetAutomatonStats::default(),
                     },
-                    0,
+                    setup_work,
                     SetAutomatonStats::default(),
                 );
             };
@@ -1203,10 +1488,10 @@ impl SemanticTransitionMatcher {
                 return (
                     SemanticMatchDecision::Undetermined {
                         reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                        work: 0,
+                        work: setup_work,
                         stats: SetAutomatonStats::default(),
                     },
-                    0,
+                    setup_work,
                     SetAutomatonStats::default(),
                 );
             };
@@ -1220,10 +1505,10 @@ impl SemanticTransitionMatcher {
                 return (
                     SemanticMatchDecision::Undetermined {
                         reason: SemanticMatchUndetermined::InvalidImageEvidence,
-                        work: 0,
+                        work: setup_work,
                         stats: SetAutomatonStats::default(),
                     },
-                    0,
+                    setup_work,
                     SetAutomatonStats::default(),
                 );
             }
@@ -1238,6 +1523,7 @@ impl SemanticTransitionMatcher {
                 limits,
                 input_sort: relation.input_sort,
             },
+            setup_work,
             is_cancelled,
         )
     }
@@ -1339,6 +1625,7 @@ impl SemanticTransitionMatcher {
                     limits,
                     input_sort: *input_sort,
                 },
+                0,
                 is_cancelled,
             );
             work = child_work;
@@ -1382,6 +1669,7 @@ impl SemanticTransitionMatcher {
                     limits,
                     input_sort: sort,
                 },
+                0,
                 is_cancelled,
             );
             work = child_work;
@@ -1395,19 +1683,20 @@ impl SemanticTransitionMatcher {
         &self,
         selection: TransitionRuleSelection<'_>,
         request: TransitionRuleMatchRequest<'_>,
+        initial_work: u64,
         mut is_cancelled: C,
     ) -> (SemanticMatchDecision, u64, SetAutomatonStats)
     where
         C: FnMut() -> bool,
     {
-        let mut work = 0;
+        let mut work = initial_work;
         let mut stats = SetAutomatonStats::default();
         let decision = (|| {
             let TransitionRuleMatchRequest { image, egraph, root, limits, input_sort } = request;
             let mut validator = HornEvaluator {
                 image,
                 egraph,
-                work: 0,
+                work: initial_work,
                 work_limit: limits.work,
                 ground_key_nodes: limits.term_nodes,
                 ground_key_bytes: limits.term_bytes,
@@ -1479,6 +1768,31 @@ impl SemanticTransitionMatcher {
             ) {
                 return SemanticMatchDecision::Undetermined { reason, work, stats };
             }
+            // The rule-selection scan and entries-by-rule table are full-image
+            // work even when the requested relation contains few rules.
+            let Some(preparation) = u64::try_from(image.rules.len())
+                .ok()
+                .and_then(|rules| {
+                    u64::try_from(image.patterns.entries.len())
+                        .ok()
+                        .and_then(|entries| rules.checked_add(entries))
+                })
+                .and_then(|count| work.checked_add(count))
+            else {
+                return SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work,
+                    stats,
+                };
+            };
+            if preparation > limits.work {
+                return SemanticMatchDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                    work,
+                    stats,
+                };
+            }
+            work = preparation;
             let mut selected_count = 0usize;
             for rule in &image.rules {
                 match selection.includes(rule) {
@@ -2483,6 +2797,60 @@ impl SemanticTransitionMatcher {
         self.execute_action_with_guards_accounted(request, &mut guards, is_cancelled)
     }
 
+    /// Execute a one-step named action using a source-verified Cost(G) image.
+    /// The matched rewrite supplies its own grade; the host work meter remains
+    /// an independent execution bound.
+    pub fn execute_costed_action_accounted<C>(
+        &self,
+        request: SemanticActionExecutionRequest<'_>,
+        cost_image: VerifiedCostImageV1<'_>,
+        is_cancelled: C,
+    ) -> (SemanticTransitionDecision, u64)
+    where
+        C: FnMut() -> bool,
+    {
+        let mut guards = UnavailableGuardEvaluator;
+        self.execute_costed_action_with_guards_accounted(
+            request,
+            cost_image,
+            &mut guards,
+            is_cancelled,
+        )
+    }
+
+    pub fn execute_costed_action_with_guards_accounted<C, G>(
+        &self,
+        request: SemanticActionExecutionRequest<'_>,
+        cost_image: VerifiedCostImageV1<'_>,
+        guards: &mut G,
+        is_cancelled: C,
+    ) -> (SemanticTransitionDecision, u64)
+    where
+        C: FnMut() -> bool,
+        G: SemanticGuardEvaluator,
+    {
+        let SemanticActionExecutionRequest {
+            image,
+            action,
+            granted_rights,
+            input,
+            limits,
+        } = request;
+        self.execute_entry_with_guards_accounted(
+            SemanticExecutionRequest {
+                image,
+                cost_image: Some(cost_image),
+                projection_base_rule_count: None,
+                selection: SemanticExecutionSelection::Action(action),
+                granted_rights,
+                input,
+                limits,
+            },
+            guards,
+            is_cancelled,
+        )
+    }
+
     pub fn execute_action_with_guards<C, G>(
         &self,
         request: SemanticActionExecutionRequest<'_>,
@@ -2519,6 +2887,8 @@ impl SemanticTransitionMatcher {
         self.execute_entry_with_guards_accounted(
             SemanticExecutionRequest {
                 image,
+                cost_image: None,
+                projection_base_rule_count: None,
                 selection: SemanticExecutionSelection::Action(action),
                 granted_rights,
                 input,
@@ -2552,6 +2922,8 @@ impl SemanticTransitionMatcher {
         self.execute_entry_with_guards_accounted(
             SemanticExecutionRequest {
                 image,
+                cost_image: None,
+                projection_base_rule_count: None,
                 selection: SemanticExecutionSelection::RewriteRelation(relation_sort),
                 granted_rights,
                 input,
@@ -2584,6 +2956,8 @@ impl SemanticTransitionMatcher {
         self.execute_entry_with_guards_accounted(
             SemanticExecutionRequest {
                 image,
+                cost_image: None,
+                projection_base_rule_count: None,
                 selection: SemanticExecutionSelection::RewriteStep(relation_sort),
                 granted_rights,
                 input,
@@ -2617,6 +2991,64 @@ impl SemanticTransitionMatcher {
         self.execute_entry_with_guards_accounted(
             SemanticExecutionRequest {
                 image,
+                cost_image: None,
+                projection_base_rule_count: None,
+                selection: SemanticExecutionSelection::RewriteStep(relation_sort),
+                granted_rights,
+                input,
+                limits,
+            },
+            guards,
+            is_cancelled,
+        )
+    }
+
+    /// Execute a directed rewrite with a source-verified Cost(G) image. The
+    /// grade is constructed from the same checked match substitution as the
+    /// successor. Neither host work nor an action effect supplies a grade.
+    pub fn execute_costed_rewrite_step_roster_accounted<C>(
+        &self,
+        request: SemanticRelationExecutionRequest<'_>,
+        cost_image: VerifiedCostImageV1<'_>,
+        is_cancelled: C,
+    ) -> (SemanticTransitionDecision, u64)
+    where
+        C: FnMut() -> bool,
+    {
+        let mut guards = UnavailableGuardEvaluator;
+        self.execute_costed_rewrite_step_roster_with_guards_accounted(
+            request,
+            cost_image,
+            &mut guards,
+            is_cancelled,
+        )
+    }
+
+    /// Guard-capable costed roster. Guard evaluation remains private until
+    /// every grade and rewrite proof in the bounded roster is complete.
+    pub fn execute_costed_rewrite_step_roster_with_guards_accounted<C, G>(
+        &self,
+        request: SemanticRelationExecutionRequest<'_>,
+        cost_image: VerifiedCostImageV1<'_>,
+        guards: &mut G,
+        is_cancelled: C,
+    ) -> (SemanticTransitionDecision, u64)
+    where
+        C: FnMut() -> bool,
+        G: SemanticGuardEvaluator,
+    {
+        let SemanticRelationExecutionRequest {
+            image,
+            relation_sort,
+            granted_rights,
+            input,
+            limits,
+        } = request;
+        self.execute_entry_with_guards_accounted(
+            SemanticExecutionRequest {
+                image,
+                cost_image: Some(cost_image),
+                projection_base_rule_count: None,
                 selection: SemanticExecutionSelection::RewriteStep(relation_sort),
                 granted_rights,
                 input,
@@ -2642,6 +3074,8 @@ impl SemanticTransitionMatcher {
         let decision = (|| {
             let SemanticExecutionRequest {
                 image,
+                cost_image,
+                projection_base_rule_count,
                 selection,
                 granted_rights,
                 input,
@@ -2788,22 +3222,79 @@ impl SemanticTransitionMatcher {
                     (None, None)
                 },
             };
-            match image.resource_profile {
-                TheoryResourceProfileV1::Uncosted => {},
-                TheoryResourceProfileV1::Costed { .. } => {
-                    return SemanticTransitionDecision::Undetermined {
-                        reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
-                        work,
-                        stats,
-                    };
-                },
-            };
             let Ok(image_fingerprint) = image.fingerprint() else {
                 return SemanticTransitionDecision::Undetermined {
                     reason: SemanticMatchUndetermined::InvalidImageEvidence,
                     work,
                     stats,
                 };
+            };
+            if let Some(base_count) = projection_base_rule_count {
+                let Some(action) = action_image else {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                        work,
+                        stats,
+                    };
+                };
+                if Some(image_fingerprint) != self.projected_execution_fingerprint
+                    || base_count != self.ordinary_rule_count
+                    || action.transitions.is_empty()
+                    || action.transitions.iter().any(|id| id.0 < base_count)
+                {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                        work,
+                        stats,
+                    };
+                }
+            }
+            let cost_image = match (image.resource_profile, cost_image, selection) {
+                (TheoryResourceProfileV1::Uncosted, None, _) => None,
+                (
+                    TheoryResourceProfileV1::Costed { grade_sort },
+                    Some(cost),
+                    SemanticExecutionSelection::RewriteStep(_),
+                ) if cost.grade_sort() == grade_sort
+                    && cost
+                        .semantic_image()
+                        .fingerprint()
+                        .is_ok_and(|fingerprint| fingerprint == image_fingerprint) =>
+                {
+                    Some(cost)
+                },
+                (
+                    TheoryResourceProfileV1::Costed { grade_sort },
+                    Some(cost),
+                    SemanticExecutionSelection::Action(_),
+                ) if cost.grade_sort() == grade_sort
+                    && cost
+                        .semantic_image()
+                        .fingerprint()
+                        .is_ok_and(|fingerprint| fingerprint == image_fingerprint) =>
+                {
+                    Some(cost)
+                },
+                (
+                    TheoryResourceProfileV1::Costed { .. },
+                    None,
+                    SemanticExecutionSelection::Action(_),
+                ) if projection_base_rule_count.is_some() => None,
+                (TheoryResourceProfileV1::Costed { .. }, None, _)
+                | (TheoryResourceProfileV1::Costed { .. }, Some(_), _) => {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                        work,
+                        stats,
+                    };
+                },
+                (TheoryResourceProfileV1::Uncosted, Some(_), _) => {
+                    return SemanticTransitionDecision::Undetermined {
+                        reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                        work,
+                        stats,
+                    };
+                },
             };
             let input = match clone_copy_slice(input_key.as_bytes()) {
                 Ok(input) => input,
@@ -2852,6 +3343,8 @@ impl SemanticTransitionMatcher {
                 completed.push(CompletedActionBranch {
                     rule: None,
                     output: root,
+                    grade: None,
+                    grade_trace: None,
                     substitution: Vec::new(),
                     premises: Vec::new(),
                     normalization_hops: Vec::new(),
@@ -2920,6 +3413,77 @@ impl SemanticTransitionMatcher {
                                     stats,
                                 };
                             },
+                        };
+                        let grade = if let Some(cost) = cost_image {
+                            let Some(grade_root) = cost.grade_root(frame_rule) else {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                                    work,
+                                    stats,
+                                };
+                            };
+                            let grade_class = match instantiate_rule_term(
+                                TermInstantiation {
+                                    image,
+                                    terms: &rule.terms,
+                                    variables: &rule.variables,
+                                    substitution: &frame.substitution,
+                                    root: grade_root,
+                                    limits: TermConstructionLimits {
+                                        work: limits.work,
+                                        nodes: private_node_limit,
+                                        bytes: limits.output_bytes,
+                                    },
+                                },
+                                &mut egraph,
+                                &mut work,
+                                &mut is_cancelled,
+                            ) {
+                                Ok(grade_class) => grade_class,
+                                Err(reason) => {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                },
+                            };
+                            let key = match exact_ground_key(
+                                &egraph,
+                                grade_class,
+                                &mut work,
+                                GroundKeyLimits {
+                                    work: limits.work,
+                                    nodes: limits.output_nodes,
+                                    bytes: limits.output_bytes,
+                                    limit_reason: SemanticMatchUndetermined::OutputLimitExceeded,
+                                },
+                                &mut is_cancelled,
+                            ) {
+                                Ok(key) => key,
+                                Err(reason) => {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                },
+                            };
+                            match clone_copy_slice(key.as_bytes()) {
+                                Ok(bytes) => Some(CheckedGradeRoot {
+                                    root: egraph.find(grade_class),
+                                    key: bytes,
+                                }),
+                                Err(reason) => {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                },
+                            }
+                        } else {
+                            None
                         };
                         if egraph.node_count().saturating_sub(initial_nodes) > private_node_limit {
                             return SemanticTransitionDecision::Undetermined {
@@ -3003,6 +3567,8 @@ impl SemanticTransitionMatcher {
                             completed.push(CompletedActionBranch {
                                 rule: Some(frame.rule),
                                 output: egraph.find(output),
+                                grade,
+                                grade_trace: None,
                                 substitution: frame.substitution,
                                 premises: branch.premises,
                                 normalization_hops: Vec::new(),
@@ -3877,7 +4443,7 @@ impl SemanticTransitionMatcher {
                                 stats,
                             };
                         }
-                        for entry in entries {
+                        for mut entry in entries {
                             if let Some(rule_id) = entry.rule {
                                 let Some(rule) = image
                                     .rules
@@ -3959,6 +4525,27 @@ impl SemanticTransitionMatcher {
                                     };
                                 },
                             });
+                            if cost_image.is_some() {
+                                let Some(grade) = entry.grade.as_ref() else {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                                        work,
+                                        stats,
+                                    };
+                                };
+                                let entry_grade = match clone_copy_slice(&grade.key) {
+                                    Ok(key) => key,
+                                    Err(reason) => {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason,
+                                            work,
+                                            stats,
+                                        };
+                                    },
+                                };
+                                entry.grade_trace =
+                                    Some(CheckedGradeTraceV2 { entry_grade, hops: Vec::new() });
+                            }
                             normalization_frontier.push_back(PrivateNormalizationBranch {
                                 entry,
                                 current,
@@ -4037,8 +4624,24 @@ impl SemanticTransitionMatcher {
                                     stats,
                                 };
                             };
+                            let candidates = match expand_normalization_candidates(
+                                groups,
+                                cost_image,
+                                &mut work,
+                                limits,
+                                &mut is_cancelled,
+                            ) {
+                                Ok(candidates) => candidates,
+                                Err(reason) => {
+                                    return SemanticTransitionDecision::Undetermined {
+                                        reason,
+                                        work,
+                                        stats,
+                                    };
+                                },
+                            };
                             let Some(next_frontier_len) =
-                                normalization_frontier.len().checked_add(groups.len())
+                                normalization_frontier.len().checked_add(candidates.len())
                             else {
                                 return SemanticTransitionDecision::Undetermined {
                                     reason: SemanticMatchUndetermined::FrontierLimitExceeded,
@@ -4053,16 +4656,19 @@ impl SemanticTransitionMatcher {
                                     stats,
                                 };
                             }
-                            if normalization_frontier.try_reserve(groups.len()).is_err() {
+                            if normalization_frontier
+                                .try_reserve(candidates.len())
+                                .is_err()
+                            {
                                 return SemanticTransitionDecision::Undetermined {
                                     reason: SemanticMatchUndetermined::AllocationFailed,
                                     work,
                                     stats,
                                 };
                             }
-                            let group_count = groups.len();
+                            let candidate_count = candidates.len();
                             let mut reusable_branch = Some(branch);
-                            for (index, group) in groups.into_iter().enumerate() {
+                            for (index, candidate) in candidates.into_iter().enumerate() {
                                 let Some(base_branch) = reusable_branch.as_ref() else {
                                     return SemanticTransitionDecision::Undetermined {
                                         reason: SemanticMatchUndetermined::InvalidImageEvidence,
@@ -4070,7 +4676,7 @@ impl SemanticTransitionMatcher {
                                         stats,
                                     };
                                 };
-                                if base_branch.seen.iter().any(|seen| *seen == group.key) {
+                                if base_branch.seen.iter().any(|seen| *seen == candidate.key) {
                                     return SemanticTransitionDecision::Undetermined {
                                         reason:
                                             SemanticMatchUndetermined::NormalizationCycleDetected,
@@ -4078,7 +4684,7 @@ impl SemanticTransitionMatcher {
                                         stats,
                                     };
                                 }
-                                let next = if index + 1 == group_count {
+                                let next = if index + 1 == candidate_count {
                                     reusable_branch
                                         .take()
                                         .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)
@@ -4105,7 +4711,7 @@ impl SemanticTransitionMatcher {
                                         };
                                     },
                                 };
-                                let after = match clone_copy_slice(&group.key) {
+                                let after = match clone_copy_slice(&candidate.key) {
                                     Ok(key) => key,
                                     Err(reason) => {
                                         return SemanticTransitionDecision::Undetermined {
@@ -4131,14 +4737,83 @@ impl SemanticTransitionMatcher {
                                         stats,
                                     };
                                 }
+                                if let Some((selected_proof, selected_grade, exhaustive_proofs)) =
+                                    candidate.selected
+                                {
+                                    let (Some(cost), Some(prior_grade), Some(trace)) = (
+                                        cost_image,
+                                        next.entry.grade.as_ref(),
+                                        next.entry.grade_trace.as_mut(),
+                                    ) else {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason:
+                                                SemanticMatchUndetermined::ResourceGradeUnavailable,
+                                            work,
+                                            stats,
+                                        };
+                                    };
+                                    let product = match compose_checked_grade_roots(
+                                        cost,
+                                        prior_grade,
+                                        &selected_grade,
+                                        &mut egraph,
+                                        &mut work,
+                                        limits,
+                                        &mut is_cancelled,
+                                    ) {
+                                        Ok(product) => product,
+                                        Err(reason) => {
+                                            return SemanticTransitionDecision::Undetermined {
+                                                reason,
+                                                work,
+                                                stats,
+                                            };
+                                        },
+                                    };
+                                    if trace.hops.len() == limits.proof_nodes
+                                        || trace.hops.try_reserve(1).is_err()
+                                    {
+                                        return SemanticTransitionDecision::Undetermined {
+                                            reason: SemanticMatchUndetermined::ProofLimitExceeded,
+                                            work,
+                                            stats,
+                                        };
+                                    }
+                                    trace.hops.push(SemanticGradedNormalizationHopReceiptV2 {
+                                        before: match clone_copy_slice(&before) {
+                                            Ok(value) => value,
+                                            Err(reason) => {
+                                                return SemanticTransitionDecision::Undetermined {
+                                                    reason,
+                                                    work,
+                                                    stats,
+                                                };
+                                            },
+                                        },
+                                        after: match clone_copy_slice(&after) {
+                                            Ok(value) => value,
+                                            Err(reason) => {
+                                                return SemanticTransitionDecision::Undetermined {
+                                                    reason,
+                                                    work,
+                                                    stats,
+                                                };
+                                            },
+                                        },
+                                        exhaustive_proofs,
+                                        selected_proof,
+                                        charged_work,
+                                    });
+                                    next.entry.grade = Some(product);
+                                }
                                 next.hops.push(SemanticNormalizationHopReceiptV1 {
                                     before,
                                     after,
-                                    exhaustive_proofs: group.proofs,
+                                    exhaustive_proofs: candidate.proofs,
                                     charged_work,
                                 });
-                                next.current = egraph.find(group.output);
-                                next.current_key = group.key;
+                                next.current = egraph.find(candidate.output);
+                                next.current_key = candidate.key;
                                 next.seen.push(match clone_copy_slice(&next.current_key) {
                                     Ok(key) => key,
                                     Err(reason) => {
@@ -4334,6 +5009,7 @@ impl SemanticTransitionMatcher {
             if let SemanticExecutionSelection::RewriteStep(relation_sort) = selection {
                 return publish_rewrite_step_roster(
                     image,
+                    cost_image,
                     relation_sort,
                     image_fingerprint,
                     input,
@@ -4431,9 +5107,43 @@ impl SemanticTransitionMatcher {
                         return SemanticTransitionDecision::Undetermined { reason, work, stats };
                     },
                 };
+                let (resource, grade_root) =
+                    match (cost_image, completed.grade, completed.grade_trace) {
+                        (None, None, None) => (SemanticResourceReceipt::NoSemanticGrade, None),
+                        (Some(cost), Some(grade), None) => (
+                            SemanticResourceReceipt::Checked {
+                                grade_sort: cost.grade_sort(),
+                                grade: grade.key,
+                                cost_image_fingerprint: cost.fingerprint(),
+                            },
+                            Some(grade.root),
+                        ),
+                        (Some(cost), Some(grade), Some(trace))
+                            if trace.hops.len() == completed.normalization_hops.len() =>
+                        {
+                            (
+                                SemanticResourceReceipt::CheckedTraceV2 {
+                                    grade_sort: cost.grade_sort(),
+                                    grade: grade.key,
+                                    cost_image_fingerprint: cost.fingerprint(),
+                                    entry_grade: trace.entry_grade,
+                                    hops: trace.hops,
+                                },
+                                Some(grade.root),
+                            )
+                        },
+                        _ => {
+                            return SemanticTransitionDecision::Undetermined {
+                                reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                                work,
+                                stats,
+                            };
+                        },
+                    };
                 transitions.push(SemanticTransition {
                     output: completed.output,
                     output_sort,
+                    grade_root,
                     substitution: SemanticActionSubstitution { bindings: completed.substitution },
                     receipt: SemanticTransitionReceipt {
                         language_fingerprint: image.language_fingerprint,
@@ -4454,7 +5164,7 @@ impl SemanticTransitionMatcher {
                         output,
                         effect: action_image.effect,
                         effect_class: action_image.effect_class,
-                        resource: SemanticResourceReceipt::NoSemanticGrade,
+                        resource,
                         premises: completed.premises,
                         normalization_hops: completed.normalization_hops,
                         work: 0,
@@ -4473,11 +5183,14 @@ impl SemanticTransitionMatcher {
                             .normalization_hops
                             .cmp(&right.receipt.normalization_hops)
                     })
+                    .then_with(|| left.receipt.resource.cmp(&right.receipt.resource))
             });
             transitions.dedup_by(|left, right| {
                 left.receipt.output == right.receipt.output
                     && left.receipt.rule == right.receipt.rule
                     && left.substitution == right.substitution
+                    && left.receipt.premises == right.receipt.premises
+                    && left.receipt.resource == right.receipt.resource
                     && left.receipt.normalization_hops == right.receipt.normalization_hops
             });
             if transitions.len() > limits.outputs {
@@ -4490,6 +5203,7 @@ impl SemanticTransitionMatcher {
             let root_count = match transitions.iter().try_fold(0usize, |count, transition| {
                 count
                     .checked_add(1)?
+                    .checked_add(usize::from(transition.grade_root.is_some()))?
                     .checked_add(transition.substitution.bindings.len())
             }) {
                 Some(count) => count,
@@ -4511,6 +5225,9 @@ impl SemanticTransitionMatcher {
             }
             for transition in &transitions {
                 publication_roots.push(egraph.find(transition.output));
+                if let Some(grade_root) = transition.grade_root {
+                    publication_roots.push(egraph.find(grade_root));
+                }
                 publication_roots.extend(
                     transition
                         .substitution
@@ -4548,6 +5265,19 @@ impl SemanticTransitionMatcher {
                             };
                         },
                     };
+                if let Some(grade_root) = transition.grade_root {
+                    transition.grade_root =
+                        match remapped_eclass(&publication_remap, egraph.find(grade_root)) {
+                            Ok(root) => Some(root),
+                            Err(reason) => {
+                                return SemanticTransitionDecision::Undetermined {
+                                    reason,
+                                    work,
+                                    stats,
+                                };
+                            },
+                        };
+                }
                 for (_, value) in &mut transition.substitution.bindings {
                     *value = match remapped_eclass(&publication_remap, egraph.find(*value)) {
                         Ok(value) => value,
@@ -4581,6 +5311,7 @@ impl SemanticTransitionMatcher {
 
 fn publish_rewrite_step_roster<C>(
     image: &TheorySemanticImageV1,
+    cost_image: Option<VerifiedCostImageV1<'_>>,
     relation_sort: TheorySortId,
     image_fingerprint: [u8; 32],
     input: Vec<u8>,
@@ -4617,7 +5348,10 @@ where
         };
     }
     let mut roots = Vec::new();
-    if roots.try_reserve_exact(steps.len()).is_err() {
+    if roots
+        .try_reserve_exact(steps.len().saturating_mul(2))
+        .is_err()
+    {
         return SemanticTransitionDecision::Undetermined {
             reason: SemanticMatchUndetermined::AllocationFailed,
             work: *work,
@@ -4625,6 +5359,11 @@ where
         };
     }
     roots.extend(steps.iter().map(|step| egraph.find(step.output)));
+    roots.extend(
+        steps
+            .iter()
+            .filter_map(|step| step.grade.as_ref().map(|grade| egraph.find(grade.root))),
+    );
     let (published_egraph, remap) = match project_reachable_egraph(
         &egraph,
         &roots,
@@ -4657,10 +5396,42 @@ where
                 return SemanticTransitionDecision::Undetermined { reason, work: *work, stats };
             },
         };
+        let (resource, grade_root) = match (cost_image, step.grade) {
+            (None, None) => (SemanticResourceReceipt::NoSemanticGrade, None),
+            (Some(cost), Some(grade)) => {
+                let root = match remapped_eclass(&remap, egraph.find(grade.root)) {
+                    Ok(root) => root,
+                    Err(reason) => {
+                        return SemanticTransitionDecision::Undetermined {
+                            reason,
+                            work: *work,
+                            stats,
+                        };
+                    },
+                };
+                (
+                    SemanticResourceReceipt::Checked {
+                        grade_sort: cost.grade_sort(),
+                        grade: grade.key,
+                        cost_image_fingerprint: cost.fingerprint(),
+                    },
+                    Some(root),
+                )
+            },
+            _ => {
+                return SemanticTransitionDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                    work: *work,
+                    stats,
+                };
+            },
+        };
         occurrences.push(SemanticRewriteStepOccurrence {
             ordinal,
             output,
             output_sort: relation_sort,
+            resource,
+            grade_root,
             receipt: step.proof,
         });
     }
@@ -4847,7 +5618,7 @@ impl From<TheoryLimitsV1> for SemanticTransitionLimits {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SemanticResourceReceipt {
     /// The authoritative theory is not a `Cost(G)` presentation. This is not a
     /// zero-cost claim: host execution resources remain independently metered.
@@ -4859,6 +5630,31 @@ pub enum SemanticResourceReceipt {
         grade: Vec<u8>,
         cost_image_fingerprint: [u8; 32],
     },
+    /// A named normalization action's ordered Cost(G) product. Every hop
+    /// carries the exhaustive source-graded proof roster and the selected
+    /// proof coordinate; equal outputs with different proofs remain distinct.
+    CheckedTraceV2 {
+        grade_sort: TheorySortId,
+        grade: Vec<u8>,
+        cost_image_fingerprint: [u8; 32],
+        entry_grade: Vec<u8>,
+        hops: Vec<SemanticGradedNormalizationHopReceiptV2>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SemanticGradedNormalizationProofReceiptV2 {
+    pub proof: SemanticNormalizationStepReceiptV1,
+    pub grade: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SemanticGradedNormalizationHopReceiptV2 {
+    pub before: Vec<u8>,
+    pub after: Vec<u8>,
+    pub exhaustive_proofs: Vec<SemanticGradedNormalizationProofReceiptV2>,
+    pub selected_proof: usize,
+    pub charged_work: u64,
 }
 
 /// One complete proof of a directed rewrite used by private normalization.
@@ -4934,6 +5730,8 @@ impl Ord for SemanticActionSubstitution {
 pub struct SemanticTransition {
     pub output: EClassId,
     pub output_sort: TheorySortId,
+    /// Source-derived grade retained in the same published e-graph as output.
+    grade_root: Option<EClassId>,
     pub substitution: SemanticActionSubstitution,
     pub receipt: SemanticTransitionReceipt,
 }
@@ -4980,6 +5778,10 @@ pub struct SemanticRewriteStepOccurrence {
     pub ordinal: usize,
     pub output: EClassId,
     pub output_sort: TheorySortId,
+    pub resource: SemanticResourceReceipt,
+    /// Checked cost-grade root in the same published e-graph as `output`.
+    /// Only the kernel may pair this root with the opaque receipt key.
+    grade_root: Option<EClassId>,
     pub receipt: SemanticNormalizationStepReceiptV1,
 }
 
@@ -5002,10 +5804,137 @@ impl ProvenSemanticRewriteSteps {
         &self.egraph
     }
 
+    /// Re-admit one kernel-retained grade as an owned input to an installed
+    /// guest-to-host projection. This uses the same reachable-egraph projector
+    /// and exact-key checker as other chained semantic queries. The opaque
+    /// receipt bytes are checked against the fresh root, never decoded.
+    pub fn admit_grade_at<C: FnMut() -> bool>(
+        &self,
+        index: usize,
+        limits: SemanticInputLimits,
+        is_cancelled: C,
+    ) -> (SemanticInputDecision, u64) {
+        let Some(occurrence) = self.occurrences.get(index) else {
+            return (
+                SemanticInputDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work: 0,
+                },
+                0,
+            );
+        };
+        admit_checked_grade(
+            &self.egraph,
+            occurrence.grade_root,
+            &occurrence.resource,
+            limits,
+            is_cancelled,
+        )
+    }
+
     pub fn into_parts(
         self,
     ) -> (EGraph<FramedSemanticOperator>, Vec<SemanticRewriteStepOccurrence>) {
         (self.egraph, self.occurrences)
+    }
+}
+
+fn admit_checked_grade<C: FnMut() -> bool>(
+    egraph: &EGraph<FramedSemanticOperator>,
+    grade_root: Option<EClassId>,
+    resource: &SemanticResourceReceipt,
+    limits: SemanticInputLimits,
+    is_cancelled: C,
+) -> (SemanticInputDecision, u64) {
+    let Some(root) = grade_root else {
+        return (
+            SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                work: 0,
+            },
+            0,
+        );
+    };
+    let grade = match resource {
+        SemanticResourceReceipt::Checked { grade, .. }
+        | SemanticResourceReceipt::CheckedTraceV2 { grade, .. } => grade,
+        SemanticResourceReceipt::NoSemanticGrade => {
+            return (
+                SemanticInputDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                    work: 0,
+                },
+                0,
+            );
+        },
+    };
+    let (decision, work) = admit_existing_root(egraph, root, limits, is_cancelled);
+    match decision {
+        SemanticInputDecision::Proven(input)
+            if input.exact_key().as_bytes() == grade.as_slice() =>
+        {
+            (SemanticInputDecision::Proven(input), work)
+        },
+        SemanticInputDecision::Proven(_) => (
+            SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                work,
+            },
+            work,
+        ),
+        other => (other, work),
+    }
+}
+
+/// Operation-local copy of one already published closed root into a bounded
+/// input. The e-graph projector and exact-ground-key routine are shared with
+/// ordinary result chaining; this introduces no new term decoder or matcher.
+fn admit_existing_root<C: FnMut() -> bool>(
+    source: &EGraph<FramedSemanticOperator>,
+    root: EClassId,
+    limits: SemanticInputLimits,
+    mut is_cancelled: C,
+) -> (SemanticInputDecision, u64) {
+    let mut work = 0;
+    let admitted = (|| {
+        let source_root = source
+            .try_find(root)
+            .ok_or(SemanticMatchUndetermined::InvalidImageEvidence)?;
+        let (graph, remap) = project_reachable_egraph(
+            source,
+            &[source_root],
+            &mut work,
+            ProjectionLimits {
+                work: limits.work,
+                nodes: limits.nodes,
+                bytes: limits.bytes,
+                limit_reason: SemanticMatchUndetermined::InputLimitExceeded,
+            },
+            &mut is_cancelled,
+        )?;
+        let root = remapped_eclass(&remap, source_root)?;
+        let exact_key = exact_ground_key(
+            &graph,
+            root,
+            &mut work,
+            GroundKeyLimits {
+                work: limits.work,
+                nodes: limits.nodes,
+                bytes: limits.bytes,
+                limit_reason: SemanticMatchUndetermined::InputLimitExceeded,
+            },
+            &mut is_cancelled,
+        )?;
+        Ok(SemanticTransitionInput {
+            egraph: graph,
+            root,
+            exact_key,
+            admission_work: work,
+        })
+    })();
+    match admitted {
+        Ok(input) => (SemanticInputDecision::Proven(input), work),
+        Err(reason) => (SemanticInputDecision::Undetermined { reason, work }, work),
     }
 }
 
@@ -5162,6 +6091,32 @@ impl ProvenSemanticTransitions {
         &self.egraph
     }
 
+    /// Re-admit a named action's source-derived grade for an installed
+    /// guest-to-host projection. Receipt bytes must match the retained root.
+    pub fn admit_grade_at<C: FnMut() -> bool>(
+        &self,
+        index: usize,
+        limits: SemanticInputLimits,
+        is_cancelled: C,
+    ) -> (SemanticInputDecision, u64) {
+        let Some(transition) = self.transitions.get(index) else {
+            return (
+                SemanticInputDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work: 0,
+                },
+                0,
+            );
+        };
+        admit_checked_grade(
+            &self.egraph,
+            transition.grade_root,
+            &transition.receipt.resource,
+            limits,
+            is_cancelled,
+        )
+    }
+
     pub fn into_parts(self) -> (EGraph<FramedSemanticOperator>, Vec<SemanticTransition>) {
         (self.egraph, self.transitions)
     }
@@ -5219,6 +6174,44 @@ pub struct ProvenSemanticProjections {
 impl ProvenSemanticProjections {
     pub fn egraph(&self) -> &EGraph<FramedSemanticOperator> {
         &self.egraph
+    }
+
+    /// Re-admit one retained host result before typed reconstruction. The
+    /// complete roster keeps equal-output proofs distinct; the receipt key is
+    /// checked against this candidate's own e-graph root, not another member
+    /// with equal bytes. Work and allocation remain bounded by the caller.
+    pub fn admit_output_at<C: FnMut() -> bool>(
+        &self,
+        index: usize,
+        limits: SemanticInputLimits,
+        is_cancelled: C,
+    ) -> (SemanticInputDecision, u64) {
+        let Some(value) = self.values.get(index) else {
+            return (
+                SemanticInputDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work: 0,
+                },
+                0,
+            );
+        };
+        let (decision, work) =
+            admit_existing_root(&self.egraph, value.output, limits, is_cancelled);
+        match decision {
+            SemanticInputDecision::Proven(input)
+                if input.exact_key().as_bytes() == value.receipt.output.as_slice() =>
+            {
+                (SemanticInputDecision::Proven(input), work)
+            },
+            SemanticInputDecision::Proven(_) => (
+                SemanticInputDecision::Undetermined {
+                    reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                    work,
+                },
+                work,
+            ),
+            other => (other, work),
+        }
     }
 
     pub fn into_parts(self) -> (EGraph<FramedSemanticOperator>, Vec<SemanticProjectionValue>) {
@@ -5421,9 +6414,22 @@ struct ActionBranch {
     premises: Vec<SemanticPremiseReceipt>,
 }
 
+#[derive(Clone)]
+struct CheckedGradeRoot {
+    root: EClassId,
+    key: Vec<u8>,
+}
+
+struct CheckedGradeTraceV2 {
+    entry_grade: Vec<u8>,
+    hops: Vec<SemanticGradedNormalizationHopReceiptV2>,
+}
+
 struct CompletedActionBranch {
     rule: Option<TheoryRuleProgramId>,
     output: EClassId,
+    grade: Option<CheckedGradeRoot>,
+    grade_trace: Option<CheckedGradeTraceV2>,
     substitution: ActionSubstitution,
     premises: Vec<SemanticPremiseReceipt>,
     normalization_hops: Vec<SemanticNormalizationHopReceiptV1>,
@@ -5441,11 +6447,20 @@ struct NormalizationSuccessorGroup {
     output: EClassId,
     key: Vec<u8>,
     proofs: Vec<SemanticNormalizationStepReceiptV1>,
+    grades: Vec<Option<CheckedGradeRoot>>,
+}
+
+struct NormalizationCandidate {
+    output: EClassId,
+    key: Vec<u8>,
+    proofs: Vec<SemanticNormalizationStepReceiptV1>,
+    selected: Option<(usize, CheckedGradeRoot, Vec<SemanticGradedNormalizationProofReceiptV2>)>,
 }
 
 struct NormalizationSuccessorStep {
     output: EClassId,
     key: Vec<u8>,
+    grade: Option<CheckedGradeRoot>,
     proof: SemanticNormalizationStepReceiptV1,
     emission_order: usize,
 }
@@ -5823,20 +6838,12 @@ where
         activation: u64,
         substitution: &HornSubstitution,
     ) -> Result<Vec<(TheoryVariableId, HornTermRef)>, SemanticMatchUndetermined> {
-        let mut candidates = Vec::new();
-        candidates
+        let mut projected = Vec::new();
+        projected
             .try_reserve_exact(rule.variables.len())
             .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
         for declaration in &rule.variables {
-            if declaration.role != mettail_grammar_core::TheoryVariableRoleV1::Binder {
-                candidates.push(declaration.id);
-            }
-        }
-        let mut projected = Vec::new();
-        projected
-            .try_reserve_exact(candidates.len())
-            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
-        for variable in candidates {
+            let variable = declaration.id;
             let scoped = ScopedClauseVariable { activation, variable };
             let Some(term) = Self::lookup_substitution(substitution, scoped) else {
                 continue;
@@ -8719,6 +9726,7 @@ where
         steps.push(NormalizationSuccessorStep {
             key: clone_copy_slice(&after)?,
             output,
+            grade: completed.grade,
             proof: SemanticNormalizationStepReceiptV1 {
                 rule: rule_id,
                 before: clone_copy_slice(before)?,
@@ -8768,23 +9776,137 @@ where
     groups
         .try_reserve_exact(steps.len())
         .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
-    for NormalizationSuccessorStep { key, output, proof, .. } in steps {
+    for NormalizationSuccessorStep { key, output, grade, proof, .. } in steps {
         if let Some(group) = groups.last_mut().filter(|group| group.key == key) {
             group
                 .proofs
                 .try_reserve(1)
                 .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            group
+                .grades
+                .try_reserve(1)
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
             group.proofs.push(proof);
+            group.grades.push(grade);
         } else {
             let mut proofs = Vec::new();
             proofs
                 .try_reserve_exact(1)
                 .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            let mut grades = Vec::new();
+            grades
+                .try_reserve_exact(1)
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
             proofs.push(proof);
-            groups.push(NormalizationSuccessorGroup { output, key, proofs });
+            grades.push(grade);
+            groups.push(NormalizationSuccessorGroup { output, key, proofs, grades });
         }
     }
     Ok(groups)
+}
+
+fn expand_normalization_candidates<C: FnMut() -> bool>(
+    groups: Vec<NormalizationSuccessorGroup>,
+    cost_image: Option<VerifiedCostImageV1<'_>>,
+    work: &mut u64,
+    limits: SemanticTransitionLimits,
+    is_cancelled: &mut C,
+) -> Result<Vec<NormalizationCandidate>, SemanticMatchUndetermined> {
+    let count = groups.iter().try_fold(0usize, |total, group| {
+        if group.proofs.len() != group.grades.len() || group.proofs.is_empty() {
+            return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+        }
+        total
+            .checked_add(if cost_image.is_some() {
+                group.proofs.len()
+            } else {
+                1
+            })
+            .ok_or(SemanticMatchUndetermined::ProofLimitExceeded)
+    })?;
+    if count > limits.frontier || count > limits.proof_nodes {
+        return Err(SemanticMatchUndetermined::ProofLimitExceeded);
+    }
+    let mut candidates = Vec::new();
+    candidates
+        .try_reserve_exact(count)
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for group in groups {
+        if cost_image.is_none() {
+            if group.grades.iter().any(Option::is_some) {
+                return Err(SemanticMatchUndetermined::InvalidImageEvidence);
+            }
+            candidates.push(NormalizationCandidate {
+                output: group.output,
+                key: group.key,
+                proofs: group.proofs,
+                selected: None,
+            });
+            continue;
+        }
+        if group.grades.iter().any(Option::is_none) {
+            return Err(SemanticMatchUndetermined::ResourceGradeUnavailable);
+        }
+        for (index, grade) in group.grades.iter().enumerate() {
+            let key_copy_work = group
+                .key
+                .len()
+                .checked_add(1)
+                .ok_or(SemanticMatchUndetermined::WorkBudgetExhausted)?;
+            charge_work_units(work, limits.work, key_copy_work, is_cancelled)?;
+            let mut proofs = Vec::new();
+            let mut graded = Vec::new();
+            proofs
+                .try_reserve_exact(group.proofs.len())
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            graded
+                .try_reserve_exact(group.proofs.len())
+                .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+            for (proof, proof_grade) in group.proofs.iter().zip(&group.grades) {
+                let grade = proof_grade
+                    .as_ref()
+                    .ok_or(SemanticMatchUndetermined::ResourceGradeUnavailable)?;
+                let copied = proof
+                    .before
+                    .len()
+                    .checked_add(proof.after.len())
+                    .and_then(|length| length.checked_mul(2))
+                    .and_then(|length| length.checked_add(grade.key.len()))
+                    .and_then(|length| {
+                        proof
+                            .premises
+                            .len()
+                            .checked_mul(2)
+                            .and_then(|premises| length.checked_add(premises))
+                    })
+                    .and_then(|length| length.checked_add(1))
+                    .ok_or(SemanticMatchUndetermined::WorkBudgetExhausted)?;
+                charge_work_units(work, limits.work, copied, is_cancelled)?;
+                proofs.push(clone_normalization_step_receipt(proof)?);
+                graded.push(SemanticGradedNormalizationProofReceiptV2 {
+                    proof: clone_normalization_step_receipt(proof)?,
+                    grade: clone_copy_slice(&grade.key)?,
+                });
+            }
+            let selected_grade = grade
+                .as_ref()
+                .ok_or(SemanticMatchUndetermined::ResourceGradeUnavailable)?;
+            candidates.push(NormalizationCandidate {
+                output: group.output,
+                key: clone_copy_slice(&group.key)?,
+                proofs,
+                selected: Some((
+                    index,
+                    CheckedGradeRoot {
+                        root: selected_grade.root,
+                        key: clone_copy_slice(&selected_grade.key)?,
+                    },
+                    graded,
+                )),
+            });
+        }
+    }
+    Ok(candidates)
 }
 
 fn clone_completed_action_branch(
@@ -8793,9 +9915,105 @@ fn clone_completed_action_branch(
     Ok(CompletedActionBranch {
         rule: source.rule,
         output: source.output,
+        grade: source
+            .grade
+            .as_ref()
+            .map(|grade| {
+                Ok(CheckedGradeRoot {
+                    root: grade.root,
+                    key: clone_copy_slice(&grade.key)?,
+                })
+            })
+            .transpose()?,
+        grade_trace: source
+            .grade_trace
+            .as_ref()
+            .map(clone_grade_trace)
+            .transpose()?,
         substitution: clone_copy_slice(&source.substitution)?,
         premises: clone_premise_receipts(&source.premises)?,
         normalization_hops: clone_normalization_hops(&source.normalization_hops)?,
+    })
+}
+
+fn clone_normalization_step_receipt(
+    proof: &SemanticNormalizationStepReceiptV1,
+) -> Result<SemanticNormalizationStepReceiptV1, SemanticMatchUndetermined> {
+    Ok(SemanticNormalizationStepReceiptV1 {
+        rule: proof.rule,
+        before: clone_copy_slice(&proof.before)?,
+        after: clone_copy_slice(&proof.after)?,
+        premises: clone_premise_receipts(&proof.premises)?,
+    })
+}
+
+fn clone_grade_trace(
+    source: &CheckedGradeTraceV2,
+) -> Result<CheckedGradeTraceV2, SemanticMatchUndetermined> {
+    let mut hops = Vec::new();
+    hops.try_reserve_exact(source.hops.len())
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    for hop in &source.hops {
+        let mut proofs = Vec::new();
+        proofs
+            .try_reserve_exact(hop.exhaustive_proofs.len())
+            .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+        for proof in &hop.exhaustive_proofs {
+            proofs.push(SemanticGradedNormalizationProofReceiptV2 {
+                proof: clone_normalization_step_receipt(&proof.proof)?,
+                grade: clone_copy_slice(&proof.grade)?,
+            });
+        }
+        hops.push(SemanticGradedNormalizationHopReceiptV2 {
+            before: clone_copy_slice(&hop.before)?,
+            after: clone_copy_slice(&hop.after)?,
+            exhaustive_proofs: proofs,
+            selected_proof: hop.selected_proof,
+            charged_work: hop.charged_work,
+        });
+    }
+    Ok(CheckedGradeTraceV2 {
+        entry_grade: clone_copy_slice(&source.entry_grade)?,
+        hops,
+    })
+}
+
+fn compose_checked_grade_roots<C: FnMut() -> bool>(
+    cost: VerifiedCostImageV1<'_>,
+    left: &CheckedGradeRoot,
+    right: &CheckedGradeRoot,
+    egraph: &mut EGraph<FramedSemanticOperator>,
+    work: &mut u64,
+    limits: SemanticTransitionLimits,
+    is_cancelled: &mut C,
+) -> Result<CheckedGradeRoot, SemanticMatchUndetermined> {
+    charge_work(work, limits.work, is_cancelled)?;
+    let mut children = Vec::new();
+    children
+        .try_reserve_exact(2)
+        .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
+    children.push(egraph.find(left.root));
+    children.push(egraph.find(right.root));
+    let operator = TheoryImageOperatorV1::Constructor(cost.product_constructor());
+    let root = egraph
+        .try_add_with_budget(ENode::new(theory_operator_to_machine(&operator), children))
+        .ok_or(SemanticMatchUndetermined::EGraphNodeBudgetExhausted)?;
+    let root = egraph.find(root);
+    let key = exact_ground_key(
+        egraph,
+        root,
+        work,
+        GroundKeyLimits {
+            work: limits.work,
+            nodes: limits.output_nodes,
+            bytes: limits.output_bytes,
+            limit_reason: SemanticMatchUndetermined::OutputLimitExceeded,
+        },
+        is_cancelled,
+    )?;
+    Ok(CheckedGradeRoot {
+        root,
+        key: clone_copy_slice(key.as_bytes())?,
     })
 }
 
@@ -8811,12 +10029,7 @@ fn clone_normalization_hops(
             .try_reserve_exact(hop.exhaustive_proofs.len())
             .map_err(|_| SemanticMatchUndetermined::AllocationFailed)?;
         for proof in &hop.exhaustive_proofs {
-            proofs.push(SemanticNormalizationStepReceiptV1 {
-                rule: proof.rule,
-                before: clone_copy_slice(&proof.before)?,
-                after: clone_copy_slice(&proof.after)?,
-                premises: clone_premise_receipts(&proof.premises)?,
-            });
+            proofs.push(clone_normalization_step_receipt(proof)?);
         }
         hops.push(SemanticNormalizationHopReceiptV1 {
             before: clone_copy_slice(&hop.before)?,
@@ -11025,6 +12238,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    mod freshness_worklist;
+    mod root_projection;
+    mod term_construction;
+
     use super::*;
     use mettail_grammar_core::{
         TheoryConstructorId, TheoryConstructorImageV1, TheoryJudgmentPatternAutomatonV1,
@@ -11032,6 +12249,78 @@ mod tests {
         THEORY_IMAGE_COMPILER_ABI_CURRENT, THEORY_PRIMITIVE_SUBSTRATE_ABI_CURRENT,
         THEORY_SEMANTIC_IMAGE_ABI_CURRENT,
     };
+
+    #[test]
+    fn exact_input_readmits_reachable_grade_leaf_only() {
+        let mut graph = EGraph::<FramedSemanticOperator>::new();
+        graph.add(ENode::leaf(FramedSemanticOperator::new(99, vec![])));
+        let leaf = graph.add(ENode::leaf(FramedSemanticOperator::new(1, vec![])));
+        let root = graph.add(ENode::new(FramedSemanticOperator::new(2, vec![]), vec![leaf]));
+        let limits = SemanticInputLimits { work: 100, nodes: 8, bytes: 4096 };
+        let SemanticInputDecision::Proven(input) =
+            SemanticTransitionInput::admit(graph, root, limits, || false)
+        else {
+            panic!("exact grade tree must admit");
+        };
+        assert_eq!(input.egraph().class_count(), 2, "unreachable class is pruned");
+        let root_token = input.root_subroot();
+        assert_eq!(root_token.child_count(), Some(1));
+        assert!(root_token.child(1).is_none(), "forged child index is refused");
+        let child = root_token.child(0).expect("reachable child token");
+        assert_eq!(child.operator().unwrap().stable_discriminant(), 1);
+        assert_eq!(child.constructor(), None, "foreign operator is not a theory constructor");
+        let (decision, work) = child.admit(limits, || false);
+        let SemanticInputDecision::Proven(child_input) = decision else {
+            panic!("reachable leaf must readmit");
+        };
+        assert!(work > 0);
+        assert_ne!(child_input.exact_key(), input.exact_key());
+        let (invalid, refused_work) =
+            child.admit(SemanticInputLimits { work: 0, ..limits }, || false);
+        assert!(matches!(
+            invalid,
+            SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                ..
+            }
+        ));
+        assert_eq!(refused_work, 0);
+
+        // Numeric class IDs from another admission may overlap, but a token
+        // cannot be rebound: it always borrows and reads its original input.
+        let mut foreign = EGraph::<FramedSemanticOperator>::new();
+        let foreign_root = foreign.add(ENode::leaf(FramedSemanticOperator::new(77, vec![])));
+        let SemanticInputDecision::Proven(foreign_input) =
+            SemanticTransitionInput::admit(foreign, foreign_root, limits, || false)
+        else {
+            panic!("foreign exact input must admit");
+        };
+        assert_eq!(
+            foreign_input
+                .root_subroot()
+                .operator()
+                .unwrap()
+                .stable_discriminant(),
+            77
+        );
+        assert_eq!(child.operator().unwrap().stable_discriminant(), 1);
+    }
+
+    #[test]
+    fn exact_subroot_reads_the_same_constructor_tag_as_the_matcher() {
+        let constructor = TheoryConstructorId(7);
+        let mut graph = EGraph::<FramedSemanticOperator>::new();
+        let root = graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(constructor),
+        )));
+        let limits = SemanticInputLimits { work: 100, nodes: 2, bytes: 4096 };
+        let SemanticInputDecision::Proven(input) =
+            SemanticTransitionInput::admit(graph, root, limits, || false)
+        else {
+            panic!("theory constructor must admit");
+        };
+        assert_eq!(input.root_subroot().constructor(), Some(constructor));
+    }
 
     #[test]
     fn accounted_child_work_survives_diagnostic_overflow() {

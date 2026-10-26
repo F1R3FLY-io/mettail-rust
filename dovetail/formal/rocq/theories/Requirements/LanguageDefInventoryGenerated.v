@@ -80,6 +80,7 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("refinementsmoke", [ReqEnvRelationPremise]);
   ("rholang", [ReqEquation; ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler; ReqFreshnessPremise; ReqEnvRelationPremise; ReqBehavioralGuard; ReqSyntheticInjectionGuard; ReqCollectionPattern; ReqMapPattern; ReqZipPattern; ReqBinderPattern; ReqSubstitutionPattern; ReqRhoCommHandlerContract; ReqRhoResourceGuardContract]);
   ("seqcarrierdemo", [ReqFoldNativeHandler; ReqCollectionPattern]);
+  ("solecollectioncarrierdemo", [ReqFoldNativeHandler; ReqCollectionPattern]);
   ("structuralcollectiondemo", [ReqDirectionalRewrite; ReqFoldNativeHandler; ReqCollectionPattern]);
   ("swapdemo", [ReqDirectionalRewrite]);
   ("tokentextleafdemo", [ReqFoldNativeHandler; ReqCollectionPattern; ReqBinderPattern]);

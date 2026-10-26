@@ -183,14 +183,25 @@ pub fn compile_projected_theory_semantic_image(
     host: &ProjectionHostSignatureV1,
     limits: TheoryImageAdmissionLimits,
 ) -> Result<ProjectedTheorySemanticImageV1, TheoryImageCompileError> {
+    compile_projected_theory_semantic_image_with_base(language, host, limits)
+        .map(|(_, projected)| projected)
+}
+
+/// Compile the base and projected artifacts in one pass. The separately
+/// returned base is the exact image to which a Cost(G) grade table refers;
+/// truncating or decoding the projected image would not reconstruct it.
+pub fn compile_projected_theory_semantic_image_with_base(
+    language: &ProjectedLanguageCoreV1,
+    host: &ProjectionHostSignatureV1,
+    limits: TheoryImageAdmissionLimits,
+) -> Result<(TheorySemanticImageV1, ProjectedTheorySemanticImageV1), TheoryImageCompileError> {
     language
         .validate_header()
         .map_err(|error| TheoryImageCompileError::Projection(format!("{error:?}")))?;
-    let mut execution = compile_theory_semantic_image(&language.base, limits)?;
-    let base_image_fingerprint = execution
-        .fingerprint()
-        .map_err(TheoryImageCompileError::Image)?;
-    let base_rule_count = checked_u32(execution.rules.len())?;
+    let base = compile_theory_semantic_image(&language.base, limits)?;
+    let base_image_fingerprint = base.fingerprint().map_err(TheoryImageCompileError::Image)?;
+    let base_rule_count = checked_u32(base.rules.len())?;
+    let mut execution = base.clone();
     let projected_language_fingerprint = language
         .fingerprint()
         .map_err(|error| TheoryImageCompileError::Projection(error.to_string()))?;
@@ -415,7 +426,7 @@ pub fn compile_projected_theory_semantic_image(
     execution.language_fingerprint = projected_language_fingerprint;
     execution.validate_resource_limits(limits)?;
     execution.validate_automata(limits)?;
-    Ok(ProjectedTheorySemanticImageV1 {
+    let projected = ProjectedTheorySemanticImageV1 {
         abi: PROJECTED_THEORY_IMAGE_ABI_V1,
         projected_language_fingerprint,
         base_image_fingerprint,
@@ -424,7 +435,8 @@ pub fn compile_projected_theory_semantic_image(
         host_codec_profile_fingerprint: host.codec_profile_fingerprint,
         execution,
         relations,
-    })
+    };
+    Ok((base, projected))
 }
 
 fn projection_required_rights(
@@ -880,7 +892,7 @@ fn compile_constructors(
         output.push(compile_constructor(
             TheoryConstructorId(checked_u32(index)?),
             constructor,
-            Some(unique_grammar_binding(language, &constructor.name)?),
+            unique_grammar_binding(language, &constructor.name)?,
             context,
         )?);
     }
@@ -908,7 +920,7 @@ fn compile_constructor(
 fn unique_grammar_binding(
     language: &LanguageCoreV1,
     name: &str,
-) -> Result<TheoryGrammarConstructorV1, TheoryImageCompileError> {
+) -> Result<Option<TheoryGrammarConstructorV1>, TheoryImageCompileError> {
     let mut binding = None;
     for production in &language.grammar.productions {
         if production.label != name {
@@ -925,10 +937,7 @@ fn unique_grammar_binding(
         }
         binding = Some(candidate);
     }
-    binding.ok_or_else(|| TheoryImageCompileError::UnknownReference {
-        kind: "grammar constructor",
-        name: name.to_string(),
-    })
+    Ok(binding)
 }
 
 fn compile_rules(
@@ -2156,6 +2165,12 @@ fn clone_vec<T: Clone>(source: &[T]) -> Result<Vec<T>, TheoryImageCompileError> 
 
 #[cfg(test)]
 mod tests {
+    mod equation_section;
+    mod signature_laws;
+    mod source_frame_scope;
+    mod source_grade_binding;
+    mod source_image_correspondence;
+
     use super::*;
     use crate::semantic_transition_kernel::SemanticProjectionMatchRequest;
     use crate::{
@@ -2172,7 +2187,8 @@ mod tests {
     use dovetail::egraph::{EClassId, EGraph, ENode};
     use mettail_grammar_core::{
         Associativity, BuiltinCarrier, CanonicalValue, Carrier, Category, CategoryId,
-        ConstructorId, DirectedProjectionRuleV1, EffectDeclV1, FieldSource, GrammarCoreV1,
+        CheckedFiniteGradeRosterV2, ConstructorId, DirectedProjectionRuleV1, EffectDeclV1,
+        FieldSource, FiniteGradeRosterErrorV2, FundingProjectionSelectorV2, GrammarCoreV1,
         JudgmentAtomV1, JudgmentDecisionV1, JudgmentDeclV1, JudgmentRuleV1,
         LanguageCoreValidationError, LanguageRight, LanguageRights, Precedence, Production,
         ProductionClass, ProductionId, ProjectedLanguageCoreV1, ProjectionBodyV1,
@@ -2184,6 +2200,7 @@ mod tests {
         TheoryTermNodeV1, TheoryValidationError, TheoryVariableRoleV1, TheoryVariableV1,
         LANGUAGE_CORE_ABI_CURRENT, PROJECTED_LANGUAGE_CORE_ABI_V1,
     };
+    use proptest::prelude::*;
 
     fn production(
         id: u32,
@@ -2366,6 +2383,1069 @@ mod tests {
         }
     }
 
+    fn costed_fixture() -> LanguageCoreV1 {
+        let mut language = fixture();
+        // A theory may construct an internal value of a syntax sort without
+        // exposing a new parser production for that value.
+        language.theory.constructors.push(TheoryConstructorV1 {
+            name: "InternalExpr".into(),
+            domain: Vec::new(),
+            codomain: "Expr".into(),
+        });
+        for name in ["Sig", "Stack", "Wrapped", "Located", "Channel", "Datum", "Continuation"] {
+            language.theory.sorts.push(TheorySortV1 {
+                name: name.into(),
+                kind: TheorySortKindV1::Opaque { abi: format!("test/{name}/1") },
+            });
+        }
+        language.theory.constructors.push(TheoryConstructorV1 {
+            name: "SigUnit".into(),
+            domain: Vec::new(),
+            codomain: "Sig".into(),
+        });
+        language.theory.constructors.push(TheoryConstructorV1 {
+            name: "SigProduct".into(),
+            domain: vec!["Sig".into(), "Sig".into()],
+            codomain: "Sig".into(),
+        });
+        language.theory.rewrites[0]
+            .arena
+            .terms
+            .push(TheoryTermNodeV1 {
+                sort: "Sig".into(),
+                form: TheoryTermFormV1::Constructor {
+                    constructor: "SigUnit".into(),
+                    arguments: Vec::new(),
+                },
+            });
+        language.theory.actions[0].grade = "Sig".into();
+        language.theory.interactive = Some(mettail_grammar_core::InteractiveDeclV1 {
+            cut: "cut".into(),
+            channel_sort: "Channel".into(),
+            datum_sort: "Datum".into(),
+            continuation_sort: "Continuation".into(),
+        });
+        language.theory.continued = Some(mettail_grammar_core::ContinuedDeclV1 {
+            k: "K".into(),
+            kp: "Kp".into(),
+            ke: "Ke".into(),
+            k_prime: "KPrime".into(),
+            near: "near".into(),
+            compute: "compute".into(),
+            section: "section".into(),
+            wrappability: "wrappable".into(),
+            quote_faithfulness: "quote_faithful".into(),
+        });
+        language.theory.cost = Some(mettail_grammar_core::CostDeclV1 {
+            base: "G".into(),
+            signature_sort: "Sig".into(),
+            stack_sort: "Stack".into(),
+            wrapped_sort: "Wrapped".into(),
+            located_sort: "Located".into(),
+            product: "SigProduct".into(),
+            unit: "SigUnit".into(),
+            rules: vec!["R1".into()],
+            grade_rules: vec![mettail_grammar_core::CostGradeRuleV1 {
+                rewrite: "add-zero".into(),
+                term: TheoryTermId(3),
+            }],
+            eta: "eta".into(),
+            mu: "mu".into(),
+            map: "map".into(),
+            laws: Vec::new(),
+        });
+        language
+    }
+
+    #[test]
+    fn checked_cost_image_binds_grade_root_to_source_exact_rewrite() {
+        let language = costed_fixture();
+        let limits = TheoryImageAdmissionLimits::default();
+        let semantic = compile_theory_semantic_image(&language, limits).expect("semantic image");
+        assert_eq!(semantic.constructors[3].grammar, None);
+        assert_eq!(semantic.constructors[4].grammar, None);
+        assert_eq!(semantic.constructors[5].grammar, None);
+        let mut forged_binding = semantic.clone();
+        forged_binding.constructors[3].grammar = semantic.constructors[0].grammar;
+        assert!(forged_binding.validate(&language, limits).is_err());
+        let cost = mettail_grammar_core::CostImageV1::compile(&language, &semantic, limits)
+            .expect("cost image compilation")
+            .expect("costed profile");
+        let verified = cost
+            .verified(&language, &semantic, limits)
+            .expect("checked cost image");
+        assert_eq!(verified.grade_root(semantic.rules[2].id), Some(TheoryTermId(3)));
+        assert_eq!(verified.grade_root(semantic.rules[0].id), None);
+        assert_eq!(verified.unit_constructor(), mettail_grammar_core::TheoryConstructorId(4));
+        assert_eq!(verified.product_constructor(), mettail_grammar_core::TheoryConstructorId(5));
+        assert_eq!(verified.fingerprint(), cost.fingerprint());
+
+        let bytes = cost
+            .encode(&language, &semantic, limits)
+            .expect("flat image encoding");
+        let decoded =
+            mettail_grammar_core::CostImageV1::decode(&bytes, &language, &semantic, limits)
+                .expect("source-exact image decode");
+        assert_eq!(decoded, cost);
+        assert_eq!(decoded.fingerprint(), cost.fingerprint());
+
+        let mut forged = cost.clone();
+        forged.rules[0].grade_term = TheoryTermId(0);
+        assert!(matches!(
+            forged.validate(&language, &semantic, limits),
+            Err(mettail_grammar_core::CostImageError::RuleMismatch(0))
+        ));
+        let mut forged_product = cost.clone();
+        forged_product.product_constructor = forged_product.unit_constructor;
+        assert!(matches!(
+            forged_product.validate(&language, &semantic, limits),
+            Err(mettail_grammar_core::CostImageError::SignatureConstructorMismatch("product"))
+        ));
+        let mut bad_fingerprint = bytes.clone();
+        bad_fingerprint[10] ^= 1;
+        assert!(matches!(
+            mettail_grammar_core::CostImageV1::decode(
+                &bad_fingerprint,
+                &language,
+                &semantic,
+                limits
+            ),
+            Err(mettail_grammar_core::CostImageError::FingerprintMismatch("language"))
+        ));
+        assert!(matches!(
+            mettail_grammar_core::CostImageV1::decode(
+                &bytes[..bytes.len() - 1],
+                &language,
+                &semantic,
+                limits
+            ),
+            Err(mettail_grammar_core::CostImageError::InvalidEncoding)
+        ));
+    }
+
+    fn check_cost_source_admission_case(
+        equation_count: usize,
+        rewrite_count: usize,
+        product_first: bool,
+        reverse_grade_declarations: bool,
+    ) -> Result<(), proptest::test_runner::TestCaseError> {
+        let mut language = costed_fixture();
+        let equation = language.theory.equations[0].clone();
+        let mut rewrite = language.theory.rewrites[0].clone();
+        let unit_root = TheoryTermId(3);
+        let product_root = TheoryTermId(rewrite.arena.terms.len() as u32);
+        rewrite.arena.terms.push(TheoryTermNodeV1 {
+            sort: "Sig".into(),
+            form: TheoryTermFormV1::Constructor {
+                constructor: "SigProduct".into(),
+                arguments: vec![unit_root, unit_root],
+            },
+        });
+        language.theory.constructors.push(TheoryConstructorV1 {
+            name: "RetainGradeRoots".into(),
+            domain: vec!["Expr".into(), "Sig".into()],
+            codomain: "Expr".into(),
+        });
+        let right = TheoryTermId(rewrite.arena.terms.len() as u32);
+        rewrite
+            .arena
+            .terms
+            .push(term_constructor("RetainGradeRoots", vec![rewrite.right, product_root]));
+        rewrite.right = right;
+        language.theory.actions.clear();
+        language.theory.equations = (0..equation_count)
+            .map(|index| {
+                let mut equation = equation.clone();
+                equation.name = format!("commutative-{index}");
+                equation
+            })
+            .collect();
+        language.theory.rewrites = (0..rewrite_count)
+            .map(|index| {
+                let mut rewrite = rewrite.clone();
+                rewrite.name = format!("retain-grade-roots-{index}");
+                rewrite
+            })
+            .collect();
+        let mut grade_rules: Vec<_> = language
+            .theory
+            .rewrites
+            .iter()
+            .enumerate()
+            .map(|(index, rewrite)| mettail_grammar_core::CostGradeRuleV1 {
+                rewrite: rewrite.name.clone(),
+                term: if product_first ^ (index % 2 == 1) {
+                    product_root
+                } else {
+                    unit_root
+                },
+            })
+            .collect();
+        if reverse_grade_declarations {
+            grade_rules.reverse();
+        }
+        language
+            .theory
+            .cost
+            .as_mut()
+            .expect("cost declaration")
+            .grade_rules = grade_rules;
+        language
+            .validate()
+            .expect("bounded source roster is valid, including no rewrites");
+        let limits = TheoryImageAdmissionLimits::default();
+        let semantic = compile_theory_semantic_image(&language, limits)
+            .expect("bounded source roster compiles");
+        let cost = mettail_grammar_core::CostImageV1::compile(&language, &semantic, limits)
+            .expect("bounded cost image compiles")
+            .expect("a cost declaration retains its image even with no rewrites");
+        let verified = cost
+            .verified(&language, &semantic, limits)
+            .expect("source-exact image");
+        prop_assert_eq!(semantic.rules.len(), 2 * equation_count + rewrite_count);
+        prop_assert_eq!(cost.rules.len(), rewrite_count);
+        let first_missing_program =
+            TheoryRuleProgramId((2 * equation_count + rewrite_count) as u32);
+        prop_assert_eq!(verified.grade_root(first_missing_program), None);
+        if rewrite_count == 0 {
+            let mut extra = cost.clone();
+            extra.rules.push(mettail_grammar_core::CostRuleImageV1 {
+                program: first_missing_program,
+                grade_term: unit_root,
+            });
+            prop_assert_eq!(
+                extra.validate(&language, &semantic, limits),
+                Err(mettail_grammar_core::CostImageError::RuleCountMismatch)
+            );
+        }
+        for source in 0..equation_count {
+            for (offset, direction) in
+                [TheoryRuleDirectionV1::Forward, TheoryRuleDirectionV1::Reverse]
+                    .into_iter()
+                    .enumerate()
+            {
+                let program = &semantic.rules[2 * source + offset];
+                prop_assert_eq!(
+                    program.origin,
+                    TheoryRuleOriginV1::Equation { source: source as u32, direction }
+                );
+                prop_assert_eq!(verified.grade_root(program.id), None);
+            }
+        }
+        for source in 0..rewrite_count {
+            let program = &semantic.rules[2 * equation_count + source];
+            let declared = language
+                .theory
+                .cost
+                .as_ref()
+                .unwrap()
+                .grade_rules
+                .iter()
+                .find(|grade| grade.rewrite == language.theory.rewrites[source].name)
+                .expect("each source rewrite has one named grade declaration");
+            prop_assert_eq!(program.id, TheoryRuleProgramId((2 * equation_count + source) as u32));
+            prop_assert_eq!(program.origin, TheoryRuleOriginV1::Rewrite { source: source as u32 });
+            prop_assert_eq!(&program.name, &declared.rewrite);
+            prop_assert_eq!(cost.rules[source].program, program.id);
+            prop_assert_eq!(cost.rules[source].grade_term, declared.term);
+            prop_assert_eq!(verified.grade_root(program.id), Some(declared.term));
+            for root in [unit_root, product_root] {
+                prop_assert_eq!(program.terms[root.0 as usize].sort, verified.grade_sort());
+            }
+
+            let mut wrong_root = cost.clone();
+            wrong_root.rules[source].grade_term = if declared.term == unit_root {
+                product_root
+            } else {
+                unit_root
+            };
+            prop_assert!(
+                matches!(wrong_root.validate(&language, &semantic, limits),
+                    Err(mettail_grammar_core::CostImageError::RuleMismatch(index)) if index == source),
+                "another well-sorted root is not the declared source root"
+            );
+            for equation_program in &semantic.rules[..2 * equation_count] {
+                let mut wrong_program = cost.clone();
+                wrong_program.rules[source].program = equation_program.id;
+                prop_assert!(wrong_program
+                    .validate(&language, &semantic, limits)
+                    .is_err());
+            }
+
+            let mut omitted = cost.clone();
+            omitted.rules.remove(source);
+            prop_assert!(omitted.validate(&language, &semantic, limits).is_err());
+            let mut extra = cost.clone();
+            extra.rules.push(cost.rules[source].clone());
+            prop_assert!(extra.validate(&language, &semantic, limits).is_err());
+            if rewrite_count > 1 {
+                let other = (source + 1) % rewrite_count;
+                let mut wrong_program = cost.clone();
+                wrong_program.rules[source].program = cost.rules[other].program;
+                prop_assert!(wrong_program
+                    .validate(&language, &semantic, limits)
+                    .is_err());
+                let mut duplicate = cost.clone();
+                duplicate.rules[source] = cost.rules[other].clone();
+                prop_assert!(duplicate.validate(&language, &semantic, limits).is_err());
+                let mut reordered = cost.clone();
+                reordered.rules.swap(source, other);
+                prop_assert!(reordered.validate(&language, &semantic, limits).is_err());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn checked_cost_source_admission_covers_empty_and_boundary_rosters() {
+        for (equations, rewrites) in [(0, 0), (3, 0), (0, 1), (3, 4)] {
+            for product_first in [false, true] {
+                for reverse_grade_declarations in [false, true] {
+                    check_cost_source_admission_case(
+                        equations,
+                        rewrites,
+                        product_first,
+                        reverse_grade_declarations,
+                    )
+                    .expect("source admission boundary case");
+                }
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn checked_cost_source_admission_preserves_origins_and_exact_grade_roots(
+            equation_count in 0usize..=3,
+            rewrite_count in 0usize..=4,
+            product_first in any::<bool>(),
+            reverse_grade_declarations in any::<bool>(),
+        ) {
+            check_cost_source_admission_case(
+                equation_count,
+                rewrite_count,
+                product_first,
+                reverse_grade_declarations,
+            )?;
+        }
+    }
+
+    #[test]
+    fn checked_cost_rewrite_step_emits_exact_grade_or_nothing() {
+        let language = costed_fixture();
+        let admission = TheoryImageAdmissionLimits::default();
+        let image = compile_theory_semantic_image(&language, admission).expect("semantic image");
+        let cost = mettail_grammar_core::CostImageV1::compile(&language, &image, admission)
+            .expect("cost compilation")
+            .expect("costed profile");
+        let verified = cost
+            .verified(&language, &image, admission)
+            .expect("verified cost image");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let request = |work| SemanticRelationExecutionRequest {
+            image: &image,
+            relation_sort: TheorySortId(0),
+            granted_rights: &rights,
+            input: normalization_input(TheoryConstructorId(0), 1),
+            limits: SemanticTransitionLimits { work, ..normalization_limits() },
+        };
+
+        assert!(matches!(
+            matcher
+                .execute_rewrite_step_roster_accounted(request(100_000), || false)
+                .0,
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                ..
+            }
+        ));
+
+        let (decision, used) = matcher.execute_costed_rewrite_step_roster_accounted(
+            request(100_000),
+            verified,
+            || false,
+        );
+        let SemanticTransitionDecision::ProvenSteps(mut roster) = decision else {
+            panic!("checked cost roster must publish only complete evidence")
+        };
+        assert_eq!(roster.work, used);
+        assert_eq!(roster.occurrences.len(), 1);
+        let mut grade_graph = EGraph::new();
+        let unit = grade_graph.add(ENode::leaf(theory_operator_to_machine(
+            &TheoryImageOperatorV1::Constructor(verified.unit_constructor()),
+        )));
+        let grade_input = match SemanticTransitionInput::admit(
+            grade_graph,
+            unit,
+            SemanticInputLimits {
+                work: 10_000,
+                nodes: 64,
+                bytes: 64 * 1024,
+            },
+            || false,
+        ) {
+            SemanticInputDecision::Proven(input) => input,
+            _ => panic!("admit declared unit constructor"),
+        };
+        assert_eq!(
+            roster.occurrences[0].resource,
+            SemanticResourceReceipt::Checked {
+                grade_sort: verified.grade_sort(),
+                grade: grade_input.exact_key().as_bytes().to_vec(),
+                cost_image_fingerprint: verified.fingerprint(),
+            }
+        );
+        let (grade_decision, grade_work) = roster.admit_grade_at(
+            0,
+            SemanticInputLimits {
+                work: 10_000,
+                nodes: 64,
+                bytes: 64 * 1024,
+            },
+            || false,
+        );
+        let SemanticInputDecision::Proven(retained_grade) = grade_decision else {
+            panic!("kernel-retained grade must be a checked projection input")
+        };
+        assert_eq!(retained_grade.exact_key(), grade_input.exact_key());
+        assert_eq!(retained_grade.admission_work(), grade_work);
+        assert!(matches!(
+            matcher
+                .execute_costed_rewrite_step_roster_accounted(
+                    request(used.saturating_sub(1)),
+                    verified,
+                    || false,
+                )
+                .0,
+            SemanticTransitionDecision::Undetermined { .. }
+        ));
+        roster.occurrences[0].resource = SemanticResourceReceipt::Checked {
+            grade_sort: verified.grade_sort(),
+            grade: b"forged-grade-key".to_vec(),
+            cost_image_fingerprint: verified.fingerprint(),
+        };
+        assert!(matches!(
+            roster
+                .admit_grade_at(
+                    0,
+                    SemanticInputLimits {
+                        work: 10_000,
+                        nodes: 64,
+                        bytes: 64 * 1024
+                    },
+                    || false,
+                )
+                .0,
+            SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn checked_cost_named_action_retains_its_source_grade_and_kernel_work_bound() {
+        let language = costed_fixture();
+        let admission = TheoryImageAdmissionLimits::default();
+        let image = compile_theory_semantic_image(&language, admission).expect("semantic image");
+        let cost = mettail_grammar_core::CostImageV1::compile(&language, &image, admission)
+            .expect("cost compilation")
+            .expect("costed profile");
+        let verified = cost
+            .verified(&language, &image, admission)
+            .expect("verified cost image");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let request = |work| SemanticActionExecutionRequest {
+            image: &image,
+            action: image.actions[0].id,
+            granted_rights: &rights,
+            input: normalization_input(TheoryConstructorId(0), 1),
+            limits: SemanticTransitionLimits { work, ..normalization_limits() },
+        };
+        assert!(matches!(
+            matcher
+                .execute_action_accounted(request(100_000), || false)
+                .0,
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                ..
+            }
+        ));
+        let (decision, work) =
+            matcher.execute_costed_action_accounted(request(100_000), verified, || false);
+        let SemanticTransitionDecision::Proven(mut proven) = decision else {
+            panic!("costed named action must publish a checked grade")
+        };
+        assert_eq!(proven.work, work);
+        assert_eq!(proven.transitions.len(), 1);
+        let SemanticResourceReceipt::Checked {
+            grade_sort,
+            grade,
+            cost_image_fingerprint,
+        } = &proven.transitions[0].receipt.resource
+        else {
+            panic!("costed action cannot publish an ungraded transition")
+        };
+        assert_eq!(*grade_sort, verified.grade_sort());
+        assert_eq!(*cost_image_fingerprint, verified.fingerprint());
+        let (admitted, used) = proven.admit_grade_at(
+            0,
+            SemanticInputLimits {
+                work: 10_000,
+                nodes: 64,
+                bytes: 64 * 1024,
+            },
+            || false,
+        );
+        let SemanticInputDecision::Proven(admitted) = admitted else {
+            panic!("named action retained grade must readmit")
+        };
+        assert_eq!(admitted.exact_key().as_bytes(), grade);
+        assert_eq!(admitted.admission_work(), used);
+        assert!(matches!(
+            matcher
+                .execute_costed_action_accounted(request(work.saturating_sub(1)), verified, || {
+                    false
+                })
+                .0,
+            SemanticTransitionDecision::Undetermined { .. }
+        ));
+        proven.transitions[0].receipt.resource = SemanticResourceReceipt::NoSemanticGrade;
+        assert!(matches!(
+            proven
+                .admit_grade_at(
+                    0,
+                    SemanticInputLimits {
+                        work: 10_000,
+                        nodes: 64,
+                        bytes: 64 * 1024
+                    },
+                    || false,
+                )
+                .0,
+            SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn checked_cost_roster_keeps_equal_output_distinct_rewrite_proofs() {
+        let mut language = costed_fixture();
+        let mut second = language.theory.rewrites[0].clone();
+        second.name = "same-output-other-proof".into();
+        language.theory.rewrites.push(second);
+        language
+            .theory
+            .cost
+            .as_mut()
+            .expect("cost declaration")
+            .grade_rules
+            .push(mettail_grammar_core::CostGradeRuleV1 {
+                rewrite: "same-output-other-proof".into(),
+                term: TheoryTermId(3),
+            });
+        let admission = TheoryImageAdmissionLimits::default();
+        let image = compile_theory_semantic_image(&language, admission).expect("semantic image");
+        let cost = mettail_grammar_core::CostImageV1::compile(&language, &image, admission)
+            .expect("cost compilation")
+            .expect("costed profile");
+        let verified = cost
+            .verified(&language, &image, admission)
+            .expect("verified cost image");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (decision, work) = matcher.execute_costed_rewrite_step_roster_accounted(
+            SemanticRelationExecutionRequest {
+                image: &image,
+                relation_sort: TheorySortId(0),
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 1),
+                limits: SemanticTransitionLimits { work: 100_000, ..normalization_limits() },
+            },
+            verified,
+            || false,
+        );
+        let SemanticTransitionDecision::ProvenSteps(roster) = decision else {
+            panic!("both source-exact rewrite proofs must be published")
+        };
+        assert_eq!(roster.work, work);
+        assert_eq!(roster.occurrences.len(), 2);
+        assert_eq!(roster.occurrences[0].receipt.after, roster.occurrences[1].receipt.after);
+        assert_ne!(roster.occurrences[0].receipt.rule, roster.occurrences[1].receipt.rule);
+        for index in 0..roster.occurrences.len() {
+            let SemanticResourceReceipt::Checked {
+                grade_sort,
+                cost_image_fingerprint,
+                grade,
+            } = &roster.occurrences[index].resource
+            else {
+                panic!("each proof needs its own checked grade")
+            };
+            assert_eq!(*grade_sort, verified.grade_sort());
+            assert_eq!(*cost_image_fingerprint, verified.fingerprint());
+            let (decision, _) = roster.admit_grade_at(
+                index,
+                SemanticInputLimits {
+                    work: 10_000,
+                    nodes: 64,
+                    bytes: 64 * 1024,
+                },
+                || false,
+            );
+            let SemanticInputDecision::Proven(input) = decision else {
+                panic!("each proof's retained grade must be authentic")
+            };
+            assert_eq!(input.exact_key().as_bytes(), grade);
+        }
+    }
+
+    #[test]
+    fn checked_cost_normalization_keeps_selected_equal_output_proof_and_ordered_product() {
+        let mut language = costed_fixture();
+        language.theory.actions[0].execution = SemanticActionExecutionV1::Normalize {
+            relation_sort: "Expr".into(),
+            terminal_constructors: vec!["Zero".into()],
+            branching: SemanticNormalizationBranchingV1::FairAllNormalForms,
+        };
+        let mut second = language.theory.rewrites[0].clone();
+        second.name = "same-output-nonunit-proof".into();
+        second.arena.terms.push(TheoryTermNodeV1 {
+            sort: "Sig".into(),
+            form: TheoryTermFormV1::Constructor {
+                constructor: "SigProduct".into(),
+                arguments: vec![TheoryTermId(3), TheoryTermId(3)],
+            },
+        });
+        language.theory.rewrites.push(second);
+        language
+            .theory
+            .cost
+            .as_mut()
+            .expect("cost declaration")
+            .grade_rules
+            .push(mettail_grammar_core::CostGradeRuleV1 {
+                rewrite: "same-output-nonunit-proof".into(),
+                term: TheoryTermId(4),
+            });
+        let admission = TheoryImageAdmissionLimits::default();
+        let image = compile_theory_semantic_image(&language, admission).expect("semantic image");
+        let cost = mettail_grammar_core::CostImageV1::compile(&language, &image, admission)
+            .expect("cost compilation")
+            .expect("costed profile");
+        let verified = cost
+            .verified(&language, &image, admission)
+            .expect("verified cost image");
+        let matcher = SemanticTransitionMatcher::restore(&image).expect("restore matcher");
+        let rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (decision, work) = matcher.execute_costed_action_accounted(
+            SemanticActionExecutionRequest {
+                image: &image,
+                action: image.actions[0].id,
+                granted_rights: &rights,
+                input: normalization_input(TheoryConstructorId(0), 2),
+                limits: normalization_limits(),
+            },
+            verified,
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(proven) = decision else {
+            panic!("checked normalization must retain both source proofs")
+        };
+        assert_eq!(proven.work, work);
+        assert_eq!(proven.transitions.len(), 2);
+        let mut selected_proofs = Vec::new();
+        for (index, transition) in proven.transitions.iter().enumerate() {
+            let SemanticResourceReceipt::CheckedTraceV2 {
+                grade_sort,
+                grade,
+                cost_image_fingerprint,
+                entry_grade,
+                hops,
+            } = &transition.receipt.resource
+            else {
+                panic!("normalization must publish checked V2 trace")
+            };
+            assert_eq!(*grade_sort, verified.grade_sort());
+            assert_eq!(*cost_image_fingerprint, verified.fingerprint());
+            assert_eq!(hops.len(), 1);
+            assert_eq!(hops[0].exhaustive_proofs.len(), 2);
+            selected_proofs.push(hops[0].selected_proof);
+            assert_ne!(hops[0].exhaustive_proofs[0].grade, hops[0].exhaustive_proofs[1].grade);
+            assert_eq!(hops[0].before, transition.receipt.normalization_hops[0].before);
+            assert_eq!(hops[0].after, transition.receipt.normalization_hops[0].after);
+            let (admitted, _) = proven.admit_grade_at(
+                index,
+                SemanticInputLimits {
+                    work: 10_000,
+                    nodes: 64,
+                    bytes: 64 * 1024,
+                },
+                || false,
+            );
+            let SemanticInputDecision::Proven(admitted) = admitted else {
+                panic!("ordered product must remain an authentic egraph grade")
+            };
+            assert_eq!(admitted.exact_key().as_bytes(), grade);
+            assert_ne!(entry_grade, grade);
+            let mut expected_graph = EGraph::new();
+            let unit = expected_graph.add(ENode::leaf(theory_operator_to_machine(
+                &TheoryImageOperatorV1::Constructor(verified.unit_constructor()),
+            )));
+            let hop_grade = if hops[0].selected_proof == 0 {
+                unit
+            } else {
+                expected_graph.add(ENode::new(
+                    theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                        verified.product_constructor(),
+                    )),
+                    vec![unit, unit],
+                ))
+            };
+            let expected_root = expected_graph.add(ENode::new(
+                theory_operator_to_machine(&TheoryImageOperatorV1::Constructor(
+                    verified.product_constructor(),
+                )),
+                vec![unit, hop_grade],
+            ));
+            let SemanticInputDecision::Proven(expected) = SemanticTransitionInput::admit(
+                expected_graph,
+                expected_root,
+                SemanticInputLimits {
+                    work: 10_000,
+                    nodes: 64,
+                    bytes: 64 * 1024,
+                },
+                || false,
+            ) else {
+                panic!("declared product fixture must admit")
+            };
+            assert_eq!(expected.exact_key().as_bytes(), grade);
+        }
+        assert_ne!(proven.transitions[0].receipt.resource, proven.transitions[1].receipt.resource,);
+        selected_proofs.sort_unstable();
+        assert_eq!(selected_proofs, [0, 1]);
+    }
+
+    #[test]
+    fn checked_cost_projection_dispatch_is_ungraded_only_for_selected_appended_rule() {
+        let base = costed_fixture();
+        let host = ProjectionHostSignatureV1 {
+            signature_fingerprint: [7; 32],
+            codec_profile_fingerprint: [9; 32],
+            sorts: vec![TheorySortV1 {
+                name: "Bool".into(),
+                kind: TheorySortKindV1::Syntax { literal: None },
+            }],
+            constructors: vec![TheoryConstructorV1 {
+                name: "Yes".into(),
+                domain: Vec::new(),
+                codomain: "Bool".into(),
+            }],
+        };
+        let projected = ProjectedLanguageCoreV1 {
+            abi: PROJECTED_LANGUAGE_CORE_ABI_V1,
+            base: base.clone(),
+            projections: vec![TheoryProjectionV1 {
+                name: "grade_to_host".into(),
+                guest_category: "Sig".into(),
+                host: ProjectionHostEndpointV1 {
+                    signature_fingerprint: host.signature_fingerprint,
+                    category: "Bool".into(),
+                    codec_profile_fingerprint: host.codec_profile_fingerprint,
+                },
+                directions: vec![ProjectionDirectionV1::GuestToHost],
+                body: ProjectionBodyV1::Rules(vec![DirectedProjectionRuleV1 {
+                    direction: ProjectionDirectionV1::GuestToHost,
+                    source_occurrence: 0,
+                    rule: TheoryRewriteV1 {
+                        name: "unit_to_yes".into(),
+                        arena: TheoryRuleArenaV1 {
+                            variables: Vec::new(),
+                            terms: vec![
+                                TheoryTermNodeV1 {
+                                    sort: "Sig".into(),
+                                    form: TheoryTermFormV1::Constructor {
+                                        constructor: "SigUnit".into(),
+                                        arguments: Vec::new(),
+                                    },
+                                },
+                                TheoryTermNodeV1 {
+                                    sort: "host::Bool".into(),
+                                    form: TheoryTermFormV1::Constructor {
+                                        constructor: "host::Yes".into(),
+                                        arguments: Vec::new(),
+                                    },
+                                },
+                            ],
+                            premises: Vec::new(),
+                            premise_roots: Vec::new(),
+                        },
+                        left: TheoryTermId(0),
+                        right: TheoryTermId(1),
+                    },
+                }]),
+            }],
+        };
+        let admission = TheoryImageAdmissionLimits::default();
+        let (source_image, image) =
+            compile_projected_theory_semantic_image_with_base(&projected, &host, admission)
+                .expect("costed projected image");
+        let cost = mettail_grammar_core::CostImageV1::compile(&base, &source_image, admission)
+            .expect("cost image")
+            .expect("costed profile");
+        let verified = cost
+            .verified(&base, &source_image, admission)
+            .expect("cost owner");
+        let source_matcher =
+            SemanticTransitionMatcher::restore(&source_image).expect("source matcher");
+        let source_rights = LanguageRights::from_rights([LanguageRight::Reduce]);
+        let (source_decision, _) = source_matcher.execute_costed_action_accounted(
+            SemanticActionExecutionRequest {
+                image: &source_image,
+                action: source_image.actions[0].id,
+                granted_rights: &source_rights,
+                input: normalization_input(TheoryConstructorId(0), 1),
+                limits: normalization_limits(),
+            },
+            verified,
+            || false,
+        );
+        let SemanticTransitionDecision::Proven(source_proof) = source_decision else {
+            panic!("source rewrite must first produce its checked grade")
+        };
+        assert_eq!(source_proof.transitions.len(), 1);
+        let matcher =
+            SemanticTransitionMatcher::restore_projected(&image).expect("projection matcher");
+        let grade_input = || {
+            let (admitted, _) = source_proof.admit_grade_at(
+                0,
+                SemanticInputLimits {
+                    work: 10_000,
+                    nodes: 64,
+                    bytes: 64 * 1024,
+                },
+                || false,
+            );
+            let SemanticInputDecision::Proven(input) = admitted else {
+                panic!("source-derived checked grade must readmit")
+            };
+            input
+        };
+        let relation = &image.relations[0];
+        let action = relation
+            .dispatch_action
+            .expect("selected projection action");
+        let rights = LanguageRights::from_rights([LanguageRight::Match, LanguageRight::Construct]);
+        assert!(matches!(
+            matcher
+                .execute_action_accounted(
+                    SemanticActionExecutionRequest {
+                        image: &image.execution,
+                        action,
+                        granted_rights: &rights,
+                        input: grade_input(),
+                        limits: normalization_limits(),
+                    },
+                    || false,
+                )
+                .0,
+            SemanticTransitionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::ResourceGradeUnavailable,
+                ..
+            }
+        ));
+        let (decision, _) = matcher.execute_rule_projection_accounted(
+            SemanticProjectionExecutionRequest {
+                image: &image,
+                projection: relation.projection,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &rights,
+                input: grade_input(),
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        let SemanticProjectionDecision::Proven(proven) = decision else {
+            panic!("only selected appended projection rule may interpret a checked grade")
+        };
+        assert_eq!(proven.values.len(), 1);
+        assert_eq!(proven.values[0].receipt.resource, SemanticResourceReceipt::NoSemanticGrade);
+        assert!(proven.values[0].receipt.rule.0 >= image.base_rule_count);
+        let (wrong, _) = matcher.execute_rule_projection_accounted(
+            SemanticProjectionExecutionRequest {
+                image: &image,
+                projection: relation.projection + 1,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &rights,
+                input: grade_input(),
+                limits: normalization_limits(),
+            },
+            || false,
+        );
+        assert!(matches!(wrong, SemanticProjectionDecision::Refuted(_)));
+    }
+
+    #[test]
+    fn finite_cost_grade_roster_covers_exact_nullary_generators() {
+        let mut base = costed_fixture();
+        let sig_category_id = CategoryId(base.grammar.categories.len() as u32);
+        base.grammar.categories.push(Category {
+            id: sig_category_id,
+            name: "Sig".into(),
+            carrier: Carrier::Dynamic,
+            primary: false,
+            admits_variables: false,
+        });
+        let grade_sort = base
+            .theory
+            .sorts
+            .iter_mut()
+            .find(|sort| sort.name == "Sig")
+            .unwrap();
+        grade_sort.kind = TheorySortKindV1::Syntax { literal: None };
+        base.theory.constructors.push(TheoryConstructorV1 {
+            name: "SigTick".into(),
+            domain: Vec::new(),
+            codomain: "Sig".into(),
+        });
+        base.theory.rewrites[0].arena.terms[3].form = TheoryTermFormV1::Constructor {
+            constructor: "SigTick".into(),
+            arguments: Vec::new(),
+        };
+        let host = ProjectionHostSignatureV1 {
+            signature_fingerprint: [7; 32],
+            codec_profile_fingerprint: [9; 32],
+            sorts: vec![TheorySortV1 {
+                name: "Bool".into(),
+                kind: TheorySortKindV1::Syntax { literal: None },
+            }],
+            constructors: vec![TheoryConstructorV1 {
+                name: "Yes".into(),
+                domain: Vec::new(),
+                codomain: "Bool".into(),
+            }],
+        };
+        let projected = ProjectedLanguageCoreV1 {
+            abi: PROJECTED_LANGUAGE_CORE_ABI_V1,
+            base,
+            projections: vec![TheoryProjectionV1 {
+                name: "grade_to_host".into(),
+                guest_category: "Sig".into(),
+                host: ProjectionHostEndpointV1 {
+                    signature_fingerprint: host.signature_fingerprint,
+                    category: "Bool".into(),
+                    codec_profile_fingerprint: host.codec_profile_fingerprint,
+                },
+                directions: vec![ProjectionDirectionV1::GuestToHost],
+                body: ProjectionBodyV1::Rules(vec![DirectedProjectionRuleV1 {
+                    direction: ProjectionDirectionV1::GuestToHost,
+                    source_occurrence: 3,
+                    rule: TheoryRewriteV1 {
+                        name: "tick_to_yes".into(),
+                        arena: TheoryRuleArenaV1 {
+                            variables: Vec::new(),
+                            terms: vec![
+                                TheoryTermNodeV1 {
+                                    sort: "Sig".into(),
+                                    form: TheoryTermFormV1::Constructor {
+                                        constructor: "SigTick".into(),
+                                        arguments: Vec::new(),
+                                    },
+                                },
+                                TheoryTermNodeV1 {
+                                    sort: "host::Bool".into(),
+                                    form: TheoryTermFormV1::Constructor {
+                                        constructor: "host::Yes".into(),
+                                        arguments: Vec::new(),
+                                    },
+                                },
+                            ],
+                            premises: Vec::new(),
+                            premise_roots: Vec::new(),
+                        },
+                        left: TheoryTermId(0),
+                        right: TheoryTermId(1),
+                    },
+                }]),
+            }],
+        };
+        let selector = FundingProjectionSelectorV2 {
+            abi: mettail_grammar_core::FUNDING_PROJECTION_SELECTOR_ABI_V2,
+            projection_name: "grade_to_host".into(),
+            guest_grade_sort: "Sig".into(),
+            host_demand_category: "Bool".into(),
+            resource_logic_abi: "test/resource/1".into(),
+            bound_verifier_abi: "test/bound/1".into(),
+            projection_proof_abi: "test/proof/1".into(),
+            projection_proof_commitment: [1; 32],
+        };
+        let limits = TheoryImageAdmissionLimits::default();
+        let (source_image, image) =
+            compile_projected_theory_semantic_image_with_base(&projected, &host, limits).unwrap();
+        let cost =
+            mettail_grammar_core::CostImageV1::compile(&projected.base, &source_image, limits)
+                .unwrap()
+                .unwrap();
+        let roster = CheckedFiniteGradeRosterV2::check(
+            &selector,
+            &projected,
+            &source_image,
+            &cost,
+            &image,
+            limits,
+        )
+        .unwrap();
+        assert_eq!(roster.generators().len(), 1);
+        assert_eq!(roster.generators()[0].source_occurrence(), 3);
+        assert_eq!(
+            source_image.constructors[roster.generators()[0].constructor().0 as usize].domain,
+            Vec::new(),
+        );
+
+        let mut altered_prefix = image.clone();
+        altered_prefix.execution.abi = altered_prefix.execution.abi.wrapping_add(1);
+        assert_eq!(
+            CheckedFiniteGradeRosterV2::check(
+                &selector,
+                &projected,
+                &source_image,
+                &cost,
+                &altered_prefix,
+                limits,
+            ),
+            Err(FiniteGradeRosterErrorV2::ImageMismatch),
+        );
+
+        let mut open = projected.clone();
+        open.base.theory.constructors.push(TheoryConstructorV1 {
+            name: "SigOpen".into(),
+            domain: vec!["Sig".into()],
+            codomain: "Sig".into(),
+        });
+        let (open_base, open_image) =
+            compile_projected_theory_semantic_image_with_base(&open, &host, limits).unwrap();
+        let open_cost = mettail_grammar_core::CostImageV1::compile(&open.base, &open_base, limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            CheckedFiniteGradeRosterV2::check(
+                &selector,
+                &open,
+                &open_base,
+                &open_cost,
+                &open_image,
+                limits,
+            ),
+            Err(FiniteGradeRosterErrorV2::OpenGenerator),
+        );
+    }
+
     #[test]
     fn projected_image_reuses_flat_rules_and_preserves_overlapping_candidates() {
         let mut base = fixture();
@@ -2449,10 +3529,18 @@ mod tests {
                 ]),
             }],
         };
-        let image = compile_projected_theory_semantic_image(&projected, &host, limits)
-            .expect("compile grouped projection image");
+        let (compiled_base, image) =
+            compile_projected_theory_semantic_image_with_base(&projected, &host, limits)
+                .expect("compile grouped projection image with retained base");
+        assert_eq!(compiled_base, legacy);
         assert_eq!(image.base_image_fingerprint, legacy.fingerprint().unwrap());
-        assert_eq!(compile_theory_semantic_image(&base, limits).unwrap(), legacy);
+        assert_eq!(image.base_rule_count as usize, compiled_base.rules.len());
+        assert_eq!(image.execution.rules[..compiled_base.rules.len()], compiled_base.rules);
+        assert_eq!(
+            compile_projected_theory_semantic_image(&projected, &host, limits).unwrap(),
+            image,
+            "the original projected-only API remains observationally identical",
+        );
         assert_eq!(image.execution.sorts.len(), legacy.sorts.len() + 1);
         assert_eq!(image.execution.constructors.len(), legacy.constructors.len() + 2);
         assert_eq!(image.execution.rules.len(), legacy.rules.len() + 3);
@@ -2522,6 +3610,57 @@ mod tests {
             .matches
             .iter()
             .all(|matched| matched.rule.0 >= image.base_rule_count));
+        let (_, fingerprint_work) = image
+            .execution
+            .fingerprint_accounted(u64::MAX, || false)
+            .expect("canonical projected-image fingerprint");
+        let (unfunded_image_match, observed_work, _) = matcher.match_projection_relation_accounted(
+            SemanticProjectionMatchRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &rights,
+                egraph: &mut graph,
+                root,
+                limits: SemanticTransitionLimits {
+                    work: fingerprint_work - 1,
+                    ..base.theory.limits.into()
+                },
+            },
+            || false,
+        );
+        assert!(matches!(
+            unfunded_image_match,
+            SemanticMatchDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                ..
+            }
+        ));
+        assert!(observed_work < fingerprint_work);
+        let (unfunded_relation_setup, observed_work, _) = matcher
+            .match_projection_relation_accounted(
+                SemanticProjectionMatchRequest {
+                    image: &image,
+                    projection: 0,
+                    direction: ProjectionDirectionV1::GuestToHost,
+                    granted_rights: &rights,
+                    egraph: &mut graph,
+                    root,
+                    limits: SemanticTransitionLimits {
+                        work: fingerprint_work,
+                        ..base.theory.limits.into()
+                    },
+                },
+                || false,
+            );
+        assert!(matches!(
+            unfunded_relation_setup,
+            SemanticMatchDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                ..
+            }
+        ));
+        assert_eq!(observed_work, fingerprint_work);
         let ordinary_rights = LanguageRights::from_rights([LanguageRight::Reduce]);
         let (ordinary, _, _) = matcher.match_rewrite_relation_accounted(
             TheorySortId(0),
@@ -2623,7 +3762,7 @@ mod tests {
             },
             || false,
         );
-        let SemanticProjectionDecision::Proven(projected_values) = projected_result else {
+        let SemanticProjectionDecision::Proven(mut projected_values) = projected_result else {
             panic!("typed projection result must be complete");
         };
         assert_eq!(projected_values.values.len(), 2);
@@ -2641,6 +3780,62 @@ mod tests {
                 && item.receipt.host_signature_fingerprint == host.signature_fingerprint
                 && item.receipt.host_codec_profile_fingerprint == host.codec_profile_fingerprint
         }));
+        let output_limits = SemanticInputLimits {
+            work: 10_000,
+            nodes: 64,
+            bytes: 64 * 1024,
+        };
+        for index in 0..projected_values.values.len() {
+            let (admitted, used) = projected_values.admit_output_at(index, output_limits, || false);
+            let SemanticInputDecision::Proven(output) = admitted else {
+                panic!("each projected output root must match its exact receipt key");
+            };
+            assert_eq!(output.admission_work(), used);
+            assert_eq!(
+                output.exact_key().as_bytes(),
+                projected_values.values[index].receipt.output.as_slice()
+            );
+        }
+        projected_values.values[0].receipt.output.push(0);
+        assert!(matches!(
+            projected_values
+                .admit_output_at(0, output_limits, || false)
+                .0,
+            SemanticInputDecision::Undetermined {
+                reason: SemanticMatchUndetermined::InvalidImageEvidence,
+                ..
+            }
+        ));
+        assert!(matches!(
+            projected_values
+                .admit_output_at(1, output_limits, || false)
+                .0,
+            SemanticInputDecision::Proven(_)
+        ));
+        let unfunded_input = normalization_input(TheoryConstructorId(0), 0);
+        let work_limit = unfunded_input.admission_work() + fingerprint_work - 1;
+        let (unfunded_execution, observed_work) = matcher.execute_rule_projection_accounted(
+            SemanticProjectionExecutionRequest {
+                image: &image,
+                projection: 0,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: &rights,
+                limits: SemanticTransitionLimits {
+                    work: work_limit,
+                    ..base.theory.limits.into()
+                },
+                input: unfunded_input,
+            },
+            || false,
+        );
+        assert!(matches!(
+            unfunded_execution,
+            SemanticProjectionDecision::Undetermined {
+                reason: SemanticMatchUndetermined::WorkBudgetExhausted,
+                ..
+            }
+        ));
+        assert!(observed_work <= work_limit);
         let (insufficient, _) = matcher.execute_rule_projection_accounted(
             SemanticProjectionExecutionRequest {
                 image: &image,
@@ -2656,6 +3851,62 @@ mod tests {
             insufficient,
             SemanticProjectionDecision::Refuted(SemanticMatchRefutation::RequestRejected)
         ));
+
+        projected.base = costed_fixture();
+        let (cost_base, cost_projected) =
+            compile_projected_theory_semantic_image_with_base(&projected, &host, limits)
+                .expect("costed guest and host projection compile from one checked base");
+        let cost_image =
+            mettail_grammar_core::CostImageV1::compile(&projected.base, &cost_base, limits)
+                .expect("cost image compiles against retained base")
+                .expect("costed guest has a grade image");
+        assert_eq!(cost_projected.base_image_fingerprint, cost_image.semantic_image_fingerprint);
+        assert_eq!(cost_projected.base_rule_count as usize, cost_base.rules.len());
+        assert_eq!(cost_projected.execution.rules[..cost_base.rules.len()], cost_base.rules);
+
+        // The V2 declaration is a separate, non-funding envelope. Its one
+        // selected relation must name the Cost(G) grade sort and GuestToHost
+        // direction; neither the ordinary V1 projected image nor its bytes
+        // become a funding certificate merely because this validates.
+        let mut funding_declaration = projected.clone();
+        funding_declaration.projections[0].guest_category = "Sig".into();
+        let selector = mettail_grammar_core::FundingProjectionSelectorV2 {
+            abi: mettail_grammar_core::FUNDING_PROJECTION_SELECTOR_ABI_V2,
+            projection_name: "booleanize".into(),
+            guest_grade_sort: "Sig".into(),
+            host_demand_category: "Bool".into(),
+            resource_logic_abi: "test/resource-logic/1".into(),
+            bound_verifier_abi: "test/bound-verifier/1".into(),
+            projection_proof_abi: "test/projection-proof/1".into(),
+            projection_proof_commitment: [7; 32],
+        };
+        assert_eq!(selector.validate_declaration(&funding_declaration), Ok(0));
+        let mut reversed = funding_declaration.clone();
+        reversed.projections[0].directions = vec![ProjectionDirectionV1::HostToGuest];
+        assert_eq!(
+            selector.validate_declaration(&reversed),
+            Err(mettail_grammar_core::FundingProjectionSelectorErrorV2::InvalidProjectedCore(
+                mettail_grammar_core::ProjectionCoreHeaderError::RowDirectionNotDeclared(
+                    "yes".into()
+                )
+            ))
+        );
+        let ProjectionBodyV1::Rules(rows) = &mut reversed.projections[0].body else {
+            panic!("fixture uses rule projections");
+        };
+        rows.retain(|row| row.direction == ProjectionDirectionV1::HostToGuest);
+        assert_eq!(
+            selector.validate_declaration(&reversed),
+            Err(
+                mettail_grammar_core::FundingProjectionSelectorErrorV2::MissingGuestToHostDirection
+            )
+        );
+        let mut wrong_grade = selector.clone();
+        wrong_grade.guest_grade_sort = "Expr".into();
+        assert_eq!(
+            wrong_grade.validate_declaration(&funding_declaration),
+            Err(mettail_grammar_core::FundingProjectionSelectorErrorV2::GradeSortMismatch)
+        );
 
         projected.projections[0].host.signature_fingerprint = [0; 32];
         assert!(matches!(
@@ -4169,15 +5420,20 @@ mod tests {
         assert!(used > 0);
         assert!(stats.root_classes > 0);
         assert_eq!(run(&image, &mut graph, &rights, zero, used), (decision, used, stats));
+        // An unaffordable atomic preparation charge leaves the completed
+        // validation and scan prefix intact; it does not spend the remainder.
+        let preparation = u64::try_from(image.rules.len() + image.patterns.entries.len())
+            .expect("fixture preparation work fits u64");
+        let completed_prefix = used - preparation;
         assert!(matches!(run(&image, &mut graph, &rights, zero, used - 1),
             (SemanticMatchDecision::Undetermined {
                 reason: SemanticMatchUndetermined::WorkBudgetExhausted, work, ..
-            }, reported, _) if work == reported && reported == used - 1));
+            }, reported, _) if work == reported && reported == completed_prefix));
         assert_eq!(run(&image, &mut graph, &LanguageRights::none(), zero, 100_000).1, 0);
 
         // Deliberately corrupt evidence consumed AFTER a successful scan.
-        // Zero matches no rule, so the reference report is exactly validation
-        // plus scan work, with no substitution or fallback materialization.
+        // Zero matches no rule, so the reference report is exactly validation,
+        // scan, and preparation work, with no substitution or fallback materialization.
         let mut forged = image.clone();
         forged.patterns.entries[0].rule = TheoryRuleProgramId(u32::MAX);
         let (decision, failed_work, failed_stats) =
@@ -4364,7 +5620,7 @@ mod tests {
                 if *reason == expected && exact == used));
             assert!(matches!(run(used - 1), (SemanticTransitionDecision::Undetermined {
                 reason: SemanticMatchUndetermined::WorkBudgetExhausted, work, ..
-            }, reported) if work == reported && reported == used - 1));
+            }, reported) if work == reported && reported >= admission && reported <= used - 1));
             assert!(matches!(run(admission - 1), (SemanticTransitionDecision::Undetermined {
                 reason: SemanticMatchUndetermined::WorkBudgetExhausted, work: 0, ..
             }, reported) if reported == admission));

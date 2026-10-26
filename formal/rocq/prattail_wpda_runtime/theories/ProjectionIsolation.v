@@ -1369,3 +1369,270 @@ Print Assumptions T14_whitespace_only_counterexample.
 Print Assumptions T15_opaque_token_exposes_no_fixed_delimiter.
 Print Assumptions T15_fixed_delimiter_is_exposed_exactly.
 Print Assumptions T15_guest_comma_counterexample.
+
+
+Section AdjacentOperandBoundaries.
+
+Definition adjacent_cuts (boundaries : list nat) (start finish : nat) : list nat :=
+  filter (fun cut => andb (start <=? cut) (cut <=? finish)) boundaries.
+
+Fixpoint adjacent_tilings
+    (count : nat) (boundaries : list nat) (start finish : nat)
+    : list (list nat) :=
+  match count with
+  | 0 => [[]]
+  | S rest =>
+      flat_map
+        (fun cut => map (cons cut) (adjacent_tilings rest boundaries cut finish))
+        (adjacent_cuts boundaries start finish)
+  end.
+
+Inductive valid_adjacent_tiling (boundaries : list nat) (finish : nat)
+    : nat -> nat -> list nat -> Prop :=
+  | ValidAdjacentNil : forall start,
+      valid_adjacent_tiling boundaries finish 0 start []
+  | ValidAdjacentCons : forall count start cut tail,
+      In cut boundaries -> start <= cut -> cut <= finish ->
+      valid_adjacent_tiling boundaries finish count cut tail ->
+      valid_adjacent_tiling boundaries finish (S count) start (cut :: tail).
+
+Theorem adjacent_cuts_exact : forall boundaries start finish cut,
+  In cut (adjacent_cuts boundaries start finish) <->
+  In cut boundaries /\ start <= cut /\ cut <= finish.
+Proof.
+  intros. unfold adjacent_cuts. rewrite filter_In, Bool.andb_true_iff.
+  rewrite !Nat.leb_le. tauto.
+Qed.
+
+Theorem adjacent_tilings_exact : forall count boundaries start finish cuts,
+  In cuts (adjacent_tilings count boundaries start finish) <->
+  valid_adjacent_tiling boundaries finish count start cuts.
+Proof.
+  induction count as [| count IH]; intros boundaries start finish cuts; simpl.
+  - split.
+    + intros [H | H]; [subst; constructor | contradiction].
+    + intros H. inversion H. left. reflexivity.
+  - rewrite in_flat_map. split.
+    + intros [cut [Hcut Htail]]. apply in_map_iff in Htail.
+      destruct Htail as [tail [Heq Htail]]. subst cuts.
+      apply adjacent_cuts_exact in Hcut.
+      destruct Hcut as [Hin [Hstart Hfinish]].
+      constructor; try assumption. apply IH. exact Htail.
+    + intros H. inversion H; subst.
+      exists cut. split.
+      * apply adjacent_cuts_exact. tauto.
+      * apply in_map_iff. exists tail. split; [reflexivity |].
+        apply IH. assumption.
+Qed.
+
+Theorem adjacent_tilings_preserve_operand_count :
+  forall count boundaries start finish cuts,
+  In cuts (adjacent_tilings count boundaries start finish) -> length cuts = count.
+Proof.
+  intros count boundaries start finish cuts H.
+  apply adjacent_tilings_exact in H. induction H; simpl; congruence.
+Qed.
+
+Theorem adjacent_tilings_use_source_boundaries :
+  forall count boundaries start finish cuts,
+  In cuts (adjacent_tilings count boundaries start finish) ->
+  Forall (fun cut => In cut boundaries) cuts.
+Proof.
+  intros count boundaries start finish cuts H.
+  apply adjacent_tilings_exact in H. induction H; constructor; assumption.
+Qed.
+
+Theorem adjacent_tilings_do_not_reverse_ranges :
+  forall count boundaries start finish cut tail,
+  In (cut :: tail) (adjacent_tilings count boundaries start finish) ->
+  start <= cut /\ cut <= finish.
+Proof.
+  intros count boundaries start finish cut tail H.
+  apply adjacent_tilings_exact in H. inversion H; subst. tauto.
+Qed.
+
+Theorem adjacent_empty_cut_is_retained : forall boundaries start finish,
+  In start boundaries -> start <= finish ->
+  In [start] (adjacent_tilings 1 boundaries start finish).
+Proof.
+  intros. apply adjacent_tilings_exact. constructor; try assumption; try lia.
+  constructor.
+Qed.
+
+Theorem adjacent_interior_cut_is_retained : forall boundaries start cut finish,
+  In cut boundaries -> In finish boundaries -> start <= cut -> cut <= finish ->
+  In [cut; finish] (adjacent_tilings 2 boundaries start finish).
+Proof.
+  intros. apply adjacent_tilings_exact.
+  constructor; try assumption. constructor; try assumption; try lia. constructor.
+Qed.
+
+Example adjacent_old_delimiter_choice_loses_a_valid_split :
+  In [1; 2] (adjacent_tilings 2 [0; 1; 2] 0 2) /\ [1; 2] <> [2; 2].
+Proof. split; [simpl; tauto | discriminate]. Qed.
+
+End AdjacentOperandBoundaries.
+
+Print Assumptions adjacent_cuts_exact.
+Print Assumptions adjacent_tilings_exact.
+Print Assumptions adjacent_tilings_preserve_operand_count.
+Print Assumptions adjacent_tilings_use_source_boundaries.
+Print Assumptions adjacent_tilings_do_not_reverse_ranges.
+Print Assumptions adjacent_empty_cut_is_retained.
+Print Assumptions adjacent_interior_cut_is_retained.
+Print Assumptions adjacent_old_delimiter_choice_loses_a_valid_split.
+
+
+Module OperandPrecedence.
+
+Definition restricts_operators floor operators :=
+  existsb (fun power => Nat.ltb power floor) operators.
+
+Theorem no_operator_excluded_at_zero : forall operators,
+  restricts_operators 0 operators = false.
+Proof. induction operators; simpl; assumption || reflexivity. Qed.
+
+Theorem restriction_has_lower_operator : forall floor operators,
+  restricts_operators floor operators = true <->
+  exists power, In power operators /\ power < floor.
+Proof.
+  intros. unfold restricts_operators. rewrite existsb_exists.
+  split; intros [power [H E]]; exists power; split; auto;
+    apply Nat.ltb_lt in E || apply Nat.ltb_lt; assumption.
+Qed.
+
+Definition admitted_powers (admits : nat -> bool) (operators : list (nat * nat)) :=
+  map fst (filter (fun row => admits (snd row)) operators).
+
+Theorem admitted_lower_operator_restricts : forall admits operators power result floor,
+  In (power, result) operators -> admits result = true -> power < floor ->
+  restricts_operators floor (admitted_powers admits operators) = true.
+Proof.
+  intros. apply restriction_has_lower_operator. exists power. split; auto.
+  unfold admitted_powers. apply in_map_iff. exists (power, result). split; auto.
+  apply filter_In. auto.
+Qed.
+
+Theorem rejected_operator_does_not_change_restriction : forall admits operators power result floor,
+  admits result = false ->
+  restricts_operators floor (admitted_powers admits ((power, result) :: operators)) =
+  restricts_operators floor (admitted_powers admits operators).
+Proof. intros. unfold admitted_powers. simpl. rewrite H. reflexivity. Qed.
+
+Theorem inactive_floor_admits_every_operator : forall floor operators power,
+  restricts_operators floor operators = false ->
+  In power operators -> floor <= power.
+Proof.
+  intros floor operators power H I.
+  destruct (Nat.lt_ge_cases power floor) as [L | L]; auto.
+  assert (restricts_operators floor operators = true) as E.
+  { apply restriction_has_lower_operator. exists power. auto. }
+  rewrite H in E. discriminate.
+Qed.
+
+Theorem equal_binding_power_is_admitted : forall floor,
+  restricts_operators floor [floor] = false.
+Proof. intros. unfold restricts_operators. simpl. rewrite Nat.ltb_irrefl. reflexivity. Qed.
+
+Section ContextualEntry.
+Context {Input Output : Type}.
+
+Definition parse_operand
+    (legacy : Input -> Output) (parser : Input -> nat -> Output)
+    input floor operators :=
+  if restricts_operators floor operators then parser input floor else legacy input.
+
+Theorem zero_floor_preserves_existing_entry : forall legacy parser input operators,
+  parse_operand legacy parser input 0 operators = legacy input.
+Proof. intros. unfold parse_operand. rewrite no_operator_excluded_at_zero. reflexivity. Qed.
+
+Theorem empty_table_keeps_existing_entry : forall legacy parser input floor,
+  parse_operand legacy parser input floor [] = legacy input.
+Proof. reflexivity. Qed.
+
+Theorem inactive_floor_preserves_existing_entry : forall legacy parser input floor operators,
+  restricts_operators floor operators = false ->
+  parse_operand legacy parser input floor operators = legacy input.
+Proof. intros. unfold parse_operand. rewrite H. reflexivity. Qed.
+
+Theorem restrictive_floor_uses_declared_context : forall legacy parser input floor operators,
+  restricts_operators floor operators = true ->
+  parse_operand legacy parser input floor operators = parser input floor.
+Proof. intros. unfold parse_operand. rewrite H. reflexivity. Qed.
+
+Theorem restrictive_floor_preserves_result : forall legacy parser input floor operators result,
+  restricts_operators floor operators = true -> parser input floor = result ->
+  parse_operand legacy parser input floor operators = result.
+Proof. intros. rewrite restrictive_floor_uses_declared_context by assumption. assumption. Qed.
+
+Theorem restrictive_floor_ignores_unrestricted_result : forall first second parser input floor operators,
+  restricts_operators floor operators = true ->
+  parse_operand first parser input floor operators = parse_operand second parser input floor operators.
+Proof. intros. rewrite !restrictive_floor_uses_declared_context by assumption. reflexivity. Qed.
+
+End ContextualEntry.
+
+Definition complete {Value : Type} position eof (value : Value) :=
+  if Nat.eqb position eof then Some value else None.
+
+Theorem complete_entry_preserves_payload : forall (Value : Type) position (value : Value),
+  complete position position value = Some value.
+Proof. intros. unfold complete. rewrite Nat.eqb_refl. reflexivity. Qed.
+
+Theorem incomplete_entry_rejects : forall (Value : Type) position eof (value : Value),
+  position <> eof -> complete position eof value = None.
+Proof. intros. unfold complete. apply Nat.eqb_neq in H. rewrite H. reflexivity. Qed.
+
+Theorem accepted_entry_consumes_the_span : forall (Value : Type) position eof (value result : Value),
+  complete position eof value = Some result -> position = eof /\ value = result.
+Proof.
+  intros. unfold complete in H. destruct (Nat.eqb position eof) eqn:E;
+    [apply Nat.eqb_eq in E; inversion H; auto | discriminate].
+Qed.
+
+Definition operator_reading (grouped : bool) (binding_power floor : nat) :=
+  orb grouped (Nat.leb floor binding_power).
+
+Theorem lower_operator_requires_grouping : forall binding_power floor,
+  binding_power < floor -> operator_reading false binding_power floor = false.
+Proof. intros. unfold operator_reading. simpl. apply Nat.leb_gt. assumption. Qed.
+
+Theorem grouping_preserves_operator_reading : forall binding_power floor,
+  operator_reading true binding_power floor = true.
+Proof. reflexivity. Qed.
+
+Theorem inactive_floor_preserves_operator_readings : forall floor operators power grouped,
+  restricts_operators floor operators = false -> In power operators ->
+  operator_reading grouped power floor = operator_reading grouped power 0.
+Proof.
+  intros. unfold operator_reading.
+  assert (Nat.leb floor power = true) as E.
+  { apply Nat.leb_le. eapply inactive_floor_admits_every_operator; eauto. }
+  rewrite E. reflexivity.
+Qed.
+
+Example unrestricted_operand_can_violate_a_prefix_floor :
+  operator_reading false 2 0 = true /\ operator_reading false 2 220 = false.
+Proof. split; reflexivity. Qed.
+
+Print Assumptions no_operator_excluded_at_zero.
+Print Assumptions restriction_has_lower_operator.
+Print Assumptions admitted_lower_operator_restricts.
+Print Assumptions rejected_operator_does_not_change_restriction.
+Print Assumptions inactive_floor_admits_every_operator.
+Print Assumptions equal_binding_power_is_admitted.
+Print Assumptions zero_floor_preserves_existing_entry.
+Print Assumptions empty_table_keeps_existing_entry.
+Print Assumptions inactive_floor_preserves_existing_entry.
+Print Assumptions restrictive_floor_uses_declared_context.
+Print Assumptions restrictive_floor_preserves_result.
+Print Assumptions restrictive_floor_ignores_unrestricted_result.
+Print Assumptions complete_entry_preserves_payload.
+Print Assumptions incomplete_entry_rejects.
+Print Assumptions accepted_entry_consumes_the_span.
+Print Assumptions lower_operator_requires_grouping.
+Print Assumptions grouping_preserves_operator_reading.
+Print Assumptions inactive_floor_preserves_operator_readings.
+Print Assumptions unrestricted_operand_can_violate_a_prefix_floor.
+
+End OperandPrecedence.

@@ -9,6 +9,16 @@ use regex_automata::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+#[cfg(test)]
+thread_local! {
+    static EXECUTABLE_VERIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn executable_verification_count() -> usize {
+    EXECUTABLE_VERIFICATIONS.with(std::cell::Cell::get)
+}
+
 pub const PARSER_IMAGE_MAGIC: [u8; 8] = *b"MTILIMG1";
 pub const PARSER_IMAGE_ABI_V1: u16 = 1;
 
@@ -153,6 +163,8 @@ impl ParserImageV1 {
         unicode_version: &str,
         limits: ParserImageAdmissionLimits,
     ) -> Result<(), ImageError> {
+        #[cfg(test)]
+        EXECUTABLE_VERIFICATIONS.with(|count| count.set(count.get() + 1));
         core.validate().map_err(ImageError::InvalidGrammar)?;
         let fingerprint = core.fingerprint().map_err(ImageError::EncodeCore)?;
         self.verify(fingerprint)?;

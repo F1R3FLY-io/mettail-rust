@@ -763,3 +763,72 @@ Print Assumptions rule_one_summary_is_local_and_inherits_boundaries.
 Print Assumptions first_parent_summary_needs_coherence.
 Print Assumptions divergent_first_parent_summary_counterexample.
 End LabelledLeadingCategoryCall.
+
+
+Module LeadingOperandGoal.
+
+Record entry := {
+  entry_source : nat;
+  entry_goal : option nat
+}.
+
+Definition unrestricted_entry source :=
+  {| entry_source := source; entry_goal := None |}.
+
+Definition strict_entry source :=
+  {| entry_source := source; entry_goal := Some source |}.
+
+Definition admits (reachable : nat -> nat -> bool) (child : entry) result :=
+  match entry_goal child with
+  | None => true
+  | Some goal => reachable result goal
+  end.
+
+Definition enter_strict {Control : Type} source (control : Control) :=
+  (strict_entry source, control).
+
+Theorem leading_entry_preserves_source : forall source,
+  entry_source (strict_entry source) = entry_source (unrestricted_entry source).
+Proof. reflexivity. Qed.
+
+Theorem leading_entry_requires_its_declared_category : forall source,
+  entry_goal (strict_entry source) = Some source.
+Proof. reflexivity. Qed.
+
+Theorem leading_entry_preserves_control : forall (Control : Type) source (control : Control),
+  snd (enter_strict source control) = control.
+Proof. reflexivity. Qed.
+
+Theorem leading_goal_admission_is_exact : forall reachable source result,
+  admits reachable (strict_entry source) result = reachable result source.
+Proof. reflexivity. Qed.
+
+Theorem leading_goal_refuses_unreachable_results : forall reachable source result,
+  reachable result source = false ->
+  admits reachable (strict_entry source) result = false.
+Proof. intros; exact H. Qed.
+
+Theorem leading_goal_retains_reachable_results : forall reachable source result,
+  reachable result source = true ->
+  admits reachable (strict_entry source) result = true.
+Proof. intros; exact H. Qed.
+
+Theorem unrestricted_entry_admission_is_unchanged : forall reachable source result,
+  admits reachable (unrestricted_entry source) result = true.
+Proof. reflexivity. Qed.
+
+Example unrestricted_child_can_leave_its_declared_category :
+  admits Nat.eqb (unrestricted_entry 1) 0 = true /\
+  admits Nat.eqb (strict_entry 1) 0 = false.
+Proof. split; reflexivity. Qed.
+
+Print Assumptions leading_entry_preserves_source.
+Print Assumptions leading_entry_requires_its_declared_category.
+Print Assumptions leading_entry_preserves_control.
+Print Assumptions leading_goal_admission_is_exact.
+Print Assumptions leading_goal_refuses_unreachable_results.
+Print Assumptions leading_goal_retains_reachable_results.
+Print Assumptions unrestricted_entry_admission_is_unchanged.
+Print Assumptions unrestricted_child_can_leave_its_declared_category.
+
+End LeadingOperandGoal.

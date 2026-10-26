@@ -76,6 +76,7 @@ target-specific canonical representation is built.
 | Family | Payload and ordered child roles | Existing owner |
 | --- | --- | --- |
 | Empty and parallel append | Empty has no children; append retains all children and their multiplicity | `ParFold`, `ParPair` |
+| Unit tuple | `()` has no children but contributes one empty tuple expression; it is not the empty process | `PUnit`, host `ETupleBody` constructor |
 | Native scalar | Checked integer, Boolean, or decoded string value; no process-text payload | Scalar handlers and existing decoders |
 | Opaque host name | Exact caller-owned name-table identity and slot; no children or embedded process | Explicit host adapter enrollment and binding |
 | Pending installed predicate | Exact retained FLT-use index; selector followed by the use's ordered construction fills | Checked owning session; later guard/provider boundary |
@@ -99,6 +100,18 @@ List values and send payload vectors are different shapes. Preserve the
 existing desugarer's argument-versus-list encoding exactly; the target must
 not independently unpack or repack payloads. The desugarer remains responsible
 for its current arity encoding.
+
+The empty process (`Nil` or `PZero`) contributes no `Par` heads. The unit
+expression `()` contributes one `ETupleBody` whose element vector is empty.
+For example, lowering `()` produces the protobuf bytes
+`2a 03 aa 01 00` (`Par.exprs` field 5 containing `Expr.e_tuple_body` field
+21 with an empty message), whereas lowering `Nil` produces an empty byte
+sequence. Both are closed and neither is a single-string value; those shared
+observations must not be used to merge their distinct constructors. The
+neutral operation is `UnitTuple`, the direct target reuses the host's
+`new_etuple_par([])` constructor, and checked source preparation reserves its
+one retained head before construction. No source text or string conversion is
+involved.
 
 A receive bind descriptor retains its source, pattern vector, optional
 remainder, and checked free-count. The capture-slot roster retains both ordinary

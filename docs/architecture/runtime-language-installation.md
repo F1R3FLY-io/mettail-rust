@@ -141,6 +141,52 @@ capacity and success-only publication. They do not prove the complete parser
 algorithm, universal grammar equivalence, physical memory bounds or public-node
 execution. Source correspondence and actual consumer tests remain necessary.
 
+## Reuse of admitted parser images
+
+An installed entry owns an immutable grammar and parser image.
+Installation verifies this pair and retains its admission limits before publication.
+Each source or template request borrows a `RuntimeParserAdmission` from that exact entry.
+`RuntimeParser::from_admission_with_bindings` uses the receipt to construct the existing parser session.
+The receipt contains no language authority.
+
+The public parser constructor obtains its receipt through the complete executable-image verifier.
+The installed path reuses the successful admission because neither the grammar nor the image can change.
+This also preserves the original admission envelope instead of checking an installed image against unrelated default limits.
+Each request still checks its runtime policy, category, input extent, lexer limits, and result limits.
+Capability checks and installed-handle checks still bracket callbacks and result publication.
+
+The former path repeated executable-image verification for every uncached request.
+That verifier compares each token language with the lexer image through an automaton product traversal.
+Software sampling identified this traversal during the existing Regex construction test.
+The traversal checks that both automata accept the same token language.
+The repair reuses the existing receipt and parser implementation.
+
+The canonical-heads test decreased from 84.27 seconds to 54.01 seconds in the measured debug build.
+Both measurements used CPU 0, its performance governor, and 49-Hz `cpu-clock` sampling.
+Each measurement includes installation, which still verifies its inputs.
+The property counter separately checks that admitted requests perform no repeated executable-image verification.
+
+The `AdmissionReuse` section of `InstalledRuntimeBackend.v` proves six laws.
+Its bundle represents the exact immutable grammar, image, and admission envelope.
+Its request function includes current policy checks, capability checks, parsing, and publication checks.
+The model proves preservation when the same request function receives the same admitted bundle.
+Rust ownership, private receipt fields, and the single checked installation constructor establish the corresponding source boundary.
+
+| Model invariant | Implementation property |
+|---|---|
+| `receipt_retains_checked_bundle` | `admitted_parser_preserves_results_limits_and_single_verification` checks exact borrowed identities and successful original admission |
+| `rejected_bundle_has_no_receipt` | `parser_admission_refuses_changed_artifacts` rejects changed framing, compiler ABI, Unicode ABI, fingerprint, engine, lexer references, and exactness |
+| `reused_request_equals_fresh_request` | `admitted_parser_preserves_results_limits_and_single_verification` compares complete source and structural-template results under generated policies |
+| `reused_request_preserves_refusal` | Both parser equivalence and `installed_admission_reuse_preserves_request_checks` cover policy failures, missing rights, and revocation before or during execution |
+| `reused_request_preserves_complete_result` | Parser equivalence checks the complete integer constructor and complete weighted results |
+| `repeated_requests_equal_fresh_requests` | The installed property repeats uncached source and template requests and compares their complete results |
+
+Each property uses 64 generated cases.
+The parser property varies valid and invalid source, input limits, lexer work, and invalid nesting policies.
+The installed property varies repetition counts, request limits, and authority failures.
+A thread-local test counter checks one verification for fresh parser construction and no repeated verification for admitted construction or installed invocation.
+Existing callback-manifest tests continue to check host changes during token decoding.
+
 ## Cache rejection is not installation rejection
 
 Parser and semantic images are replaceable caches. An invalid unsigned cache

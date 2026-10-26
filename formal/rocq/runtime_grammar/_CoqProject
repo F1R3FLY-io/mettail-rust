@@ -4,6 +4,7 @@
 -Q ../egraph/theories EGraph
 
 ../prattail_wpda_runtime/theories/SelectedOccurrencePlan.v
+../prattail_wpda_runtime/theories/FacadeDriverFallThrough.v
 ../egraph/theories/EGraphBudgetDedup.v
 
 theories/CanonicalComposition.v
@@ -54,6 +55,8 @@ theories/CanonicalValueLiteral.v
 theories/MixinProjection.v
 theories/DataCategoryCapabilities.v
 theories/NoAdmitTypeProjection.v
+theories/UnorderedPatternAssignment.v
+theories/PrefixOpenerUnion.v
 theories/TypeCarrierProjection.v
 theories/TermAttributeProjection.v
 theories/OptionsLimitsProjection.v
@@ -95,6 +98,21 @@ theories/ExecutableTheoryCore.v
 theories/ExecutableTheoryImage.v
 theories/CollectionComprehension.v
 theories/SemanticTransitionKernel.v
+theories/SemanticPublicationProvenance.v
+theories/AuthoredSourceExecution.v
+theories/AuthoredSourcePublication.v
+theories/FreshnessWorklist.v
+theories/AuthoredTermConstruction.v
+theories/AuthoredSourceImage.v
+theories/SourceEquationSection.v
+theories/SourceEquationCollections.v
+theories/SourceEquationCollectionUniqueness.v
+theories/SourceEquationCarrierDomain.v
+theories/CheckedCostImage.v
+theories/CostSourceAdmission.v
+theories/SourceSignatureMonoidAdmission.v
+theories/QuotientCommitmentBoundary.v
+theories/HostCostV2Authority.v
 theories/InstalledFltGraphProjection.v
 theories/InstalledFltJudgments.v
 theories/InstalledFltTraversal.v
@@ -143,6 +161,7 @@ theories/IterativeDropDispatch.v
 theories/ExactStringCarrierProjection.v
 theories/DerivedSExprProjection.v
 theories/HostProfileLifecycle.v
+theories/HostCompoundFragment.v
 theories/ParserBackendSelection.v
 theories/OwnedPrecedenceAdmission.v
 theories/OwnedExplicitPrattLevels.v

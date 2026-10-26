@@ -8,6 +8,8 @@ use crate::canonical::{RhoValue, ValueDecodeError};
 use mettail_grammar_core as core;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod rewrite_family;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IntrinsicOpcode {
     ExactTermEq,
@@ -549,6 +551,8 @@ fn compile_rewrite(
     signature: &Signature,
     limits: core::TheoryLimitsV1,
 ) -> Result<core::TheoryRewriteV1, ValueDecodeError> {
+    let normalized = rewrite_family::normalize(value, path, signature, limits)?;
+    let value = normalized.as_ref().unwrap_or(value);
     let values = expect_map(value, path)?;
     let name = required_string(values, "name", path)?.to_string();
     let mut compiler = RuleCompiler::new(signature, limits, &name);

@@ -20,7 +20,10 @@ This page defines Dovetail terms before they appear in formulas or algorithms.
 | binder | A constructor that introduces a bound name with lexical scope — Ambient's `new(x, P)` binds `x` in `P`. Represented with the `moniker` crate's `Scope`/`Binder`/`FreeVar`. |
 | de-Bruijn index | A nameless representation of a bound variable as the count of binders between its use and its binder, making α-equivalent terms *identical* (de Bruijn 1972). The binder-congruence handler keys on de-Bruijn body shape. |
 | α-equivalence | Equality up to consistent renaming of bound names: `new(x, x[0]) ≈α new(y, y[0])`. |
-| capture-avoidance | Renaming a bound name so it cannot be accidentally captured when a term moves under another binder; realized here by `moniker` `unbind` (which freshens the bound name) before re-closing with `Scope::new`. |
+| capture-avoidance | Preservation of variable bindings when a term moves between scopes. Binder removal uses [scope instantiation](../../design/binder-scope-instantiation.md). |
+| scope instantiation | Replacement of one scope's bound variables with ordered arguments. The operation adjusts references to preserve every retained binding. |
+| scope offset | The number of enclosing scopes between a bound variable and its scope. A scope with several binders counts once. |
+| binder index | The position of a bound variable in its scope's ordered binder list. |
 | freshness `x # t` | "`x` does not occur free in `t`" (Pitts' nominal-logic relation): the side condition under which a binder may float past a term. |
 | NativeHandler | A disposition (and the Ambient binder mechanism): a deterministic, capture-safe in-Rust transform — here, float `new`s outward then AC-reduce — installed as a language's `try_direct_eval`. |
 | binder-congruence handler | Ambient's `NativeHandler`: floats every `new` to the top (capture-safe), leaving a binder-free soup the AC rules reduce. Documented in [Binder-Congruence Handler](11-binder-congruence-handler.md). |

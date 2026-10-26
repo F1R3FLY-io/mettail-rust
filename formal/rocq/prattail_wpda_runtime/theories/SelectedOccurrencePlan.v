@@ -599,3 +599,118 @@ Proof. discriminate. Qed.
 
 Print Assumptions staged_election_keeps_owner_and_scan_order.
 Print Assumptions staged_election_preserves_every_event_occurrence.
+
+Section ElectionComparisonReuse.
+  Variable padding : nat.
+
+  Fixpoint padded_ordinal_compare (fuel : nat) (left right : list nat) : comparison :=
+    match fuel with
+    | O => Eq
+    | S rest =>
+        match left, right with
+        | [], [] => Eq
+        | _, _ =>
+            match Nat.compare (hd padding left) (hd padding right) with
+            | Eq => padded_ordinal_compare rest (tl left) (tl right)
+            | order => order
+            end
+        end
+    end.
+
+  Lemma padded_ordinal_compare_reverse : forall fuel left right,
+    padded_ordinal_compare fuel right left =
+      CompOpp (padded_ordinal_compare fuel left right).
+  Proof.
+    induction fuel as [|fuel IH]; intros [|a left] [|b right]; cbn; try reflexivity;
+      rewrite Nat.compare_antisym;
+      destruct (Nat.compare _ _); cbn; auto.
+  Qed.
+
+  Definition strict_order (order : comparison) : bool :=
+    match order with Lt => true | _ => false end.
+
+  Definition two_direction_order (forward reverse : bool) : comparison :=
+    if forward then Lt else if reverse then Gt else Eq.
+
+  Theorem one_ordinal_comparison_replaces_two_strict_tests : forall fuel left right,
+    two_direction_order
+      (strict_order (padded_ordinal_compare fuel left right))
+      (strict_order (padded_ordinal_compare fuel right left)) =
+    padded_ordinal_compare fuel left right.
+  Proof.
+    intros. rewrite (padded_ordinal_compare_reverse fuel left right).
+    destruct (padded_ordinal_compare fuel left right); reflexivity.
+  Qed.
+
+  Definition rank_order (lateness : comparison) (equal_weight forward reverse : bool)
+    (ordinals : comparison) : comparison :=
+    match lateness with
+    | Lt => Lt
+    | Gt => Gt
+    | Eq => if equal_weight then ordinals else two_direction_order forward reverse
+    end.
+
+  Definition rank_strict (lateness : comparison) (equal_weight forward : bool)
+    (ordinals : comparison) : bool :=
+    match lateness with
+    | Lt => true
+    | Gt => false
+    | Eq => if equal_weight then strict_order ordinals else forward
+    end.
+
+  Theorem rank_comparison_preserves_forward_then_reverse :
+    forall lateness equal_weight forward reverse fuel left right,
+    two_direction_order
+      (rank_strict lateness equal_weight forward (padded_ordinal_compare fuel left right))
+      (rank_strict (CompOpp lateness) equal_weight reverse (padded_ordinal_compare fuel right left)) =
+    rank_order lateness equal_weight forward reverse (padded_ordinal_compare fuel left right).
+  Proof.
+    intros. destruct lateness; cbn; try reflexivity.
+    destruct equal_weight; cbn; try reflexivity.
+    apply one_ordinal_comparison_replaces_two_strict_tests.
+  Qed.
+
+  Definition finish_rank_order (rank packing coordinates : comparison) : comparison :=
+    match rank with
+    | Eq => match packing with Eq => coordinates | order => order end
+    | order => order
+    end.
+
+  Theorem equal_rank_keeps_packing_then_coordinates : forall packing coordinates,
+    finish_rank_order Eq packing coordinates =
+      match packing with Eq => coordinates | order => order end.
+  Proof. reflexivity. Qed.
+
+  Theorem unequal_rank_ignores_secondary_coordinates : forall rank packing coordinates,
+    rank <> Eq -> finish_rank_order rank packing coordinates = rank.
+  Proof. intros [| |] packing coordinates different; cbn; congruence. Qed.
+
+  Definition old_projection_count (forward : bool) : nat := if forward then 2 else 4.
+
+  Theorem one_comparison_needs_at_most_two_projections : forall forward,
+    2 <= old_projection_count forward.
+  Proof. intros []; cbn; lia. Qed.
+
+  Theorem padding_is_not_a_new_decision : forall fuel count,
+    padded_ordinal_compare fuel [] (repeat padding count) = Eq.
+  Proof.
+    induction fuel as [|fuel IH]; intros [|count]; cbn; try reflexivity.
+    now rewrite Nat.compare_refl.
+  Qed.
+  Theorem trailing_padding_preserves_rank : forall fuel word count,
+    padded_ordinal_compare fuel word (word ++ repeat padding count) = Eq.
+  Proof.
+    induction fuel as [|fuel IH]; intros [|head word] count; cbn; try reflexivity.
+    - exact (padding_is_not_a_new_decision (S fuel) count).
+    - rewrite Nat.compare_refl. apply IH.
+  Qed.
+End ElectionComparisonReuse.
+
+Print Assumptions rank_comparison_preserves_forward_then_reverse.
+Print Assumptions one_ordinal_comparison_replaces_two_strict_tests.
+Print Assumptions equal_rank_keeps_packing_then_coordinates.
+Print Assumptions unequal_rank_ignores_secondary_coordinates.
+Print Assumptions one_comparison_needs_at_most_two_projections.
+Print Assumptions padding_is_not_a_new_decision.
+
+Print Assumptions trailing_padding_preserves_rank.

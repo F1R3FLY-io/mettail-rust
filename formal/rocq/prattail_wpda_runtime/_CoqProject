@@ -192,3 +192,8 @@ theories/IterAbsorptionObservation.v
 theories/SourceRoleVariableAuthority.v
 theories/InstalledWalkerResources.v
 theories/OwnedBackendPreparation.v
+theories/CertifiedCrossCatPrefix.v
+theories/TypedReturnCompletion.v
+theories/LexicalInfixReturn.v
+
+theories/TypedUnaryPublication.v

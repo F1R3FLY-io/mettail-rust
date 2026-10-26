@@ -19,6 +19,7 @@
     existing no-key hook; they are not assigned invented encoded bytes. *)
 From Stdlib Require Import List Bool Arith.PeanoNat.
 From RuntimeGrammar Require Import KbestCompositionalSemanticKey.
+From PrattailWpdaRuntime Require Import FacadeDriverFallThrough.
 Import ListNotations.
 
 Module OwnedSemanticVisitor.
@@ -67,7 +68,6 @@ Definition ordered_list children : NodeObservation :=
 
 Section Observation.
 Variable typed borrowed : nat -> NodeObservation.
-Hypothesis same_observation : forall node, borrowed node = typed node.
 
 Fixpoint run (observe : nat -> NodeObservation) (fuel : nat) (stack : list Task)
     : list WriteEvent * list Task :=
@@ -82,9 +82,11 @@ Fixpoint run (observe : nat -> NodeObservation) (fuel : nat) (stack : list Task)
   | S remaining, Finish _ :: rest => run observe remaining rest
   end.
 
-Theorem borrowed_worker_preserves_each_write_and_pending_task : forall fuel stack,
+Theorem borrowed_worker_preserves_each_write_and_pending_task :
+  (forall node, borrowed node = typed node) -> forall fuel stack,
   run borrowed fuel stack = run typed fuel stack.
 Proof.
+  intros same_observation.
   induction fuel as [|fuel IH]; intros stack; [reflexivity|].
   destruct stack as [|task rest]; [reflexivity|].
   destruct task; simpl; try rewrite same_observation; now rewrite IH.
@@ -160,10 +162,14 @@ Theorem cached_node_uses_exact_original_observation : forall exact cache node ke
   CacheSound exact cache -> cache_lookup node cache = Some key ->
   flatten_key key = exact node.
 Proof. exact cache_hit_returns_exact_stream. Qed.
-Theorem failed_cache_commit_cannot_publish_candidates : forall (Term : Type)
-    (candidates : list Term) retained,
-  exposed_terms (finalize_realization candidates (CacheResourceExhausted retained)) = [].
-Proof. exact exhausted_commit_publishes_no_partial_result. Qed.
+Theorem successful_key_construction_publishes_candidates : forall (Term : Type)
+    (candidates : list Term),
+  exposed_terms (finalize_realization candidates true) = candidates.
+Proof. exact construction_success_publishes_all_candidates. Qed.
+Theorem failed_key_construction_cannot_publish_candidates : forall (Term : Type)
+    (candidates : list Term),
+  exposed_terms (finalize_realization candidates false) = [].
+Proof. exact construction_failure_publishes_no_candidates. Qed.
 End CacheBoundary.
 
 (** A hook dispatch distinguishes absence of an original semantic observation
@@ -196,7 +202,98 @@ Print Assumptions explicit_variable_skips_implicit_probe.
 Print Assumptions equal_event_traces_have_equal_exact_keys.
 Print Assumptions shared_child_composition_preserves_original_stream.
 Print Assumptions cached_node_uses_exact_original_observation.
-Print Assumptions failed_cache_commit_cannot_publish_candidates.
+Print Assumptions successful_key_construction_publishes_candidates.
+Print Assumptions failed_key_construction_cannot_publish_candidates.
 Print Assumptions no_original_observation_retains_no_key.
 Print Assumptions key_error_is_not_no_key.
+
+Inductive CastTerm :=
+| CBoolLit (b : bool)
+| CBoolToUInt32 (x : CastTerm)
+| CCastUInt32 (x : CastTerm)
+| CCastBool (x : CastTerm).
+
+Fixpoint cast_key (term : CastTerm) : list WriteEvent :=
+  match term with
+  | CBoolLit b => literal 1 (if b then 1 else 0)
+  | CBoolToUInt32 x | CCastUInt32 x | CCastBool x => cast_key x
+  end.
+
+Inductive CastVal := VBool (b : bool) | VU32 (n : nat).
+
+Fixpoint cast_eval (term : CastTerm) : option CastVal :=
+  match term with
+  | CBoolLit b => Some (VBool b)
+  | CBoolToUInt32 x => match cast_eval x with
+    | Some (VBool b) => Some (VU32 (if b then 1 else 0))
+    | _ => None end
+  | CCastUInt32 x => match cast_eval x with
+    | Some (VU32 n) => Some (VU32 n)
+    | _ => None end
+  | CCastBool x => match cast_eval x with
+    | Some (VBool b) => Some (VBool b)
+    | _ => None end
+  end.
+
+Definition t_u32 b := CCastUInt32 (CBoolToUInt32 (CBoolLit b)).
+Definition t_bool b := CCastBool (CBoolLit b).
+Definition w_u32 := {| lw_open_len := 0; lw_primary := 0; lw_lex_alt := 0;
+  lw_src := 0; lw_rule := 39 |}.
+Definition w_bool := {| lw_open_len := 0; lw_primary := 0; lw_lex_alt := 0;
+  lw_src := 0; lw_rule := 40 |}.
+
+Definition we_eq_dec : forall a b : WriteEvent, {a = b} + {a <> b}.
+Proof. decide equality; try apply Nat.eq_dec; apply (list_eq_dec Nat.eq_dec). Defined.
+
+Definition key_eqb (a b : list WriteEvent) :=
+  if list_eq_dec we_eq_dec a b then true else false.
+
+Theorem key_eqb_spec : forall a b, key_eqb a b = true <-> a = b.
+Proof.
+  intros; unfold key_eqb; destruct (list_eq_dec we_eq_dec a b); intuition discriminate.
+Qed.
+
+Theorem cast_cohort_key_collision : forall b, cast_key (t_u32 b) = cast_key (t_bool b).
+Proof. reflexivity. Qed.
+
+Theorem cast_cohort_eval_differs : forall b, cast_eval (t_u32 b) <> cast_eval (t_bool b).
+Proof. intros b; destruct b; discriminate. Qed.
+
+Theorem g1_fold_keeps_cast_u32 : forall b,
+  all_fold key_eqb cast_key [(t_u32 b, w_u32); (t_bool b, w_bool)] = [(t_u32 b, w_u32)] /\
+  all_fold key_eqb cast_key [(t_bool b, w_bool); (t_u32 b, w_u32)] = [(t_u32 b, w_u32)].
+Proof. intros b; destruct b; split; reflexivity. Qed.
+
+Theorem g1_fold_drops_elected_term : forall b,
+  ~ In (t_bool b) (map fst (all_fold key_eqb cast_key [(t_u32 b,w_u32); (t_bool b,w_bool)])).
+Proof.
+  intros b; rewrite (proj1 (g1_fold_keeps_cast_u32 b)); simpl; intuition discriminate.
+Qed.
+
+Theorem g1_consumer_value : forall b,
+  map (fun pair => cast_eval (fst pair))
+    (all_fold key_eqb cast_key [(t_u32 b,w_u32); (t_bool b,w_bool)]) =
+  [Some (VU32 (if b then 1 else 0))].
+Proof. intros b; destruct b; reflexivity. Qed.
+
+Theorem g1_aligned_rep_is_elected : forall b,
+  align key_eqb cast_key [t_bool b]
+    (all_fold key_eqb cast_key [(t_u32 b,w_u32); (t_bool b,w_bool)]) = [(t_bool b,w_u32)].
+Proof. intros b; destruct b; reflexivity. Qed.
+
+Theorem g1_aligned_value : forall b,
+  map (fun pair => cast_eval (fst pair))
+    (align key_eqb cast_key [t_bool b]
+      (all_fold key_eqb cast_key [(t_u32 b,w_u32); (t_bool b,w_bool)])) = [Some (VBool b)].
+Proof. intros b; destruct b; reflexivity. Qed.
+
+Print Assumptions key_eqb_spec.
+Print Assumptions cast_cohort_key_collision.
+Print Assumptions cast_cohort_eval_differs.
+Print Assumptions g1_fold_keeps_cast_u32.
+Print Assumptions g1_fold_drops_elected_term.
+Print Assumptions g1_consumer_value.
+Print Assumptions g1_aligned_rep_is_elected.
+Print Assumptions g1_aligned_value.
+
 End OwnedSemanticVisitor.

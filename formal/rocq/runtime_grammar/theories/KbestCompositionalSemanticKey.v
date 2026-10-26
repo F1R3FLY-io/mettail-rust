@@ -15,7 +15,7 @@
     - the length-and-fingerprint accelerator composes over concatenation;
     - accelerator equality never replaces exact byte equality;
     - cache insertion preserves the exact-key invariant;
-    - bounded insertion reports exhaustion without publishing partial state;
+    - bounded LRU retention preserves results at every capacity;
     - a unary chain changes from triangular re-streaming work to linear local
       construction work and linear retained cache witnesses.
 
@@ -156,134 +156,256 @@ Module KbestCompositionalSemanticKey.
     apply Hsound with (node := node). exact Hlookup.
   Qed.
 
-  Inductive CacheInsertResult : Type :=
-  | CacheStored : Cache -> CacheInsertResult
-  | CacheResourceExhausted : Cache -> CacheInsertResult.
+  Record MemoEntry := {
+    memo_node : NodeId;
+    memo_owner : nat;
+    memo_key : PersistentKey
+  }.
 
-  Definition bounded_cache_insert
-      (capacity : nat) (node : NodeId) (key : PersistentKey) (cache : Cache)
-      : CacheInsertResult :=
-    if length cache <? capacity
-    then CacheStored ((node, key) :: cache)
-    else CacheResourceExhausted cache.
+  Definition MemoCache := list MemoEntry.
+  Definition MemoSound (live : nat -> bool) (exact : NodeId -> list Byte)
+      (cache : MemoCache) :=
+    forall entry, In entry cache -> live (memo_owner entry) = true ->
+      flatten_key (memo_key entry) = exact (memo_node entry).
 
-  Theorem bounded_cache_store_respects_capacity :
-      forall capacity node key cache stored,
-        length cache <= capacity ->
-        bounded_cache_insert capacity node key cache = CacheStored stored ->
-        length stored <= capacity.
+  Definition remove_node node cache :=
+    filter (fun entry => negb (Nat.eqb node (memo_node entry))) cache.
+
+  Definition admit capacity entry cache :=
+    firstn capacity (entry :: remove_node (memo_node entry) cache).
+
+  Definition lookup_memo (live : nat -> bool) (node : NodeId) (cache : MemoCache) :=
+    match find (fun entry => Nat.eqb node (memo_node entry)) cache with
+    | None => (None, cache)
+    | Some entry =>
+        if live (memo_owner entry)
+        then (Some (memo_key entry), entry :: remove_node node cache)
+        else (None, remove_node node cache)
+    end.
+
+  Definition memoized_key live compute node cache :=
+    match fst (lookup_memo live node cache) with
+    | Some key => key
+    | None => compute node
+    end.
+
+  Theorem eviction_preserves_soundness : forall live exact cache retained,
+      MemoSound live exact cache ->
+      (forall entry, In entry retained -> In entry cache) ->
+      MemoSound live exact retained.
+  Proof. unfold MemoSound; intros; eauto. Qed.
+
+  Lemma removed_entry_was_present : forall node cache entry,
+      In entry (remove_node node cache) -> In entry cache.
   Proof.
-    intros capacity node key cache stored Hbound Hstored.
-    unfold bounded_cache_insert in Hstored.
-    destruct (length cache <? capacity) eqn:Hroom.
-    - inversion Hstored. subst stored. simpl.
-      apply Nat.ltb_lt in Hroom. lia.
-    - discriminate.
+    intros; unfold remove_node in H; apply filter_In in H; tauto.
   Qed.
 
-  Theorem bounded_cache_exhaustion_is_atomic :
-      forall capacity node key cache exhausted,
-        bounded_cache_insert capacity node key cache =
-          CacheResourceExhausted exhausted ->
-        exhausted = cache /\ capacity <= length cache.
+  Theorem admission_preserves_soundness : forall live exact capacity entry cache,
+      MemoSound live exact cache ->
+      flatten_key (memo_key entry) = exact (memo_node entry) ->
+      MemoSound live exact (admit capacity entry cache).
   Proof.
-    intros capacity node key cache exhausted Hexhausted.
-    unfold bounded_cache_insert in Hexhausted.
-    destruct (length cache <? capacity) eqn:Hroom.
-    - discriminate.
-    - inversion Hexhausted. subst exhausted. split; [reflexivity |].
-      apply Nat.ltb_ge. exact Hroom.
+    intros live exact capacity entry cache Hsound Hexact other Hin Hlive.
+    unfold admit in Hin.
+    assert (In other (entry :: remove_node (memo_node entry) cache)) as Hretained.
+    { rewrite <- (firstn_skipn capacity (entry :: remove_node (memo_node entry) cache)).
+      apply in_or_app. left. exact Hin. }
+    destruct Hretained as [Hequal | HinRest].
+    - subst other. exact Hexact.
+    - apply Hsound; [eapply removed_entry_was_present; exact HinRest | exact Hlive].
   Qed.
 
-  (** Realization may construct candidate terms before the semantic-key cache
-      transaction is committed.  The public boundary is therefore a sum:
-      candidates are observable only after a successful commit; exhaustion
-      exposes an error and no prefix of the candidate list. *)
+  Theorem admission_bounds_all_entries : forall capacity entry cache,
+      length (admit capacity entry cache) <= capacity.
+  Proof. intros; unfold admit; rewrite firstn_length; apply Nat.le_min_l. Qed.
+
+  Theorem zero_capacity_retains_nothing : forall entry cache,
+      admit 0 entry cache = [].
+  Proof. reflexivity. Qed.
+
+  Theorem admission_does_not_inspect_liveness : forall capacity entry cache,
+      admit capacity entry cache =
+      firstn capacity (entry :: remove_node (memo_node entry) cache).
+  Proof. reflexivity. Qed.
+
+  Lemma remove_node_shortens : forall cache entry,
+      In entry cache ->
+      length (remove_node (memo_node entry) cache) < length cache.
+  Proof.
+    induction cache as [|head tail IH]; intros entry Hin; [contradiction |].
+    simpl in Hin. unfold remove_node; simpl.
+    destruct (Nat.eqb (memo_node entry) (memo_node head)) eqn:Hequal; simpl.
+    - pose proof (filter_length_le (fun item => negb (Nat.eqb (memo_node entry) (memo_node item))) tail). lia.
+    - destruct Hin as [Hin | Hin].
+      + subst head. rewrite Nat.eqb_refl in Hequal. discriminate.
+      + specialize (IH entry Hin). unfold remove_node in IH. lia.
+  Qed.
+
+  Theorem lookup_preserves_entry_bound : forall live node cache,
+      length (snd (lookup_memo live node cache)) <= length cache.
+  Proof.
+    intros live node cache. unfold lookup_memo.
+    destruct (find (fun entry => Nat.eqb node (memo_node entry)) cache) as [entry|] eqn:Hfind.
+    - apply find_some in Hfind. destruct Hfind as [Hin Hid].
+      apply Nat.eqb_eq in Hid. subst node.
+      destruct (live (memo_owner entry)); simpl.
+      + pose proof (remove_node_shortens cache entry Hin). lia.
+      + unfold remove_node. apply filter_length_le.
+    - simpl. lia.
+  Qed.
+
+  Theorem lookup_preserves_soundness : forall live exact node cache,
+      MemoSound live exact cache ->
+      MemoSound live exact (snd (lookup_memo live node cache)).
+  Proof.
+    intros live exact node cache Hsound. unfold lookup_memo.
+    destruct (find (fun entry => Nat.eqb node (memo_node entry)) cache) as [entry|] eqn:Hfind.
+    - apply find_some in Hfind. destruct Hfind as [Hin _].
+      destruct (live (memo_owner entry)); simpl;
+        apply (eviction_preserves_soundness live exact cache); try exact Hsound;
+        intros other Hother.
+      + destruct Hother as [Hother | Hother]; [subst; exact Hin |].
+        eapply removed_entry_was_present; eauto.
+      + eapply removed_entry_was_present; eauto.
+    - exact Hsound.
+  Qed.
+
+  Theorem valid_hit_returns_exact_stream : forall live exact node cache key,
+      MemoSound live exact cache ->
+      fst (lookup_memo live node cache) = Some key ->
+      flatten_key key = exact node.
+  Proof.
+    intros live exact node cache key Hsound Hhit. unfold lookup_memo in Hhit.
+    destruct (find (fun entry => Nat.eqb node (memo_node entry)) cache) as [entry|] eqn:Hfind;
+      [|discriminate].
+    destruct (live (memo_owner entry)) eqn:Hlive; [|discriminate].
+    simpl in Hhit. inversion Hhit; subst key.
+    apply find_some in Hfind. destruct Hfind as [Hin Hid].
+    apply Nat.eqb_eq in Hid. subst node. eapply Hsound; eauto.
+  Qed.
+
+  Theorem expired_owner_is_a_miss : forall live node cache entry,
+      find (fun candidate => Nat.eqb node (memo_node candidate)) cache = Some entry ->
+      live (memo_owner entry) = false ->
+      lookup_memo live node cache = (None, remove_node node cache).
+  Proof. intros; unfold lookup_memo; now rewrite H, H0. Qed.
+
+  Theorem valid_hit_promotes_to_most_recent : forall live node cache entry,
+      find (fun candidate => Nat.eqb node (memo_node candidate)) cache = Some entry ->
+      live (memo_owner entry) = true ->
+      snd (lookup_memo live node cache) = entry :: remove_node node cache.
+  Proof. intros; unfold lookup_memo; now rewrite H, H0. Qed.
+
+  Theorem cache_capacity_cannot_change_key : forall live exact compute node cache,
+      MemoSound live exact cache ->
+      (forall queried, flatten_key (compute queried) = exact queried) ->
+      flatten_key (memoized_key live compute node cache) = exact node.
+  Proof.
+    intros live exact compute node cache Hsound Hcompute. unfold memoized_key.
+    destruct (fst (lookup_memo live node cache)) as [key|] eqn:Hhit.
+    - eapply valid_hit_returns_exact_stream; eauto.
+    - apply Hcompute.
+  Qed.
+
+  Theorem arbitrary_eviction_preserves_observations :
+      forall live exact compute nodes left right,
+      MemoSound live exact left -> MemoSound live exact right ->
+      (forall node, flatten_key (compute node) = exact node) ->
+      map (fun node => flatten_key (memoized_key live compute node left)) nodes =
+      map (fun node => flatten_key (memoized_key live compute node right)) nodes.
+  Proof.
+    intros live exact compute nodes left right Hleft Hright Hcompute.
+    apply map_ext. intro node.
+    rewrite (cache_capacity_cannot_change_key live exact compute node left Hleft Hcompute).
+    rewrite (cache_capacity_cannot_change_key live exact compute node right Hright Hcompute).
+    reflexivity.
+  Qed.
+
+  Definition pending_in cache pending :=
+    filter (fun node => existsb (Nat.eqb node) pending) (map memo_node cache).
+
+  Definition abort_memo cache pending :=
+    filter (fun entry => negb (existsb (Nat.eqb (memo_node entry)) pending)) cache.
+
+  Theorem provisional_metadata_is_bounded : forall cache pending,
+      length (pending_in cache pending) <= length cache.
+  Proof.
+    intros. unfold pending_in.
+    pose proof (filter_length_le (fun node => existsb (Nat.eqb node) pending) (map memo_node cache)).
+    rewrite length_map in H. exact H.
+  Qed.
+
+  Theorem abort_removes_every_provisional_entry : forall cache pending entry,
+      In entry (abort_memo cache pending) -> ~ In (memo_node entry) pending.
+  Proof.
+    intros cache pending entry Hin Hpending.
+    unfold abort_memo in Hin. apply filter_In in Hin. destruct Hin as [_ Hnot].
+    apply negb_true_iff in Hnot.
+    assert (existsb (Nat.eqb (memo_node entry)) pending = true) as Hyes.
+    { apply existsb_exists. exists (memo_node entry). split; [exact Hpending | apply Nat.eqb_refl]. }
+    congruence.
+  Qed.
+
+  Theorem abort_preserves_soundness : forall live exact cache pending,
+      MemoSound live exact cache -> MemoSound live exact (abort_memo cache pending).
+  Proof.
+    intros. apply (eviction_preserves_soundness live exact cache); [exact H |].
+    intros entry Hin. unfold abort_memo in Hin. apply filter_In in Hin. tauto.
+  Qed.
+
+  Definition commit_memo (cache : MemoCache) (_pending : list NodeId) := (cache, @nil NodeId).
+
+  Theorem commit_keeps_entries_and_clears_markers : forall cache pending,
+      commit_memo cache pending = (cache, []).
+  Proof. reflexivity. Qed.
+
   Inductive PublicRealization (Term : Type) : Type :=
   | RealizationSucceeded : list Term -> PublicRealization Term
-  | RealizationResourceExhausted : PublicRealization Term.
+  | RealizationConstructionFailed : PublicRealization Term.
 
   Arguments RealizationSucceeded {Term}.
-  Arguments RealizationResourceExhausted {Term}.
+  Arguments RealizationConstructionFailed {Term}.
 
   Definition finalize_realization {Term : Type}
-      (candidates : list Term) (cache_result : CacheInsertResult)
-      : PublicRealization Term :=
-    match cache_result with
-    | CacheStored _ => RealizationSucceeded candidates
-    | CacheResourceExhausted _ => RealizationResourceExhausted
-    end.
+      (candidates : list Term) (constructed : bool) : PublicRealization Term :=
+    if constructed then RealizationSucceeded candidates else RealizationConstructionFailed.
 
-  Definition exposed_terms {Term : Type}
-      (result : PublicRealization Term) : list Term :=
+  Definition exposed_terms {Term : Type} (result : PublicRealization Term) :=
     match result with
     | RealizationSucceeded terms => terms
-    | RealizationResourceExhausted => []
+    | RealizationConstructionFailed => []
     end.
 
-  Theorem successful_commit_publishes_all_candidates :
-      forall (Term : Type) (candidates : list Term) stored,
-        finalize_realization candidates (CacheStored stored) =
-          RealizationSucceeded candidates.
+  Theorem construction_success_publishes_all_candidates :
+      forall (Term : Type) (candidates : list Term),
+      exposed_terms (finalize_realization candidates true) = candidates.
   Proof. reflexivity. Qed.
 
-  Theorem exhausted_commit_publishes_no_partial_result :
-      forall (Term : Type) (candidates : list Term) retained,
-        exposed_terms
-          (finalize_realization candidates (CacheResourceExhausted retained)) =
-        [].
+  Theorem construction_failure_publishes_no_candidates :
+      forall (Term : Type) (candidates : list Term),
+      exposed_terms (finalize_realization candidates false) = [].
   Proof. reflexivity. Qed.
 
-  Theorem bounded_exhaustion_preserves_cache_and_hides_candidates :
-      forall (Term : Type) capacity node key cache retained
-             (candidates : list Term),
-        bounded_cache_insert capacity node key cache =
-          CacheResourceExhausted retained ->
-        retained = cache /\
-        exposed_terms
-          (finalize_realization candidates (CacheResourceExhausted retained)) =
-          [].
-  Proof.
-    intros Term capacity node key cache retained candidates Hexhausted.
-    split.
-    - apply (proj1 (bounded_cache_exhaustion_is_atomic
-        capacity node key cache retained Hexhausted)).
-    - reflexivity.
-  Qed.
+  Print Assumptions eviction_preserves_soundness.
+  Print Assumptions admission_preserves_soundness.
+  Print Assumptions admission_bounds_all_entries.
+  Print Assumptions zero_capacity_retains_nothing.
+  Print Assumptions admission_does_not_inspect_liveness.
+  Print Assumptions lookup_preserves_entry_bound.
+  Print Assumptions lookup_preserves_soundness.
+  Print Assumptions valid_hit_returns_exact_stream.
+  Print Assumptions expired_owner_is_a_miss.
+  Print Assumptions valid_hit_promotes_to_most_recent.
+  Print Assumptions cache_capacity_cannot_change_key.
+  Print Assumptions arbitrary_eviction_preserves_observations.
+  Print Assumptions provisional_metadata_is_bounded.
+  Print Assumptions abort_removes_every_provisional_entry.
+  Print Assumptions abort_preserves_soundness.
+  Print Assumptions commit_keeps_entries_and_clears_markers.
+  Print Assumptions construction_success_publishes_all_candidates.
+  Print Assumptions construction_failure_publishes_no_candidates.
 
-  (** A cache failure is also a control-state boundary.  In particular, the
-      implementation must not fall back to the legacy full-subtree streamer
-      after the bounded compositional cache has refused a transaction: doing so
-      would reintroduce the triangular work that the bound is meant to avoid. *)
-  Inductive DedupControl : Type :=
-  | ContinueDedup
-  | StopRealization.
-
-  Definition control_after_cache (result : CacheInsertResult) : DedupControl :=
-    match result with
-    | CacheStored _ => ContinueDedup
-    | CacheResourceExhausted _ => StopRealization
-    end.
-
-  Definition legacy_fallback_allowed (control : DedupControl) : bool :=
-    match control with
-    | ContinueDedup => true
-    | StopRealization => false
-    end.
-
-  Theorem cache_exhaustion_stops_before_legacy_fallback :
-      forall retained,
-        legacy_fallback_allowed
-          (control_after_cache (CacheResourceExhausted retained)) = false.
-  Proof. reflexivity. Qed.
-
-  Theorem stopped_realization_is_absorbing :
-      forall next,
-        match StopRealization with
-        | ContinueDedup => next
-        | StopRealization => StopRealization
-        end = StopRealization.
-  Proof. reflexivity. Qed.
 
   (** Exact keys are also bounded by their logical byte length.  This is a
       distinct resource from the number of cached node witnesses: one leaf may
@@ -405,13 +527,6 @@ Module KbestCompositionalSemanticKey.
   Print Assumptions inserted_key_is_found.
   Print Assumptions sound_cache_insert.
   Print Assumptions cache_hit_returns_exact_stream.
-  Print Assumptions bounded_cache_store_respects_capacity.
-  Print Assumptions bounded_cache_exhaustion_is_atomic.
-  Print Assumptions successful_commit_publishes_all_candidates.
-  Print Assumptions exhausted_commit_publishes_no_partial_result.
-  Print Assumptions bounded_exhaustion_preserves_cache_and_hides_candidates.
-  Print Assumptions cache_exhaustion_stops_before_legacy_fallback.
-  Print Assumptions stopped_realization_is_absorbing.
   Print Assumptions bounded_key_success_is_exact_and_within_limit.
   Print Assumptions bounded_key_exhaustion_reports_exact_request.
   Print Assumptions byte_exhaustion_exposes_no_partial_key.

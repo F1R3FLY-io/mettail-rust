@@ -352,7 +352,13 @@ Proof.
   pose proof (four_run_has_exact_source_cost _ _ _ R) as [RL _].
   assert (P : Permutation (left++right) (lout++rout)) by (now apply Permutation_app).
   assert (WIDTH : length (lout++rout) = 8).
-  { pose proof (Permutation_length P) as LEN. rewrite !length_app in LEN |- *. lia. }
+  (* Changed because this step did not compile under the pinned Rocq 9.1.1.
+     Each pass of a repeated rewrite in two locations must succeed in both.
+     The second pass found no instance in the goal, so `length (lout ++ rout)`
+     stayed in LEN and lia had no link to the goal. The code was:
+  { pose proof (Permutation_length P) as LEN. rewrite !length_app in LEN |- *. lia. } *)
+  { pose proof (Permutation_length P) as LEN. rewrite !length_app in LEN.
+    rewrite !length_app. lia. }
   rewrite <- WIDTH in M.
   destruct (BM.callbacks_borrow_actual_original_records Entry (lout++rout)
     merge outcome rhs lhs reply M IN) as [rv [lv [RN LN]]].
@@ -394,8 +400,15 @@ Proof.
   destruct witness_merge_succeeds as [merge M].
   pose proof (@FourFinished nat 0 1 2 3 false false false false false) as L.
   pose proof (@FourFinished nat 4 5 6 7 false false false false false) as R.
+  (* Changed because this step did not compile under the pinned Rocq 9.1.1.
+     The theorem's conclusion does not mention `fallback`, so its type keeps
+     `fallback` only as an unnamed premise `Entry ->`, and `with` cannot name
+     it. The same arguments are given by position. The code was:
   eapply accepted_eight_calls_have_a_destination_ordered_result
     with (left:=[0;1;2;3]) (right:=[4;5;6;7]) (fallback:=0);
+    [exact L|exact R|exact M]. *)
+  eapply (accepted_eight_calls_have_a_destination_ordered_result
+    [0;1;2;3] [4;5;6;7] _ _ _ _ _ 0);
     [exact L|exact R|exact M].
 Qed.
 Example fixed_eight_can_reject : exists trace,

@@ -651,6 +651,138 @@ Section DisplayLexicalBoundaries.
   Proof.
     split; reflexivity.
   Qed.
+
+  (** Delimited collection display (2026-10-21): the [GrammarItem::Collection]
+      arm of [generate_engine_regular_arm] in macros/src/gen/syntax/display.rs.
+      The rendering writes the opener, then the items joined by the padded
+      separator, then the closer.  Each item is a captured value.  The
+      rendering therefore has the boundaries in [collection_boundaries]: the
+      opener before the first item and the last item before the closer when
+      the collection has items, and the opener before the closer when it is
+      empty.  The separator is written with a space on each side, so it adds
+      no other boundary. *)
+  Definition collection_boundaries
+      (opener closer : SurfaceKind) (has_items : bool)
+      : list (SurfaceKind * SurfaceKind) :=
+    if has_items
+    then [(opener, CapturedValue); (CapturedValue, closer)]
+    else [(opener, closer)].
+
+  (** A boundary policy decides whether one boundary gets a space.  It is
+      glom-safe on a rendering when each boundary that needs a separator gets
+      one. *)
+  Definition glom_safe_on
+      (policy : SurfaceKind -> SurfaceKind -> bool)
+      (boundaries : list (SurfaceKind * SurfaceKind)) : Prop :=
+    forall left right,
+      In (left, right) boundaries ->
+      needs_lexical_separator left right = true ->
+      policy left right = true.
+
+  (** The rendering before 2026-10-21 wrote no space at any collection
+      boundary: [String::from(open)], then the joined items, then [close]. *)
+  Definition collection_policy_before_fix
+      (left right : SurfaceKind) : bool := false.
+
+  (** Counterexample about that rendering: word delimiters are not glom-safe,
+      with or without items.  The Rust witness is [PNameBag . Proc ::=
+      HashBag(Name) sep "," delim "bnames" "end"], whose term [bnames n , n end]
+      rendered as [bnamesn , nend] and read back as the identifier
+      [bnamesn]; the empty collection rendered as the identifier
+      [bnamesend]. *)
+  Theorem word_delimited_collection_before_fix_is_not_glom_safe :
+    forall has_items,
+      ~ glom_safe_on collection_policy_before_fix
+          (collection_boundaries WordLiteral WordLiteral has_items).
+  Proof.
+    intros has_items Hsafe.
+    destruct has_items.
+    - assert (Hin : In (WordLiteral, CapturedValue)
+                      (collection_boundaries WordLiteral WordLiteral true))
+        by (cbn; left; reflexivity).
+      specialize (Hsafe _ _ Hin eq_refl).
+      unfold collection_policy_before_fix in Hsafe.
+      discriminate Hsafe.
+    - assert (Hin : In (WordLiteral, WordLiteral)
+                      (collection_boundaries WordLiteral WordLiteral false))
+        by (cbn; left; reflexivity).
+      specialize (Hsafe _ _ Hin eq_refl).
+      unfold collection_policy_before_fix in Hsafe.
+      discriminate Hsafe.
+  Qed.
+
+  (** The corrected rendering writes a space exactly where the lexical
+      boundary needs one. *)
+  Definition collection_policy (left right : SurfaceKind) : bool :=
+    needs_lexical_separator left right.
+
+  Theorem collection_policy_is_glom_safe :
+    forall opener closer has_items,
+      glom_safe_on collection_policy
+        (collection_boundaries opener closer has_items).
+  Proof.
+    intros opener closer has_items left right _ Hneeds.
+    exact Hneeds.
+  Qed.
+
+  (** The corrected rendering writes no space that the boundary does not
+      need, so each omitted space is glom-safe by
+      [omitted_separator_is_glom_safe]. *)
+  Theorem collection_policy_writes_only_needed_spaces :
+    forall left right,
+      collection_policy left right = true ->
+      needs_lexical_separator left right = true.
+  Proof.
+    intros left right H.
+    exact H.
+  Qed.
+
+  (** Word delimiters get a space at every boundary, with or without items:
+      [bnames n , n end] and the empty [bnames end]. *)
+  Theorem word_delimited_collection_separates_every_boundary :
+    forall has_items left right,
+      In (left, right)
+        (collection_boundaries WordLiteral WordLiteral has_items) ->
+      collection_policy left right = true.
+  Proof.
+    intros [|] left right Hin; cbn in Hin.
+    - destruct Hin as [Heq | [Heq | []]]; inversion Heq; subst; reflexivity.
+    - destruct Hin as [Heq | []]; inversion Heq; subst; reflexivity.
+  Qed.
+
+  (** Regression fence: bracket delimiters keep the old rendering at every
+      boundary, so the output for [par{...}], [set{...}] and [seq[...]] is
+      unchanged. *)
+  Theorem bracket_delimited_collection_is_unchanged :
+    forall has_items left right,
+      In (left, right)
+        (collection_boundaries DelimitedLiteral DelimitedLiteral has_items) ->
+      collection_policy left right = collection_policy_before_fix left right.
+  Proof.
+    intros [|] left right Hin; cbn in Hin.
+    - destruct Hin as [Heq | [Heq | []]]; inversion Heq; subst; reflexivity.
+    - destruct Hin as [Heq | []]; inversion Heq; subst; reflexivity.
+  Qed.
+
+  (** The three spaces that the generated code writes, in the order of
+      [collection_boundaries]: after the opener and before the closer when the
+      collection has items, and between them when it is empty.  The Rust
+      transcription reads each space from one end of one delimiter. *)
+  Definition collection_spaces (opener closer : SurfaceKind)
+      : bool * bool * bool :=
+    (collection_policy opener CapturedValue,
+     collection_policy CapturedValue closer,
+     collection_policy opener closer).
+
+  Theorem collection_spaces_follow_the_delimiter_ends :
+    forall opener closer,
+      collection_spaces opener closer =
+        (may_end_identifier opener,
+         may_begin_identifier closer,
+         andb (may_end_identifier opener) (may_begin_identifier closer)).
+  Proof.
+    intros [] []; reflexivity.
+  Qed.
 End DisplayLexicalBoundaries.
 
 (** Only the Rholang quote token [@] uses the quote-sigil operand rescue.  A
@@ -715,6 +847,190 @@ Print Assumptions marked_postfix_chain_has_one_level.
 Print Assumptions omitted_separator_is_glom_safe.
 Print Assumptions adjacent_captures_require_separator.
 Print Assumptions capture_word_boundaries_require_separator.
+Print Assumptions word_delimited_collection_before_fix_is_not_glom_safe.
+Print Assumptions collection_policy_is_glom_safe.
+Print Assumptions collection_policy_writes_only_needed_spaces.
+Print Assumptions word_delimited_collection_separates_every_boundary.
+Print Assumptions bracket_delimited_collection_is_unchanged.
+Print Assumptions collection_spaces_follow_the_delimiter_ends.
 Print Assumptions explicit_grouping_never_uses_sigil_rescue.
 Print Assumptions non_quote_literal_never_uses_sigil_rescue.
 Print Assumptions at_quote_wraps_exactly_tail_bearing_operands.
+
+Section SharedDispatchStorage.
+  Context {Input State Digest Record : Type}.
+  Variable initial : State.
+  Variable run : State -> Input -> Digest.
+
+  Fixpoint digest_per_arm (candidates : list (option Input)) : option Digest :=
+    match candidates with
+    | [] => None
+    | None :: rest => digest_per_arm rest
+    | Some input :: _ => Some (run initial input)
+    end.
+
+  Fixpoint selected_input (candidates : list (option Input)) : option Input :=
+    match candidates with
+    | [] => None
+    | None :: rest => selected_input rest
+    | Some input :: _ => Some input
+    end.
+
+  Definition digest_shared candidates :=
+    option_map (run initial) (selected_input candidates).
+
+  Lemma shared_digest_preserves_selected_stream : forall candidates,
+    digest_shared candidates = digest_per_arm candidates.
+  Proof.
+    induction candidates as [|[input|] rest IH]; simpl; auto.
+  Qed.
+
+  Lemma shared_digest_preserves_unmatched_input : forall candidates,
+    selected_input candidates = None -> digest_shared candidates = None.
+  Proof. intros candidates H. unfold digest_shared. now rewrite H. Qed.
+
+  Lemma copied_selected_record_preserves_lookup : forall selected : option Record,
+    option_map (fun record => record) selected = selected.
+  Proof. intros [record|]; reflexivity. Qed.
+End SharedDispatchStorage.
+
+Print Assumptions shared_digest_preserves_selected_stream.
+Print Assumptions shared_digest_preserves_unmatched_input.
+Print Assumptions copied_selected_record_preserves_lookup.
+
+Section CrossCategoryPrefixDisplay.
+  Definition prefix_source_threshold (source_max : nat) (explicit : option nat) : nat :=
+    match explicit with
+    | Some threshold => threshold
+    | None => Nat.min 255 (source_max + 2)
+    end.
+
+  Definition prefix_display_threshold_before (same_category : bool) source_max explicit :=
+    if same_category then prefix_source_threshold source_max explicit else 0.
+
+  Definition prefix_display_threshold source_max explicit :=
+    prefix_source_threshold source_max explicit.
+
+  Definition prefix_operand_needs_group child_bp threshold := child_bp <? threshold.
+  Definition prefix_operand_is_preserved child_bp threshold grouped :=
+    orb grouped (threshold <=? child_bp).
+
+  Theorem prefix_display_matches_parser_threshold : forall source_max explicit,
+    prefix_display_threshold source_max explicit = prefix_source_threshold source_max explicit.
+  Proof. reflexivity. Qed.
+
+  Theorem prefix_explicit_threshold_is_preserved : forall source_max threshold,
+    prefix_display_threshold source_max (Some threshold) = threshold.
+  Proof. reflexivity. Qed.
+
+  Theorem prefix_default_uses_source_maximum : forall source_max,
+    prefix_display_threshold source_max None = Nat.min 255 (source_max + 2).
+  Proof. reflexivity. Qed.
+
+  Theorem same_category_prefix_display_is_unchanged : forall source_max explicit,
+    prefix_display_threshold source_max explicit =
+    prefix_display_threshold_before true source_max explicit.
+  Proof. reflexivity. Qed.
+
+  Theorem prefix_grouping_preserves_operand : forall child_bp threshold,
+    prefix_operand_is_preserved child_bp threshold
+      (prefix_operand_needs_group child_bp threshold) = true.
+  Proof.
+    intros child_bp threshold.
+    unfold prefix_operand_is_preserved, prefix_operand_needs_group.
+    destruct (child_bp <? threshold) eqn:Needs; simpl; [reflexivity|].
+    apply Nat.ltb_ge in Needs. apply Nat.leb_le. exact Needs.
+  Qed.
+
+  Theorem prefix_grouping_is_necessary : forall child_bp threshold,
+    prefix_operand_needs_group child_bp threshold = true ->
+    prefix_operand_is_preserved child_bp threshold false = false.
+  Proof.
+    intros child_bp threshold Needs.
+    unfold prefix_operand_needs_group in Needs. apply Nat.ltb_lt in Needs.
+    unfold prefix_operand_is_preserved. simpl. apply Nat.leb_gt. exact Needs.
+  Qed.
+
+  Theorem omitted_cross_category_threshold_loses_infix_operand :
+    prefix_operand_needs_group 2 (prefix_display_threshold_before false 3 None) = false /\
+    prefix_operand_is_preserved 2 (prefix_source_threshold 3 None) false = false /\
+    prefix_operand_is_preserved 2 (prefix_source_threshold 3 None)
+      (prefix_operand_needs_group 2 (prefix_display_threshold 3 None)) = true.
+  Proof. repeat split; reflexivity. Qed.
+End CrossCategoryPrefixDisplay.
+
+Print Assumptions prefix_display_matches_parser_threshold.
+Print Assumptions prefix_explicit_threshold_is_preserved.
+Print Assumptions prefix_default_uses_source_maximum.
+Print Assumptions same_category_prefix_display_is_unchanged.
+Print Assumptions prefix_grouping_preserves_operand.
+Print Assumptions prefix_grouping_is_necessary.
+Print Assumptions omitted_cross_category_threshold_loses_infix_operand.
+
+Module SigilOperandTail.
+
+Definition precedence_governed result source :=
+  match source with
+  | None => false
+  | Some source => Nat.eqb source result
+  end.
+
+Definition follow_leading_operand closed result source :=
+  andb closed (negb (precedence_governed result source)).
+
+Definition wrap_operand closed result source leading_primary :=
+  if follow_leading_operand closed result source then negb leading_primary else true.
+
+Definition wrap_operand_before (closed leading_primary : bool) :=
+  if closed then negb leading_primary else true.
+
+Theorem local_operator_never_inherits_primary : forall closed category,
+  follow_leading_operand closed category (Some category) = false.
+Proof. intros; unfold follow_leading_operand, precedence_governed.
+  rewrite Nat.eqb_refl. destruct closed; reflexivity. Qed.
+
+Theorem local_operator_always_groups : forall closed category primary,
+  wrap_operand closed category (Some category) primary = true.
+Proof. intros; unfold wrap_operand. rewrite local_operator_never_inherits_primary. reflexivity. Qed.
+
+Theorem unclassified_frame_preserves_old_wrap : forall closed category primary,
+  wrap_operand closed category None primary = wrap_operand_before closed primary.
+Proof. intros []; reflexivity. Qed.
+
+Theorem foreign_operator_preserves_old_wrap : forall closed result source primary,
+  source <> result ->
+  wrap_operand closed result (Some source) primary = wrap_operand_before closed primary.
+Proof. intros closed result source primary Hne.
+  unfold wrap_operand, follow_leading_operand, precedence_governed, wrap_operand_before.
+  apply Nat.eqb_neq in Hne. rewrite Hne. destruct closed; reflexivity. Qed.
+
+Theorem open_tail_always_groups : forall result source primary,
+  wrap_operand false result source primary = true.
+Proof. reflexivity. Qed.
+
+Theorem closed_unclassified_tail_follows_primary : forall category primary,
+  wrap_operand true category None primary = negb primary.
+Proof. reflexivity. Qed.
+
+Theorem local_operator_grouping_preserves_prefix_operand : forall closed category primary child_bp threshold,
+  prefix_operand_is_preserved child_bp threshold
+    (wrap_operand closed category (Some category) primary) = true.
+Proof. intros; rewrite local_operator_always_groups.
+  unfold prefix_operand_is_preserved. reflexivity. Qed.
+
+Example closed_literal_does_not_protect_a_local_tail :
+  wrap_operand_before true true = false /\
+  prefix_operand_is_preserved 2 220 (wrap_operand_before true true) = false /\
+  prefix_operand_is_preserved 2 220 (wrap_operand true 0 (Some 0) true) = true.
+Proof. repeat split; reflexivity. Qed.
+
+Print Assumptions local_operator_never_inherits_primary.
+Print Assumptions local_operator_always_groups.
+Print Assumptions unclassified_frame_preserves_old_wrap.
+Print Assumptions foreign_operator_preserves_old_wrap.
+Print Assumptions open_tail_always_groups.
+Print Assumptions closed_unclassified_tail_follows_primary.
+Print Assumptions local_operator_grouping_preserves_prefix_operand.
+Print Assumptions closed_literal_does_not_protect_a_local_tail.
+
+End SigilOperandTail.

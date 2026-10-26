@@ -966,6 +966,22 @@ impl Parser {
     fn rewrite_decl(&mut self) -> PResult<RewriteDecl> {
         let span = self.span();
         let name = self.ident()?;
+        let mut context = Vec::new();
+        if self.eat(&Tok::LParen) {
+            while !self.at(&Tok::RParen) {
+                let binding_span = self.span();
+                let binding_name = self.ident()?;
+                self.expect(Tok::Colon)?;
+                let sort = self.rewrite_context_type()?;
+                context.push(RewriteContextBinding::try_new(binding_name, sort).map_err(
+                    |error| Diag::new(DiagKind::Parse, error.to_string(), binding_span),
+                )?);
+                if !self.eat(&Tok::Comma) {
+                    break;
+                }
+            }
+            self.expect(Tok::RParen)?;
+        }
         self.expect(Tok::Colon)?;
         let mut premises = Vec::new();
         // D2 spelling: `if S ~> T then ...`
@@ -981,14 +997,136 @@ impl Parser {
         self.expect(Tok::Squiggle)?;
         let rhs = self.ast()?;
         self.expect(Tok::Semi)?;
-        Ok(RewriteDecl {
-            name,
-            context: Vec::new(),
-            premises,
-            lhs,
-            rhs,
-            span,
-        })
+        Ok(RewriteDecl { name, context, premises, lhs, rhs, span })
+    }
+
+    fn rewrite_context_type(&mut self) -> PResult<RhoValue> {
+        enum Task {
+            Type,
+            Postfix,
+            ArrowFirst,
+            ArrowEnd(Parsed<RhoValue>),
+            UnaryEnd(&'static str),
+            BinaryFirst(&'static str),
+            BinaryEnd(&'static str, Parsed<RhoValue>),
+        }
+        let tagged = |tag: &str, children: Vec<RhoValue>| {
+            RhoValue::List(
+                std::iter::once(RhoValue::String(tag.into()))
+                    .chain(children)
+                    .collect(),
+            )
+        };
+        let mut tasks = vec![Task::Type];
+        let mut values = Vec::<Parsed<RhoValue>>::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Type => {
+                    if self.eat(&Tok::LBracket) {
+                        tasks.push(Task::ArrowFirst);
+                        tasks.push(Task::Type);
+                    } else {
+                        let head = match self.peek() {
+                            Tok::Ident(name) => name.clone(),
+                            Tok::Str(_) => return self.err("expected a context type name"),
+                            token
+                                if token
+                                    .spelling()
+                                    .as_bytes()
+                                    .first()
+                                    .is_some_and(u8::is_ascii_alphabetic) =>
+                            {
+                                token.spelling().to_string()
+                            },
+                            _ => return self.err("expected a context type name"),
+                        };
+                        self.bump();
+                        if self.eat(&Tok::LParen) {
+                            let (tag, binary) = match head.as_str() {
+                                "HashBag" => ("bag", false),
+                                "Set" => ("set", false),
+                                "List" => ("vec", false),
+                                "Map" => ("map", true),
+                                "PathMap" => ("pathmap", true),
+                                "Rewrite" => ("rewrite", false),
+                                _ => {
+                                    return self
+                                        .err(format!("unknown context type constructor `{head}`"))
+                                },
+                            };
+                            tasks.push(if binary {
+                                Task::BinaryFirst(tag)
+                            } else {
+                                Task::UnaryEnd(tag)
+                            });
+                            tasks.push(Task::Type);
+                        } else {
+                            values.push(self.parsed(
+                                RhoValue::String(head),
+                                1,
+                                "rewrite context type",
+                            )?);
+                            tasks.push(Task::Postfix);
+                        }
+                    }
+                },
+                Task::Postfix => {
+                    while self.eat(&Tok::Star) {
+                        let value = values.pop().expect("type operand is scheduled");
+                        values.push(self.parsed(
+                            tagged("multi", vec![value.value]),
+                            value.depth + 1,
+                            "rewrite context type",
+                        )?);
+                    }
+                },
+                Task::ArrowFirst => {
+                    let domain = values.pop().expect("arrow domain is scheduled");
+                    self.expect(Tok::ThinArrow)?;
+                    tasks.push(Task::ArrowEnd(domain));
+                    tasks.push(Task::Type);
+                },
+                Task::ArrowEnd(domain) => {
+                    let codomain = values.pop().expect("arrow codomain is scheduled");
+                    self.expect(Tok::RBracket)?;
+                    let depth = 1 + domain.depth.max(codomain.depth);
+                    values.push(self.parsed(
+                        tagged("arrow", vec![domain.value, codomain.value]),
+                        depth,
+                        "rewrite context type",
+                    )?);
+                    tasks.push(Task::Postfix);
+                },
+                Task::UnaryEnd(tag) => {
+                    let element = values.pop().expect("type element is scheduled");
+                    self.expect(Tok::RParen)?;
+                    values.push(self.parsed(
+                        tagged(tag, vec![element.value]),
+                        element.depth + 1,
+                        "rewrite context type",
+                    )?);
+                    tasks.push(Task::Postfix);
+                },
+                Task::BinaryFirst(tag) => {
+                    let first = values.pop().expect("first type argument is scheduled");
+                    self.expect(Tok::Comma)?;
+                    tasks.push(Task::BinaryEnd(tag, first));
+                    tasks.push(Task::Type);
+                },
+                Task::BinaryEnd(tag, first) => {
+                    let second = values.pop().expect("second type argument is scheduled");
+                    self.expect(Tok::RParen)?;
+                    let depth = 1 + first.depth.max(second.depth);
+                    values.push(self.parsed(
+                        tagged(tag, vec![first.value, second.value]),
+                        depth,
+                        "rewrite context type",
+                    )?);
+                    tasks.push(Task::Postfix);
+                },
+            }
+        }
+        Ok(values.pop().expect("one context type is scheduled").value)
     }
 
     fn at_projection_declaration(&self) -> bool {

@@ -17,6 +17,9 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.RholangTheoremService \
 	RuntimeGrammar.RegistryModuleClosure \
 	RuntimeGrammar.WpdaDispatchPartition \
+	RuntimeGrammar.PrefixOpenerUnion \
+	RuntimeGrammar.NoAdmitTypeProjection \
+	RuntimeGrammar.UnorderedPatternAssignment \
 	RuntimeGrammar.StructuralTemplate \
 	RuntimeGrammar.InstalledRuntimeBackend \
 	RuntimeGrammar.StructuralConstructMatch \
@@ -69,6 +72,20 @@ RUNTIME_GRAMMAR_SECURITY_MODULES := \
 	RuntimeGrammar.ExecutableTheoryImage \
 	RuntimeGrammar.CollectionComprehension \
 	RuntimeGrammar.SemanticTransitionKernel \
+	RuntimeGrammar.SemanticPublicationProvenance \
+	RuntimeGrammar.AuthoredSourceExecution \
+	RuntimeGrammar.AuthoredSourcePublication \
+	RuntimeGrammar.FreshnessWorklist \
+	RuntimeGrammar.AuthoredTermConstruction \
+	RuntimeGrammar.AuthoredSourceImage \
+	RuntimeGrammar.SourceEquationSection \
+	RuntimeGrammar.SourceEquationCollections \
+	RuntimeGrammar.SourceEquationCollectionUniqueness \
+	RuntimeGrammar.SourceEquationCarrierDomain \
+	RuntimeGrammar.CheckedCostImage \
+	RuntimeGrammar.CostSourceAdmission \
+	RuntimeGrammar.SourceSignatureMonoidAdmission \
+	RuntimeGrammar.QuotientCommitmentBoundary \
 	RuntimeGrammar.InstalledFltGraphProjection \
 	RuntimeGrammar.SemanticIntrinsics \
 	RuntimeGrammar.SemanticIntrinsicSchema \

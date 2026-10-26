@@ -2,10 +2,19 @@
 
     Source correspondence:
     - capture::field_layout supplies canonical ordered slots. Fixed slots carry
-      checked token/native expressions, None, or correctly typed empty carriers;
-      required slots carry category identifiers. Fixed expressions are opaque
-      here: their lexical/type checks belong to the existing emitters and the
+      checked token/native expressions, None, or the empty carrier that
+      test_gen/unit_tests.rs `construct_leaf_value` (:417) emits; required
+      slots carry category identifiers. Fixed expressions are opaque here:
+      their lexical/type checks belong to the existing emitters and the
       CaptureTokenSamplingAdapter model, not to an invented payload algebra.
+      HashSet uses HashSetLit. PathMap uses HashBag, as its generated
+      payload type requires. Empty carrier expressions encode these
+      choices below. The implementation properties check the emitted
+      expressions for every carrier and optional field.
+    - test_gen/strategies/finite_witness.rs `ordinary_recipe` (:603) admits a
+      rule by the classification of term_ops/subst.rs
+      `variant_kind_from_term_context` (:3777). The section "Rule admission"
+      models both, and the admission before 2026-10-20.
     - sym_tree::SymbolicTreeAutomaton::witness inserts an arena node only after
       every ordered child state has a witness. The arena append and category
       map update below model that insertion, including repeated child indices.
@@ -22,7 +31,7 @@
     used as a proof of this arbitrary-arity adapter. No saturation algorithm
     changes in this slice, so its stabilization theorem is not needed either.
 *)
-From Stdlib Require Import List Arith Lia.
+From Stdlib Require Import List Arith Lia Bool.
 From Trampoline Require Import WorklistFoldEquivalence.
 Import ListNotations.
 
@@ -373,10 +382,273 @@ Example mixed_fields_keep_repeated_child_occurrences :
     [7; 7] = Some [FixedArgument 10; ChildArgument 7; FixedArgument 11; ChildArgument 7].
 Proof. reflexivity. Qed.
 
+(** A capture-free sole `Vec` constructor is the one-slot case of the canonical
+    layout: its only slot is the fixed empty carrier. It depends on no child
+    state, fills without children, and refuses a surplus child. *)
+Example sole_empty_carrier_recipe_needs_no_child :
+  dependencies [FixedExpr 12] = []
+  /\ fill_slots [FixedExpr 12] [] = Some [FixedArgument 12]
+  /\ fill_slots [FixedExpr 12] [3] = None.
+Proof. repeat split; reflexivity. Qed.
+
+(** * Rule admission
+
+    A rule's fields after field_layout. A category field is required. A
+    non-optional collection field is the empty carrier of its carrier
+    (`construct_leaf_value`, unit_tests.rs:440-457). Every other field is one
+    fixed expression: a token sample, a predicate, or an optional field, whose
+    expression is `None` (unit_tests.rs:432), also when it is a collection.
+    The refusals that inspect one field (guest bodies, scopes, runtime-only
+    native and undeclared categories, finite_witness.rs:646-696) apply to both
+    shapes in the same way, so they are not modeled here. *)
+Inductive Carrier :=
+  VecCarrier | HashBagCarrier | HashSetCarrier | PathMapCarrier | MapCarrier.
+
+Inductive Field :=
+| CategoryField (category : nat)
+| CollectionField (carrier : Carrier) (element : nat)
+| ExpressionField (expression : nat).
+
+(** subst.rs:3777: a rule whose only field is a non-optional collection is a
+    sole collection; a rule without fields is nullary, and the direct bases
+    cover it; every other rule is regular. *)
+Inductive Shape := NullaryShape | SoleCollectionShape (carrier : Carrier) (element : nat) | RegularShape.
+
+Definition classify (fields : list Field) : Shape :=
+  match fields with
+  | [] => NullaryShape
+  | [CollectionField carrier element] => SoleCollectionShape carrier element
+  | _ => RegularShape
+  end.
+
+(** HashBag and PathMap share the generated HashBag representation. *)
+Definition empty_carrier_expression (carrier : Carrier) : nat :=
+  match carrier with
+  | VecCarrier => 0 | HashBagCarrier | PathMapCarrier => 1
+  | HashSetCarrier => 2 | MapCarrier => 3
+  end.
+
+(** finite_witness.rs `field_slot` (:705). *)
+Definition field_slot (field : Field) : Slot :=
+  match field with
+  | CategoryField category => RequiredCategory category
+  | CollectionField carrier _ => FixedExpr (empty_carrier_expression carrier)
+  | ExpressionField expression => FixedExpr expression
+  end.
+
+Definition canonical_slots (fields : list Field) : list Slot := map field_slot fields.
+
+(** The admission before 2026-10-20 (finite_witness.rs:621, kept there as a
+    comment): only the regular shape. *)
+Definition admission_before (fields : list Field) : option (list Slot) :=
+  match classify fields with
+  | RegularShape => Some (canonical_slots fields)
+  | _ => None
+  end.
+
+(** The current admission (finite_witness.rs:622-631): the regular shape, and
+    a sole `Vec` collection as the one-slot case of the same canonical layout.
+    Other sole carriers keep a named refusal. Correctly typed empty
+    expressions do not establish display and parse roundtrip behavior.
+    For example, the owner-element bag `PPar` prints `{}`, which Rholang
+    also reads as an empty map. *)
+Definition admission (fields : list Field) : option (list Slot) :=
+  match classify fields with
+  | RegularShape | SoleCollectionShape VecCarrier _ => Some (canonical_slots fields)
+  | _ => None
+  end.
+
+Record Rule := { rule_constructor : nat; rule_category : nat; rule_fields : list Field }.
+
+(** finite_witness.rs `from_language` (:554-572): each admitted rule adds one
+    recipe of its category; a refused rule adds none. *)
+Definition rule_recipes (admit : list Field -> option (list Slot)) (rule : Rule) : list Recipe :=
+  match admit (rule_fields rule) with
+  | Some slots =>
+      [{| constructor_id := rule_constructor rule; result_category := rule_category rule;
+          ordered_slots := slots |}]
+  | None => []
+  end.
+
+Definition admitted_recipes admit (rules : list Rule) : list Recipe :=
+  flat_map (rule_recipes admit) rules.
+
+Lemma classify_sole_collection : forall carrier element,
+  classify [CollectionField carrier element] = SoleCollectionShape carrier element.
+Proof. reflexivity. Qed.
+
+Lemma canonical_slots_sole_collection : forall carrier element,
+  canonical_slots [CollectionField carrier element] =
+    [FixedExpr (empty_carrier_expression carrier)].
+Proof. reflexivity. Qed.
+
+(** Negative control: the admission before 2026-10-20 refuses a sole `Vec`
+    rule, although its canonical layout needs no child. *)
+Theorem admission_before_refuses_the_sole_vec_rule : forall element,
+  admission_before [CollectionField VecCarrier element] = None
+  /\ dependencies (canonical_slots [CollectionField VecCarrier element]) = [].
+Proof. split; reflexivity. Qed.
+
+Definition only_sole_vec_rules (rules : list Rule) (category : nat) :=
+  forall rule, In rule rules -> rule_category rule = category ->
+    exists element, rule_fields rule = [CollectionField VecCarrier element].
+
+(** The root cause of the missing DdlOptionSection and DdlProjectionPremises
+    bases, stated for the admission before 2026-10-20: when every rule of a
+    category is a sole `Vec` rule, no valid arena types any entry at that
+    category, so `base_for` finds no witness. *)
+Theorem admission_before_leaves_a_sole_vec_category_without_witness :
+  forall rules category arena index,
+  only_sole_vec_rules rules category ->
+  arena_valid (admitted_recipes admission_before rules) arena ->
+  ~ reference_typed arena index category.
+Proof.
+  intros rules category arena index ONLY VALID [node [LOOK CAT]].
+  destruct (VALID index node LOOK) as [MEMBER _].
+  unfold admitted_recipes in MEMBER. apply in_flat_map in MEMBER.
+  destruct MEMBER as [rule [IN RECIPE]].
+  unfold rule_recipes in RECIPE.
+  destruct (admission_before (rule_fields rule)) as [slots|] eqn:ADMIT;
+    simpl in RECIPE; [|contradiction].
+  destruct RECIPE as [EQ|[]].
+  rewrite <- EQ in CAT. simpl in CAT.
+  destruct (ONLY rule IN CAT) as [element FIELDS].
+  rewrite FIELDS in ADMIT.
+  rewrite (proj1 (admission_before_refuses_the_sole_vec_rule element)) in ADMIT.
+  discriminate.
+Qed.
+
+(** The fix: the current admission gives every sole `Vec` rule a recipe with
+    no child state. It can be inserted into any valid arena, and the new
+    entry types its category, whatever the element category is. *)
+Theorem admission_gives_a_sole_vec_rule_a_zero_child_witness :
+  forall rules rule element arena,
+  In rule rules -> rule_fields rule = [CollectionField VecCarrier element] ->
+  arena_valid (admitted_recipes admission rules) arena ->
+  exists recipe,
+    In recipe (admitted_recipes admission rules) /\
+    dependencies (ordered_slots recipe) = [] /\
+    arena_valid (admitted_recipes admission rules)
+      (arena ++ [{| node_recipe := recipe; child_indices := [] |}]) /\
+    reference_typed (arena ++ [{| node_recipe := recipe; child_indices := [] |}])
+      (length arena) (rule_category rule).
+Proof.
+  intros rules rule element arena IN FIELDS VALID.
+  exists {| constructor_id := rule_constructor rule; result_category := rule_category rule;
+            ordered_slots := [FixedExpr (empty_carrier_expression VecCarrier)] |}.
+  assert (MEMBER : In {| constructor_id := rule_constructor rule;
+      result_category := rule_category rule;
+      ordered_slots := [FixedExpr (empty_carrier_expression VecCarrier)] |}
+      (admitted_recipes admission rules)).
+  { unfold admitted_recipes. apply in_flat_map. exists rule. split; [exact IN|].
+    unfold rule_recipes, admission.
+    rewrite FIELDS, classify_sole_collection, canonical_slots_sole_collection.
+    simpl. left. reflexivity. }
+  split; [exact MEMBER|]. split; [reflexivity|]. split.
+  - apply arena_insertion_preserves_validity; [exact VALID|exact MEMBER|].
+    unfold references_valid. simpl. constructor.
+  - eexists. split.
+    + rewrite nth_error_app2 by lia. rewrite Nat.sub_diag. reflexivity.
+    + reflexivity.
+Qed.
+
+(** Shape independence for `Vec`: the sole rule gets exactly the slot that
+    the same collection field gets inside a regular rule. *)
+Theorem sole_vec_slot_equals_the_regular_field_slot : forall element,
+  admission [CollectionField VecCarrier element] =
+    Some [field_slot (CollectionField VecCarrier element)].
+Proof. reflexivity. Qed.
+
+(** The other sole carriers stay refused by name (finite_witness.rs:627-631). *)
+Theorem admission_refuses_the_other_sole_carriers : forall carrier element,
+  carrier <> VecCarrier -> admission [CollectionField carrier element] = None.
+Proof. intros [] element H; [exfalso; apply H; reflexivity|reflexivity ..]. Qed.
+
+(** The change does not touch regular rules. *)
+Theorem admission_keeps_every_regular_rule : forall fields,
+  classify fields = RegularShape ->
+  admission fields = admission_before fields /\ admission fields = Some (canonical_slots fields).
+Proof. intros fields H. unfold admission, admission_before. rewrite H. split; reflexivity. Qed.
+
+Definition leaf_nullary_before (items_empty context_empty : bool) : bool :=
+  items_empty || context_empty.
+
+Definition leaf_nullary (fields : list Field) : bool :=
+  match classify fields with NullaryShape => true | _ => false end.
+
+Definition first_nullary_leaf (category : nat) (rules : list Rule) : option Rule :=
+  find (fun rule => Nat.eqb category (rule_category rule) && leaf_nullary (rule_fields rule)) rules.
+
+Theorem captured_token_was_a_false_nullary : forall token,
+  leaf_nullary_before true true = true /\
+  leaf_nullary [ExpressionField token] = false.
+Proof. intros; split; reflexivity. Qed.
+
+Theorem leaf_nullary_iff_no_fields : forall fields,
+  leaf_nullary fields = true <-> fields = [].
+Proof.
+  intros [|field tail]; [simpl; tauto|].
+  destruct field; destruct tail; simpl; split; intros H; discriminate.
+Qed.
+
+Theorem first_nullary_leaf_sound : forall category rules rule,
+  first_nullary_leaf category rules = Some rule ->
+  In rule rules /\ rule_category rule = category /\ rule_fields rule = [].
+Proof.
+  intros category rules rule FOUND.
+  apply find_some in FOUND. destruct FOUND as [IN TEST].
+  apply andb_true_iff in TEST. destruct TEST as [CAT FIELDS].
+  apply Nat.eqb_eq in CAT. apply leaf_nullary_iff_no_fields in FIELDS.
+  auto.
+Qed.
+
+Theorem first_nullary_leaf_complete : forall category rules,
+  first_nullary_leaf category rules = None <->
+  forall rule, In rule rules -> rule_category rule = category -> rule_fields rule <> [].
+Proof.
+  intros category rules. split.
+  - intros NONE rule IN CAT EMPTY.
+    unfold first_nullary_leaf in NONE.
+    pose proof (find_none _ _ NONE rule IN) as TEST.
+    cbv beta in TEST.
+    rewrite CAT, Nat.eqb_refl, EMPTY in TEST. discriminate.
+  - intros NONE. destruct (first_nullary_leaf category rules) as [rule|] eqn:FOUND;
+      [|reflexivity].
+    apply first_nullary_leaf_sound in FOUND.
+    destruct FOUND as [IN [CAT EMPTY]].
+    exfalso. exact (NONE rule IN CAT EMPTY).
+Qed.
+
+Theorem first_nullary_leaf_keeps_declaration_order : forall category head tail,
+  rule_category head = category -> rule_fields head = [] ->
+  first_nullary_leaf category (head :: tail) = Some head.
+Proof.
+  intros category head tail CAT EMPTY. unfold first_nullary_leaf. simpl.
+  rewrite CAT, Nat.eqb_refl, EMPTY. reflexivity.
+Qed.
+
+Theorem empty_carrier_representation :
+  empty_carrier_expression VecCarrier = 0 /\
+  empty_carrier_expression HashBagCarrier = 1 /\
+  empty_carrier_expression HashSetCarrier = 2 /\
+  empty_carrier_expression PathMapCarrier = 1 /\
+  empty_carrier_expression MapCarrier = 3.
+Proof. repeat split; reflexivity. Qed.
+
+Print Assumptions captured_token_was_a_false_nullary.
+Print Assumptions leaf_nullary_iff_no_fields.
+Print Assumptions first_nullary_leaf_sound.
+Print Assumptions first_nullary_leaf_complete.
+Print Assumptions first_nullary_leaf_keeps_declaration_order.
+Print Assumptions empty_carrier_representation.
 Print Assumptions arena_insertion_preserves_validity.
 Print Assumptions valid_map_supplies_insertion_readiness.
 Print Assumptions valid_arena_has_finite_typed_unfolding.
 Print Assumptions iterative_assembly_reconstructs_typed_witness.
 Print Assumptions ordered_fill_preserves_fields.
 Print Assumptions nonempty_direct_bases_unchanged.
+Print Assumptions admission_before_leaves_a_sole_vec_category_without_witness.
+Print Assumptions admission_gives_a_sole_vec_rule_a_zero_child_witness.
+Print Assumptions admission_refuses_the_other_sole_carriers.
+Print Assumptions admission_keeps_every_regular_rule.
 End FiniteConstructorWitnessAdapter.

@@ -178,10 +178,16 @@ not a resource bound for descriptor encoding or semantic execution.
 
 ## Verification boundary
 
-`RholangPreparationReservation` supplies the checked precharge, exact successful
-operation, retained-budget-prefix, and ordered-roster laws. The adapters keep
-the same constructor operations and instantiate those laws; the laws alone
-are not a proof of all Rust execution.
+`RholangPreparationReservation` retains the paid precharge, exact-operation,
+retained-budget-prefix, and ordered-roster laws for `ReflectedCodecBudget` callers.
+Its cancellation-only specialization describes public preparation without host-work
+or payload debits. Both policies preserve the existing checked operation and its
+exact result, including failure. These laws do not prove all Rust execution.
+
+The [admission contract](rholang-frontend-admission-contract.md#direct-driver-storage-reservations)
+maps every cancellation law to the generated public-adapter properties.
+Those properties compare successful bytes, complete guard reports, checked errors,
+cancellation refusal, and subsequent session recovery.
 
 The focused source tests compare all 17 send-sugar constructors with explicit
 core syntax and compare normalized public output bytes. They exercise every

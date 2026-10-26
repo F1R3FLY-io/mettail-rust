@@ -215,3 +215,93 @@ Print Assumptions paid_roster_preserves_source_order.
 Print Assumptions exact_logical_reservation_is_admitted.
 Print Assumptions one_under_declared_slots_refuses.
 Print Assumptions representable_components_can_have_an_overflowing_sum.
+
+
+Definition cancellation_only_reservation (cancelled : bool) (_work _units : nat)
+    : option unit :=
+  if cancelled then None else Some tt.
+
+Definition cancellation_only_action {A} (cancelled : bool) (work units : nat)
+    (build : unit -> A) : option A :=
+  match cancellation_only_reservation cancelled work units with
+  | None => None
+  | Some _ => Some (build tt)
+  end.
+
+Theorem cancellation_only_reservation_exact :
+  forall cancelled work units,
+    cancellation_only_reservation cancelled work units = Some tt <->
+    cancelled = false.
+Proof. intros []; simpl; split; congruence. Qed.
+
+Theorem cancellation_only_reservation_ignores_amounts :
+  forall cancelled work units other_work other_units,
+    cancellation_only_reservation cancelled work units =
+    cancellation_only_reservation cancelled other_work other_units.
+Proof. reflexivity. Qed.
+
+Theorem cancellation_only_cancel_has_no_result :
+  forall A work units (build : unit -> A),
+    cancellation_only_action true work units build = None.
+Proof. reflexivity. Qed.
+
+Theorem cancellation_only_success_is_exact_operation :
+  forall A work units (build : unit -> A),
+    cancellation_only_action false work units build = Some (build tt).
+Proof. reflexivity. Qed.
+
+Theorem cancellation_only_result_exact :
+  forall A cancelled work units (build : unit -> A) value,
+    cancellation_only_action cancelled work units build = Some value <->
+    cancelled = false /\ build tt = value.
+Proof.
+  intros A cancelled work units build value.
+  destruct cancelled; unfold cancellation_only_action, cancellation_only_reservation;
+    simpl; split; intro H.
+  - discriminate.
+  - destruct H as [H _]. discriminate.
+  - inversion H. auto.
+  - destruct H as [_ H]. subst value. reflexivity.
+Qed.
+
+Theorem cancellation_only_action_ignores_amounts :
+  forall A cancelled work units other_work other_units (build : unit -> A),
+    cancellation_only_action cancelled work units build =
+    cancellation_only_action cancelled other_work other_units build.
+Proof. reflexivity. Qed.
+
+Theorem cancellation_only_retains_underlying_refusal :
+  forall A work units,
+    cancellation_only_action false work units (fun _ => @None A) = Some None.
+Proof. reflexivity. Qed.
+
+Theorem cancellation_only_agrees_with_successful_paid_operation :
+  forall A cancelled ceiling available work slots
+      (build : unit -> option A) next value,
+    preparation_action cancelled ceiling available work slots build =
+      Accepted next value ->
+    cancellation_only_action cancelled (total_charge work) (total_charge slots) build =
+      Some (Some value).
+Proof.
+  intros A cancelled ceiling available work slots build next value H.
+  apply preparation_success_is_the_same_paid_operation in H.
+  destruct H as [Hcancel [Hbuild _]].
+  subst cancelled. exact (f_equal (@Some (option A)) Hbuild).
+Qed.
+
+Print Assumptions cancellation_only_reservation_exact.
+Print Assumptions cancellation_only_reservation_ignores_amounts.
+Print Assumptions cancellation_only_cancel_has_no_result.
+Print Assumptions cancellation_only_success_is_exact_operation.
+Print Assumptions cancellation_only_result_exact.
+Print Assumptions cancellation_only_action_ignores_amounts.
+Print Assumptions cancellation_only_retains_underlying_refusal.
+Print Assumptions cancellation_only_agrees_with_successful_paid_operation.
+
+Example paid_ceiling_is_not_public_cancellation :
+  preparation_action false 8 {| work_left := 0; units_left := 0 |}
+    [1] [1] (fun _ => Some 7) = Refused {| work_left := 0; units_left := 0 |} /\
+  cancellation_only_action false 1 1 (fun _ => Some 7) = Some (Some 7).
+Proof. split; reflexivity. Qed.
+
+Print Assumptions paid_ceiling_is_not_public_cancellation.

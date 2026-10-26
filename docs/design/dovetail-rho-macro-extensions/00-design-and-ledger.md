@@ -40,7 +40,8 @@ binder reconstruction; E3 needs E2's `dovetail_normal_term`).
 - Typed path: `dovetail_report.rs:31` `needs_typed_fold_path`; `:576` early-returns to
   `typed_report.rs:444`. Uses `EGraph<L>` + `saturate_with_native` (`:554`) + generated `NativeRule`s
   /dispatcher (`:250`) + reconstruction. String path (`:726` `eg.saturate`) has **no** native dispatch.
-- Substitution primitive: `(*body).substitute_<dom>(&binder.0,&arg)` after `scope.unbind()`
+- Substitution primitive: `scope.unsafe_body().instantiate_scope_<dom>(&arguments)`.
+  [Scope instantiation](../binder-scope-instantiation.md) preserves outer bindings when a rule removes a scope.
   (`normalize.rs:2091`); iterative `subst_iterative` (`subst.rs`); oracle `lambda-datalog.rs:118`.
 - `(eval f a)` parses to `MultiSubst{scope:Var(f),replacements:[Var(a)]}` (`parse.rs:2641-2701`);
   rejected at `dovetail_report.rs:441`.
@@ -101,12 +102,12 @@ in LHS. **Verifies Rholang `Comm` is NOT detected** (its replacement is a `Map`,
 **E1.3 op_id (MF2):** substitution `NativeRule` op_ids start at `folds.len()`; own dispatch arms;
 shared counter across folds ∪ substitution rules; do not route through `collect_fold_rules`.
 
-**E1.4 dispatch arm (MF5):** in the dropped-`Extractor`-scope-then-mutate discipline
-(`typed_report.rs:321`): gate scope+repl classes on `__class_is_fold_value`; `kth(...,0)` the child
-derivations; `build_<binder_cat>_d` (E2) the binder term + `build_<repl_cat>_d` the replacement;
-`let Cat::<binder_label>(scope) = … else return None`; `scope.unbind()`; `substitute_<binder_cat_lc>`
-(or `multi_substitute_…` with arity assert); re-add via `__mettail_dovetail_add_<body_cat>`. Own
-`body_value` handling (not `is_pure_native_arith`, no `safeify`).
+**E1.4 dispatch arm (MF5):** The dispatcher checks scope and argument readiness before extraction.
+It reconstructs the binder and its arguments after the extractor releases its graph borrow.
+It instantiates the closed body with `instantiate_scope_<binder_cat_lc>` and checks multi-binder arity.
+The operation shifts argument references and decrements references beyond the removed scope.
+The dispatcher adds the result through `__mettail_dovetail_add_<body_cat>`.
+It retains the existing `body_value` handling.
 
 **E1.5 progress weights (MF1, FATAL — land atomically with E1.4):** extend `generate_helpers`
 (`typed_report.rs:185`) so the redex-head set = fold heads ∪ substitution-rewrite LHS head ops:

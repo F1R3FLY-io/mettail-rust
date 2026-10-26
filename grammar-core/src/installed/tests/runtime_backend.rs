@@ -418,3 +418,59 @@ fn invalid_category_and_input_budget_refuse_before_backend_invocation() {
     ));
     assert!(factory.state.invocations.lock().expect("calls").is_empty());
 }
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+
+    #[test]
+    fn installed_admission_reuse_preserves_request_checks(
+        repeats in 1usize..8,
+        request_limit in 1u32..256,
+        authority_case in 0u8..3,
+    ) {
+        use proptest::prelude::*;
+        let factory = Arc::new(RecordingFactory::default());
+        let table = Arc::new(InstalledLanguageTable::with_runtime_factory(factory.clone()));
+        let grant = install(&table, LanguageRights::all());
+        let before = crate::image::executable_verification_count();
+        let policy = RuntimePolicy {
+            max_input_bytes: request_limit,
+            max_symbolic_template_cache_entries: 0,
+            ..RuntimePolicy::default()
+        };
+        for _ in 0..repeats {
+            let source = table.parse(&grant.handle, "", None, &DefaultRuntimeHost, policy)
+                .expect("admitted source");
+            let template = table.parse_template(&grant.handle, &[], &[], None,
+                &DefaultRuntimeHost, policy, LanguageRight::Construct).expect("uncached template");
+            prop_assert_eq!(source, template);
+        }
+        let invoked = factory.state.invocations.lock().expect("calls").len();
+        prop_assert_eq!(invoked, 2 * repeats);
+        prop_assert_eq!(factory.state.preparations.load(Ordering::SeqCst), 1);
+        prop_assert_eq!(crate::image::executable_verification_count(), before);
+        for call in factory.state.invocations.lock().expect("calls").iter() {
+            prop_assert_eq!(call.policy.max_input_bytes, request_limit);
+        }
+        let invalid_policy = RuntimePolicy { max_lexer_mode_depth: 0, ..policy };
+        prop_assert!(matches!(table.parse(&grant.handle, "", None, &DefaultRuntimeHost, invalid_policy),
+            Err(InstalledParseError::Parse(RuntimeError::InvalidRuntimePolicy(_)))));
+        prop_assert_eq!(factory.state.invocations.lock().expect("calls").len(), invoked);
+        let handle = match authority_case {
+            0 => grant.handle.attenuate(&LanguageRights::none()),
+            1 => {
+                table.revoke(grant.revocation).expect("revoke before invocation");
+                grant.handle.clone()
+            },
+            _ => {
+                *factory.state.revoke.lock().expect("revocation") = Some((table.clone(), grant.revocation));
+                grant.handle.clone()
+            },
+        };
+        prop_assert!(matches!(table.parse(&handle, "", None, &DefaultRuntimeHost, policy),
+            Err(InstalledParseError::Access(_))));
+        prop_assert_eq!(factory.state.invocations.lock().expect("calls").len(),
+            invoked + usize::from(authority_case == 2));
+        prop_assert_eq!(crate::image::executable_verification_count(), before);
+    }
+}

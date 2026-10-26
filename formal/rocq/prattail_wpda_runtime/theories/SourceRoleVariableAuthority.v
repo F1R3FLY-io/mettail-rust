@@ -180,3 +180,43 @@ Print Assumptions first_default_preserves_observer_state_trace_and_error.
 Print Assumptions authored_var_short_circuit_does_not_query_role.
 Print Assumptions default_observer_is_called_once.
 End SourceRoleVariableAuthority.
+
+
+Module SurfaceFillerAdmission.
+
+Definition choose_surface {Surface : Type} (variable_allowed : bool)
+    (variable : Surface) (ground : option Surface) : option Surface :=
+  if variable_allowed then Some variable else ground.
+
+Theorem admitted_variable_keeps_nonground_sample : forall Surface (variable : Surface) ground,
+  choose_surface true variable ground = Some variable.
+Proof. reflexivity. Qed.
+
+Theorem denied_variable_preserves_declared_ground : forall Surface (variable value : Surface),
+  choose_surface false variable (Some value) = Some value.
+Proof. reflexivity. Qed.
+
+Theorem denied_variable_without_ground_is_not_invented : forall Surface (variable : Surface),
+  choose_surface false variable None = None.
+Proof. reflexivity. Qed.
+
+Theorem variable_replacement_requires_admission : forall Surface (variable : Surface) ground allowed,
+  ground <> Some variable -> choose_surface allowed variable ground = Some variable -> allowed = true.
+Proof. intros Surface variable ground [] Hground Hchoice; [reflexivity|contradiction]. Qed.
+
+Definition old_surface {Surface : Type} (native : bool)
+    (variable : Surface) (ground : option Surface) : option Surface :=
+  if native then ground else Some variable.
+
+Example native_presence_does_not_imply_variable_authority :
+  old_surface false 1 (Some 0) = Some 1 /\
+  choose_surface false 1 (Some 0) = Some 0.
+Proof. split; reflexivity. Qed.
+
+Print Assumptions admitted_variable_keeps_nonground_sample.
+Print Assumptions denied_variable_preserves_declared_ground.
+Print Assumptions denied_variable_without_ground_is_not_invented.
+Print Assumptions variable_replacement_requires_admission.
+Print Assumptions native_presence_does_not_imply_variable_authority.
+
+End SurfaceFillerAdmission.

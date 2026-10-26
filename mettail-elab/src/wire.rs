@@ -9,8 +9,8 @@ use crate::ast::{
     Ast, Binding, Builder, CatDecl, CollKind, DottedPath, Equation, Export, Import, Item,
     LimitAssignment, ModuleFile, ModuleItem, NativeLiteral, OptionSection, Param,
     ProjectionBinding, ProjectionBody, ProjectionDecl, ProjectionDirection, ProjectionPremise,
-    ProjectionRule, Replacement, RewriteBinding, RewriteDecl, RewriteEntry, RewritePremise, Sort,
-    TermAssociativity, TermDecl, TermRule, TheoryDecl, TheoryExpr, TokenDecl,
+    ProjectionRule, Replacement, RewriteBinding, RewriteContextBinding, RewriteDecl, RewriteEntry,
+    RewritePremise, Sort, TermAssociativity, TermDecl, TermRule, TheoryDecl, TheoryExpr, TokenDecl,
 };
 use crate::canonical::{
     admit_canonical_value, admit_canonical_value_resources, RhoValue, ValueDecodeError,
@@ -862,7 +862,7 @@ fn decode_rewrite(value: RhoValue, path: &str) -> Result<RewriteDecl, DdlValueEr
             .into_iter()
             .enumerate()
             .map(|(index, value)| {
-                decode_rewrite_binding(value, &format!("{path}.context[{index}]"))
+                decode_rewrite_context_binding(value, &format!("{path}.context[{index}]"))
             })
             .collect::<Result<Vec<_>, _>>()?
     } else {
@@ -899,6 +899,39 @@ fn decode_rewrite_binding(value: RhoValue, path: &str) -> Result<RewriteBinding,
     let name = expect_string(fields.next().expect("arity checked"), format!("{path}.name"))?;
     let sort = decode_sort(fields.next().expect("arity checked"), &format!("{path}.sort"))?;
     Ok(RewriteBinding { name, sort })
+}
+
+fn decode_rewrite_context_binding(
+    value: RhoValue,
+    path: &str,
+) -> Result<RewriteContextBinding, DdlValueError> {
+    let mut fields = expect_node(value, "rewrite-binding", Some(2), path.into())?.into_iter();
+    let name = expect_string(fields.next().expect("arity checked"), format!("{path}.name"))?;
+    let value = fields.next().expect("arity checked");
+    let sort = if matches!(
+        node_tag(&value),
+        Some("sort-category" | "sort-bag" | "sort-set" | "sort-list")
+    ) {
+        crate::canonical::sort_to_value(&decode_sort(value, &format!("{path}.sort"))?)
+    } else {
+        value
+    };
+    let sort_path = format!("{path}.sort");
+    let mut work = vec![(&sort, 1)];
+    while let Some((value, depth)) = work.pop() {
+        require_structural_depth(depth, &sort_path, "rewrite context type")?;
+        if let RhoValue::List(fields) = value {
+            let child_depth = structural_child_depth(depth, &sort_path)?;
+            work.extend(
+                fields
+                    .iter()
+                    .skip(1)
+                    .rev()
+                    .map(|child| (child, child_depth)),
+            );
+        }
+    }
+    Ok(RewriteContextBinding::try_new_at(name, sort, &sort_path)?)
 }
 
 fn decode_rewrite_premise(value: RhoValue, path: &str) -> Result<RewritePremise, DdlValueError> {

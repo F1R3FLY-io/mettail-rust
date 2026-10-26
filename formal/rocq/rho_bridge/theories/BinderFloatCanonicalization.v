@@ -70,7 +70,7 @@
  *          <=6-binder canonical-run cap (binder_congruence.rs, Heap-permutation display
  *          ordering) therefore affects DISPLAY canonicality only, never exposure.
  *
- * Rocq 9.1 compatible.  No Admitted, no Axioms, no Assumptions, no Parameters.
+ * Part 5 (end of file): which sole collections get the helper.  Rocq 9.1 compatible.  No Admitted, no Axioms, no Assumptions, no Parameters.
  *)
 
 From Stdlib Require Import List.
@@ -827,6 +827,151 @@ Proof.
   - left. reflexivity.
 Qed.
 
+(* =====================================================================================
+   Part 5 — Which sole collections get the helper (added 2026-10-20).
+
+   Part 2 models the helper's body over ONE category: the nested layers of a bag are
+   the same constructor.  The emitter decides separately whether it emits the helper and
+   whether an assemble site calls it.  This part models those decisions, before and
+   after 2026-10-20.  It is appended here so that the line numbers that other files
+   cite in this file stay valid.
+
+   Sources (mettail-rust/macros/src):
+   - Emission: gen/term_ops/normalize.rs `generate_flatten_helpers`, the
+     `flattenable_collection` test.
+   - Callers: gen/term_ops/normalize.rs `generate_tagged_collection_assemble_case`
+     (arm HashBag | HashMap | PathMap), and the two `AcBag` arms of
+     gen/runtime/dovetail_report/reconstruct.rs (the rebuild kernel and the typed
+     inverse).  The `AcBag` projection is HashBag only (dovetail_report.rs).
+   - Typing: the helper is `fn insert_into_<label>(bag: &mut HashBag<Owner>, elem: Owner)`.
+     Its body pushes the members of `Owner::<label>(inner)` onto a `Vec<Owner>`.  For a
+     rule `<label> . xs:C(Element) |- ... : Owner`, `inner` holds `Element` values, so
+     the body type-checks only when Element = Owner.  Each caller passes a
+     `&mut HashBag<Element>` and an `Element` value, so each call type-checks only when
+     Element = Owner.
+   Categories are numbers here, as in Part 1.
+   ===================================================================================== *)
+
+Inductive CollectionCarrier : Type :=
+  | VecCarrier | HashBagCarrier | HashSetCarrier | HashMapCarrier | PathMapCarrier.
+
+Definition flattenable_carrier (carrier : CollectionCarrier) : bool :=
+  match carrier with
+  | HashBagCarrier | HashMapCarrier | PathMapCarrier => true
+  | VecCarrier | HashSetCarrier => false
+  end.
+
+(* The typing paragraph above: the helper and each call to it are well typed exactly
+   when the element category is the owner category. *)
+Definition helper_well_typed (owner element : nat) : Prop := element = owner.
+
+(* Before 2026-10-20 the carrier alone decided the emission, and each caller called
+   the helper for every carrier that it reaches. *)
+Definition helper_emitted_before (owner element : nat) (carrier : CollectionCarrier) : bool :=
+  flattenable_carrier carrier.
+
+Inductive HelperCaller : Type := TaggedAssemble | RebuildKernel | TypedInverse.
+
+Definition caller_reaches (caller : HelperCaller) (carrier : CollectionCarrier) : bool :=
+  match caller, carrier with
+  | TaggedAssemble, _ => flattenable_carrier carrier
+  | (RebuildKernel | TypedInverse), HashBagCarrier => true
+  | (RebuildKernel | TypedInverse), _ => false
+  end.
+
+Definition caller_calls_before (caller : HelperCaller) (owner element : nat)
+    (carrier : CollectionCarrier) : bool :=
+  caller_reaches caller carrier.
+
+(* The noadmit test grammar (macros/tests/noadmit_substitution.rs) has
+   `Bag . names:HashBag(Name) |- ... : CostSig`. *)
+Definition name_category := 0.
+Definition cost_sig_category := 1.
+
+(* Negative control, the root cause of the flatten.rs and normalize.rs compile errors of
+   the 2026-10-20 macros run: the code before 2026-10-20 emits the helper for `Bag` and
+   calls it from the rebuild kernel, and neither is well typed. *)
+Theorem old_gate_emits_and_calls_an_ill_typed_helper :
+  helper_emitted_before cost_sig_category name_category HashBagCarrier = true
+  /\ caller_calls_before RebuildKernel cost_sig_category name_category HashBagCarrier = true
+  /\ ~ helper_well_typed cost_sig_category name_category.
+Proof.
+  split; [reflexivity|]. split; [reflexivity|].
+  unfold helper_well_typed, name_category, cost_sig_category. discriminate.
+Qed.
+
+(* The gate after 2026-10-20 (`collection_flatten_helper_applies`, normalize.rs). *)
+Definition helper_applies (owner element : nat) (carrier : CollectionCarrier) : bool :=
+  Nat.eqb element owner && flattenable_carrier carrier.
+
+Definition caller_calls (caller : HelperCaller) (owner element : nat)
+    (carrier : CollectionCarrier) : bool :=
+  caller_reaches caller carrier && helper_applies owner element carrier.
+
+Theorem helper_applies_only_when_well_typed : forall owner element carrier,
+  helper_applies owner element carrier = true -> helper_well_typed owner element.
+Proof.
+  intros owner element carrier H. unfold helper_applies in H.
+  apply andb_true_iff in H. destruct H as [H _]. apply Nat.eqb_eq. exact H.
+Qed.
+
+(* No caller calls a helper that is not emitted, and each call is well typed. *)
+Theorem every_call_has_an_emitted_well_typed_helper : forall caller owner element carrier,
+  caller_calls caller owner element carrier = true ->
+  helper_applies owner element carrier = true /\ helper_well_typed owner element.
+Proof.
+  intros caller owner element carrier H. unfold caller_calls in H.
+  apply andb_true_iff in H. destruct H as [_ H].
+  split; [exact H | exact (helper_applies_only_when_well_typed owner element carrier H)].
+Qed.
+
+(* Byte identity: on a same-category collection the new gate equals the old one, at
+   the emission and at every caller.  Each collection grammar that compiled before
+   2026-10-20 has only same-category flattenable collections. *)
+Theorem new_gate_equals_the_old_gate_on_same_category : forall caller owner carrier,
+  helper_applies owner owner carrier = helper_emitted_before owner owner carrier
+  /\ caller_calls caller owner owner carrier = caller_calls_before caller owner owner carrier.
+Proof.
+  intros caller owner carrier.
+  unfold caller_calls, caller_calls_before, helper_applies, helper_emitted_before.
+  rewrite Nat.eqb_refl. simpl.
+  split; [reflexivity|].
+  destruct caller, carrier; reflexivity.
+Qed.
+
+(* One element joins the assembled bag.  When the helper applies, the caller calls it
+   (Part 2's `splice_insert`).  Otherwise the caller inserts the element directly with
+   `HashBag::insert`. *)
+Definition assemble_insert (applies : bool) (value : Elem) (residual : list Elem)
+    : list Elem :=
+  if applies then splice_insert value residual else value :: residual.
+
+(* A value of another category is never a layer of the owner's constructor.  In the
+   owner's bag it is therefore an atom. *)
+Definition category_atom (owner element : nat) (value : Elem) : Prop :=
+  element <> owner -> is_atom value = true.
+
+(* On an atom the direct insert equals what the helper does (`splice_insert_atom`). *)
+Theorem direct_insert_equals_the_helper_on_an_atom : forall applies n residual,
+  assemble_insert applies (EAtom n) residual = splice_insert (EAtom n) residual.
+Proof. intros [|] n residual; reflexivity. Qed.
+
+(* The bag arm keeps the assembled bag flat on both branches of the new gate. *)
+Theorem bag_arm_preserves_flatness : forall owner element carrier value residual,
+  flattenable_carrier carrier = true ->
+  category_atom owner element value ->
+  flat residual ->
+  flat (assemble_insert (helper_applies owner element carrier) value residual).
+Proof.
+  intros owner element carrier value residual FLAT ATOM RESIDUAL.
+  unfold assemble_insert, helper_applies. rewrite FLAT, andb_true_r.
+  destruct (Nat.eqb element owner) eqn:SAME.
+  - apply float_preserves_bag_flatness. exact RESIDUAL.
+  - apply Nat.eqb_neq in SAME. intros member [EQ | IN].
+    + subst member. apply ATOM. exact SAME.
+    + apply RESIDUAL. exact IN.
+Qed.
+
 (* Zero-admission confirmation. *)
 Print Assumptions freshening_totality.
 Print Assumptions float_preserves_bag_flatness.
@@ -838,3 +983,7 @@ Print Assumptions newcomm_permutation_redex_invariance.
 Print Assumptions f1_subject_exposes_in_redex_after_float.
 Print Assumptions am2_subject_exposes_in_redex_after_float.
 Print Assumptions out_singleton_subject_exposes_out_redex_after_float.
+Print Assumptions old_gate_emits_and_calls_an_ill_typed_helper.
+Print Assumptions every_call_has_an_emitted_well_typed_helper.
+Print Assumptions new_gate_equals_the_old_gate_on_same_category.
+Print Assumptions bag_arm_preserves_flatness.

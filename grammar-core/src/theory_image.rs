@@ -1516,16 +1516,21 @@ fn validate_constructors(
             return Err(TheoryImageError::SourceMismatch { kind: "constructor", index });
         }
         let expected_binding = unique_grammar_binding(language, &source.name, index)?;
-        if actual.grammar != Some(expected_binding) {
+        if actual.grammar != expected_binding {
             return Err(TheoryImageError::SourceMismatch { kind: "grammar constructor", index });
         }
-        let category = language
-            .grammar
-            .categories
-            .get(expected_binding.category.0 as usize)
-            .ok_or(TheoryImageError::SourceMismatch { kind: "grammar category", index })?;
-        if category.name != source.codomain {
-            return Err(TheoryImageError::SourceMismatch { kind: "constructor codomain", index });
+        if let Some(binding) = expected_binding {
+            let category = language
+                .grammar
+                .categories
+                .get(binding.category.0 as usize)
+                .ok_or(TheoryImageError::SourceMismatch { kind: "grammar category", index })?;
+            if category.name != source.codomain {
+                return Err(TheoryImageError::SourceMismatch {
+                    kind: "constructor codomain",
+                    index,
+                });
+            }
         }
     }
     Ok(())
@@ -1535,7 +1540,7 @@ fn unique_grammar_binding(
     language: &LanguageCoreV1,
     label: &str,
     index: u32,
-) -> Result<TheoryGrammarConstructorV1, TheoryImageError> {
+) -> Result<Option<TheoryGrammarConstructorV1>, TheoryImageError> {
     let mut binding = None;
     for production in &language.grammar.productions {
         if production.label != label {
@@ -1553,7 +1558,7 @@ fn unique_grammar_binding(
         }
         binding = Some(candidate);
     }
-    binding.ok_or(TheoryImageError::SourceMismatch { kind: "grammar constructor", index })
+    Ok(binding)
 }
 
 fn validate_image_totals(

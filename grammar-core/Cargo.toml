@@ -23,3 +23,6 @@ regex-automata = "0.4"
 regex-syntax = { version = "0.8", default-features = false, features = ["unicode"] }
 rigail = { path = "../rigail" }
 mettail-semantic-key = { path = "../semantic-key" }
+
+[dev-dependencies]
+proptest = "1"

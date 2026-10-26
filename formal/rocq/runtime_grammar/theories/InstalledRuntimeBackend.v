@@ -360,4 +360,66 @@ Print Assumptions invocation_uses_prepared_backend_and_unchanged_session.
 Print Assumptions revoked_backend_completion_cannot_publish.
 Print Assumptions sound_backend_cache_hit_is_same_backend_parse.
 Print Assumptions different_backend_epoch_cannot_hit.
+
+Section AdmissionReuse.
+  Context {Bundle Request Result : Type}.
+  Variable verify_bundle : Bundle -> bool.
+  Variable run_request : Bundle -> Request -> option Result.
+
+  Record AdmissionReceipt : Type := {
+    admitted_bundle : Bundle;
+    admitted_bundle_checked : verify_bundle admitted_bundle = true
+  }.
+
+  Definition fresh_request (bundle : Bundle) (request : Request) : option Result :=
+    if verify_bundle bundle then run_request bundle request else None.
+
+  Definition reused_request (receipt : AdmissionReceipt) (request : Request)
+      : option Result :=
+    run_request (admitted_bundle receipt) request.
+
+  Theorem receipt_retains_checked_bundle : forall receipt,
+    verify_bundle (admitted_bundle receipt) = true.
+  Proof. exact admitted_bundle_checked. Qed.
+
+  Theorem rejected_bundle_has_no_receipt : forall receipt,
+    verify_bundle (admitted_bundle receipt) = false -> False.
+  Proof.
+    intros receipt Hrejected.
+    rewrite (admitted_bundle_checked receipt) in Hrejected. discriminate.
+  Qed.
+
+  Theorem reused_request_equals_fresh_request : forall receipt request,
+    reused_request receipt request = fresh_request (admitted_bundle receipt) request.
+  Proof.
+    intros receipt request. unfold reused_request, fresh_request.
+    rewrite (admitted_bundle_checked receipt). reflexivity.
+  Qed.
+
+  Theorem reused_request_preserves_refusal : forall receipt request,
+    run_request (admitted_bundle receipt) request = None ->
+    reused_request receipt request = None.
+  Proof. intros receipt request H. exact H. Qed.
+
+  Theorem reused_request_preserves_complete_result : forall receipt request result,
+    run_request (admitted_bundle receipt) request = Some result ->
+    reused_request receipt request = Some result.
+  Proof. intros receipt request result H. exact H. Qed.
+
+  Theorem repeated_requests_equal_fresh_requests : forall receipt requests,
+    map (reused_request receipt) requests =
+    map (fresh_request (admitted_bundle receipt)) requests.
+  Proof.
+    intros receipt requests. apply map_ext. intro request.
+    apply reused_request_equals_fresh_request.
+  Qed.
+End AdmissionReuse.
+
+Print Assumptions receipt_retains_checked_bundle.
+Print Assumptions rejected_bundle_has_no_receipt.
+Print Assumptions reused_request_equals_fresh_request.
+Print Assumptions reused_request_preserves_refusal.
+Print Assumptions reused_request_preserves_complete_result.
+Print Assumptions repeated_requests_equal_fresh_requests.
+
 End InstalledRuntimeBackend.

@@ -1,0 +1,34 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam ArrowColor #334155
+skinparam ParticipantBorderColor #334155
+skinparam ParticipantFontColor #0F172A
+skinparam NoteBackgroundColor #FEF3C7
+skinparam NoteBorderColor #D97706
+title Cost(G) grade to host funding: separate checked authorities
+
+participant "Guest GSLT\nDovetail matcher" as Guest #DBEAFE
+participant "Installed image\n+ V2 selector" as Install #EDE9FE
+participant "Guest-to-host\nprojection matcher" as Projection #DCFCE7
+participant "Trusted Rholang\ncost carrier" as Codec #CFFAFE
+participant "Host OSLF\nresource logic" as Host #FCE7F3
+participant "Authenticated\noffered-funded supply" as Supply #FEE2E2
+
+Guest -> Install: successor + grade root + exact key\n(same rule and substitution)
+Install -> Install: check base / projected prefix,\ncost image, codec, selector
+Install -> Projection: selected GuestToHost relation\nchecked grade root
+Projection --> Install: all checked typed candidates\nwith exact input/proof commitments
+loop every enabled candidate
+  Install -> Codec: exact typed host value
+  Codec -> Host: canonical Par
+  Host -> Host: compute and verify demand bound
+  Host -> Supply: compare each signature lane
+  Supply --> Host: authenticated supply verdict
+end
+Host --> Install: funded only if all required checks pass
+note over Guest,Supply
+  Grade and semantic work are never host purse authority.
+  Ambiguity is retained; no first/cheapest candidate is selected.
+end note
+@enduml

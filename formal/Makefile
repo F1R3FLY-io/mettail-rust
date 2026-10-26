@@ -110,6 +110,7 @@ rocq-runtime-grammar: require-capped rocq-runtime-grammar-dovetail-deps
 rocq-runtime-grammar-dovetail-deps: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq theories/ExactKeys/ExactKeyDedup.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Lowering/CollectionAcLowering.vo
+	$(MAKE) -C ../dovetail/formal/rocq theories/Saturation/DovetailSaturation.vo
 
 rocq-runtime-installed-language-authority: require-capped
 	$(MAKE) -C rocq/runtime_grammar theories/InstalledLanguageAuthority.vo

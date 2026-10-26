@@ -139,7 +139,7 @@ Fixpoint resolve_service_reply (payload_count : nat) (children : list Value)
   end.
 
 Inductive ConstructOp :=
-| EmptyOp | AppendOp
+| EmptyOp | UnitOp | AppendOp
 | IntegerOp (integer_value : Z) | BooleanOp (boolean_value : bool)
 | TextOp (text_value : string)
 | HostNameOp (slot : HostNameSlot)
@@ -172,6 +172,7 @@ Definition interpret (operation : ConstructOp) (children : list Value)
     : ConstructionResult :=
   match operation, children with
   | EmptyOp, [] => Constructed empty
+  | UnitOp, [] => Constructed unit_tuple
   | AppendOp, [lhs; rhs] => Constructed (append lhs rhs)
   | IntegerOp value, [] => integer value
   | BooleanOp value, [] => Constructed (boolean value)

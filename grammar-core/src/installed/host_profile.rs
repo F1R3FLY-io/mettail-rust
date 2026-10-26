@@ -4,8 +4,10 @@
 
 use super::*;
 use crate::{
-    ProjectionHostProfileErrorV1, ProjectionHostProfileRecordV1, ProjectionHostSignatureV1,
-    RuntimeCapabilityKey, RuntimeCapabilityManifest, RuntimeCapabilityRequirement,
+    ProjectionHostCompoundCodecDescriptorV2, ProjectionHostCompoundProfileErrorV2,
+    ProjectionHostCompoundProfileRecordV2, ProjectionHostProfileErrorV1,
+    ProjectionHostProfileRecordV1, ProjectionHostSignatureV1, RuntimeCapabilityKey,
+    RuntimeCapabilityManifest, RuntimeCapabilityRequirement,
 };
 
 /// Implemented by trusted node code, not by a Theory/Module source value.
@@ -17,6 +19,16 @@ pub trait ProjectionHostCodecProvider: Send + Sync {
     fn compiled_record(&self) -> &[u8];
     fn capability_manifest(&self, key: &RuntimeCapabilityKey) -> Option<RuntimeCapabilityManifest>;
     fn admits_exact_descriptor(&self, descriptor: &[u8]) -> bool;
+}
+
+/// Independently compiled V2 route implementation. A generated compound
+/// descriptor is only candidate data until this trusted provider checks every
+/// selected category/operator ID, tag, origin, and field schema it accepts.
+pub trait ProjectionHostCompoundCodecProviderV2: Send + Sync {
+    fn compiled_record(&self) -> &[u8];
+    fn capability_manifest(&self, key: &RuntimeCapabilityKey) -> Option<RuntimeCapabilityManifest>;
+    fn admits_exact_descriptor(&self, descriptor: &ProjectionHostCompoundCodecDescriptorV2)
+        -> bool;
 }
 
 #[derive(Clone)]
@@ -96,6 +108,28 @@ pub struct InstalledHostProfileSnapshot {
     manifest: RuntimeCapabilityManifest,
 }
 
+#[derive(Clone, Debug)]
+pub struct InstalledCompoundHostProfileSnapshotV2 {
+    record: Arc<ProjectionHostCompoundProfileRecordV2>,
+    manifest: RuntimeCapabilityManifest,
+}
+
+impl InstalledCompoundHostProfileSnapshotV2 {
+    pub fn record(&self) -> &ProjectionHostCompoundProfileRecordV2 {
+        &self.record
+    }
+
+    pub fn manifest(&self) -> &RuntimeCapabilityManifest {
+        &self.manifest
+    }
+
+    pub fn raw_signature(
+        &self,
+    ) -> Result<ProjectionHostSignatureV1, ProjectionHostCompoundProfileErrorV2> {
+        self.record.payload.raw_signature()
+    }
+}
+
 impl InstalledHostProfileSnapshot {
     pub fn record(&self) -> &ProjectionHostProfileRecordV1 {
         &self.record
@@ -113,6 +147,7 @@ impl InstalledHostProfileSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostProfileInstallError {
     InvalidRecord(ProjectionHostProfileErrorV1),
+    InvalidCompoundRecord(ProjectionHostCompoundProfileErrorV2),
     ProviderRecordMismatch,
     ProviderCodecRefused,
     Capability(RuntimeCapabilityError),
@@ -127,6 +162,7 @@ pub enum HostProfileInstallError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostProfileAccessError {
     UnknownHandle,
+    WrongProfileVersion,
     Revoked,
     InsufficientRights,
     ProviderChanged,
@@ -154,6 +190,61 @@ pub(super) struct HostProfileEntry {
 }
 
 impl HostProfileEntry {
+    pub(super) fn authorizes(
+        &self,
+        registry_id: u64,
+        handle: &InstalledHostProfileHandle,
+        right: LanguageRight,
+    ) -> bool {
+        !self.revoked
+            && handle.registry_id == registry_id
+            && handle.entry_id == self.entry_id
+            && handle.epoch == self.epoch
+            && Arc::ptr_eq(&handle.seal, &self.seal)
+            && handle.rights.is_subset_of(&self.ceiling)
+            && handle.rights.contains(right)
+            && self
+                .record
+                .canonical_bytes()
+                .is_ok_and(|bytes| self.provider.compiled_record() == bytes)
+            && self
+                .provider
+                .admits_exact_descriptor(&self.record.payload.codec.descriptor)
+            && self.provider.capability_manifest(&self.manifest.key) == Some(self.manifest.clone())
+    }
+
+    fn grant(&self, registry_id: u64, fingerprint: [u8; 32]) -> InstalledHostProfileGrant {
+        InstalledHostProfileGrant {
+            handle: InstalledHostProfileHandle {
+                registry_id,
+                entry_id: self.entry_id,
+                epoch: self.epoch,
+                fingerprint,
+                rights: self.ceiling.clone(),
+                seal: Arc::clone(&self.seal),
+            },
+            revocation: HostProfileRevocationAuthority {
+                registry_id,
+                entry_id: self.entry_id,
+                fingerprint,
+                seal: Arc::clone(&self.seal),
+            },
+        }
+    }
+}
+
+pub(super) struct CompoundHostProfileEntry {
+    pub(super) record: Arc<ProjectionHostCompoundProfileRecordV2>,
+    manifest: RuntimeCapabilityManifest,
+    provider: Arc<dyn ProjectionHostCompoundCodecProviderV2>,
+    ceiling: LanguageRights,
+    entry_id: u64,
+    epoch: u64,
+    seal: Arc<HandleSeal>,
+    revoked: bool,
+}
+
+impl CompoundHostProfileEntry {
     pub(super) fn authorizes(
         &self,
         registry_id: u64,
@@ -250,6 +341,9 @@ impl InstalledLanguageTable {
             .state
             .write()
             .map_err(|_| HostProfileInstallError::Poisoned)?;
+        if state.compound_host_profiles.contains_key(&fingerprint) {
+            return Err(HostProfileInstallError::ConflictingVersion);
+        }
         // The capability binder already compares two provider snapshots. Also
         // recheck at publication, so a provider that changed while validation
         // was in flight cannot publish a stale binding.
@@ -311,6 +405,119 @@ impl InstalledLanguageTable {
         Ok(grant)
     }
 
+    /// Separate V2 compound-profile admission. Its record cannot be decoded
+    /// or installed as a V1 scalar profile; the provider is independently
+    /// compiled trusted code and must accept the exact full route descriptor.
+    pub fn install_compound_host_profile_v2(
+        &self,
+        record_bytes: &[u8],
+        provider: Arc<dyn ProjectionHostCompoundCodecProviderV2>,
+        granted_rights: LanguageRights,
+    ) -> Result<InstalledHostProfileGrant, HostProfileInstallError> {
+        if !granted_rights
+            .iter()
+            .all(|right| matches!(right, LanguageRight::Bridge | LanguageRight::ReflectAst))
+        {
+            return Err(HostProfileInstallError::InvalidRights);
+        }
+        let record = ProjectionHostCompoundProfileRecordV2::decode_canonical(record_bytes)
+            .map_err(HostProfileInstallError::InvalidCompoundRecord)?;
+        let compiled =
+            ProjectionHostCompoundProfileRecordV2::decode_canonical(provider.compiled_record())
+                .map_err(HostProfileInstallError::InvalidCompoundRecord)?;
+        if compiled != record {
+            return Err(HostProfileInstallError::ProviderRecordMismatch);
+        }
+        if !provider.admits_exact_descriptor(&record.payload.codec.descriptor) {
+            return Err(HostProfileInstallError::ProviderCodecRefused);
+        }
+        let key = RuntimeCapabilityKey::structural_codec(
+            record.payload.grammar_fingerprint,
+            record.payload.codec.provider_abi.clone(),
+        );
+        let requirement = RuntimeCapabilityRequirement {
+            key: key.clone(),
+            effect: RuntimeEffect::Reflect,
+        };
+        let bindings = RuntimeCapabilityBindings::bind(&[requirement], |requested| {
+            provider.capability_manifest(requested)
+        })
+        .map_err(HostProfileInstallError::Capability)?;
+        let manifest = bindings
+            .get(&key)
+            .cloned()
+            .ok_or(HostProfileInstallError::ManifestMismatch)?;
+        if manifest.abi != record.payload.codec.provider_abi
+            || manifest.code_commitment != record.payload.codec.implementation_commitment
+        {
+            return Err(HostProfileInstallError::ManifestMismatch);
+        }
+        let fingerprint = record.claimed_digests.profile_fingerprint;
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| HostProfileInstallError::Poisoned)?;
+        if state.host_profiles.contains_key(&fingerprint) {
+            return Err(HostProfileInstallError::ConflictingVersion);
+        }
+        if provider.compiled_record() != record_bytes
+            || !provider.admits_exact_descriptor(&record.payload.codec.descriptor)
+            || provider.capability_manifest(&manifest.key) != Some(manifest.clone())
+        {
+            return Err(HostProfileInstallError::ProviderChanged);
+        }
+        if state
+            .compound_host_profiles
+            .iter()
+            .any(|(existing_fingerprint, existing)| {
+                !existing.revoked
+                    && *existing_fingerprint != fingerprint
+                    && existing.record.payload.language_name == record.payload.language_name
+                    && existing.record.payload.language_version == record.payload.language_version
+            })
+        {
+            return Err(HostProfileInstallError::ConflictingVersion);
+        }
+        if let Some(existing) = state.compound_host_profiles.get(&fingerprint) {
+            if !existing.revoked {
+                if *existing.record != record
+                    || existing.manifest != manifest
+                    || existing.ceiling != granted_rights
+                    || !Arc::ptr_eq(&existing.provider, &provider)
+                {
+                    return Err(HostProfileInstallError::ConflictingVersion);
+                }
+                return Ok(existing.grant(self.registry_id, fingerprint));
+            }
+        }
+        let epoch = state
+            .compound_host_profiles
+            .get(&fingerprint)
+            .map_or(Ok(1u64), |old| {
+                old.epoch
+                    .checked_add(1)
+                    .ok_or(HostProfileInstallError::IdentifierExhausted)
+            })?;
+        let entry_id = state.next_entry_id;
+        state.next_entry_id = state
+            .next_entry_id
+            .checked_add(1)
+            .ok_or(HostProfileInstallError::IdentifierExhausted)?;
+        let entry = CompoundHostProfileEntry {
+            record: Arc::new(record),
+            manifest,
+            provider,
+            ceiling: granted_rights,
+            entry_id,
+            epoch,
+            seal: Arc::new(HandleSeal),
+            revoked: false,
+        };
+        let grant = entry.grant(self.registry_id, fingerprint);
+        state.compound_host_profiles.insert(fingerprint, entry);
+        Ok(grant)
+    }
+
     /// Return a snapshot only for a live, sealed, sufficiently authorized
     /// handle. Users must call this again immediately before publishing a
     /// result, because revocation can occur after the snapshot is obtained.
@@ -323,8 +530,33 @@ impl InstalledLanguageTable {
             .state
             .read()
             .map_err(|_| HostProfileAccessError::Poisoned)?;
+        if state
+            .compound_host_profiles
+            .contains_key(&handle.fingerprint)
+        {
+            return Err(HostProfileAccessError::WrongProfileVersion);
+        }
         let entry = self.valid_host_profile_entry(&state, handle, required)?;
         Ok(InstalledHostProfileSnapshot {
+            record: Arc::clone(&entry.record),
+            manifest: entry.manifest.clone(),
+        })
+    }
+
+    pub fn authorize_compound_host_profile_v2(
+        &self,
+        handle: &InstalledHostProfileHandle,
+        required: &[LanguageRight],
+    ) -> Result<InstalledCompoundHostProfileSnapshotV2, HostProfileAccessError> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| HostProfileAccessError::Poisoned)?;
+        if state.host_profiles.contains_key(&handle.fingerprint) {
+            return Err(HostProfileAccessError::WrongProfileVersion);
+        }
+        let entry = self.valid_compound_host_profile_entry(&state, handle, required)?;
+        Ok(InstalledCompoundHostProfileSnapshotV2 {
             record: Arc::clone(&entry.record),
             manifest: entry.manifest.clone(),
         })
@@ -353,7 +585,7 @@ impl InstalledLanguageTable {
                 ));
             }
         }
-        self.valid_host_profile_entry(&state, host, host_rights)
+        self.valid_any_host_profile(&state, host, host_rights)
             .map_err(LanguageAndHostAccessError::Host)?;
         Ok(publish())
     }
@@ -387,7 +619,7 @@ impl InstalledLanguageTable {
                 }
             }
             if let Some((host, host_rights)) = host {
-                self.valid_host_profile_entry(&state, host, host_rights)
+                self.valid_any_host_profile(&state, host, host_rights)
                     .map_err(LanguageAndHostAccessError::Host)?;
             }
         }
@@ -435,6 +667,61 @@ impl InstalledLanguageTable {
         Ok(entry)
     }
 
+    fn valid_compound_host_profile_entry<'a>(
+        &self,
+        state: &'a InstalledState,
+        handle: &InstalledHostProfileHandle,
+        required: &[LanguageRight],
+    ) -> Result<&'a CompoundHostProfileEntry, HostProfileAccessError> {
+        let entry = state
+            .compound_host_profiles
+            .get(&handle.fingerprint)
+            .ok_or(HostProfileAccessError::UnknownHandle)?;
+        if handle.registry_id != self.registry_id
+            || handle.entry_id != entry.entry_id
+            || handle.epoch != entry.epoch
+            || !Arc::ptr_eq(&handle.seal, &entry.seal)
+        {
+            return Err(HostProfileAccessError::UnknownHandle);
+        }
+        if entry.revoked {
+            return Err(HostProfileAccessError::Revoked);
+        }
+        if !handle.rights.is_subset_of(&entry.ceiling)
+            || required.iter().any(|right| !handle.rights.contains(*right))
+        {
+            return Err(HostProfileAccessError::InsufficientRights);
+        }
+        if entry.provider.compiled_record()
+            != entry
+                .record
+                .canonical_bytes()
+                .map_err(|_| HostProfileAccessError::ProviderChanged)?
+            || !entry
+                .provider
+                .admits_exact_descriptor(&entry.record.payload.codec.descriptor)
+            || entry.provider.capability_manifest(&entry.manifest.key)
+                != Some(entry.manifest.clone())
+        {
+            return Err(HostProfileAccessError::ProviderChanged);
+        }
+        Ok(entry)
+    }
+
+    fn valid_any_host_profile(
+        &self,
+        state: &InstalledState,
+        handle: &InstalledHostProfileHandle,
+        required: &[LanguageRight],
+    ) -> Result<(), HostProfileAccessError> {
+        if state.host_profiles.contains_key(&handle.fingerprint) {
+            self.valid_host_profile_entry(state, handle, required)?;
+        } else {
+            self.valid_compound_host_profile_entry(state, handle, required)?;
+        }
+        Ok(())
+    }
+
     pub fn revoke_host_profile(
         &self,
         authority: HostProfileRevocationAuthority,
@@ -443,20 +730,33 @@ impl InstalledLanguageTable {
             .state
             .write()
             .map_err(|_| HostProfileAccessError::Poisoned)?;
-        let entry = state
-            .host_profiles
-            .get_mut(&authority.fingerprint)
-            .ok_or(HostProfileAccessError::UnknownHandle)?;
-        if authority.registry_id != self.registry_id
-            || authority.entry_id != entry.entry_id
-            || !Arc::ptr_eq(&authority.seal, &entry.seal)
-        {
-            return Err(HostProfileAccessError::UnknownHandle);
+        if let Some(entry) = state.host_profiles.get_mut(&authority.fingerprint) {
+            if authority.registry_id != self.registry_id
+                || authority.entry_id != entry.entry_id
+                || !Arc::ptr_eq(&authority.seal, &entry.seal)
+            {
+                return Err(HostProfileAccessError::UnknownHandle);
+            }
+            if entry.revoked {
+                return Err(HostProfileAccessError::Revoked);
+            }
+            entry.revoked = true;
+        } else {
+            let entry = state
+                .compound_host_profiles
+                .get_mut(&authority.fingerprint)
+                .ok_or(HostProfileAccessError::UnknownHandle)?;
+            if authority.registry_id != self.registry_id
+                || authority.entry_id != entry.entry_id
+                || !Arc::ptr_eq(&authority.seal, &entry.seal)
+            {
+                return Err(HostProfileAccessError::UnknownHandle);
+            }
+            if entry.revoked {
+                return Err(HostProfileAccessError::Revoked);
+            }
+            entry.revoked = true;
         }
-        if entry.revoked {
-            return Err(HostProfileAccessError::Revoked);
-        }
-        entry.revoked = true;
         Ok(())
     }
 }

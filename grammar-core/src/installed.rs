@@ -1,11 +1,14 @@
 use crate::{
-    runtime_capability_requirements, CategoryId, DefaultRuntimeHost, GrammarCoreV1, ImageError,
-    LanguageCoreV1, ParserImageAdmissionLimits, ParserImageV1, ProjectedLanguageCoreV1,
-    ProjectedTheorySemanticImageV1, ProjectionHostSignatureV1, RuntimeCapabilityBindings,
-    RuntimeCapabilityError, RuntimeEffect, RuntimeError, RuntimeHost, RuntimeLexicalSession,
-    RuntimeParser, RuntimePolicy, RuntimeTemplateHole, RuntimeTemplatePiece, SyntaxItem,
-    TheoryImageAdmissionLimits, TheoryImageError, TheorySemanticImageV1, TokenDecoder,
-    WeightedParse, PROJECTED_THEORY_IMAGE_ABI_V1,
+    cost_image::InstalledValidatedCostImageV1, runtime_capability_requirements, CategoryId,
+    CheckedFiniteGradeRosterV2, ConstructorId, CostImageError, CostImageV1, DefaultRuntimeHost,
+    FundingProjectionSelectorV2, GrammarCoreV1, ImageError, LanguageCoreV1,
+    ParserImageAdmissionLimits, ParserImageV1, ProjectedLanguageCoreV1,
+    ProjectedTheorySemanticImageV1, ProjectionDirectionV1, ProjectionHostCompoundProfileRecordV2,
+    ProjectionHostSignatureV1, RuntimeCapabilityBindings, RuntimeCapabilityError, RuntimeEffect,
+    RuntimeError, RuntimeHost, RuntimeLexicalSession, RuntimeParser, RuntimePolicy,
+    RuntimeTemplateHole, RuntimeTemplatePiece, SemanticFieldSchemaV1, SyntaxItem,
+    TheoryConstructorId, TheoryImageAdmissionLimits, TheoryImageError, TheorySemanticImageV1,
+    TheorySortId, TokenDecoder, VerifiedCostImageV1, WeightedParse, PROJECTED_THEORY_IMAGE_ABI_V1,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -249,11 +252,44 @@ pub struct ExecutableProjectedLanguageInstall {
     pub granted_rights: LanguageRights,
 }
 
+/// Additive V2 funding selection over the unchanged V1 projected artifact.
+/// The selector is authored data; only an independently installed verifier
+/// can bind its proof and resource-logic ABIs to executable host code.
+pub struct ExecutableFundingProjectedLanguageInstallV2 {
+    pub projected: ProjectedLanguageCoreV1,
+    pub selector: FundingProjectionSelectorV2,
+    pub parser_image: ParserImageV1,
+    pub host_profile: InstalledHostProfileHandle,
+    pub granted_rights: LanguageRights,
+}
+
 /// A Module may export ordinary and host-projected languages together. Both
 /// variants enter one prepared batch and one all-or-nothing table commit.
 pub enum ExecutableLanguageInstallRequest {
     Legacy(ExecutableLanguageInstall),
     Projected(ExecutableProjectedLanguageInstall),
+    FundingProjectedV2(ExecutableFundingProjectedLanguageInstallV2),
+}
+
+/// Trusted node implementation for the selected grade interpretation proof.
+/// Matching authored ABI strings alone never installs this verifier. The
+/// implementation receives the exact compiled source cost and base images,
+/// and must check that every accepted projected output has the canonical host
+/// demand-program meaning under its typed codec.
+pub trait FundingProjectionVerifierV2: Send + Sync {
+    fn resource_logic_abi(&self) -> &str;
+    fn bound_verifier_abi(&self) -> &str;
+    fn projection_proof_abi(&self) -> &str;
+    fn projection_proof_commitment(&self) -> [u8; 32];
+    fn verify_selected_projection(
+        &self,
+        selector: &FundingProjectionSelectorV2,
+        projected: &ProjectedLanguageCoreV1,
+        base_image: &TheorySemanticImageV1,
+        cost_image: &CostImageV1,
+        image: &ProjectedTheorySemanticImageV1,
+        host: &ProjectionHostCompoundProfileRecordV2,
+    ) -> bool;
 }
 
 /// Trusted compiler supplied by the node, not by a Theory or Registry value.
@@ -265,12 +301,13 @@ pub trait ProjectionImageCompiler: Send + Sync {
         language: &ProjectedLanguageCoreV1,
         host: &ProjectionHostSignatureV1,
         limits: TheoryImageAdmissionLimits,
-    ) -> Result<ProjectedTheorySemanticImageV1, String>;
+    ) -> Result<(TheorySemanticImageV1, ProjectedTheorySemanticImageV1), String>;
 }
 
 struct ProjectedBundleInstall {
     core: ProjectedLanguageCoreV1,
     host_profile: InstalledHostProfileHandle,
+    funding_selector: Option<FundingProjectionSelectorV2>,
 }
 
 struct RuntimeLanguageBundleInstall {
@@ -297,6 +334,10 @@ pub struct InstallCommitment {
     pub theory_fingerprint: [u8; 32],
     pub parser_image_fingerprint: Option<[u8; 32]>,
     pub semantic_image_fingerprint: Option<[u8; 32]>,
+    pub cost_image_fingerprint: Option<[u8; 32]>,
+    /// None for every V1 installation. A V2 value commits to the exact
+    /// selected relation, proof ABI/commitment, and unchanged projected core.
+    pub funding_selector_fingerprint: Option<[u8; 32]>,
     pub parser_kind: InstalledParserKind,
     /// Semantic epoch of the injected runtime implementation. Static adapters
     /// retain their existing ABI/cache commitment and carry no runtime epoch.
@@ -429,6 +470,7 @@ pub trait RuntimeParserBackend: Send + Sync {
 enum InstalledParser {
     Runtime {
         image: Arc<ParserImageV1>,
+        admission_limits: ParserImageAdmissionLimits,
         backend: Arc<dyn RuntimeParserBackend>,
         epoch: [u8; 32],
     },
@@ -601,10 +643,337 @@ fn symbolic_template_weight(parses: &Vec<WeightedParse>) -> usize {
     weight
 }
 
+/// Check structural composition once before either image becomes immutable
+/// installed state. Rechecking the whole prefix on every live call would add
+/// unmetered work without strengthening the installed commitment.
+fn projected_retains_exact_base(
+    projected: &ProjectedTheorySemanticImageV1,
+    base: &TheorySemanticImageV1,
+) -> Result<bool, TheoryImageError> {
+    let execution = &projected.execution;
+    Ok(projected.base_image_fingerprint == base.fingerprint()?
+        && projected.base_rule_count as usize == base.rules.len()
+        && execution.abi == base.abi
+        && execution.compiler_abi == base.compiler_abi
+        && execution.primitive_substrate_abi == base.primitive_substrate_abi
+        && execution.grammar_fingerprint == base.grammar_fingerprint
+        && execution.theory_fingerprint == base.theory_fingerprint
+        && execution.resource_profile == base.resource_profile
+        && execution.sorts.get(..base.sorts.len()) == Some(base.sorts.as_slice())
+        && execution.constructors.get(..base.constructors.len())
+            == Some(base.constructors.as_slice())
+        && execution.rules.get(..base.rules.len()) == Some(base.rules.as_slice())
+        && execution.judgments == base.judgments
+        && execution.judgment_rules == base.judgment_rules
+        && execution.judgment_patterns == base.judgment_patterns
+        && execution.actions.get(..base.actions.len()) == Some(base.actions.as_slice()))
+}
+
+/// Bind every appended host sort/constructor to the exact generated V2
+/// category/constructor census. The payload constructor name is itself the
+/// fully qualified checked route label; no source-term or receipt decoding is
+/// involved. Unknown or unbound host constructors cannot cross this route.
+fn bind_compound_host_routes_v2(
+    base: &TheorySemanticImageV1,
+    projected: &ProjectedTheorySemanticImageV1,
+    host: &ProjectionHostCompoundProfileRecordV2,
+) -> Result<
+    (
+        Vec<InstalledHostSortRouteV2>,
+        Vec<InstalledHostConstructorRouteV2>,
+        Vec<InstalledHostSequenceRouteV2>,
+    ),
+    InstallLanguageError,
+> {
+    let payload = &host.payload;
+    let descriptor = &payload.codec.descriptor;
+    let execution = &projected.execution;
+    let sequence_constructor_count =
+        descriptor.sequences.len().checked_mul(2).ok_or_else(|| {
+            InstallLanguageError::InvalidProjection(
+                "compound sequence constructor count overflow".into(),
+            )
+        })?;
+    let expected_sort_count = descriptor
+        .categories
+        .len()
+        .checked_add(descriptor.sequences.len())
+        .ok_or_else(|| {
+            InstallLanguageError::InvalidProjection("compound sort count overflow".into())
+        })?;
+    let expected_constructor_count = descriptor
+        .operators
+        .len()
+        .checked_add(sequence_constructor_count)
+        .ok_or_else(|| {
+            InstallLanguageError::InvalidProjection("compound constructor count overflow".into())
+        })?;
+    if execution.sorts.len() != base.sorts.len().saturating_add(payload.sorts.len())
+        || execution.constructors.len()
+            != base
+                .constructors
+                .len()
+                .saturating_add(payload.constructors.len())
+        || expected_sort_count != payload.sorts.len()
+        || expected_constructor_count != payload.constructors.len()
+    {
+        return Err(InstallLanguageError::InvalidProjection(
+            "compound host signature does not exactly fill the projected suffix".into(),
+        ));
+    }
+    let mut sort_ids = BTreeMap::new();
+    let mut sort_routes = Vec::with_capacity(payload.sorts.len());
+    for (index, declaration) in payload
+        .sorts
+        .iter()
+        .take(descriptor.categories.len())
+        .enumerate()
+    {
+        let Some(route) = descriptor
+            .categories
+            .iter()
+            .find(|route| route.name == declaration.name)
+        else {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound host sort lacks an exact generated category route".into(),
+            ));
+        };
+        let offset = base.sorts.len().checked_add(index).ok_or_else(|| {
+            InstallLanguageError::InvalidProjection("host sort coordinate overflow".into())
+        })?;
+        let sort = TheorySortId(u32::try_from(offset).map_err(|_| {
+            InstallLanguageError::InvalidProjection("host sort coordinate overflow".into())
+        })?);
+        if execution.sorts.get(offset).map(|item| item.id) != Some(sort)
+            || sort_ids.insert(declaration.name.as_str(), sort).is_some()
+        {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound host sort coordinate mismatch".into(),
+            ));
+        }
+        sort_routes.push(InstalledHostSortRouteV2 { sort, category: route.category });
+    }
+    // Ordinary selected constructors may have sequence-valued fields, so the
+    // exact list sort IDs must be in the domain map before their signatures
+    // are checked. Nil/Cons constructors are validated below.
+    for (index, route) in descriptor.sequences.iter().enumerate() {
+        let payload_index = descriptor
+            .categories
+            .len()
+            .checked_add(index)
+            .ok_or_else(|| {
+                InstallLanguageError::InvalidProjection("compound sequence sort overflow".into())
+            })?;
+        let declaration = payload.sorts.get(payload_index).ok_or_else(|| {
+            InstallLanguageError::InvalidProjection("compound sequence sort missing".into())
+        })?;
+        let offset = base.sorts.len().checked_add(payload_index).ok_or_else(|| {
+            InstallLanguageError::InvalidProjection("compound sequence sort overflow".into())
+        })?;
+        let sort = TheorySortId(u32::try_from(offset).map_err(|_| {
+            InstallLanguageError::InvalidProjection("compound sequence sort overflow".into())
+        })?);
+        if declaration.name != route.sort_name
+            || execution.sorts.get(offset).map(|item| item.id) != Some(sort)
+            || sort_ids.insert(declaration.name.as_str(), sort).is_some()
+        {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound sequence sort coordinate mismatch".into(),
+            ));
+        }
+    }
+    let mut constructor_routes = Vec::with_capacity(payload.constructors.len());
+    let mut used_operators = BTreeSet::new();
+    for (index, declaration) in payload
+        .constructors
+        .iter()
+        .take(descriptor.operators.len())
+        .enumerate()
+    {
+        let Some(route) = descriptor
+            .operators
+            .iter()
+            .find(|route| route.label == declaration.name)
+        else {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound host constructor lacks an exact generated route".into(),
+            ));
+        };
+        if !used_operators.insert(route.operator) {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound host constructor route is not one-to-one".into(),
+            ));
+        }
+        let Some(&codomain) = sort_ids.get(declaration.codomain.as_str()) else {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound host constructor codomain is not a selected category".into(),
+            ));
+        };
+        if !sort_routes
+            .iter()
+            .any(|sort| sort.sort == codomain && sort.category == route.category)
+        {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound host constructor category mismatch".into(),
+            ));
+        }
+        let mut domain = Vec::with_capacity(declaration.domain.len());
+        for name in &declaration.domain {
+            domain.push(*sort_ids.get(name.as_str()).ok_or_else(|| {
+                InstallLanguageError::InvalidProjection(
+                    "compound host constructor child is outside the selected signature".into(),
+                )
+            })?);
+        }
+        let offset = base.constructors.len().checked_add(index).ok_or_else(|| {
+            InstallLanguageError::InvalidProjection("host constructor coordinate overflow".into())
+        })?;
+        let constructor = TheoryConstructorId(u32::try_from(offset).map_err(|_| {
+            InstallLanguageError::InvalidProjection("host constructor coordinate overflow".into())
+        })?);
+        let Some(compiled) = execution.constructors.get(offset) else {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound host constructor missing from projected suffix".into(),
+            ));
+        };
+        if compiled.id != constructor
+            || compiled.codomain != codomain
+            || compiled.domain != domain
+            || compiled.grammar.is_some()
+        {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound host constructor signature mismatch".into(),
+            ));
+        }
+        constructor_routes.push(InstalledHostConstructorRouteV2 {
+            constructor,
+            category: route.category,
+            host_constructor: route.constructor,
+            codomain,
+            domain,
+            fields: route.fields.clone(),
+        });
+    }
+    let mut sequence_routes = Vec::with_capacity(descriptor.sequences.len());
+    for (index, route) in descriptor.sequences.iter().enumerate() {
+        let payload_sort_index =
+            descriptor
+                .categories
+                .len()
+                .checked_add(index)
+                .ok_or_else(|| {
+                    InstallLanguageError::InvalidProjection(
+                        "compound sequence sort overflow".into(),
+                    )
+                })?;
+        let declaration = payload.sorts.get(payload_sort_index).ok_or_else(|| {
+            InstallLanguageError::InvalidProjection("compound sequence sort missing".into())
+        })?;
+        let sort_offset = base
+            .sorts
+            .len()
+            .checked_add(payload_sort_index)
+            .ok_or_else(|| {
+                InstallLanguageError::InvalidProjection("compound sequence sort overflow".into())
+            })?;
+        let sort = TheorySortId(u32::try_from(sort_offset).map_err(|_| {
+            InstallLanguageError::InvalidProjection("compound sequence sort overflow".into())
+        })?);
+        let element = descriptor
+            .categories
+            .iter()
+            .find(|category| category.category == route.element)
+            .and_then(|category| sort_ids.get(category.name.as_str()).copied())
+            .ok_or_else(|| {
+                InstallLanguageError::InvalidProjection("compound sequence element missing".into())
+            })?;
+        if declaration.name != route.sort_name
+            || execution.sorts.get(sort_offset).map(|item| item.id) != Some(sort)
+            || sort_ids.get(declaration.name.as_str()) != Some(&sort)
+        {
+            return Err(InstallLanguageError::InvalidProjection(
+                "compound sequence sort coordinate mismatch".into(),
+            ));
+        }
+        let constructor_index = descriptor
+            .operators
+            .len()
+            .checked_add(index.checked_mul(2).ok_or_else(|| {
+                InstallLanguageError::InvalidProjection(
+                    "compound sequence constructor overflow".into(),
+                )
+            })?)
+            .ok_or_else(|| {
+                InstallLanguageError::InvalidProjection(
+                    "compound sequence constructor overflow".into(),
+                )
+            })?;
+        let mut installed = [TheoryConstructorId(0); 2];
+        for (part, (name, domain)) in
+            [(&route.nil_name, Vec::new()), (&route.cons_name, vec![element, sort])]
+                .into_iter()
+                .enumerate()
+        {
+            let offset = base
+                .constructors
+                .len()
+                .checked_add(constructor_index.checked_add(part).ok_or_else(|| {
+                    InstallLanguageError::InvalidProjection(
+                        "compound sequence constructor overflow".into(),
+                    )
+                })?)
+                .ok_or_else(|| {
+                    InstallLanguageError::InvalidProjection(
+                        "compound sequence constructor overflow".into(),
+                    )
+                })?;
+            let id = TheoryConstructorId(u32::try_from(offset).map_err(|_| {
+                InstallLanguageError::InvalidProjection(
+                    "compound sequence constructor overflow".into(),
+                )
+            })?);
+            let declared =
+                payload
+                    .constructors
+                    .get(constructor_index.checked_add(part).ok_or_else(|| {
+                        InstallLanguageError::InvalidProjection(
+                            "compound sequence constructor overflow".into(),
+                        )
+                    })?);
+            let compiled = execution.constructors.get(offset);
+            if declared.map(|item| item.name.as_str()) != Some(name.as_str())
+                || compiled.is_none_or(|item| {
+                    item.id != id
+                        || item.codomain != sort
+                        || item.domain != domain
+                        || item.grammar.is_some()
+                })
+            {
+                return Err(InstallLanguageError::InvalidProjection(
+                    "compound sequence Nil/Cons coordinate mismatch".into(),
+                ));
+            }
+            installed[part] = id;
+        }
+        sequence_routes.push(InstalledHostSequenceRouteV2 {
+            element_category: route.element,
+            element,
+            sort,
+            nil: installed[0],
+            cons: installed[1],
+        });
+    }
+    Ok((sort_routes, constructor_routes, sequence_routes))
+}
+
 pub struct InstalledLanguage {
     language: Arc<LanguageCoreV1>,
     parser: InstalledParser,
     semantic_image: Option<Arc<TheorySemanticImageV1>>,
+    /// Exact original image retained when the executable image appends host
+    /// projection rules. Cost(G) grades are checked only against this image.
+    base_semantic_image: Option<Arc<TheorySemanticImageV1>>,
+    cost_image: Option<InstalledValidatedCostImageV1>,
     projected: Option<InstalledProjectionBundle>,
     commitment: InstallCommitment,
     effect_rights: LanguageRights,
@@ -616,7 +985,77 @@ pub struct InstalledLanguage {
 struct InstalledProjectionBundle {
     core: Arc<ProjectedLanguageCoreV1>,
     image: Arc<ProjectedTheorySemanticImageV1>,
+    /// Computed once from this exact image at installation, and compared with
+    /// the independent semantic-image commitment before publication.
+    execution_fingerprint: [u8; 32],
     host_profile: InstalledHostProfileHandle,
+    funding: Option<InstalledFundingProjectionBindingV2>,
+}
+
+/// Sealed install-time funding interpretation identity, not a balance or
+/// permit. Every use must recheck the live host handle and checked grade root.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledFundingProjectionBindingV2 {
+    pub selector: FundingProjectionSelectorV2,
+    pub selector_fingerprint: [u8; 32],
+    pub projection: u32,
+    pub host_proc_sort: TheorySortId,
+    /// Exact finite-generator induction premise for the first certified V2
+    /// fragment.  This is not a host funding bound or a supply witness.
+    pub finite_grade_roster: CheckedFiniteGradeRosterV2,
+    /// Checked once against the immutable appended host signature. These IDs
+    /// let the result projector build a generated typed tree without matching
+    /// source strings or parsing exact-key bytes at runtime.
+    pub host_sorts: Vec<InstalledHostSortRouteV2>,
+    pub host_constructors: Vec<InstalledHostConstructorRouteV2>,
+    pub host_sequences: Vec<InstalledHostSequenceRouteV2>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledHostSortRouteV2 {
+    pub sort: TheorySortId,
+    pub category: CategoryId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledHostConstructorRouteV2 {
+    pub constructor: TheoryConstructorId,
+    pub category: CategoryId,
+    pub host_constructor: ConstructorId,
+    pub codomain: TheorySortId,
+    pub domain: Vec<TheorySortId>,
+    pub fields: Vec<SemanticFieldSchemaV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledHostSequenceRouteV2 {
+    pub element_category: CategoryId,
+    pub element: TheorySortId,
+    pub sort: TheorySortId,
+    pub nil: TheoryConstructorId,
+    pub cons: TheoryConstructorId,
+}
+
+/// Sealed Arc-owned projected image validated at installation. The kernel may
+/// reuse its fingerprint only for this exact Arc allocation; an equal but
+/// independently supplied image still takes the accounted hash path.
+pub struct VerifiedProjectedImageV1 {
+    image: Arc<ProjectedTheorySemanticImageV1>,
+    execution_fingerprint: [u8; 32],
+}
+
+impl VerifiedProjectedImageV1 {
+    pub fn image(&self) -> &ProjectedTheorySemanticImageV1 {
+        &self.image
+    }
+
+    pub fn execution_fingerprint(&self) -> [u8; 32] {
+        self.execution_fingerprint
+    }
+
+    pub fn same_image(&self, image: &ProjectedTheorySemanticImageV1) -> bool {
+        std::ptr::eq(self.image.as_ref(), image)
+    }
 }
 
 impl InstalledLanguage {
@@ -632,6 +1071,47 @@ impl InstalledLanguage {
         self.semantic_image.as_deref()
     }
 
+    pub fn base_semantic_image(&self) -> Option<&TheorySemanticImageV1> {
+        self.base_semantic_image
+            .as_deref()
+            .or_else(|| self.semantic_image())
+    }
+
+    pub fn cost_image(&self) -> Option<&CostImageV1> {
+        self.cost_image
+            .as_ref()
+            .map(InstalledValidatedCostImageV1::image)
+    }
+
+    /// Borrow the install-time-validated immutable source and image only when
+    /// the admission profile and install commitment still match. No full
+    /// semantic-image traversal or fingerprint recomputation occurs per call.
+    /// An absent Cost(G) image is an error, never a zero-cost result.
+    pub fn verified_cost_image(
+        &self,
+        limits: TheoryImageAdmissionLimits,
+    ) -> Result<Option<VerifiedCostImageV1<'_>>, CostImageError> {
+        if self.language.theory.cost.is_none() {
+            return Ok(None);
+        }
+        let witness = self
+            .cost_image
+            .as_ref()
+            .ok_or(CostImageError::MissingInstalledImage)?;
+        if let Some(projected) = self.projected_image() {
+            if projected.base_image_fingerprint != witness.image().semantic_image_fingerprint {
+                return Err(CostImageError::FingerprintMismatch("projected base image"));
+            }
+        }
+        if self.commitment.semantic_limits_fingerprint != Some(witness.limits_fingerprint()) {
+            return Err(CostImageError::FingerprintMismatch("install admission profile"));
+        }
+        if self.commitment.cost_image_fingerprint != Some(witness.fingerprint()) {
+            return Err(CostImageError::FingerprintMismatch("install commitment"));
+        }
+        witness.verified(limits).map(Some)
+    }
+
     pub fn projected_core(&self) -> Option<&ProjectedLanguageCoreV1> {
         self.projected.as_ref().map(|bundle| bundle.core.as_ref())
     }
@@ -640,8 +1120,25 @@ impl InstalledLanguage {
         self.projected.as_ref().map(|bundle| bundle.image.as_ref())
     }
 
+    pub fn verified_projected_image(&self) -> Option<VerifiedProjectedImageV1> {
+        let bundle = self.projected.as_ref()?;
+        (self.commitment.semantic_image_fingerprint == Some(bundle.execution_fingerprint)).then(
+            || VerifiedProjectedImageV1 {
+                image: Arc::clone(&bundle.image),
+                execution_fingerprint: bundle.execution_fingerprint,
+            },
+        )
+    }
+
     pub fn projected_host_profile(&self) -> Option<&InstalledHostProfileHandle> {
         self.projected.as_ref().map(|bundle| &bundle.host_profile)
+    }
+
+    pub fn funding_projection_v2(&self) -> Option<&InstalledFundingProjectionBindingV2> {
+        let bundle = self.projected.as_ref()?;
+        let binding = bundle.funding.as_ref()?;
+        (self.commitment.funding_selector_fingerprint == Some(binding.selector_fingerprint))
+            .then_some(binding)
     }
 
     pub fn commitment(&self) -> &InstallCommitment {
@@ -673,13 +1170,15 @@ impl InstalledLanguage {
         policy: RuntimePolicy,
     ) -> Result<Vec<WeightedParse>, RuntimeError> {
         match &self.parser {
-            InstalledParser::Runtime { image, backend, .. } => {
+            InstalledParser::Runtime { image, admission_limits, backend, .. } => {
                 let policy = self.effective_runtime_policy(policy);
-                let parser = RuntimeParser::new_with_policy_and_bindings(
-                    &self.language.grammar,
+                let admission = RuntimeParserAdmission {
+                    grammar: &self.language.grammar,
                     image,
-                    &self.commitment.compiler_abi,
-                    &self.commitment.unicode_abi,
+                    limits: *admission_limits,
+                };
+                let parser = RuntimeParser::from_admission_with_bindings(
+                    admission,
                     host,
                     policy,
                     self.capability_bindings.clone(),
@@ -701,13 +1200,15 @@ impl InstalledLanguage {
         policy: RuntimePolicy,
     ) -> Result<Vec<WeightedParse>, RuntimeError> {
         match &self.parser {
-            InstalledParser::Runtime { image, backend, .. } => {
+            InstalledParser::Runtime { image, admission_limits, backend, .. } => {
                 let policy = self.effective_runtime_policy(policy);
-                let parser = RuntimeParser::new_with_policy_and_bindings(
-                    &self.language.grammar,
+                let admission = RuntimeParserAdmission {
+                    grammar: &self.language.grammar,
                     image,
-                    &self.commitment.compiler_abi,
-                    &self.commitment.unicode_abi,
+                    limits: *admission_limits,
+                };
+                let parser = RuntimeParser::from_admission_with_bindings(
+                    admission,
                     host,
                     policy,
                     self.capability_bindings.clone(),
@@ -967,6 +1468,29 @@ struct InstalledState {
     next_entry_id: u64,
     entries: BTreeMap<[u8; 32], InstalledEntry>,
     host_profiles: BTreeMap<[u8; 32], host_profile::HostProfileEntry>,
+    compound_host_profiles: BTreeMap<[u8; 32], host_profile::CompoundHostProfileEntry>,
+}
+
+impl InstalledState {
+    fn authorizes_host_profile(
+        &self,
+        registry_id: u64,
+        handle: &InstalledHostProfileHandle,
+        right: LanguageRight,
+    ) -> bool {
+        self.host_profiles
+            .get(&handle.fingerprint())
+            .is_some_and(|entry| entry.authorizes(registry_id, handle, right))
+            || self
+                .compound_host_profiles
+                .get(&handle.fingerprint())
+                .is_some_and(|entry| entry.authorizes(registry_id, handle, right))
+    }
+
+    fn contains_host_profile(&self, fingerprint: [u8; 32]) -> bool {
+        self.host_profiles.contains_key(&fingerprint)
+            || self.compound_host_profiles.contains_key(&fingerprint)
+    }
 }
 
 /// Fingerprint-indexed table shared by dynamic and compile-time grammars.
@@ -977,6 +1501,7 @@ pub struct InstalledLanguageTable {
     state: RwLock<InstalledState>,
     runtime_factory: Option<Arc<dyn RuntimeParserFactory>>,
     projection_compiler: Option<Arc<dyn ProjectionImageCompiler>>,
+    funding_projection_verifier: Option<Arc<dyn FundingProjectionVerifierV2>>,
 }
 
 impl Default for InstalledLanguageTable {
@@ -994,6 +1519,7 @@ impl InstalledLanguageTable {
             state: RwLock::new(InstalledState::default()),
             runtime_factory: None,
             projection_compiler: None,
+            funding_projection_verifier: None,
         }
     }
 
@@ -1013,6 +1539,19 @@ impl InstalledLanguageTable {
         Self {
             runtime_factory: Some(factory),
             projection_compiler: Some(compiler),
+            ..Self::new()
+        }
+    }
+
+    pub fn with_runtime_projection_and_funding_verifier(
+        factory: Arc<dyn RuntimeParserFactory>,
+        compiler: Arc<dyn ProjectionImageCompiler>,
+        verifier: Arc<dyn FundingProjectionVerifierV2>,
+    ) -> Self {
+        Self {
+            runtime_factory: Some(factory),
+            projection_compiler: Some(compiler),
+            funding_projection_verifier: Some(verifier),
             ..Self::new()
         }
     }
@@ -1274,6 +1813,36 @@ impl InstalledLanguageTable {
         )
     }
 
+    /// Install only V2 selected funding projections. An unconfigured trusted
+    /// proof verifier refuses the entire atomic batch; V1 projection installs
+    /// retain their original independent path and fingerprint.
+    #[allow(clippy::too_many_arguments)]
+    pub fn install_funding_projected_runtime_batch_v2_with_artifact_limits_and_host(
+        &self,
+        requests: Vec<ExecutableFundingProjectedLanguageInstallV2>,
+        compiler_abi: &str,
+        unicode_abi: &str,
+        capability_abi: &str,
+        policy_fingerprint: [u8; 32],
+        parser_limits: ParserImageAdmissionLimits,
+        semantic_limits: TheoryImageAdmissionLimits,
+        host: &dyn RuntimeHost,
+    ) -> Result<Vec<InstalledLanguageGrant>, InstallLanguageError> {
+        self.install_executable_mixed_runtime_batch_with_artifact_limits_and_host(
+            requests
+                .into_iter()
+                .map(ExecutableLanguageInstallRequest::FundingProjectedV2)
+                .collect(),
+            compiler_abi,
+            unicode_abi,
+            capability_abi,
+            policy_fingerprint,
+            parser_limits,
+            semantic_limits,
+            host,
+        )
+    }
+
     /// One atomic transaction for mixed ordinary/projected Module exports.
     #[allow(clippy::too_many_arguments)]
     pub fn install_executable_mixed_runtime_batch_with_artifact_limits_and_host(
@@ -1305,6 +1874,20 @@ impl InstalledLanguageTable {
                         projected: Some(ProjectedBundleInstall {
                             core: request.projected,
                             host_profile: request.host_profile,
+                            funding_selector: None,
+                        }),
+                        granted_rights: request.granted_rights,
+                    }
+                },
+                ExecutableLanguageInstallRequest::FundingProjectedV2(request) => {
+                    RuntimeLanguageBundleInstall {
+                        language: request.projected.base.clone(),
+                        parser_image: request.parser_image,
+                        semantic_image: None,
+                        projected: Some(ProjectedBundleInstall {
+                            core: request.projected,
+                            host_profile: request.host_profile,
+                            funding_selector: Some(request.selector),
                         }),
                         granted_rights: request.granted_rights,
                     }
@@ -1328,8 +1911,15 @@ impl InstalledLanguageTable {
         projected: ProjectedBundleInstall,
         base: &LanguageCoreV1,
         limits: TheoryImageAdmissionLimits,
-    ) -> Result<([u8; 32], TheorySemanticImageV1, InstalledProjectionBundle), InstallLanguageError>
-    {
+    ) -> Result<
+        (
+            [u8; 32],
+            TheorySemanticImageV1,
+            TheorySemanticImageV1,
+            InstalledProjectionBundle,
+        ),
+        InstallLanguageError,
+    > {
         projected
             .core
             .validate_header()
@@ -1339,19 +1929,41 @@ impl InstalledLanguageTable {
                 "projected base differs from the admitted parser language".into(),
             ));
         }
-        let profile = self
-            .authorize_host_profile(&projected.host_profile, &[LanguageRight::Bridge])
-            .map_err(InstallLanguageError::HostProfile)?;
-        let signature = profile.raw_signature().map_err(|error| {
-            InstallLanguageError::InvalidProjection(format!("host signature: {error:?}"))
-        })?;
+        let compound_profile = if projected.funding_selector.is_some() {
+            Some(
+                self.authorize_compound_host_profile_v2(
+                    &projected.host_profile,
+                    &[LanguageRight::Bridge],
+                )
+                .map_err(InstallLanguageError::HostProfile)?,
+            )
+        } else {
+            None
+        };
+        let signature = if let Some(profile) = &compound_profile {
+            profile.raw_signature().map_err(|error| {
+                InstallLanguageError::InvalidProjection(format!(
+                    "compound host signature: {error:?}"
+                ))
+            })?
+        } else {
+            self.authorize_host_profile(&projected.host_profile, &[LanguageRight::Bridge])
+                .map_err(InstallLanguageError::HostProfile)?
+                .raw_signature()
+                .map_err(|error| {
+                    InstallLanguageError::InvalidProjection(format!("host signature: {error:?}"))
+                })?
+        };
         let compiler = self
             .projection_compiler
             .as_ref()
             .ok_or(InstallLanguageError::MissingProjectionCompiler)?;
-        let image = compiler
+        let (base_image, image) = compiler
             .compile_projected(&projected.core, &signature, limits)
             .map_err(InstallLanguageError::InvalidProjection)?;
+        base_image
+            .validate(base, limits)
+            .map_err(InstallLanguageError::InvalidTheoryImage)?;
         let fingerprint = projected
             .core
             .fingerprint()
@@ -1361,24 +1973,161 @@ impl InstalledLanguageTable {
             || image.execution.language_fingerprint != fingerprint
             || image.host_signature_fingerprint != signature.signature_fingerprint
             || image.host_codec_profile_fingerprint != signature.codec_profile_fingerprint
-            || image.base_rule_count as usize > image.execution.rules.len()
+            || !projected_retains_exact_base(&image, &base_image)
+                .map_err(InstallLanguageError::InvalidTheoryImage)?
         {
             return Err(InstallLanguageError::InvalidProjection(
                 "trusted compiler returned an image for a different guest or host".into(),
             ));
         }
+        let funding = if let Some(selector) = projected.funding_selector {
+            let selected = selector
+                .validate_declaration(&projected.core)
+                .map_err(|error| {
+                    InstallLanguageError::InvalidProjection(format!("funding selector: {error:?}"))
+                })?;
+            // The host resource logic consumes a canonical process, not a
+            // scalar signature or a Boolean stand-in. A later carrier ABI
+            // may generalize this only with a separately reviewed lowering.
+            if selector.host_demand_category != "Proc" {
+                return Err(InstallLanguageError::InvalidProjection(
+                    "funding selector must end at the host Proc carrier".into(),
+                ));
+            }
+            let projection = u32::try_from(selected).map_err(|_| {
+                InstallLanguageError::InvalidProjection(
+                    "funding selector coordinate overflow".into(),
+                )
+            })?;
+            let mut relations = image.relations.iter().filter(|relation| {
+                relation.projection == projection
+                    && relation.direction == ProjectionDirectionV1::GuestToHost
+            });
+            if relations.next().is_none() || relations.next().is_some() {
+                return Err(InstallLanguageError::InvalidProjection(
+                    "funding selector has no unique compiled relation".into(),
+                ));
+            }
+            let verifier = self.funding_projection_verifier.as_ref().ok_or_else(|| {
+                InstallLanguageError::InvalidProjection(
+                    "funding selector lacks a trusted installed verifier".into(),
+                )
+            })?;
+            let cost_image = CostImageV1::compile(base, &base_image, limits)
+                .map_err(InstallLanguageError::InvalidCostImage)?
+                .ok_or_else(|| {
+                    InstallLanguageError::InvalidProjection(
+                        "funding selector has no checked source cost image".into(),
+                    )
+                })?;
+            let finite_grade_roster = CheckedFiniteGradeRosterV2::check(
+                &selector,
+                &projected.core,
+                &base_image,
+                &cost_image,
+                &image,
+                limits,
+            )
+            .map_err(|error| {
+                InstallLanguageError::InvalidProjection(format!(
+                    "funding grade is outside the finite certified fragment: {error:?}"
+                ))
+            })?;
+            let checked_host = compound_profile.as_ref().ok_or_else(|| {
+                InstallLanguageError::InvalidProjection(
+                    "funding selector has no installed compound host profile".into(),
+                )
+            })?;
+            let (host_sorts, host_constructors, host_sequences) =
+                bind_compound_host_routes_v2(&base_image, &image, checked_host.record())?;
+            let routes = &checked_host.record().payload.codec.descriptor;
+            if ![
+                (routes.proc_category, "Proc"),
+                (routes.cost_signature_category, "CostSig"),
+                (routes.cost_stack_category, "CostStack"),
+            ]
+            .into_iter()
+            .all(|(category, name)| {
+                routes
+                    .categories
+                    .iter()
+                    .any(|route| route.category == category && route.name == name)
+            }) {
+                return Err(InstallLanguageError::InvalidProjection(
+                    "compound host profile lacks exact Proc/CostSig/CostStack routes".into(),
+                ));
+            }
+            let host_proc_sort = host_sorts
+                .iter()
+                .find(|route| route.category == routes.proc_category)
+                .map(|route| route.sort)
+                .ok_or_else(|| {
+                    InstallLanguageError::InvalidProjection(
+                        "compound host Proc sort has no installed route".into(),
+                    )
+                })?;
+            if verifier.resource_logic_abi() != selector.resource_logic_abi
+                || verifier.bound_verifier_abi() != selector.bound_verifier_abi
+                || verifier.projection_proof_abi() != selector.projection_proof_abi
+                || verifier.projection_proof_commitment() != selector.projection_proof_commitment
+                || !verifier.verify_selected_projection(
+                    &selector,
+                    &projected.core,
+                    &base_image,
+                    &cost_image,
+                    &image,
+                    checked_host.record(),
+                )
+            {
+                return Err(InstallLanguageError::InvalidProjection(
+                    "funding selector proof or host implementation mismatch".into(),
+                ));
+            }
+            let selector_fingerprint = selector.fingerprint(&projected.core).map_err(|error| {
+                InstallLanguageError::InvalidProjection(format!(
+                    "funding selector fingerprint: {error}"
+                ))
+            })?;
+            Some(InstalledFundingProjectionBindingV2 {
+                selector,
+                selector_fingerprint,
+                projection,
+                host_proc_sort,
+                finite_grade_roster,
+                host_sorts,
+                host_constructors,
+                host_sequences,
+            })
+        } else {
+            None
+        };
         // Compilation is outside the write lock. Revocation during that work
         // fails here and again inside the atomic commit lock.
-        self.authorize_host_profile(&projected.host_profile, &[LanguageRight::Bridge])
+        if compound_profile.is_some() {
+            self.authorize_compound_host_profile_v2(
+                &projected.host_profile,
+                &[LanguageRight::Bridge],
+            )
             .map_err(InstallLanguageError::HostProfile)?;
+        } else {
+            self.authorize_host_profile(&projected.host_profile, &[LanguageRight::Bridge])
+                .map_err(InstallLanguageError::HostProfile)?;
+        }
+        let execution_fingerprint = image
+            .execution
+            .fingerprint()
+            .map_err(InstallLanguageError::InvalidTheoryImage)?;
         let execution = image.execution.clone();
         Ok((
             fingerprint,
             execution,
+            base_image,
             InstalledProjectionBundle {
                 core: Arc::new(projected.core),
                 image: Arc::new(image),
+                execution_fingerprint,
                 host_profile: projected.host_profile,
+                funding,
             },
         ))
     }
@@ -1400,24 +2149,24 @@ impl InstalledLanguageTable {
         }
         let mut prepared = Vec::with_capacity(requests.len());
         for request in requests {
-            request
-                .language
+            let installed_language = Arc::new(request.language);
+            installed_language
                 .validate()
                 .map_err(InstallLanguageError::InvalidLanguage)?;
-            reject_runtime_source(&request.language.grammar)?;
+            reject_runtime_source(&installed_language.grammar)?;
             let admission = RuntimeParserAdmission::verify(
-                &request.language.grammar,
+                &installed_language.grammar,
                 &request.parser_image,
                 compiler_abi,
                 unicode_abi,
                 parser_limits,
             )
             .map_err(InstallLanguageError::InvalidImage)?;
-            let mut language_fingerprint = request
-                .language
+            let mut language_fingerprint = installed_language
                 .fingerprint()
                 .map_err(InstallLanguageError::EncodeCore)?;
             let mut semantic_image = request.semantic_image;
+            let mut base_semantic_image = None;
             let mut projected_bundle = None;
             if let Some(projected) = request.projected {
                 if semantic_image.is_some() {
@@ -1425,18 +2174,17 @@ impl InstalledLanguageTable {
                 }
                 let limits =
                     semantic_limits.ok_or(InstallLanguageError::SemanticArtifactPolicyMismatch)?;
-                let (fingerprint, execution, bundle) =
-                    self.compile_bound_projection(projected, &request.language, limits)?;
+                let (fingerprint, execution, base, bundle) =
+                    self.compile_bound_projection(projected, &installed_language, limits)?;
                 language_fingerprint = fingerprint;
                 semantic_image = Some(execution);
+                base_semantic_image = Some(base);
                 projected_bundle = Some(bundle);
             }
-            let grammar_fingerprint = request
-                .language
+            let grammar_fingerprint = installed_language
                 .grammar_fingerprint()
                 .map_err(InstallLanguageError::EncodeCore)?;
-            let theory_fingerprint = request
-                .language
+            let theory_fingerprint = installed_language
                 .theory_fingerprint()
                 .map_err(InstallLanguageError::EncodeCore)?;
             let parser_image_fingerprint = request
@@ -1453,7 +2201,7 @@ impl InstalledLanguageTable {
                 (Some(image), Some(limits)) => {
                     if projected_bundle.is_none() {
                         image
-                            .validate(&request.language, limits)
+                            .validate(&installed_language, limits)
                             .map_err(InstallLanguageError::InvalidTheoryImage)?;
                     }
                     (
@@ -1471,8 +2219,35 @@ impl InstalledLanguageTable {
                 (None, None) => (None, None, None, None, None),
                 _ => return Err(InstallLanguageError::SemanticArtifactPolicyMismatch),
             };
+            if projected_bundle.as_ref().is_some_and(|bundle| {
+                semantic_image_fingerprint != Some(bundle.execution_fingerprint)
+            }) {
+                return Err(InstallLanguageError::InvalidProjection(
+                    "installed execution differs from validated projected image".into(),
+                ));
+            }
+            // Cost(G) grades refer to the original directed rewrite programs.
+            // The projected compiler retains its exact checked base image;
+            // never attach grade roots to appended host-crossing rules.
+            let installed_semantic_image = semantic_image.map(Arc::new);
+            let installed_base_semantic_image = base_semantic_image.map(Arc::new);
+            let cost_source = installed_base_semantic_image
+                .as_ref()
+                .or(installed_semantic_image.as_ref());
+            let cost_image = match (cost_source, semantic_limits) {
+                (Some(image), Some(limits)) => InstalledValidatedCostImageV1::compile(
+                    Arc::clone(&installed_language),
+                    Arc::clone(image),
+                    limits,
+                )
+                .map_err(InstallLanguageError::InvalidCostImage)?,
+                _ => None,
+            };
+            let cost_image_fingerprint = cost_image
+                .as_ref()
+                .map(InstalledValidatedCostImageV1::fingerprint);
             let requirements =
-                runtime_capability_requirements(&request.language.grammar, grammar_fingerprint)
+                runtime_capability_requirements(&installed_language.grammar, grammar_fingerprint)
                     .map_err(InstallLanguageError::Capability)?;
             let capability_bindings =
                 RuntimeCapabilityBindings::bind(&requirements, |key| host.capability_manifest(key))
@@ -1481,7 +2256,7 @@ impl InstalledLanguageTable {
                 .commitment()
                 .map_err(InstallLanguageError::Capability)?;
             let effect_rights =
-                runtime_effect_rights(&request.language.grammar, &capability_bindings);
+                runtime_effect_rights(&installed_language.grammar, &capability_bindings);
             let factory = self
                 .runtime_factory
                 .as_ref()
@@ -1502,6 +2277,11 @@ impl InstalledLanguageTable {
                 theory_fingerprint,
                 parser_image_fingerprint: Some(parser_image_fingerprint),
                 semantic_image_fingerprint,
+                cost_image_fingerprint,
+                funding_selector_fingerprint: projected_bundle
+                    .as_ref()
+                    .and_then(|bundle| bundle.funding.as_ref())
+                    .map(|binding| binding.selector_fingerprint),
                 parser_kind: InstalledParserKind::RuntimeImage,
                 runtime_backend_commitment: Some(epoch),
                 compiler_abi: compiler_abi.into(),
@@ -1520,13 +2300,16 @@ impl InstalledLanguageTable {
                 language_fingerprint,
                 request.granted_rights,
                 InstalledLanguage {
-                    language: Arc::new(request.language),
+                    language: installed_language,
                     parser: InstalledParser::Runtime {
                         image: Arc::new(request.parser_image),
+                        admission_limits: parser_limits,
                         backend,
                         epoch,
                     },
-                    semantic_image: semantic_image.map(Arc::new),
+                    semantic_image: installed_semantic_image,
+                    base_semantic_image: installed_base_semantic_image,
+                    cost_image,
                     projected: projected_bundle,
                     commitment,
                     effect_rights,
@@ -1575,6 +2358,8 @@ impl InstalledLanguageTable {
             theory_fingerprint,
             parser_image_fingerprint: None,
             semantic_image_fingerprint: None,
+            cost_image_fingerprint: None,
+            funding_selector_fingerprint: None,
             parser_kind: InstalledParserKind::StaticTyped { adapter_abi: adapter_abi.into() },
             runtime_backend_commitment: None,
             compiler_abi: compiler_abi.into(),
@@ -1598,6 +2383,8 @@ impl InstalledLanguageTable {
                 language: Arc::new(language),
                 parser: InstalledParser::Static(adapter),
                 semantic_image: None,
+                base_semantic_image: None,
+                cost_image: None,
                 projected: None,
                 commitment,
                 effect_rights,
@@ -1636,13 +2423,12 @@ impl InstalledLanguageTable {
         let mut unique = BTreeMap::<[u8; 32], usize>::new();
         for (index, (fingerprint, _, language)) in requests.iter().enumerate() {
             if let Some(projected) = &language.projected {
-                let host = state
-                    .host_profiles
-                    .get(&projected.host_profile.fingerprint())
-                    .ok_or(InstallLanguageError::HostProfile(
+                if !state.contains_host_profile(projected.host_profile.fingerprint()) {
+                    return Err(InstallLanguageError::HostProfile(
                         HostProfileAccessError::UnknownHandle,
-                    ))?;
-                if !host.authorizes(
+                    ));
+                }
+                if !state.authorizes_host_profile(
                     self.registry_id,
                     &projected.host_profile,
                     LanguageRight::Bridge,
@@ -1865,11 +2651,11 @@ impl InstalledLanguageTable {
             return Err(LanguageAccessError::AmplifiedHandle);
         }
         if let Some(projected) = &entry.language.projected {
-            let host = state
-                .host_profiles
-                .get(&projected.host_profile.fingerprint())
-                .ok_or(LanguageAccessError::HostProfileUnavailable)?;
-            if !host.authorizes(self.registry_id, &projected.host_profile, LanguageRight::Bridge) {
+            if !state.authorizes_host_profile(
+                self.registry_id,
+                &projected.host_profile,
+                LanguageRight::Bridge,
+            ) {
                 return Err(LanguageAccessError::HostProfileUnavailable);
             }
         }
@@ -2075,6 +2861,7 @@ pub enum InstallLanguageError {
     NativeSourceForbidden(String),
     InvalidImage(ImageError),
     InvalidTheoryImage(TheoryImageError),
+    InvalidCostImage(CostImageError),
     EncodeCore(postcard::Error),
     EncodeParserImage(postcard::Error),
     SemanticArtifactPolicyMismatch,

@@ -91,6 +91,7 @@ Inductive HeadKind :=
 | PatternReferenceHead (index depth : nat)
 | UnaryHead (operator : UnaryOperator)
 | BinaryHead (operator : BinaryOperator)
+| TupleHead
 | ListHead
 | MapHead
 | MethodHead (name : string)
@@ -117,12 +118,18 @@ Definition singleton (kind : HeadKind) (children : list Value)
   MakeValue [MakeHead kind children] summary.
 Definition text (s : string) : Value := singleton (TextHead s) [] closed_summary.
 Definition boolean (b : bool) : Value := singleton (BooleanHead b) [] closed_summary.
+(* Source `()` is the host's ETupleBody with zero elements. It is a value
+   head, unlike Nil/PZero, which contributes no Par heads. *)
+Definition unit_tuple : Value := singleton TupleHead [] closed_summary.
 Definition host_name (slot : HostNameSlot) : Value :=
   singleton (HostNameHead slot) [] closed_summary.
 
 Definition append (left right : Value) : Value :=
   MakeValue (heads_of left ++ heads_of right)
     (join_summary (summary_of left) (summary_of right)).
+
+Theorem unit_tuple_is_not_nil : unit_tuple <> empty.
+Proof. discriminate. Qed.
 
 Fixpoint children_summary (children : list Value) : Summary :=
   match children with
@@ -154,6 +161,13 @@ Definition single_string (value : Value) : bool :=
   | [MakeHead (TextHead _) []] => true
   | _ => false
   end.
+
+Theorem unit_tuple_is_closed_and_nonstring :
+  summary_of unit_tuple = closed_summary /\ single_string unit_tuple = false.
+Proof. split; reflexivity. Qed.
+
+Print Assumptions unit_tuple_is_not_nil.
+Print Assumptions unit_tuple_is_closed_and_nonstring.
 
 Definition addition_operator (left right : Value) : BinaryOperator :=
   if single_string left && single_string right then Concat else Add.

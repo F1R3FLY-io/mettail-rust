@@ -42,6 +42,7 @@ Section RholangAstLowering.
     | NQuote : Proc -> Name
     | NFree : Channel -> Name
     | NBound : nat -> Name
+    | NParen : Name -> Name
   with ProcList : Type :=
     | ProcNil : ProcList
     | ProcCons : Proc -> ProcList -> ProcList
@@ -127,9 +128,7 @@ Section RholangAstLowering.
   Fixpoint lower_proc (proc : Proc) : LowerResult :=
     match proc with
     | PZero => Lowered ANil
-    | PDrop (NQuote body) => lower_proc body
-    | PDrop (NBound index) => Lowered (ABound index)
-    | PDrop (NFree channel) => Lowered (AChan channel)
+    | PDrop name => lower_name name
     | PPar lhs rhs =>
         match lower_proc lhs, lower_proc rhs with
         | Lowered lhs_ast, Lowered rhs_ast => Lowered (APar lhs_ast rhs_ast)
@@ -176,6 +175,7 @@ Section RholangAstLowering.
     | NQuote body => lower_proc body
     | NFree channel => Lowered (AChan channel)
     | NBound index => Lowered (ABound index)
+    | NParen inner => lower_name inner
     end
   with lower_proc_list (items : ProcList) : option (list Ast) :=
     match items with
@@ -212,12 +212,12 @@ Section RholangAstLowering.
     | Rejected => None
     end.
 
-  Fixpoint lower_proc_branches (procs : list Proc) : LowerResult :=
+  Fixpoint append_proc_branches (procs : list Proc) : LowerResult :=
     match procs with
     | [] => Rejected
     | [proc] => lower_proc proc
     | proc :: rest =>
-        match lower_proc proc, lower_proc_branches rest with
+        match lower_proc proc, append_proc_branches rest with
         | Lowered branch_ast, Lowered rest_ast => Lowered (APar branch_ast rest_ast)
         | _, _ => Rejected
         end
@@ -245,11 +245,11 @@ Section RholangAstLowering.
     destruct (lower_proc proc) as [ast |] eqn:Hproc; inversion Hlower; reflexivity.
   Qed.
 
-  Theorem ambiguous_two_proc_lowering_preserves_both_branches :
+  Theorem append_two_proc_lowerings_preserves_both_branches :
     forall lhs rhs lhs_ast rhs_ast,
       lower_proc lhs = Lowered lhs_ast ->
       lower_proc rhs = Lowered rhs_ast ->
-      lower_proc_branches [lhs; rhs] = Lowered (APar lhs_ast rhs_ast).
+      append_proc_branches [lhs; rhs] = Lowered (APar lhs_ast rhs_ast).
   Proof.
     intros lhs rhs lhs_ast rhs_ast Hlhs Hrhs.
     simpl. rewrite Hlhs, Hrhs. reflexivity.
@@ -369,3 +369,204 @@ Section RholangAstLowering.
   Proof. intros b0 b1 rest. reflexivity. Qed.
 
 End RholangAstLowering.
+
+Module AlternativeLowering.
+
+Fixpoint select_keys (seen : list nat) (alternatives : list (nat * Proc)) : list Proc :=
+  match alternatives with
+  | [] => []
+  | (key, body) :: rest =>
+      if existsb (Nat.eqb key) seen then select_keys seen rest
+      else body :: select_keys (key :: seen) rest
+  end.
+
+Fixpoint lower_selected (alternatives : list Proc) : option (list Ast) :=
+  match alternatives with
+  | [] => Some []
+  | body :: rest =>
+      match lower_proc body, lower_selected rest with
+      | Lowered ast, Some asts => Some (ast :: asts)
+      | _, _ => None
+      end
+  end.
+
+Fixpoint keep_first (eqb : Ast -> Ast -> bool) (acc terms : list Ast) : list Ast :=
+  match terms with
+  | [] => rev acc
+  | term :: rest =>
+      if existsb (eqb term) acc then keep_first eqb acc rest
+      else keep_first eqb (term :: acc) rest
+  end.
+
+Definition assemble (terms : list Ast) : LowerResult :=
+  match terms with
+  | [] => Rejected
+  | first :: rest => Lowered (fold_left APar rest first)
+  end.
+
+Definition lower_proc_branches (eqb : Ast -> Ast -> bool)
+    (alternatives : list (nat * Proc)) : LowerResult :=
+  match lower_selected (select_keys [] alternatives) with
+  | Some asts => assemble (keep_first eqb [] asts)
+  | None => Rejected
+  end.
+
+Section ExactEquality.
+Variable eqb : Ast -> Ast -> bool.
+Hypothesis eqb_exact : forall a b, eqb a b = true <-> a = b.
+
+Lemma exists_ast_exact : forall term acc,
+  existsb (eqb term) acc = true <-> In term acc.
+Proof.
+  intros. rewrite existsb_exists. split.
+  - intros [x [Hx E]]. apply eqb_exact in E. now subst x.
+  - intros H. exists term. split; [exact H|]. apply eqb_exact. reflexivity.
+Qed.
+
+Theorem keep_first_membership : forall terms acc term,
+  In term (keep_first eqb acc terms) <-> In term acc \/ In term terms.
+Proof.
+  induction terms as [|first rest IH]; intros; simpl.
+  - rewrite <- in_rev. tauto.
+  - destruct (existsb (eqb first) acc) eqn:E.
+    + rewrite IH. apply exists_ast_exact in E. split.
+      * tauto.
+      * intros [H|[H|H]]; try tauto. subst term. tauto.
+    + rewrite IH. simpl. tauto.
+Qed.
+
+Theorem keep_first_has_no_duplicates : forall terms acc,
+  NoDup acc -> NoDup (keep_first eqb acc terms).
+Proof.
+  induction terms as [|first rest IH]; intros; simpl.
+  - now apply NoDup_rev.
+  - destruct (existsb (eqb first) acc) eqn:E; apply IH; [exact H|].
+    constructor; [|exact H]. intros Hin. apply exists_ast_exact in Hin. congruence.
+Qed.
+
+Theorem deduplication_preserves_exact_program_membership : forall terms term,
+  In term (keep_first eqb [] terms) <-> In term terms.
+Proof. intros. rewrite keep_first_membership. simpl. tauto. Qed.
+
+Theorem distinct_alternatives_are_preserved : forall left right left_ast right_ast,
+  lower_proc left = Lowered left_ast -> lower_proc right = Lowered right_ast ->
+  left_ast <> right_ast ->
+  lower_proc_branches eqb [(0, left); (1, right)] = Lowered (APar left_ast right_ast).
+Proof.
+  intros. unfold lower_proc_branches. cbn [select_keys existsb Nat.eqb lower_selected].
+  rewrite H. cbn [lower_selected orb]. rewrite H0. cbn [keep_first existsb].
+  destruct (eqb right_ast left_ast) eqn:E.
+  - apply eqb_exact in E. congruence.
+  - reflexivity.
+Qed.
+
+Definition twin_alternatives :=
+  [(0, PDrop (NQuote (POutput (NFree 1) (PString 7))));
+   (1, PDrop (NParen (NQuote (POutput (NFree 1) (PString 7)))))].
+
+Theorem old_lowering_emits_twins :
+  lower_selected (select_keys [] twin_alternatives) =
+    Some [ASend (AChan 1) (AValue 7); ASend (AChan 1) (AValue 7)].
+Proof. reflexivity. Qed.
+
+Theorem corrected_lowering_emits_one_twin :
+  lower_proc_branches eqb twin_alternatives = Lowered (ASend (AChan 1) (AValue 7)).
+Proof.
+  unfold lower_proc_branches. rewrite old_lowering_emits_twins.
+  cbn [keep_first existsb].
+  assert (eqb (ASend (AChan 1) (AValue 7)) (ASend (AChan 1) (AValue 7)) = true)
+    as E by (apply eqb_exact; reflexivity).
+  now rewrite E.
+Qed.
+
+Theorem parallel_duplicates_inside_one_alternative_survive : forall body ast,
+  lower_proc body = Lowered ast ->
+  lower_proc_branches eqb [(0, PPar body body)] = Lowered (APar ast ast).
+Proof.
+  intros. unfold lower_proc_branches.
+  cbn [select_keys existsb lower_selected lower_proc]. rewrite H. reflexivity.
+Qed.
+
+Theorem failed_lowering_is_rejected : forall alternatives,
+  lower_selected (select_keys [] alternatives) = None ->
+  lower_proc_branches eqb alternatives = Rejected.
+Proof. intros. unfold lower_proc_branches. now rewrite H. Qed.
+
+End ExactEquality.
+
+Section CanonicalComparison.
+Variable canonical : Ast -> Ast.
+Variable eqb : Ast -> Ast -> bool.
+Hypothesis eqb_exact : forall a b, eqb a b = true <-> a = b.
+
+Definition same_program (a b : Ast) := eqb (canonical a) (canonical b).
+
+Lemma exists_canonical : forall first acc,
+  existsb (eqb (canonical first)) (map canonical acc) =
+  existsb (same_program first) acc.
+Proof.
+  intros first acc. induction acc; simpl; [reflexivity|].
+  now rewrite IHacc.
+Qed.
+
+Theorem canonical_selection_commutes : forall terms acc,
+  map canonical (keep_first same_program acc terms) =
+  keep_first eqb (map canonical acc) (map canonical terms).
+Proof.
+  induction terms as [|first rest IH]; intros acc; simpl.
+  - apply map_rev.
+  - rewrite exists_canonical.
+    destruct (existsb (same_program first) acc).
+    + apply IH.
+    + apply IH.
+Qed.
+
+Theorem canonical_program_membership_is_preserved : forall terms program,
+  In program (map canonical (keep_first same_program [] terms)) <->
+  In program (map canonical terms).
+Proof.
+  intros. rewrite canonical_selection_commutes.
+  apply deduplication_preserves_exact_program_membership. exact eqb_exact.
+Qed.
+
+Theorem canonical_programs_have_no_duplicates : forall terms,
+  NoDup (map canonical (keep_first same_program [] terms)).
+Proof.
+  intros. rewrite canonical_selection_commutes.
+  apply keep_first_has_no_duplicates; [exact eqb_exact|constructor].
+Qed.
+
+Theorem canonical_twins_retain_the_first_original : forall left right,
+  canonical left = canonical right ->
+  keep_first same_program [] [left; right] = [left].
+Proof.
+  intros. simpl. unfold same_program.
+  assert (eqb (canonical right) (canonical left) = true) as E.
+  { apply eqb_exact. symmetry. exact H. }
+  now rewrite E.
+Qed.
+
+Theorem canonical_comparison_preserves_one_program : forall program,
+  keep_first same_program [] [program] = [program].
+Proof. reflexivity. Qed.
+
+End CanonicalComparison.
+End AlternativeLowering.
+
+Print Assumptions AlternativeLowering.exists_ast_exact.
+Print Assumptions AlternativeLowering.keep_first_membership.
+Print Assumptions AlternativeLowering.keep_first_has_no_duplicates.
+Print Assumptions AlternativeLowering.deduplication_preserves_exact_program_membership.
+Print Assumptions AlternativeLowering.distinct_alternatives_are_preserved.
+Print Assumptions AlternativeLowering.old_lowering_emits_twins.
+Print Assumptions AlternativeLowering.corrected_lowering_emits_one_twin.
+Print Assumptions AlternativeLowering.parallel_duplicates_inside_one_alternative_survive.
+Print Assumptions AlternativeLowering.failed_lowering_is_rejected.
+
+Print Assumptions AlternativeLowering.canonical_selection_commutes.
+Print Assumptions AlternativeLowering.canonical_program_membership_is_preserved.
+Print Assumptions AlternativeLowering.canonical_programs_have_no_duplicates.
+Print Assumptions AlternativeLowering.canonical_twins_retain_the_first_original.
+Print Assumptions AlternativeLowering.canonical_comparison_preserves_one_program.
+
+Print Assumptions AlternativeLowering.exists_canonical.
