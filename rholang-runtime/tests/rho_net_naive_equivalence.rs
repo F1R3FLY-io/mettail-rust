@@ -794,6 +794,7 @@ fn sigma_echo_receiver(accept_channel: &str, arity: usize) -> models::rhoapi::Pa
             source: Some(new_gstring_par(accept_channel.to_string(), Vec::new(), false)),
             remainder: None,
             free_count: (arity + 1) as i32,
+            cost_signature: None,
         }],
         body,
         false,

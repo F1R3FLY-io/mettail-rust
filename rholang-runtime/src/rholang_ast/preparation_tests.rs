@@ -7,6 +7,61 @@ use prost::Message;
 use std::cell::Cell;
 
 #[test]
+fn checked_unit_tuple_retains_the_host_wire_and_differs_from_nil() {
+    let unit = Proc::PUnit;
+    let nil = Proc::PZero;
+    let original = drive_machine_preparing(
+        Seed::Body(&unit),
+        &BoundEnv::new(),
+        &mut |_, _| Ok(()),
+        SourcePreparation::Original,
+        None,
+    )
+    .expect("original unit");
+    let checked = drive_machine_preparing(
+        Seed::Body(&unit),
+        &BoundEnv::new(),
+        &mut |_, _| Ok(()),
+        SourcePreparation::Checked,
+        None,
+    )
+    .expect("checked unit");
+    let checked_nil = drive_machine_preparing(
+        Seed::Body(&nil),
+        &BoundEnv::new(),
+        &mut |_, _| Ok(()),
+        SourcePreparation::Checked,
+        None,
+    )
+    .expect("checked nil");
+    assert_eq!(original.encode_to_vec(), [0x2a, 3, 0xaa, 1, 0]);
+    assert_eq!(checked.encode_to_vec(), original.encode_to_vec());
+    assert!(checked_nil.encode_to_vec().is_empty());
+}
+
+#[test]
+fn fixed_funding_host_template_lowers_metered_and_refuses_other_procs() {
+    let template = Proc::parse_via_wpda("{% Nil %}[#Nil]").expect("fixed template syntax");
+    let mut used = 0;
+    let mut cancelled = || false;
+    let mut budget = ReflectedCodecBudget::new(&mut used, 1_000_000, 1_000_000, &mut cancelled);
+    let canonical = lower_rholang_host_proc_with_budget(&template, &mut budget)
+        .expect("exact checked generator template");
+    assert_eq!(canonical.cost_signed_terms.len(), 1);
+    assert!(used > 0);
+
+    let mut refused_work = 0;
+    let mut refused_cancel = || false;
+    let mut refused_budget =
+        ReflectedCodecBudget::new(&mut refused_work, 1_000_000, 1_000_000, &mut refused_cancel);
+    assert!(matches!(
+        lower_rholang_host_proc_with_budget(&Proc::PUnit, &mut refused_budget),
+        Err(RholangAstLowerError::CostPlanUnavailable(_))
+    ));
+    assert_eq!(refused_work, 0, "shape refusal precedes budgeted lowering");
+}
+
+#[test]
 fn initial_storage_reservation_checks_both_dimensions_and_retains_paid_prefix() {
     let source = Proc::PZero;
     // Initial capacities reserve 128 four-byte slots, then the seed reserves
@@ -923,6 +978,7 @@ fn empty_context_is_paid_once_and_cached_only_after_success() {
                 direct_flt_results: HashMap::new(),
                 empty_env: None,
                 source_preparation: SourcePreparation::Original,
+                parsed_source: None,
             };
             cancelled.set(true);
             assert_eq!(

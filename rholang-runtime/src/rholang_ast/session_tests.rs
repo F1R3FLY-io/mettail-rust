@@ -26,6 +26,7 @@ fn unresolved_flt() -> Proc {
 
 fn assert_idle() {
     assert!(!ACTIVE.with(Cell::get));
+    assert!(ALTERNATIVE_FOLDS.with(|state| state.borrow().is_none()));
     assert!(HELD_FOLD_SITES.with(|sites| sites.borrow().is_empty()));
     assert_eq!(take_guard_discharge_report(), GuardDischargeReport::default());
 }
@@ -220,6 +221,140 @@ fn checked_public_source_accepts_concat_and_preserves_eplusplus() {
         Some(ExprInstance::EPlusPlusBody(_))
     ));
     assert!(work > 0);
+}
+
+#[test]
+fn projected_host_proc_uses_the_public_meter_and_preserves_lowered_bytes() {
+    use mettail_rholang_codegen::ReflectedCodecBudget;
+
+    let source = Proc::PCostSignedTerm(
+        Arc::new(Proc::PZero),
+        Arc::new(CostSig::CostSigHash(Arc::new(Proc::PZero))),
+    );
+    let reference = lower_public_body(&source, BoundEnv::new())
+        .expect("public source has a canonical host lowering");
+    assert!(reference.folds.is_empty());
+    assert_eq!(reference.guard_report.disagreements, 0);
+
+    let mut work = 0;
+    let mut cancel = || false;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 100_000, 1_000_000, &mut cancel);
+    let par = super::super::lower_rholang_host_proc_with_budget(&source, &mut budget)
+        .expect("selected host value lowers through the public metered path");
+    assert_eq!(par.encode_to_vec(), reference.par.encode_to_vec());
+    assert!(budget.work_used() > 0);
+    assert_idle();
+    let arbitrary = Proc::PParInfix(Arc::new(integer(7)), Arc::new(Proc::PZero));
+    assert!(matches!(
+        super::super::lower_rholang_host_proc_with_budget(&arbitrary, &mut budget),
+        Err(RholangAstLowerError::CostPlanUnavailable(_))
+    ));
+
+    let mut refused_work = 0;
+    let mut cancel = || false;
+    let mut zero_budget = ReflectedCodecBudget::new(&mut refused_work, 0, 0, &mut cancel);
+    assert!(super::super::lower_rholang_host_proc_with_budget(&source, &mut zero_budget).is_err());
+    assert_idle();
+}
+
+fn checked_query_bytes(source: &str) -> Vec<u8> {
+    use mettail_rholang_codegen::ReflectedCodecBudget;
+    use models::rust::rholang::sorter::par_sort_matcher::ParSortMatcher;
+    use models::rust::rholang::sorter::sortable::Sortable;
+
+    let proc = Proc::parse_via_wpda(source).expect("query source parses through MeTTaIL");
+    let mut work = 0;
+    let mut cancel = || false;
+    let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 16_000_000, &mut cancel);
+    let result = lower_public_body_with_budget(&proc, BoundEnv::new(), &mut budget).unwrap_or_else(
+        |error| panic!("checked query preparation failed for {source:?}: {error:?}"),
+    );
+    assert!(result.folds.is_empty());
+    assert!(budget.work_used() > 0);
+    assert_idle();
+    ParSortMatcher::sort_match(&result.par).term.encode_to_vec()
+}
+
+#[test]
+fn checked_query_rows_match_explicit_row_local_scopes_and_all_pattern_forms() {
+    for (source, expanded) in [
+        (
+            r#"for(x <- @"svc"!?(1, 2)) { @"OUT"!(*x) }"#,
+            r#"new reply in { @"svc"!(*reply, 1, 2) | for(x <- reply) { @"OUT"!(*x) } }"#,
+        ),
+        (
+            r#"for(@x <- @"svc"!?(1)) { @"OUT"!(x) }"#,
+            r#"new reply in { @"svc"!(*reply, 1) | for(@x <- reply) { @"OUT"!(x) } }"#,
+        ),
+        (
+            r#"for(<- @"svc"!?()) { @"OUT"!(1) }"#,
+            r#"new reply in { @"svc"!(*reply) | for(<- reply) { @"OUT"!(1) } }"#,
+        ),
+        (
+            r#"for(x <- @"first"!?(1); y <- @"second"!?(*x)) { @"OUT"!(*y) }"#,
+            r#"new firstReply in { @"first"!(*firstReply, 1) | for(x <- firstReply) {
+                new secondReply in { @"second"!(*secondReply, *x) | for(y <- secondReply) { @"OUT"!(*y) } }
+            } }"#,
+        ),
+        (
+            r#"for(x <- @"first"; y <- @"second"!?(*x)) { @"OUT"!(*y) }"#,
+            r#"for(x <- @"first") { new reply in { @"second"!(*reply, *x) | for(y <- reply) { @"OUT"!(*y) } } }"#,
+        ),
+        (
+            r#"for(x <- @"first"!?(1) & y <- @"second"!?(2)) { @"OUT"!(*x, *y) }"#,
+            r#"new firstReply, secondReply in { @"first"!(*firstReply, 1) | @"second"!(*secondReply, 2)
+                | for(x <- firstReply & y <- secondReply) { @"OUT"!(*x, *y) } }"#,
+        ),
+        (
+            r#"for(@x <- @"svc"!?(1) where x == 1) { @"OUT"!(x) }"#,
+            r#"new reply in { @"svc"!(*reply, 1) | for(@x <- reply where x == 1) { @"OUT"!(x) } }"#,
+        ),
+        (
+            r#"new __r0 in { for(x <- @"svc"!?(*__r0)) { @"OUT"!(*__r0, *x) } }"#,
+            r#"new __r0 in { new reply in { @"svc"!(*reply, *__r0)
+                | for(x <- reply) { @"OUT"!(*__r0, *x) } } }"#,
+        ),
+    ] {
+        assert_eq!(checked_query_bytes(source), checked_query_bytes(expanded), "{source}");
+        assert_eq!(
+            checked_query_bytes(source),
+            checked_query_bytes(source),
+            "fresh identities stay private"
+        );
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+
+    #[test]
+    fn checked_query_request_payload_preserves_every_argument(
+        arguments in proptest::collection::vec(proptest::prelude::any::<i16>(), 0..12),
+    ) {
+        let arguments = arguments.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        let source = format!("for(x <- @\"svc\"!?({arguments})) {{ @\"OUT\"!(*x) }}");
+        let payload = if arguments.is_empty() { "*reply".into() } else { format!("*reply, {arguments}") };
+        let expanded = format!("new reply in {{ @\"svc\"!({payload}) | for(x <- reply) {{ @\"OUT\"!(*x) }} }}");
+        proptest::prop_assert_eq!(checked_query_bytes(&source), checked_query_bytes(&expanded));
+    }
+}
+
+#[test]
+fn checked_query_preparation_refuses_insufficient_budget_and_leaves_the_session_idle() {
+    use mettail_rholang_codegen::ReflectedCodecBudget;
+
+    let proc = Proc::parse_via_wpda(r#"for(x <- @"svc"!?(1, 2, 3)) { @"OUT"!(*x) }"#)
+        .expect("query source parses");
+    for (work_limit, byte_limit, cancelled) in
+        [(0, 1_000_000, false), (1_000_000, 0, false), (1_000_000, 1_000_000, true)]
+    {
+        let mut work = 0;
+        let mut cancel = || cancelled;
+        let mut budget = ReflectedCodecBudget::new(&mut work, work_limit, byte_limit, &mut cancel);
+        assert!(lower_public_body_with_budget(&proc, BoundEnv::new(), &mut budget).is_err());
+        assert_idle();
+    }
+    checked_query_bytes(r#"for(x <- @"svc"!?(1)) { @"OUT"!(*x) }"#);
 }
 
 #[test]
@@ -713,4 +848,109 @@ fn caught_legacy_accessor_panics_preserve_owned_outputs() {
     assert_eq!(output.folds.len(), 1);
     assert_eq!(output.guard_report.residual, 3);
     assert_idle();
+}
+
+#[test]
+fn alternative_fold_scope_cleans_up_and_rejects_reentry() {
+    let result = with_owned_outputs(|_| {
+        let _alternatives = AlternativeFoldScope::enter().unwrap();
+        assert!(matches!(
+            AlternativeFoldScope::enter(),
+            Err(RholangAstLowerError::ReentrantLoweringSession)
+        ));
+        assert!(matches!(
+            SessionGuard::enter(),
+            Err(RholangAstLowerError::ReentrantLoweringSession)
+        ));
+        register_fold_site(FoldKind::Int, 8, "test").unwrap();
+        Err(RholangAstLowerError::UnsupportedProc("test rejection"))
+    });
+    assert!(result.is_err());
+    assert_idle();
+    let _owner = SessionGuard::enter().unwrap();
+    let _alternatives = AlternativeFoldScope::enter().unwrap();
+    assert_eq!(register_fold_site(FoldKind::Int, 8, "test"), Ok(0));
+}
+
+#[test]
+fn alternative_fold_reuse_at_capacity_does_not_allocate_or_alias() {
+    let _owner = SessionGuard::enter().unwrap();
+    seed_outputs(255);
+    let alternatives = AlternativeFoldScope::enter().unwrap();
+    assert_eq!(register_fold_site(FoldKind::Int, 8, "test"), Ok(255));
+    alternatives.begin_alternative();
+    assert_eq!(register_fold_site(FoldKind::Int, 8, "test"), Ok(255));
+    for (kind, width, fingerprint) in [
+        (FoldKind::UInt, 8, "test"),
+        (FoldKind::Int, 9, "test"),
+        (FoldKind::Int, 8, "other"),
+    ] {
+        alternatives.begin_alternative();
+        assert_eq!(
+            register_fold_site(kind, width, fingerprint),
+            Err(RholangAstLowerError::FoldSiteIndexOverflow { index: 256 })
+        );
+        assert_eq!(HELD_FOLD_SITES.with(|sites| sites.borrow().len()), 256);
+    }
+    alternatives.begin_alternative();
+    assert_eq!(register_fold_site(FoldKind::Int, 8, "test"), Ok(255));
+    assert_eq!(
+        register_fold_site(FoldKind::Int, 8, "test"),
+        Err(RholangAstLowerError::FoldSiteIndexOverflow { index: 256 })
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(256))]
+
+    #[test]
+    fn alternative_fold_allocation_matches_position_and_full_signature(
+        base in 0usize..256,
+        cases in proptest::collection::vec(
+            proptest::collection::vec((0usize..6, -12i64..12, 0u8..3), 0..20), 0..20),
+    ) {
+        use proptest::prelude::*;
+        let _owner = SessionGuard::enter().unwrap();
+        seed_outputs(base);
+        let alternatives = AlternativeFoldScope::enter().unwrap();
+        let kinds = [FoldKind::Int, FoldKind::UInt, FoldKind::Float, FoldKind::Fixed,
+            FoldKind::BigIntCast, FoldKind::BigRatCast];
+        let mut expected = std::collections::BTreeMap::new();
+        for case in cases {
+            alternatives.begin_alternative();
+            for (ordinal, (kind, width, language)) in case.into_iter().enumerate() {
+                let key = (ordinal, kind, width, language);
+                let next = base + expected.len();
+                let expected_index = expected.get(&key).copied().map(Ok).unwrap_or_else(|| {
+                    u8::try_from(next).map_err(|_| RholangAstLowerError::FoldSiteIndexOverflow { index: next })
+                });
+                let fingerprint = format!("language-{language}");
+                let actual = register_fold_site(kinds[kind], width, &fingerprint);
+                prop_assert_eq!(&actual, &expected_index);
+                if let Ok(index) = actual {
+                    expected.insert(key, index);
+                    HELD_FOLD_SITES.with(|sites| {
+                        let sites = sites.borrow();
+                        let spec = &sites[usize::from(index)];
+                        assert_eq!((spec.kind, spec.width, spec.fingerprint.as_str()),
+                            (kinds[kind], width, fingerprint.as_str()));
+                        assert_eq!(spec.site_index, index);
+                    });
+                }
+                prop_assert_eq!(HELD_FOLD_SITES.with(|sites| sites.borrow().len()), base + expected.len());
+                HELD_FOLD_SITES.with(|sites| {
+                    let sites = sites.borrow();
+                    for spec in &sites[..base] {
+                        assert_eq!((spec.kind, spec.width, spec.site_index, spec.fingerprint.as_str()),
+                            (FoldKind::Int, 8, 0, "test-only-unused-descriptor"));
+                    }
+                    for (&(_, kind, width, language), &index) in &expected {
+                        let spec = &sites[usize::from(index)];
+                        assert_eq!((spec.kind, spec.width, spec.site_index), (kinds[kind], width, index));
+                        assert_eq!(spec.fingerprint, format!("language-{language}"));
+                    }
+                });
+            }
+        }
+    }
 }

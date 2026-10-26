@@ -338,6 +338,8 @@ impl FltAutomatonMatcher {
             execute_program(&state.program, entry, target).map(|captures| ListParWithRandom {
                 pars: captures,
                 random_state: data.random_state.clone(),
+                cost_authority: data.cost_authority.clone(),
+                cost_stack: data.cost_stack.clone(),
             })
         };
 

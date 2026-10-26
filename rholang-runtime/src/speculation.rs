@@ -78,8 +78,8 @@
 //! **different `Produce` source** than the one it left with.
 //!
 //! This module reproduces both strata rather than papering over them:
-//! [`SpeculativeSandbox::fire`] performs the removal (inside f1r3node's own
-//! `process_match_found`) and then [`SpeculativeSandbox::stage_peek_restores`]
+//! [`SpeculativeSandbox::fire`] performs the removal through f1r3node's checked
+//! CostV2 resting-candidate commit and then [`SpeculativeSandbox::stage_peek_restores`]
 //! re-produces each non-persistent datum through the ordinary `produce` path, so
 //! the restored datum's `Produce` source is minted afresh exactly as it is in an
 //! ordinary run. The two are separate named steps precisely so that Stage 2 can
@@ -110,15 +110,18 @@
 //!
 //! ## ★ On-chain from the start, and what that decided
 //!
-//! Speculation runs **on chain**: the exploration is part of the deploy, not a
-//! node-local convenience. Four consequences are visible in this module's API.
+//! The current RestingCOMM implementation is **standalone local only**. It is
+//! not a consensus or replay transition: Casper's legacy event converter and
+//! `ReplayRSpace` refuse RestingCOMM until their versioned evidence path is
+//! installed. The earlier on-chain design obligations remain explicit below;
+//! they are not claims that the current CostV2 implementation meets them.
 //!
 //! | consequence | how it shows up here |
 //! |---|---|
 //! | the exploration is a deterministic function of the deploy | [`SpeculativeSandbox::saturate`] takes the `Blake2b512Random` from its caller — there is no seed constant in this file. The sandbox's randomness must derive from the **deploy's**, never from a fixture seed such as `step.rs`'s `FIXED_SEED`. |
-//! | replay must RE-DERIVE the whole exploration | speculation emits no COMM events into the deploy log, so there is nothing for replay to filter against. Every ordering this module depends on is content-derived and total — see the determinism note on `SpaceMatcher::enumerate_enabled_rendezvous`, which is why that query lives on the trait `ReplayRSpace` also implements. Because the exploration is metered (below), replay re-deriving it costs exactly what play cost: cost agreement is structural, not separately arranged. |
+//! | replay needs its own checked transition | `ReplayRSpace` currently refuses RestingCOMM; a versioned V3 native journal and explicit replay operation are required before consensus use. |
 //! | **metering is the bound** | see the section below. There is no node budget, no frontier cap, no new consensus parameter. |
-//! | a replay-equivalence differential is required | it is a later stage, templated on `casper/tests/util/rholang/async_driver_differential.rs`. The consensus-side half it needs already exists: `ReplayRSpace::enabled_rendezvous` shares one implementation with `RSpace::enabled_rendezvous`, pinned by `rspace++/tests/enabled_rendezvous_spec.rs::t6`. |
+//! | a replay-equivalence differential is required | a future consensus route must compare play and replay with exact Resting identities and resource receipts; no local capability can be promoted into that route. |
 //!
 //! ## ★★ Metering is the bound — there is no separate budget
 //!
@@ -129,31 +132,35 @@
 //!
 //! This is not something the sandbox has to arrange — it is already true, and
 //! the reason is worth writing down because it is not where a reader would look
-//! for it. The consensus cost unit is **one token per send or receive
-//! EVALUATED**, and it is levied in `Reduce::eval_send` and
-//! `Reduce::eval_receive` (`self.metering.reserve_comm(send_eval_cost())?` /
-//! `receive_eval_cost()`), i.e. when the *term* is evaluated, upstream of
-//! whether any rendezvous fires. `MeteredMachine::reserve_reduction` — the
-//! non-COMM structural charge — is explicitly diagnostic and contributes zero to
-//! the consensus consumed cost, so `reserve_comm` is the whole of it.
+//! for it. In the merged node a COMM is the only metered compute (DR-131).
+//! Staging a send or a receive is free: `Reduce::eval_send` and
+//! `Reduce::eval_receive` record only `reserve_primitive(send_eval_cost())` and
+//! `reserve_primitive(receive_eval_cost())`, and a primitive event carries zero
+//! consensus units. A COMM is charged when it fires. In this sandbox every COMM
+//! fires as a resting rendezvous. The node's accounting observer reserves one
+//! unit for it (`reserve_comm_identity`, weight one) before the atomic
+//! retirement.
 //!
-//! Every speculative step passes through that charge:
+//! Every speculative step is either free or passes through that charge:
 //!
 //! | speculative step | route | charged |
 //! |---|---|---|
-//! | administrative saturation | `RhoRuntime::inj` → `eval_send` / `eval_receive` | ✔ one token per send, one per receive |
-//! | the store mutation of a firing | `RSpace::process_match_found` | — already paid when the send and the receive were evaluated |
-//! | the continuation body | `DebruijnInterpreter::eval` → `eval_send` / `eval_receive` | ✔ one token per send, one per receive |
-//! | a peek restore | `StagedSpace::produce` | — the send that produced it was already charged |
+//! | administrative saturation | `RhoRuntime::inj` → `eval_send` / `eval_receive` | — staging a send or a receive is free |
+//! | a local resting-candidate commit | `RSpace::commit_enabled_rendezvous` | ✔ one unit for one domain-separated Resting identity, charged before atomic retirement; never a synthetic Produce/Consume introduction |
+//! | the continuation body | `DebruijnInterpreter::eval` → `eval_send` / `eval_receive` | — staging is free; a COMM that the body enables is charged when it fires |
+//! | a peek restore | `StagedSpace::produce` | — staging is free |
 //!
-//! So there is no unmetered path through this module, and the ONE thing that
-//! could have created one is not done: the sandbox's budget is **never** set to
-//! `Cost::unsafe_max()`. `create_rho_runtime` gives it `CostAccounting::empty_cost()`
-//! — zero — so a sandbox that is never funded refuses to evaluate anything at
-//! all, which is the fail-shut direction. [`SpeculativeSandbox::fund_from`] is
-//! the only way to give it phlogiston, and it takes it from the **host deploy's
-//! remaining budget**, under the host's own signature, so the speculation draws
-//! on the same tokens and the same lane the deploy does.
+//! So there is no unmetered COMM in this module, and the ONE thing that could
+//! have created one is not done: the sandbox's budget is **never** set to
+//! `Cost::unsafe_max()`. `create_rho_runtime` gives it
+//! `CostAccounting::empty_cost()` — zero. A sandbox that is never funded can
+//! stage a program, but it cannot fire a COMM. Only
+//! [`SpeculativeSandbox::fund_from_standalone`] binds the RestingCOMM
+//! authority, so [`SpeculativeSandbox::fire`] first refuses with a `Bootstrap`
+//! error. That is the fail-shut direction. [`SpeculativeSandbox::fund_from`]
+//! is the only way to give it phlogiston, and it takes it from the **host
+//! deploy's remaining budget**, under the host's own signature, so the
+//! speculation draws on the same tokens and the same lane the deploy does.
 //!
 //! The charge-back is the mirror: after the exploration,
 //! [`SpeculativeSandbox::consumed`] is what it spent, and the caller charges the
@@ -161,24 +168,27 @@
 //! returns `Err(OutOfPhlogistonsError)` if the deploy cannot afford it. Nothing
 //! in this module owns a budget: budgets are F1r3node's, from `wallet.txt`.
 //!
-//! ### ⚠ A budget unit is ONE COMM, not one unit of `Cost.value`
+//! ### ⚠ A budget unit is one unit of `Cost.value`, and a fired COMM costs one unit
 //!
-//! Measured, and it corrects the natural misreading of the API's types.
-//! `RuntimeBudget::reconcile_lane` "tallies ONE per committed
-//! `BillableKind::Comm` event and ZERO for every other kind", and
-//! `MeteredMachine::reserve_comm(amount)` charges **one** regardless of
-//! `amount` — the `Cost` it takes is the *diagnostic weight* that rides into the
-//! event log and the cost-trace digest, not the amount charged. A budget of `k`
-//! tokens therefore commits at most `k` COMMs and then raises on the next one.
+//! Measured on the merged node (2026-10-20). `RuntimeBudget::reconcile_lane`
+//! adds the weight of each committed COMM, produce or consume event. It adds
+//! zero for a reduction, primitive or substitution event. The resting-COMM
+//! charge has a weight of one. `MeteredMachine::reserve_comm(amount)` records
+//! one COMM event with the weight `amount.value`, so it lowers the remaining
+//! budget by `amount.value`: a weight of 11 lowered it by 11. The node that
+//! MeTTaIL pinned before this merge charged one unit for each call, whatever
+//! the weight.
 //!
 //! Two consequences for a caller:
 //!
-//! * [`SpeculativeSandbox::consumed`] is a **COMM count**. Measured: 64 staged
-//!   sends cost exactly 64 units.
-//! * Charging it back is `consumed()` *calls* to `reserve_comm`, not one call
-//!   with `consumed()` as the argument. `s1_speculative_sandbox.rs::t10` made
-//!   that mistake in an earlier revision and measured the host being charged 1
-//!   where 5 was owed; it now charges per COMM and asserts the arithmetic.
+//! * [`SpeculativeSandbox::consumed`] is a **COMM count**. Measured: 64 fired
+//!   COMMs cost exactly 64 units, so their 64 staged sends and 64 staged
+//!   receives cost nothing (`s1_speculative_sandbox.rs::t9`).
+//! * Charging it back is `consumed()` *calls* to `reserve_comm`, each with a
+//!   weight of one unit. Each speculative COMM is then one COMM event of weight
+//!   one on the host's lane, as it is in the sandbox.
+//!   [`search::charge_host_comms`] does this, and
+//!   `s1_speculative_sandbox.rs::t10` asserts the arithmetic.
 //!
 //! ## Depth-`n` truncation is RESUMABLE — not success, not failure
 //!
@@ -221,7 +231,7 @@
 //! | call | what it is |
 //! |---|---|
 //! | `RSpace::enabled_rendezvous()` | `E(S)`. Read-only. The whole query lives on `SpaceMatcher`, so play and replay run one enumeration. |
-//! | `RSpace::process_match_found(pc)` | fire the rendezvous `pc` NAMES: remove its data and continuation by store index, drop the joins, emit the `COMM`, return the continuation and matched payloads. |
+//! | `RSpace::commit_enabled_rendezvous(pc)` | Revalidate the exact candidate under CostV2, reserve the checked Resting COMM charge before atomic retirement, emit a distinct RestingCOMM without synthetic IO, return the continuation and matched payloads. |
 //! | `DebruijnInterpreter::eval` | the public, self-contained reduction entry — seeds its own completion driver and drains it. |
 //! | `RholangAndScalaDispatcher::dispatch` | the system-process (`ScalaBodyRef`) arm. |
 //! | `ISpace::revert_to_soft_checkpoint` | exact state install on a fresh sandbox — pinned by `tests/x3_exact_state_install.rs`. |
@@ -234,7 +244,7 @@
 //! persistent continuation was never stored, so the reducer re-issues the
 //! consume to put it back; on the produce path it was never removed, so the
 //! reducer does not. In the sandbox the continuation is **resting** when the step
-//! begins, which is the produce-path shape, and `process_match_found` already
+//! begins, which is the produce-path shape, and checked resting commit
 //! implements it exactly (`if !persist { remove_continuation }`). Calling
 //! `continue_consume_process` would re-install a persistent continuation that is
 //! already there and duplicate it.
@@ -319,11 +329,13 @@ use rholang::rust::interpreter::system_processes::Definition;
 use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::hashing::stable_hash_provider::EventCodecEpoch;
 use rspace_plus_plus::rspace::hot_store::HotStoreState;
 use rspace_plus_plus::rspace::internal::{Datum, ProduceCandidate, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{
     commit_produce, ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+    RSpaceAccountingObserver,
 };
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -365,7 +377,7 @@ pub enum SpeculationError {
     Interpreter(InterpreterError),
     /// [`SpeculativeSandbox::fire`] was handed a rendezvous the store does not
     /// admit — a stale index, or a rendezvous enumerated against a different
-    /// state. `process_match_found` returned no result.
+    /// state. The checked resting-candidate commit returned `Ok(None)`.
     NotFired,
     /// The sandbox could not be built: the in-memory key-value store or the
     /// history repository refused. Carried as text because the two failures come
@@ -1119,10 +1131,10 @@ impl BranchOutcome {
 /// The two staged writes are byte-identical to what an ordinary run leaves
 /// behind on its no-match path:
 ///
-/// * `produce` ⇒ `put_datum` with `Produce::create(channel, data, persist)` —
-///   `RSpace::store_data`'s body with the same freshly minted source.
-/// * `consume` ⇒ `put_continuation` + one `put_join` per channel —
-///   `RSpace::store_waiting_continuation`'s body.
+/// * `produce` ⇒ `put_datum` with a source minted under the wrapped space's
+///   codec epoch, matching `RSpace::store_data`.
+/// * `consume` ⇒ `put_continuation` with an epoch-matched source, then one
+///   `put_join` per channel, matching `RSpace::store_waiting_continuation`.
 ///
 /// So a staged state is not an approximation of a resting state; it *is* one.
 ///
@@ -1167,18 +1179,38 @@ impl StagedSpace {
         MaybeProduceResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
         RSpaceError,
     > {
-        let source = Produce::create(&channel, &data, persist);
+        let source = Produce::create_for_epoch(self.inner.codec_epoch(), &channel, &data, persist)?;
         let datum = Datum { a: Arc::new(data), persist, source };
-        commit_produce(guard, || {
-            self.inner.get_store().put_datum(&channel, datum);
+        commit_produce(guard, || -> Result<_, RSpaceError> {
+            self.inner.get_store().put_datum(&channel, datum)?;
             self.staged_produces.fetch_add(1, AtomicOrdering::Relaxed);
-            None
-        })
+            Ok(None)
+        })?
     }
 }
 
 #[async_trait]
 impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for StagedSpace {
+    fn codec_epoch(&self) -> EventCodecEpoch {
+        self.inner.codec_epoch()
+    }
+
+    fn set_accounting_observer(
+        &self,
+        observer: Option<
+            Arc<
+                dyn RSpaceAccountingObserver<
+                    Par,
+                    BindPattern,
+                    ListParWithRandom,
+                    TaggedContinuation,
+                >,
+            >,
+        >,
+    ) {
+        self.inner.set_accounting_observer(observer);
+    }
+
     // ── the two overridden operations ────────────────────────────────────
 
     async fn produce(
@@ -1217,12 +1249,18 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for StagedS
         MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
         RSpaceError,
     > {
-        let waiting =
-            WaitingContinuation::create(&channels, &patterns, &continuation, persist, peeks);
+        let waiting = WaitingContinuation::create_for_epoch(
+            self.inner.codec_epoch(),
+            &channels,
+            &patterns,
+            &continuation,
+            persist,
+            peeks,
+        )?;
         let store = self.inner.get_store();
-        let _ = store.put_continuation(&channels, waiting);
+        store.put_continuation(&channels, waiting)?;
         for channel in channels.iter() {
-            store.put_join(channel, &channels);
+            store.put_join(channel, &channels)?;
         }
         self.staged_consumes.fetch_add(1, AtomicOrdering::Relaxed);
         Ok(None)
@@ -1233,20 +1271,33 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for StagedS
     async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         self.inner.create_checkpoint().await
     }
-    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         self.inner.get_data(channel).await
     }
     async fn get_waiting_continuations(
         &self,
         channels: Vec<Par>,
-    ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
+    ) -> Result<Vec<WaitingContinuation<BindPattern, TaggedContinuation>>, RSpaceError> {
         self.inner.get_waiting_continuations(channels).await
     }
-    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+    async fn get_joins(&self, channel: Par) -> Result<Vec<Vec<Par>>, RSpaceError> {
         self.inner.get_joins(channel).await
     }
     async fn remove_all_data(&self, channel: &Par) -> Result<(), RSpaceError> {
         self.inner.remove_all_data(channel).await
+    }
+    async fn remove_data_at(&self, channel: &Par, index: i32) -> Result<(), RSpaceError> {
+        self.inner.remove_data_at(channel, index).await
+    }
+    async fn remove_data_at_recorded(
+        &self,
+        channel: &Par,
+        index: i32,
+        operation_id: &[u8],
+    ) -> Result<(), RSpaceError> {
+        self.inner
+            .remove_data_at_recorded(channel, index, operation_id)
+            .await
     }
     async fn remove_all_continuations(&self, channels: Vec<Par>) -> Result<(), RSpaceError> {
         self.inner.remove_all_continuations(channels).await
@@ -1330,7 +1381,7 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for StagedS
 /// into a fresh sandbox (Stage 2: branching).
 pub struct SpeculativeSandbox {
     /// The real space. Held separately from the runtime's `StagedSpace` because
-    /// `enabled_rendezvous` and `process_match_found` are `RSpace`'s, not
+    /// `enabled_rendezvous` and checked resting commit are `RSpace`'s, not
     /// `ISpace`'s — and because the whole point is that the *reducer* cannot
     /// reach them.
     inner: Space,
@@ -1344,6 +1395,10 @@ pub struct SpeculativeSandbox {
     /// [`SpeculativeSandbox::fire`] and exposed by
     /// [`SpeculativeSandbox::guard_refusals`].
     guard_refusals: GuardRefusalLedger,
+    /// Set only by the trusted standalone constructors. It selects a CostV2
+    /// space at construction; there is no setter, and no guest payload, source
+    /// syntax or cost grade reaches this choice.
+    standalone: bool,
 }
 
 impl SpeculativeSandbox {
@@ -1357,11 +1412,51 @@ impl SpeculativeSandbox {
         Self::with_definitions(Vec::new()).await
     }
 
+    /// Build an explicitly local CostV2 sandbox. The caller must then use
+    /// `fund_from_standalone`; constructing a space alone grants neither
+    /// phlogiston nor RestingCOMM authority.
+    pub async fn new_standalone() -> Result<Self, SpeculationError> {
+        Self::with_definitions_for_standalone(Vec::new()).await
+    }
+
+    /// Fund a standalone sandbox under the host's signature, then bind the
+    /// matching local RestingCOMM charge capability. There is no local-to-
+    /// consensus conversion; native execution/replay remains a separate path.
+    pub fn fund_from_standalone(&self, host: &RuntimeBudget) -> Result<Cost, SpeculationError> {
+        if !self.standalone {
+            return Err(SpeculationError::Bootstrap(
+                "sandbox was not built by a standalone host".into(),
+            ));
+        }
+        if host.native_execution_active() {
+            return Err(SpeculationError::Bootstrap(
+                "standalone lookahead cannot use an active native accounting host".into(),
+            ));
+        }
+        let funded = self.fund_from(host);
+        self.runtime.cost().enable_standalone_resting_comm()?;
+        Ok(funded)
+    }
+
     /// A sandbox carrying `definitions` — the Tier-3 fold-contract system
     /// processes a generated language installs. Speculation over a language's
     /// terms needs them for the same reason ordinary execution does.
-    pub async fn with_definitions(
+    pub async fn with_definitions(definitions: Vec<Definition>) -> Result<Self, SpeculationError> {
+        Self::with_definitions_and_authority(definitions, false).await
+    }
+
+    /// The trusted standalone host builds a fresh local CostV2 sandbox per
+    /// request. This constructor does not represent a consensus or replay
+    /// authority.
+    pub(crate) async fn with_definitions_for_standalone(
+        definitions: Vec<Definition>,
+    ) -> Result<Self, SpeculationError> {
+        Self::with_definitions_and_authority(definitions, true).await
+    }
+
+    async fn with_definitions_and_authority(
         mut definitions: Vec<Definition>,
+        standalone: bool,
     ) -> Result<Self, SpeculationError> {
         let mut manager = InMemoryStoreManager::new();
         // `{error}`, not `{error:?}`: a `Bootstrap` detail is carried into
@@ -1376,10 +1471,17 @@ impl SpeculativeSandbox {
         let guards = SubstrateGuardMatcher::new();
         // ★ The refusal ledger, taken before the decider is boxed. `fire` reads it to tell a
         // rendezvous that did not address this configuration (`NotFired`) from one whose `where`
-        // guard could not be DECIDED — two facts that arrive at `process_match_found` as the
-        // same `None`, and that a branch driver must not confuse.
+        // guard could not be DECIDED — distinct from a stale candidate. The
+        // checked Resting commit returns `Ok(None)` only for stale candidates;
+        // a guard denial is an explicit error, and the ledger distinguishes
+        // an undecidable guest guard from a definite false one.
         let guard_refusals = guards.refusals();
-        let inner = Space::create(store, Arc::new(Box::new(guards)))
+        let epoch = if standalone {
+            EventCodecEpoch::CostV2
+        } else {
+            EventCodecEpoch::Legacy
+        };
+        let inner = Space::create_for_epoch(epoch, store, Arc::new(Box::new(guards)))
             .map_err(|error| SpeculationError::Bootstrap(format!("rspace: {error}")))?;
         let staged = StagedSpace::new(inner.clone());
 
@@ -1390,17 +1492,18 @@ impl SpeculativeSandbox {
             &mut definitions,
             ExternalServices::noop(), // inert — a speculative branch calls no external service
         )
-        .await;
+        .await
+        .map_err(|error| SpeculationError::Bootstrap(format!("rho runtime: {error}")))?;
 
         // ★★ NO `Cost::unsafe_max()` HERE, and that is the point.
         //
         // `create_rho_runtime` gives the sandbox `CostAccounting::empty_cost()`
-        // — a budget of zero — so an unfunded sandbox refuses to evaluate
-        // anything. That is the fail-shut direction, and it is what makes an
-        // unmetered speculative evaluation unrepresentable rather than merely
-        // discouraged. `fund_from` is the only way in, and it draws on the host
-        // deploy's remaining phlogiston. See the metering section of the module
-        // header.
+        // — a budget of zero. An unfunded sandbox can stage a program, because
+        // staging is free (DR-131), but it cannot fire a COMM. That is the
+        // fail-shut direction, and it is what makes an unmetered speculative
+        // COMM unrepresentable rather than merely discouraged. `fund_from` is
+        // the only way in, and it draws on the host deploy's remaining
+        // phlogiston. See the metering section of the module header.
 
         // ★ Correction 4: capture AFTER bootstrap, so the installed system
         // continuations are in every state this sandbox ever loads.
@@ -1412,6 +1515,7 @@ impl SpeculativeSandbox {
             runtime,
             baseline,
             guard_refusals,
+            standalone,
         })
     }
 
@@ -1423,7 +1527,8 @@ impl SpeculativeSandbox {
     /// draws on the same tokens and is attributed to the same per-signature lane
     /// the deploy is. It is not a new allocation: whatever the exploration
     /// spends, the caller charges back to the host with
-    /// `MeteredMachine::reserve_comm(sandbox.consumed())`, which fails shut with
+    /// [`search::charge_host_comms`], one `MeteredMachine::reserve_comm` call of
+    /// weight one for each unit of `sandbox.consumed()`. It fails shut with
     /// `OutOfPhlogistonsError` if the deploy cannot afford it.
     ///
     /// An exploration that would run away therefore exhausts the deploy and is
@@ -1458,15 +1563,15 @@ impl SpeculativeSandbox {
         self.runtime.cost().clone()
     }
 
-    /// What this sandbox has spent: the consensus consumed cost, i.e. one token
-    /// per send and per receive evaluated. This is the amount to charge back to
-    /// the host.
+    /// What this sandbox has spent: the consensus consumed cost, i.e. one unit
+    /// per COMM fired. Staging a send or a receive is free (DR-131). This is the
+    /// amount to charge back to the host.
     pub fn consumed(&self) -> Cost {
         self.runtime.cost().total_cost()
     }
 
-    /// What this sandbox has left. Zero means the next send or receive it
-    /// evaluates will raise `OutOfPhlogistonsError`.
+    /// What this sandbox has left. Zero means the next COMM it fires fails with
+    /// `RSpaceError::OutOfPhlogistons`.
     pub fn remaining(&self) -> Cost {
         self.runtime.cost().remaining()
     }
@@ -1517,6 +1622,7 @@ impl SpeculativeSandbox {
                 cache_snapshot: self.rebase(state),
                 log: Vec::new(),
                 produce_counter: BTreeMap::new(),
+                replay_cursor: None,
             })
             .await?;
         Ok(())
@@ -1525,17 +1631,27 @@ impl SpeculativeSandbox {
     /// `state` with the bootstrap installs restored under it. Entries `state`
     /// already carries win, so a snapshot round-trips unchanged.
     pub fn rebase(&self, mut state: SpeculativeState) -> SpeculativeState {
-        for (channels, installed) in self.baseline.installed_continuations.iter() {
-            state
-                .installed_continuations
-                .entry(channels.clone())
-                .or_insert_with(|| installed.clone());
+        for (target, baseline) in state
+            .installed_continuations
+            .iter_mut()
+            .zip(self.baseline.installed_continuations.iter())
+        {
+            for (channels, installed) in baseline {
+                target
+                    .entry(channels.clone())
+                    .or_insert_with(|| installed.clone());
+            }
         }
-        for (channel, joins) in self.baseline.installed_joins.iter() {
-            state
-                .installed_joins
-                .entry(channel.clone())
-                .or_insert_with(|| joins.clone());
+        for (target, baseline) in state
+            .installed_joins
+            .iter_mut()
+            .zip(self.baseline.installed_joins.iter())
+        {
+            for (channel, joins) in baseline {
+                target
+                    .entry(channel.clone())
+                    .or_insert_with(|| joins.clone());
+            }
         }
         state
     }
@@ -1567,16 +1683,18 @@ impl SpeculativeSandbox {
     ///
     /// ⚠ `enabled()[0]` is what a `consume` ARRIVING at this state would take —
     /// **not** what an ordinary run does. See correction 1.
-    pub fn enabled(&self) -> Vec<Rendezvous> {
-        self.inner.enabled_rendezvous()
+    pub fn enabled(&self) -> Result<Vec<Rendezvous>, SpeculationError> {
+        self.inner
+            .enabled_rendezvous()
+            .map_err(SpeculationError::Space)
     }
 
     /// `E(S)`, named. Convenience for a driver building a trace.
-    pub fn enabled_names(&self) -> Vec<RendezvousName> {
-        let enabled = self.enabled();
+    pub fn enabled_names(&self) -> Result<Vec<RendezvousName>, SpeculationError> {
+        let enabled = self.enabled()?;
         let mut names = Vec::with_capacity(enabled.len());
         names.extend(enabled.iter().map(RendezvousName::of));
-        names
+        Ok(names)
     }
 
     /// Fire exactly the rendezvous `rendezvous` **names**, then run the
@@ -1584,12 +1702,13 @@ impl SpeculativeSandbox {
     ///
     /// Three things happen, in this order:
     ///
-    /// 1. **The store mutation and the COMM event**, inside f1r3node's own
-    ///    `RSpace::process_match_found`: the selected data are removed by store
+    /// 1. **The store mutation and the distinct RestingCOMM event**, inside
+    ///    f1r3node's checked `RSpace::commit_enabled_rendezvous`: the selected data are removed by store
     ///    index (highest first, so a receive taking two data from one channel
     ///    does not shift an index out from under itself), the continuation is
-    ///    removed unless it is persistent, the joins are dropped, and the `COMM`
-    ///    is appended to the event log.
+    ///    removed unless it is persistent, the joins are dropped, and a
+    ///    distinct `RestingComm` is appended to the event log, with no
+    ///    synthetic Produce or Consume introduction.
     /// 2. **The dispatch**, which is also the saturation: the continuation body
     ///    is evaluated with the matched data bound, and everything it reaches
     ///    stages. It returns at quiescence.
@@ -1612,20 +1731,39 @@ impl SpeculativeSandbox {
         let persistent = rendezvous.continuation.persist;
         let peek = !rendezvous.continuation.peeks.is_empty();
 
-        // (1) mutate + log, in f1r3node.
-        // ★ `process_match_found` answers `None` for two facts that are not one fact: the
-        // rendezvous does not address this configuration, and the rendezvous DOES address it but
-        // its `where` guard could not be decided. Reporting the second as `NotFired` attributes
-        // an undecidable guard to a stale index — the same conflation, one layer up. The ledger
-        // separates them, and only ever REPLACES an error that was already being returned, so no
-        // branch that fired before fails now.
-        let (continuation, results) =
-            self.inner.process_match_found(rendezvous).ok_or_else(|| {
-                match self.guard_refusals.decider_gap_error() {
+        // (1) Checked CostV2 resting commit. Only a sandbox built by the trusted
+        // standalone constructors has a CostV2 space, and only
+        // `fund_from_standalone` sets the RestingCOMM bit. Legacy and consensus
+        // contexts have neither and cannot select this event through a guest
+        // payload.
+        if !self.standalone {
+            return Err(SpeculationError::Bootstrap(
+                "resting rendezvous requires a standalone CostV2 sandbox".into(),
+            ));
+        }
+        let budget = self.runtime.cost();
+        if !budget.standalone_resting_comm_enabled() || budget.native_execution_active() {
+            return Err(SpeculationError::Bootstrap(
+                "resting rendezvous lacks local accounting authority".into(),
+            ));
+        }
+        // RSpace invokes its observer before atomic retirement. The scope
+        // makes that checked, domain-separated Resting identity reserve one
+        // sandbox COMM unit, which host charge-back later mirrors exactly.
+        let scope = budget.enter_comm_accounting_scope();
+        let result = self.inner.commit_enabled_rendezvous(&rendezvous).await;
+        drop(scope);
+        let (continuation, results) = match result {
+            Ok(Some(fired)) => fired,
+            Ok(None) => return Err(SpeculationError::NotFired),
+            Err(RSpaceError::ProduceCommitDenied) => {
+                return Err(match self.guard_refusals.decider_gap_error() {
                     Some(error) => SpeculationError::Interpreter(error),
-                    None => SpeculationError::NotFired,
-                }
-            })?;
+                    None => SpeculationError::Space(RSpaceError::ProduceCommitDenied),
+                });
+            },
+            Err(error) => return Err(SpeculationError::Space(error)),
+        };
 
         let mut payloads = Vec::with_capacity(results.len());
         payloads.extend(results.iter().map(|result| result.matched_datum.clone()));
@@ -1701,7 +1839,10 @@ impl SpeculativeSandbox {
         };
         let mut trace = ReductionTrace::from_process(initial);
         for _ in 0..steps {
-            let enabled = self.enabled();
+            let enabled = match self.enabled() {
+                Ok(enabled) => enabled,
+                Err(error) => return BranchOutcome::Aborted { trace, error },
+            };
             if enabled.is_empty() {
                 return BranchOutcome::Quiescent { state: self.snapshot(), trace };
             }
@@ -1732,7 +1873,10 @@ impl SpeculativeSandbox {
         // anything is still enabled — NOT by whether the bound was reached, so a
         // branch that happens to finish on its last allotted step is reported as
         // the completed evaluation it is.
-        let frontier = self.enabled().len();
+        let frontier = match self.enabled() {
+            Ok(enabled) => enabled.len(),
+            Err(error) => return BranchOutcome::Aborted { trace, error },
+        };
         let state = self.snapshot();
         match frontier {
             0 => BranchOutcome::Quiescent { state, trace },
@@ -1845,35 +1989,45 @@ impl SpeculativeSandbox {
 /// continuation per key rather than a vector and cannot be empty.
 pub fn canonicalize(state: &SpeculativeState) -> SpeculativeState {
     let mut canonical = SpeculativeState::default();
-    canonical.data.reserve(state.data.len());
-    for (channel, data) in state.data.iter() {
-        if !data.is_empty() {
-            canonical.data.insert(channel.clone(), data.clone());
-        }
+    for (target, source) in canonical.data.iter_mut().zip(state.data.iter()) {
+        target.extend(
+            source
+                .iter()
+                .filter(|(_, data)| !data.is_empty())
+                .map(|(key, data)| (key.clone(), data.clone())),
+        );
     }
-    canonical.continuations.reserve(state.continuations.len());
-    for (channels, continuations) in state.continuations.iter() {
-        if !continuations.is_empty() {
-            canonical
-                .continuations
-                .insert(channels.clone(), continuations.clone());
-        }
+    for (target, source) in canonical
+        .continuations
+        .iter_mut()
+        .zip(state.continuations.iter())
+    {
+        target.extend(
+            source
+                .iter()
+                .filter(|(_, continuations)| !continuations.is_empty())
+                .map(|(key, continuations)| (key.clone(), continuations.clone())),
+        );
     }
-    canonical.joins.reserve(state.joins.len());
-    for (channel, joins) in state.joins.iter() {
-        if !joins.is_empty() {
-            canonical.joins.insert(channel.clone(), joins.clone());
-        }
+    for (target, source) in canonical.joins.iter_mut().zip(state.joins.iter()) {
+        target.extend(
+            source
+                .iter()
+                .filter(|(_, joins)| !joins.is_empty())
+                .map(|(key, joins)| (key.clone(), joins.clone())),
+        );
     }
-    canonical
+    for (target, source) in canonical
         .installed_joins
-        .reserve(state.installed_joins.len());
-    for (channel, joins) in state.installed_joins.iter() {
-        if !joins.is_empty() {
-            canonical
-                .installed_joins
-                .insert(channel.clone(), joins.clone());
-        }
+        .iter_mut()
+        .zip(state.installed_joins.iter())
+    {
+        target.extend(
+            source
+                .iter()
+                .filter(|(_, joins)| !joins.is_empty())
+                .map(|(key, joins)| (key.clone(), joins.clone())),
+        );
     }
     canonical.installed_continuations = state.installed_continuations.clone();
     canonical
@@ -1894,10 +2048,9 @@ pub fn canonicalize(state: &SpeculativeState) -> SpeculativeState {
 /// (correction 4).
 pub fn content_fingerprint(state: &SpeculativeState) -> Vec<String> {
     let canonical = canonicalize(state);
-    let mut lines: Vec<String> =
-        Vec::with_capacity(canonical.data.len() + canonical.continuations.len());
+    let mut lines: Vec<String> = Vec::new();
 
-    for (channel, data) in canonical.data.iter() {
+    for (channel, data) in canonical.data.iter().flat_map(|shard| shard.iter()) {
         let mut sources: Vec<String> = Vec::with_capacity(data.len());
         sources.extend(data.iter().map(|datum| {
             format!(
@@ -1917,7 +2070,11 @@ pub fn content_fingerprint(state: &SpeculativeState) -> Vec<String> {
         ));
     }
 
-    for (channels, continuations) in canonical.continuations.iter() {
+    for (channels, continuations) in canonical
+        .continuations
+        .iter()
+        .flat_map(|shard| shard.iter())
+    {
         let mut sources: Vec<String> = Vec::with_capacity(continuations.len());
         sources.extend(continuations.iter().map(|waiting| {
             format!(
@@ -1956,9 +2113,14 @@ pub fn content_fingerprint(state: &SpeculativeState) -> Vec<String> {
 /// representation and allocation cost, never which configurations compare
 /// equal.
 pub fn content_fingerprint_digest(state: &SpeculativeState) -> Blake2b256Hash {
-    let mut lines: Vec<Vec<u8>> = Vec::with_capacity(state.data.len() + state.continuations.len());
+    let mut lines: Vec<Vec<u8>> = Vec::new();
 
-    for (channel, data) in state.data.iter().filter(|(_, data)| !data.is_empty()) {
+    for (channel, data) in state
+        .data
+        .iter()
+        .flat_map(|shard| shard.iter())
+        .filter(|(_, data)| !data.is_empty())
+    {
         let mut records: Vec<[u8; 33]> = Vec::with_capacity(data.len());
         for datum in data {
             let mut record = [0u8; 33];
@@ -1983,6 +2145,7 @@ pub fn content_fingerprint_digest(state: &SpeculativeState) -> Blake2b256Hash {
     for (channels, continuations) in state
         .continuations
         .iter()
+        .flat_map(|shard| shard.iter())
         .filter(|(_, continuations)| !continuations.is_empty())
     {
         let mut records: Vec<[u8; 34]> = Vec::with_capacity(continuations.len());
@@ -2038,6 +2201,97 @@ pub(crate) mod publication_tests {
     use super::*;
     use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
 
+    #[tokio::test]
+    async fn standalone_constructor_selects_only_a_local_cost_v2_sandbox() {
+        let legacy = SpeculativeSandbox::new().await.expect("legacy sandbox");
+        assert_eq!(legacy.inner.codec_epoch(), EventCodecEpoch::Legacy);
+        assert!(!legacy.standalone);
+
+        let local = SpeculativeSandbox::new_standalone()
+            .await
+            .expect("standalone sandbox");
+        assert_eq!(local.inner.codec_epoch(), EventCodecEpoch::CostV2);
+        assert!(local.standalone);
+    }
+
+    #[tokio::test]
+    async fn resting_comm_authority_comes_only_from_standalone_funding() {
+        let host = RuntimeBudget::new(Cost::create(1_000_000, "authority test host"));
+        let legacy = SpeculativeSandbox::new().await.expect("legacy sandbox");
+        assert!(legacy.fund_from_standalone(&host).is_err());
+        assert!(!legacy.runtime.cost().standalone_resting_comm_enabled());
+
+        let local = SpeculativeSandbox::new_standalone()
+            .await
+            .expect("standalone sandbox");
+        assert!(
+            !local.runtime.cost().standalone_resting_comm_enabled(),
+            "construction grants nothing"
+        );
+        local
+            .fund_from_standalone(&host)
+            .expect("fund local sandbox");
+        assert!(local.runtime.cost().standalone_resting_comm_enabled());
+        local.fund_from(&host);
+        assert!(
+            !local.runtime.cost().standalone_resting_comm_enabled(),
+            "re-funding clears the authority"
+        );
+    }
+
+    #[test]
+    fn standalone_funding_preserves_local_authority_origin() {
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let tokio = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("standalone funding test runtime");
+        TestRunner::new(Config::with_cases(64))
+            .run(
+                &(0_i64..1_000_001, prop::collection::vec(any::<bool>(), 1..17)),
+                |(funding, transitions)| {
+                    tokio.block_on(async {
+                        let host = RuntimeBudget::new(Cost::create(funding, "authority property"));
+                        let available = host.remaining();
+                        let signature = host.signature();
+                        let ordinary = SpeculativeSandbox::new().await.expect("ordinary sandbox");
+                        let local = SpeculativeSandbox::new_standalone().await.expect("local sandbox");
+                        prop_assert_eq!(ordinary.inner.codec_epoch(), EventCodecEpoch::Legacy);
+                        prop_assert_eq!(local.inner.codec_epoch(), EventCodecEpoch::CostV2);
+                        prop_assert!(!ordinary.runtime.cost().standalone_resting_comm_enabled());
+                        prop_assert!(!local.runtime.cost().standalone_resting_comm_enabled());
+
+                        for grant_local in transitions {
+                            prop_assert!(ordinary.fund_from_standalone(&host).is_err());
+                            prop_assert!(!ordinary.runtime.cost().standalone_resting_comm_enabled());
+                            prop_assert_eq!(ordinary.fund_from(&host), available.clone());
+                            let funded = if grant_local {
+                                local.fund_from_standalone(&host).expect("local authority grant")
+                            } else {
+                                local.fund_from(&host)
+                            };
+                            prop_assert_eq!(funded, available.clone());
+                            prop_assert_eq!(local.runtime.cost().standalone_resting_comm_enabled(), grant_local);
+                            prop_assert_eq!(local.runtime.cost().remaining().value, funding);
+                            prop_assert_eq!(host.remaining(), available.clone());
+                            prop_assert_eq!(host.signature(), signature.clone());
+                        }
+
+                        local.fund_from_standalone(&host).expect("final local authority grant");
+                        prop_assert!(local.runtime.cost().standalone_resting_comm_enabled());
+                        local.fund_from(&host);
+                        prop_assert!(!local.runtime.cost().standalone_resting_comm_enabled());
+                        prop_assert_eq!(host.remaining(), available);
+                        prop_assert_eq!(host.signature(), signature);
+                        Ok(())
+                    })
+                },
+            )
+            .expect("standalone authority property");
+    }
+
     pub(crate) struct TestGuard(pub bool);
 
     impl ProduceCommitGuard for TestGuard {
@@ -2050,11 +2304,73 @@ pub(crate) mod publication_tests {
         }
     }
 
-    pub(crate) async fn new_space() -> Space {
+    async fn new_space_for_epoch(epoch: EventCodecEpoch) -> Space {
         let mut manager = InMemoryStoreManager::new();
         let stores = manager.r_space_stores().await.expect("publication stores");
-        Space::create(stores, Arc::new(Box::new(SubstrateGuardMatcher::new())))
+        Space::create_for_epoch(epoch, stores, Arc::new(Box::new(SubstrateGuardMatcher::new())))
             .expect("publication space")
+    }
+
+    pub(crate) async fn new_space() -> Space {
+        new_space_for_epoch(EventCodecEpoch::Legacy).await
+    }
+
+    #[tokio::test]
+    async fn staged_sources_match_live_codec_epoch_for_produce_and_consume() {
+        for epoch in [EventCodecEpoch::Legacy, EventCodecEpoch::CostV1, EventCodecEpoch::CostV2] {
+            let staged = StagedSpace::new(new_space_for_epoch(epoch).await);
+            assert_eq!(staged.codec_epoch(), epoch);
+            let channel = new_gstring_par("staged-epoch".to_owned(), Vec::new(), false);
+            let data = ListParWithRandom {
+                pars: vec![new_gint_par(42, Vec::new(), false)],
+                random_state: vec![7; 32],
+                ..ListParWithRandom::default()
+            };
+            let patterns = vec![BindPattern {
+                patterns: vec![new_freevar_par(0, Vec::new())],
+                remainder: None,
+                free_count: 1,
+            }];
+            let continuation = TaggedContinuation {
+                tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
+                guard: None,
+                cost_authority: None,
+            };
+            let channels = vec![channel.clone()];
+            let expected_produce =
+                Produce::create_for_epoch(epoch, &channel, &data, true).expect("produce identity");
+            let expected_consume = WaitingContinuation::create_for_epoch(
+                epoch,
+                &channels,
+                &patterns,
+                &continuation,
+                false,
+                BTreeSet::new(),
+            )
+            .expect("consume identity");
+
+            assert!(staged
+                .consume(channels.clone(), patterns, continuation, false, BTreeSet::new())
+                .await
+                .expect("stage consume")
+                .is_none());
+            assert!(staged
+                .produce(channel.clone(), data, true)
+                .await
+                .expect("stage produce")
+                .is_none());
+            let stored = staged.get_data(&channel).await.expect("stored datum");
+            assert_eq!(stored.len(), 1);
+            assert_eq!(stored[0].source.hash, expected_produce.hash);
+            assert_eq!(stored[0].source.channel_hash, expected_produce.channel_hash);
+            let waiting = staged
+                .get_waiting_continuations(channels)
+                .await
+                .expect("stored continuation");
+            assert_eq!(waiting.len(), 1);
+            assert_eq!(waiting[0].source, expected_consume.source);
+            assert!(staged.take_event_log().await.is_empty());
+        }
     }
 
     #[tokio::test]
@@ -2065,6 +2381,7 @@ pub(crate) mod publication_tests {
             let data = ListParWithRandom {
                 pars: vec![new_gint_par(42, Vec::new(), false)],
                 random_state: vec![7; 32],
+                ..ListParWithRandom::default()
             };
             staged
                 .consume(
@@ -2077,6 +2394,7 @@ pub(crate) mod publication_tests {
                     TaggedContinuation {
                         tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
                         guard: None,
+                        cost_authority: None,
                     },
                     false,
                     BTreeSet::new(),
@@ -2088,11 +2406,16 @@ pub(crate) mod publication_tests {
                 .await;
             assert_eq!(result.expect_err("refused staging"), RSpaceError::ProduceCommitDenied);
             assert_eq!(staged.staged_produces(), 0);
-            assert!(staged.get_data(&channel).await.is_empty());
+            assert!(staged
+                .get_data(&channel)
+                .await
+                .expect("staged read")
+                .is_empty());
             assert_eq!(
                 staged
                     .get_waiting_continuations(vec![channel.clone()])
                     .await
+                    .expect("staged waiting read")
                     .len(),
                 1
             );
@@ -2102,11 +2425,18 @@ pub(crate) mod publication_tests {
                 .expect("authorized staging")
                 .is_none());
             assert_eq!(staged.staged_produces(), 1);
-            let stored = staged.get_data(&channel).await;
+            let stored = staged.get_data(&channel).await.expect("staged read");
             assert_eq!(stored.len(), 1);
             assert_eq!(*stored[0].a, data);
             assert_eq!(stored[0].persist, persistent);
-            assert_eq!(staged.get_waiting_continuations(vec![channel]).await.len(), 1);
+            assert_eq!(
+                staged
+                    .get_waiting_continuations(vec![channel])
+                    .await
+                    .expect("staged waiting read")
+                    .len(),
+                1
+            );
             assert!(staged.take_event_log().await.is_empty());
         }
     }

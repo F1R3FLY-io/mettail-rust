@@ -414,17 +414,17 @@ fn service_diagnostic(error: InstalledSemanticError) -> ReplyBody {
             use mettail_dovetail_runtime::TheoryImageCompileError;
             match error {
                 TheoryImageCompileError::PredicateRole { reason, .. } => {
-                    return kernel_undetermined_diagnostic(reason)
+                    return kernel_undetermined_diagnostic(reason);
                 },
                 TheoryImageCompileError::Allocation => {
                     return kernel_undetermined_diagnostic(
                         SemanticMatchUndetermined::AllocationFailed,
-                    )
+                    );
                 },
                 TheoryImageCompileError::LengthOverflow => {
                     return kernel_undetermined_diagnostic(
                         SemanticMatchUndetermined::InputLimitExceeded,
-                    )
+                    );
                 },
                 TheoryImageCompileError::Image(_)
                 | TheoryImageCompileError::Projection(_)

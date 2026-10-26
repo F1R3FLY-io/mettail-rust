@@ -278,6 +278,7 @@ pub fn interpret_construction_graph<C: FnMut() -> bool>(
                         };
                         let footprint = match scalar {
                             ValueOp::Empty => Footprint { entries: 0, text_bytes: 0 },
+                            ValueOp::UnitTuple => Footprint { entries: 1, text_bytes: 0 },
                             ValueOp::Text(text) => Footprint { entries: 1, text_bytes: text.len() },
                             ValueOp::Integer(_)
                             | ValueOp::Boolean(_)
@@ -289,6 +290,7 @@ pub fn interpret_construction_graph<C: FnMut() -> bool>(
                             // In particular the text clone is AFTER reservation.
                             let value = match scalar {
                                 ValueOp::Empty => DirectNodeTarget::empty(),
+                                ValueOp::UnitTuple => DirectNodeTarget::unit_tuple(),
                                 ValueOp::Integer(value) => DirectNodeTarget::integer(*value),
                                 ValueOp::Boolean(value) => DirectNodeTarget::boolean(*value),
                                 ValueOp::Text(value) => DirectNodeTarget::text(value.clone()),

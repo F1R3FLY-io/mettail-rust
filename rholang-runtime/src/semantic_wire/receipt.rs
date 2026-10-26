@@ -1,4 +1,6 @@
-//! The exact finite-depth schema checked by SemanticReceiptWire.v.
+//! The V1 finite-depth schema checked by SemanticReceiptWire.v. Resource tag 2
+//! extends it with the checked Cost(G) normalization trace modeled by
+//! CheckedCostImage.v; tags 0 and 1 and the enclosing receipt stay unchanged.
 //!
 //! Tuple materialization reserves one logical value descriptor and eight bytes
 //! per child slot before allocation. Owned byte vectors move into the wire;
@@ -6,10 +8,11 @@
 //! its bytes. Every variable roster is iterative. Receipt work fields are data,
 //! never recharged as execution. This is transport, not proof verification.
 
-use super::{SemanticWireError, VALUE_DESCRIPTOR_BYTES, decode_u32, decode_u64, encode_u64};
+use super::{decode_u32, decode_u64, encode_u64, SemanticWireError, VALUE_DESCRIPTOR_BYTES};
 use crate::language_install::{exact_expr, exact_list, wire_list};
 use crate::semantic_service::SemanticServiceResult;
 use mettail_dovetail_runtime::{
+    SemanticGradedNormalizationHopReceiptV2, SemanticGradedNormalizationProofReceiptV2,
     SemanticIntrinsicOpcodeV1, SemanticIntrinsicReceiptV1, SemanticJudgmentProofReceipt,
     SemanticJudgmentProofStep, SemanticNormalizationHopReceiptV1,
     SemanticNormalizationStepReceiptV1, SemanticPremiseReceipt, SemanticResourceReceipt,
@@ -20,7 +23,7 @@ use mettail_grammar_core::{
     TheoryJudgmentRuleProgramId, TheoryRuleProgramId, TheorySortId,
 };
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
-use models::rhoapi::{Par, expr::ExprInstance};
+use models::rhoapi::{expr::ExprInstance, Par};
 use models::rust::utils::new_gbytearray_par;
 
 type Result<T> = std::result::Result<T, SemanticWireError>;
@@ -198,6 +201,22 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
         })
     }
 
+    fn graded_proof(&mut self, proof: SemanticGradedNormalizationProofReceiptV2) -> Result<Par> {
+        self.tuple(|e| Ok([e.step(proof.proof)?, e.bytes(proof.grade)?]))
+    }
+
+    fn graded_hop(&mut self, hop: SemanticGradedNormalizationHopReceiptV2) -> Result<Par> {
+        self.tuple(|e| {
+            Ok([
+                e.bytes(hop.before)?,
+                e.bytes(hop.after)?,
+                e.roster(hop.exhaustive_proofs, Self::graded_proof)?,
+                e.uint(hop.selected_proof as u64)?,
+                e.uint(hop.charged_work)?,
+            ])
+        })
+    }
+
     pub(super) fn resource(&mut self, r: SemanticResourceReceipt) -> Result<Par> {
         match r {
             SemanticResourceReceipt::NoSemanticGrade => self.tuple(|e| Ok([e.uint(0_u32)?])),
@@ -211,6 +230,22 @@ impl<C: FnMut() -> bool> Encoder<'_, '_, C> {
                     e.uint(grade_sort.0)?,
                     e.bytes(grade)?,
                     e.fingerprint(cost_image_fingerprint)?,
+                ])
+            }),
+            SemanticResourceReceipt::CheckedTraceV2 {
+                grade_sort,
+                grade,
+                cost_image_fingerprint,
+                entry_grade,
+                hops,
+            } => self.tuple(|e| {
+                Ok([
+                    e.uint(2_u32)?,
+                    e.uint(grade_sort.0)?,
+                    e.bytes(grade)?,
+                    e.fingerprint(cost_image_fingerprint)?,
+                    e.bytes(entry_grade)?,
+                    e.roster(hops, Self::graded_hop)?,
                 ])
             }),
         }
@@ -476,6 +511,27 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
         })
     }
 
+    fn graded_proof(&mut self, value: &Par) -> Result<SemanticGradedNormalizationProofReceiptV2> {
+        let [proof, grade] = self.tuple(value)?;
+        Ok(SemanticGradedNormalizationProofReceiptV2 {
+            proof: self.step(proof)?,
+            grade: self.bytes(grade)?,
+        })
+    }
+
+    fn graded_hop(&mut self, value: &Par) -> Result<SemanticGradedNormalizationHopReceiptV2> {
+        let [before, after, proofs, selected, work] = self.tuple(value)?;
+        let selected_proof = usize::try_from(self.uint(selected)?)
+            .map_err(|_| SemanticWireError::Shape("graded proof ordinal overflow"))?;
+        Ok(SemanticGradedNormalizationHopReceiptV2 {
+            before: self.bytes(before)?,
+            after: self.bytes(after)?,
+            exhaustive_proofs: self.roster(proofs, Self::graded_proof)?,
+            selected_proof,
+            charged_work: self.uint(work)?,
+        })
+    }
+
     pub(super) fn resource(&mut self, value: &Par) -> Result<SemanticResourceReceipt> {
         let (tag, payload) = self
             .list(value)?
@@ -488,26 +544,22 @@ impl<C: FnMut() -> bool> Decoder<'_, '_, C> {
                 grade: self.bytes(grade)?,
                 cost_image_fingerprint: self.fingerprint(image)?,
             },
+            (2, [sort, grade, image, entry_grade, hops]) => {
+                SemanticResourceReceipt::CheckedTraceV2 {
+                    grade_sort: TheorySortId(self.coordinate(sort)?),
+                    grade: self.bytes(grade)?,
+                    cost_image_fingerprint: self.fingerprint(image)?,
+                    entry_grade: self.bytes(entry_grade)?,
+                    hops: self.roster(hops, Self::graded_hop)?,
+                }
+            },
             _ => return Err(SemanticWireError::Shape("unknown resource tag or arity")),
         })
     }
 
     fn receipt(&mut self, value: &Par) -> Result<SemanticTransitionReceipt> {
-        let [
-            language,
-            theory,
-            image,
-            action,
-            rule,
-            input,
-            output,
-            effect,
-            class,
-            resource,
-            premises,
-            hops,
-            work,
-        ] = self.tuple(value)?;
+        let [language, theory, image, action, rule, input, output, effect, class, resource, premises, hops, work] =
+            self.tuple(value)?;
         self.budget.charge(0, VALUE_DESCRIPTOR_BYTES)?;
         Ok(SemanticTransitionReceipt {
             language_fingerprint: self.fingerprint(language)?,
@@ -730,6 +782,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn semantic_wire_preserves_selected_proof_and_complete_graded_roster_v2() {
+        let mut original = transport_receipt();
+        let step = original.normalization_hops[0].exhaustive_proofs[0].clone();
+        original.resource = SemanticResourceReceipt::CheckedTraceV2 {
+            grade_sort: TheorySortId(7),
+            grade: vec![3, 4],
+            cost_image_fingerprint: [7; 32],
+            entry_grade: vec![1],
+            hops: vec![SemanticGradedNormalizationHopReceiptV2 {
+                before: step.before.clone(),
+                after: step.after.clone(),
+                exhaustive_proofs: vec![
+                    SemanticGradedNormalizationProofReceiptV2 {
+                        proof: step.clone(),
+                        grade: vec![1],
+                    },
+                    SemanticGradedNormalizationProofReceiptV2 { proof: step, grade: vec![2] },
+                ],
+                selected_proof: 1,
+                charged_work: 9,
+            }],
+        };
+        let (encoded, _, _, _) = encode(original.clone(), 1_000_000, 1_000_000, 0);
+        let encoded = encoded.expect("checked V2 encode");
+        let (decoded, _, _, _) = decode(&encoded, 1_000_000, 1_000_000, 0);
+        assert_eq!(decoded, Ok(original));
     }
 
     #[test]

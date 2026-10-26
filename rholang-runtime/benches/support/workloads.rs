@@ -857,6 +857,7 @@ fn sigma_echo_receiver(accept_channel: &str, arity: usize) -> Par {
             source: Some(quoted(accept_channel)),
             remainder: None,
             free_count: (arity + 1) as i32,
+            cost_signature: None,
         }],
         body,
         false,

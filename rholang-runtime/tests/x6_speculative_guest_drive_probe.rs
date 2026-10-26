@@ -86,7 +86,11 @@ async fn probe(label: &str, source: &str) {
 
     let host = host_budget(40_000_000);
     let started = std::time::Instant::now();
-    let attempt = LookaheadService::serve(
+    // Changed by the merge of feature/cost-accounted-rho: the node now refuses a resting commit
+    // in a space that is not CostV2 (rspace++ `ops_resting.rs`), so the guest drive, which
+    // fires COMMs in the sandbox, takes the standalone path. The call was
+    // `LookaheadService::serve(`.
+    let attempt = LookaheadService::serve_local(
         LookaheadRequest::new(subject, Lookahead::Unbounded)
             .with_prelude(prelude)
             .with_projection(LeafProjection::resting_on(LEAF))

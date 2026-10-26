@@ -35,8 +35,9 @@
 //!   of the firing continuation plus the `Produce` content hash of each datum it
 //!   consumed. That name is regime-independent: a datum consumed straight out of
 //!   a `produce` (never stored, index `-1`) hashes identically to the same datum
-//!   consumed at rest, because `Produce::create` reads only (channel, payload,
-//!   persistence).
+//!   consumed at rest, because `Produce::create_for_epoch` reads only the codec
+//!   epoch, the channel, the payload and the persistence. The oracle and the
+//!   standalone sandbox both use the CostV2 epoch, so their names agree.
 //! * Configurations are compared by [`content_fingerprint`], which canonicalises
 //!   empty entries away first. ⚠ A read MATERIALISES an entry — `get_data` on an
 //!   empty channel inserts an empty vector — so the raw channel count of a
@@ -87,10 +88,12 @@ use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
 use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::hashing::stable_hash_provider::EventCodecEpoch;
+use rspace_plus_plus::rspace::hot_store::shard_of;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{
-    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard, RSpaceAccountingObserver,
 };
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -146,6 +149,7 @@ mod guarded_publication {
                 let data = ListParWithRandom {
                     pars: vec![new_gint_par(42, Vec::new(), false)],
                     random_state: vec![7; 32],
+                    ..ListParWithRandom::default()
                 };
                 let patterns = vec![BindPattern {
                     patterns: vec![new_freevar_par(0, Vec::new())],
@@ -153,15 +157,36 @@ mod guarded_publication {
                     free_count: 1,
                 }];
                 let continuation = TaggedContinuation::default();
+                // Changed for the merged node's epoch-bound event names. The
+                // recorder names each COMM with `create_for_epoch` in its space's
+                // codec epoch, as the live space does, so the expected name uses
+                // the same epoch. The code was:
+                // let expected = CommName {
+                //     consume: Consume::create(
+                //         &vec![channel.clone()],
+                //         &patterns,
+                //         &continuation,
+                //         false,
+                //     )
+                //     .hash,
+                //     data: vec![Produce::create(&channel, &data, persistent).hash],
+                // };
+                let epoch = space.codec_epoch();
                 let expected = CommName {
-                    consume: Consume::create(
-                        &vec![channel.clone()],
+                    consume: Consume::create_for_epoch(
+                        epoch,
+                        &[channel.clone()],
                         &patterns,
                         &continuation,
                         false,
                     )
+                    .expect("the expected consume has a name in the space's codec epoch")
                     .hash,
-                    data: vec![Produce::create(&channel, &data, persistent).hash],
+                    data: vec![
+                        Produce::create_for_epoch(epoch, &channel, &data, persistent)
+                            .expect("the expected datum has a name in the space's codec epoch")
+                            .hash,
+                    ],
                 };
                 assert!(space
                     .consume(
@@ -223,7 +248,11 @@ mod guarded_publication {
                         .expect("retain verified state");
                 }
                 assert_eq!(
-                    space.get_waiting_continuations(vec![channel]).await.len(),
+                    space
+                        .get_waiting_continuations(vec![channel])
+                        .await
+                        .expect("read waiting continuations")
+                        .len(),
                     usize::from(!invoke)
                 );
                 let ledger = space.fired.lock().expect("recorded COMMs");
@@ -247,6 +276,7 @@ mod guarded_publication {
         let data = ListParWithRandom {
             pars: vec![new_gint_par(42, Vec::new(), false)],
             random_state: vec![7; 32],
+            ..ListParWithRandom::default()
         };
         assert!(space
             .produce_guarded(
@@ -263,7 +293,7 @@ mod guarded_publication {
             .expect("allowed storage")
             .is_none());
         assert!(space.fired.lock().expect("recorded COMMs").is_empty());
-        let stored = space.get_data(&channel).await;
+        let stored = space.get_data(&channel).await.expect("read data");
         assert_eq!(stored.len(), 1);
         assert_eq!(*stored[0].a, data);
     }
@@ -297,8 +327,12 @@ fn host_budget(units: i64) -> RuntimeBudget {
 
 /// A sandbox funded from a fresh host budget of `HOST_UNITS`.
 async fn funded_sandbox() -> SpeculativeSandbox {
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox must build");
-    sandbox.fund_from(&host_budget(HOST_UNITS));
+    let sandbox = SpeculativeSandbox::new_standalone()
+        .await
+        .expect("local sandbox must build");
+    sandbox
+        .fund_from_standalone(&host_budget(HOST_UNITS))
+        .expect("fund local sandbox");
     sandbox
 }
 
@@ -386,6 +420,7 @@ fn receive_with_body(
             source: Some(chan(source)),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         })
         .collect();
     let bind_count = binds.len() as i32;
@@ -531,23 +566,48 @@ impl RecordingSpace {
 
     /// Reconstruct the semantic name of a COMM from the result the space
     /// returned. `removed_datum` is the payload AS STORED (pre bind-transform),
-    /// which is what `Produce::create` hashed when the datum was minted — so
-    /// this reconstruction is exact for a datum consumed at rest AND for one
-    /// consumed straight out of a `produce` at index `-1`.
+    /// which is what `Produce::create_for_epoch` hashed in the space's codec
+    /// epoch when the datum was minted — so this reconstruction is exact for a
+    /// datum consumed at rest AND for one consumed straight out of a `produce`
+    /// at index `-1`.
     fn record(
         &self,
         result: &MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) {
         if let Some((continuation, results)) = result {
-            let consume = Consume::create(
+            // Changed for the CostV2 standalone sandbox of the merged node. The
+            // sandbox names a rendezvous with `create_for_epoch` in its space's
+            // epoch, so the oracle names each COMM in its own space's epoch too.
+            // The code was:
+            // let consume = Consume::create(
+            //     &continuation.channels,
+            //     &continuation.patterns,
+            //     &continuation.continuation,
+            //     continuation.persistent,
+            // );
+            // let mut data = Vec::with_capacity(results.len());
+            // data.extend(results.iter().map(|item| {
+            //     Produce::create(&item.channel, &item.removed_datum, item.persistent).hash
+            // }));
+            let epoch = self.inner.codec_epoch();
+            let consume = Consume::create_for_epoch(
+                epoch,
                 &continuation.channels,
                 &continuation.patterns,
                 &continuation.continuation,
                 continuation.persistent,
-            );
+            )
+            .expect("the oracle names the firing consume in its space's codec epoch");
             let mut data = Vec::with_capacity(results.len());
             data.extend(results.iter().map(|item| {
-                Produce::create(&item.channel, &item.removed_datum, item.persistent).hash
+                Produce::create_for_epoch(
+                    epoch,
+                    &item.channel,
+                    &item.removed_datum,
+                    item.persistent,
+                )
+                .expect("the oracle names each consumed datum in its space's codec epoch")
+                .hash
             }));
             self.fired
                 .lock()
@@ -559,6 +619,26 @@ impl RecordingSpace {
 
 #[async_trait]
 impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for RecordingSpace {
+    fn codec_epoch(&self) -> EventCodecEpoch {
+        self.inner.codec_epoch()
+    }
+
+    fn set_accounting_observer(
+        &self,
+        observer: Option<
+            Arc<
+                dyn RSpaceAccountingObserver<
+                    Par,
+                    BindPattern,
+                    ListParWithRandom,
+                    TaggedContinuation,
+                >,
+            >,
+        >,
+    ) {
+        self.inner.set_accounting_observer(observer);
+    }
+
     async fn produce(
         &self,
         channel: Par,
@@ -617,20 +697,33 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Recordi
     async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         self.inner.create_checkpoint().await
     }
-    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         self.inner.get_data(channel).await
     }
     async fn get_waiting_continuations(
         &self,
         channels: Vec<Par>,
-    ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
+    ) -> Result<Vec<WaitingContinuation<BindPattern, TaggedContinuation>>, RSpaceError> {
         self.inner.get_waiting_continuations(channels).await
     }
-    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+    async fn get_joins(&self, channel: Par) -> Result<Vec<Vec<Par>>, RSpaceError> {
         self.inner.get_joins(channel).await
     }
     async fn remove_all_data(&self, channel: &Par) -> Result<(), RSpaceError> {
         self.inner.remove_all_data(channel).await
+    }
+    async fn remove_data_at(&self, channel: &Par, index: i32) -> Result<(), RSpaceError> {
+        self.inner.remove_data_at(channel, index).await
+    }
+    async fn remove_data_at_recorded(
+        &self,
+        channel: &Par,
+        index: i32,
+        operation_id: &[u8],
+    ) -> Result<(), RSpaceError> {
+        self.inner
+            .remove_data_at_recorded(channel, index, operation_id)
+            .await
     }
     async fn remove_all_continuations(&self, channels: Vec<Par>) -> Result<(), RSpaceError> {
         self.inner.remove_all_continuations(channels).await
@@ -709,8 +802,17 @@ async fn ordinary_run(par: Par) -> OrdinaryRun {
         .r_space_stores()
         .await
         .expect("in-memory rspace stores must build");
-    let inner = Space::create(store, Arc::new(Box::new(SubstrateGuardMatcher::new())))
-        .expect("a fresh in-memory RSpace must build");
+    // Changed for the CostV2 standalone sandbox of the merged node. The
+    // trace-following run uses `SpeculativeSandbox::new_standalone`, whose
+    // space is CostV2, so the oracle runs on a CostV2 space too. The code was:
+    // let inner = Space::create(store, Arc::new(Box::new(SubstrateGuardMatcher::new())))
+    //     .expect("a fresh in-memory RSpace must build");
+    let inner = Space::create_for_epoch(
+        EventCodecEpoch::CostV2,
+        store,
+        Arc::new(Box::new(SubstrateGuardMatcher::new())),
+    )
+    .expect("a fresh in-memory CostV2 RSpace must build");
     let space = RecordingSpace::new(inner.clone());
     let ledger = space.fired.clone();
 
@@ -721,10 +823,13 @@ async fn ordinary_run(par: Par) -> OrdinaryRun {
         &mut Vec::new(),
         ExternalServices::noop(),
     )
-    .await;
-    // The oracle is metered exactly as the sandbox is — same units, same
-    // charge points (`eval_send` / `eval_receive`) — so the two arms differ in
-    // the stratification and in nothing else, cost included.
+    .await
+    .expect("ordinary test runtime must build");
+    // The oracle is funded with the same units as the sandbox. In the merged
+    // node a COMM is the only metered operation (DR-131): t8 pins that an
+    // unfunded sandbox stages a send and a receive. So the two arms
+    // differ in the stratification, and the comparison below reads
+    // configurations and COMM names, not cost.
     runtime
         .cost()
         .set(Cost::create(HOST_UNITS, "s1 host deploy"));
@@ -764,13 +869,13 @@ struct TraceRun {
 /// Run `par` in a sandbox, at each step firing the rendezvous whose name matches
 /// the next COMM the ordinary run made.
 async fn trace_following_run(par: Par, wanted: &[CommName]) -> Result<TraceRun, SpeculationError> {
-    let sandbox = SpeculativeSandbox::new().await?;
-    sandbox.fund_from(&host_budget(HOST_UNITS));
+    let sandbox = SpeculativeSandbox::new_standalone().await?;
+    sandbox.fund_from_standalone(&host_budget(HOST_UNITS))?;
     sandbox.saturate(par, seed()).await?;
 
     let mut positions = Vec::with_capacity(wanted.len());
     for (step, name) in wanted.iter().enumerate() {
-        let enabled = sandbox.enabled();
+        let enabled = sandbox.enabled().expect("enabled roster");
         let position = locate(&enabled, name).unwrap_or_else(|| {
             panic!(
                 "step {step}: the COMM the ordinary run fired is NOT in E(S) — \
@@ -819,8 +924,7 @@ async fn t0a_teeth_the_sandbox_stages_and_the_oracle_fires() {
 
     let quiescent = canonicalize(&sandbox.snapshot());
     assert_eq!(
-        quiescent
-            .data
+        quiescent.data[shard_of(&chan("c"))]
             .get(&chan("c"))
             .map(|data| data.len())
             .unwrap_or(0),
@@ -828,7 +932,7 @@ async fn t0a_teeth_the_sandbox_stages_and_the_oracle_fires() {
         "nothing fired, so both data are still resting"
     );
 
-    let enabled = sandbox.enabled();
+    let enabled = sandbox.enabled().expect("enabled roster");
     assert_eq!(
         enabled.len(),
         4,
@@ -853,7 +957,7 @@ async fn t0b_teeth_firing_actually_changes_the_configuration() {
         .expect("saturate");
 
     let before = content_fingerprint(&sandbox.snapshot());
-    let enabled = sandbox.enabled();
+    let enabled = sandbox.enabled().expect("enabled roster");
     assert_eq!(enabled.len(), 4);
 
     let step = sandbox
@@ -867,7 +971,7 @@ async fn t0b_teeth_firing_actually_changes_the_configuration() {
     let after = content_fingerprint(&sandbox.snapshot());
     assert_ne!(before, after, "firing must change the configuration");
 
-    let remaining = sandbox.enabled();
+    let remaining = sandbox.enabled().expect("enabled roster");
     assert_eq!(
         remaining.len(),
         1,
@@ -882,7 +986,12 @@ async fn t0b_teeth_firing_actually_changes_the_configuration() {
 #[tokio::test]
 async fn t0c_the_post_bootstrap_baseline_is_carried_into_every_state() {
     let sandbox = funded_sandbox().await;
-    let installed = sandbox.baseline().installed_continuations.len();
+    let installed = sandbox
+        .baseline()
+        .installed_continuations
+        .iter()
+        .map(|shard| shard.len())
+        .sum::<usize>();
     assert!(
         installed > 1,
         "the runtime must bootstrap several system processes; saw {installed}"
@@ -891,33 +1000,47 @@ async fn t0c_the_post_bootstrap_baseline_is_carried_into_every_state() {
 
     // A hand-built state carrying no installs at all.
     let mut bare = SpeculativeState::default();
-    bare.data.insert(
+    bare.data[shard_of(&chan("c"))].insert(
         chan("c"),
         vec![Datum::create(
             &chan("c"),
             ListParWithRandom {
                 pars: vec![new_gint_par(1, Vec::new(), false)],
                 random_state: seed().to_bytes(),
+                ..ListParWithRandom::default()
             },
             false,
         )],
     );
     assert_eq!(
-        bare.installed_continuations.len(),
+        bare.installed_continuations
+            .iter()
+            .map(|shard| shard.len())
+            .sum::<usize>(),
         0,
         "the hand-built state genuinely carries no installs"
     );
 
     // `rebase` puts them back; `load` applies `rebase`.
     assert_eq!(
-        sandbox.rebase(bare.clone()).installed_continuations.len(),
+        sandbox
+            .rebase(bare.clone())
+            .installed_continuations
+            .iter()
+            .map(|shard| shard.len())
+            .sum::<usize>(),
         installed,
         "rebase must restore every bootstrap install"
     );
 
     sandbox.load(bare).await.expect("load");
     assert_eq!(
-        sandbox.snapshot().installed_continuations.len(),
+        sandbox
+            .snapshot()
+            .installed_continuations
+            .iter()
+            .map(|shard| shard.len())
+            .sum::<usize>(),
         installed,
         "after `load`, the sandbox still has its system processes — without the \
          baseline layer this would have collapsed to 0 and every branch would \
@@ -947,8 +1070,18 @@ async fn t0d_real_sandbox_exercises_the_exact_state_fields() {
         .expect("saturate");
 
     let snapshot = sandbox.snapshot();
-    let program_continuations: usize = snapshot.continuations.values().map(|v| v.len()).sum();
-    let program_joins: usize = snapshot.joins.values().map(|v| v.len()).sum();
+    let program_continuations: usize = snapshot
+        .continuations
+        .iter()
+        .flat_map(|shard| shard.values())
+        .map(Vec::len)
+        .sum();
+    let program_joins: usize = snapshot
+        .joins
+        .iter()
+        .flat_map(|shard| shard.values())
+        .map(Vec::len)
+        .sum();
 
     assert_eq!(program_continuations, 3, "snapshot() sees all three staged continuations");
     assert!(
@@ -957,17 +1090,17 @@ async fn t0d_real_sandbox_exercises_the_exact_state_fields() {
     );
 
     assert!(
-        snapshot.continuations.contains_key(&vec![chan("empty")]),
+        snapshot.continuations[shard_of(&vec![chan("empty")])].contains_key(&vec![chan("empty")]),
         "the real sandbox must exercise a continuation-only row"
     );
     assert!(
-        snapshot
-            .continuations
+        snapshot.continuations[shard_of(&vec![chan("ja"), chan("jb")])]
             .contains_key(&vec![chan("ja"), chan("jb")]),
         "the real sandbox must exercise a multi-channel continuation row"
     );
     assert!(
-        snapshot.joins.contains_key(&chan("ja")) && snapshot.joins.contains_key(&chan("jb")),
+        snapshot.joins[shard_of(&chan("ja"))].contains_key(&chan("ja"))
+            && snapshot.joins[shard_of(&chan("jb"))].contains_key(&chan("jb")),
         "the exact state must independently carry both join-index entries"
     );
 }
@@ -1075,7 +1208,7 @@ async fn t2_index_zero_diverges_from_the_ordinary_choice() {
             .expect("saturate");
         let mut widths: Vec<usize> = Vec::with_capacity(oracle.comms.len());
         for name in oracle.comms.iter() {
-            let enabled = sandbox.enabled();
+            let enabled = sandbox.enabled().expect("enabled roster");
             widths.push(enabled.len());
             let position = locate(&enabled, name)
                 .expect("the ordinary choice must be a member of E(S) at every step");
@@ -1132,8 +1265,7 @@ async fn t3_a_peek_is_two_strata() {
         .expect("saturate");
 
     let before = canonicalize(&sandbox.snapshot());
-    let resting_before: Vec<Blake2b256Hash> = before
-        .data
+    let resting_before: Vec<Blake2b256Hash> = before.data[shard_of(&chan("p"))]
         .get(&chan("p"))
         .expect("the datum rests before the peek")
         .iter()
@@ -1141,7 +1273,7 @@ async fn t3_a_peek_is_two_strata() {
         .collect();
     assert_eq!(resting_before.len(), 1);
 
-    let enabled = sandbox.enabled();
+    let enabled = sandbox.enabled().expect("enabled roster");
     assert_eq!(enabled.len(), 1, "one peek receiver, one datum");
     assert!(
         !enabled[0].continuation.peeks.is_empty(),
@@ -1153,8 +1285,7 @@ async fn t3_a_peek_is_two_strata() {
     assert_eq!(step.peek_restores, 1, "exactly one non-persistent datum is restored");
 
     let after = canonicalize(&sandbox.snapshot());
-    let resting_after: Vec<Blake2b256Hash> = after
-        .data
+    let resting_after: Vec<Blake2b256Hash> = after.data[shard_of(&chan("p"))]
         .get(&chan("p"))
         .expect("the datum is back after the restore")
         .iter()
@@ -1163,11 +1294,17 @@ async fn t3_a_peek_is_two_strata() {
     assert_eq!(resting_after.len(), 1, "the peek'd datum is enumerable again");
 
     // The payload is the same...
-    let payload_before = before.data.get(&chan("p")).expect("before").as_slice()[0]
+    let payload_before = before.data[shard_of(&chan("p"))]
+        .get(&chan("p"))
+        .expect("before")
+        .as_slice()[0]
         .a
         .pars
         .clone();
-    let payload_after = after.data.get(&chan("p")).expect("after").as_slice()[0]
+    let payload_after = after.data[shard_of(&chan("p"))]
+        .get(&chan("p"))
+        .expect("after")
+        .as_slice()[0]
         .a
         .pars
         .clone();
@@ -1186,7 +1323,7 @@ async fn t3_a_peek_is_two_strata() {
 
     // The peek receiver itself is gone (it was linear), so nothing is enabled.
     assert!(
-        sandbox.enabled().is_empty(),
+        sandbox.enabled().expect("enabled roster").is_empty(),
         "a linear peek receiver is consumed by its own firing, so the restored \
          datum has no partner"
     );
@@ -1214,12 +1351,12 @@ async fn t4_a_persistent_continuation_survives_its_own_firing() {
         .await
         .expect("saturate");
 
-    let first = sandbox.enabled();
+    let first = sandbox.enabled().expect("enabled roster");
     assert_eq!(first.len(), 2, "one persistent receiver, two data");
     let step = sandbox.fire(first[0].clone()).await.expect("fire");
     assert!(step.persistent, "the fired continuation was persistent");
 
-    let second = sandbox.enabled();
+    let second = sandbox.enabled().expect("enabled roster");
     assert_eq!(
         second.len(),
         1,
@@ -1228,14 +1365,18 @@ async fn t4_a_persistent_continuation_survives_its_own_firing() {
     sandbox.fire(second[0].clone()).await.expect("fire");
 
     assert!(
-        sandbox.enabled().is_empty(),
+        sandbox.enabled().expect("enabled roster").is_empty(),
         "both data drained; the receiver rests with nothing to take"
     );
     let final_state = canonicalize(&sandbox.snapshot());
-    assert!(final_state.data.get(&chan("q")).is_none(), "both data are consumed");
+    assert!(
+        final_state.data[shard_of(&chan("q"))]
+            .get(&chan("q"))
+            .is_none(),
+        "both data are consumed"
+    );
     assert_eq!(
-        final_state
-            .continuations
+        final_state.continuations[shard_of(&vec![chan("q")])]
             .get(&vec![chan("q")])
             .map(|group| group.len())
             .unwrap_or(0),
@@ -1267,7 +1408,7 @@ async fn t5_a_named_non_least_selection_is_reachable() {
         .saturate(program.clone(), seed())
         .await
         .expect("saturate");
-    let width = probe.enabled().len();
+    let width = probe.enabled().expect("enabled roster").len();
     assert_eq!(width, 3, "one receiver, three data");
 
     let mut consumed: HashSet<Vec<Blake2b256Hash>> = HashSet::with_capacity(width);
@@ -1279,7 +1420,7 @@ async fn t5_a_named_non_least_selection_is_reachable() {
             .saturate(program.clone(), seed())
             .await
             .expect("saturate");
-        let enabled = sandbox.enabled();
+        let enabled = sandbox.enabled().expect("enabled roster");
         assert_eq!(enabled.len(), width, "the enumeration is reproducible");
 
         let name = RendezvousName::of(&enabled[index]);
@@ -1288,8 +1429,7 @@ async fn t5_a_named_non_least_selection_is_reachable() {
 
         // The datum it named is gone; the other two are not.
         let after = canonicalize(&sandbox.snapshot());
-        let remaining: Vec<Blake2b256Hash> = after
-            .data
+        let remaining: Vec<Blake2b256Hash> = after.data[shard_of(&chan("c"))]
             .get(&chan("c"))
             .expect("two data remain")
             .iter()
@@ -1337,8 +1477,8 @@ async fn t6_a_system_process_fires_in_the_sandbox() {
     let installed_groups: Vec<Vec<Par>> = sandbox
         .baseline()
         .installed_continuations
-        .keys()
-        .cloned()
+        .iter()
+        .flat_map(|shard| shard.keys().cloned())
         .collect();
     assert!(
         !installed_groups.is_empty(),
@@ -1372,7 +1512,7 @@ async fn t6_a_system_process_fires_in_the_sandbox() {
             .await
             .expect("saturate");
 
-        let enabled = sandbox.enabled();
+        let enabled = sandbox.enabled().expect("enabled roster");
         if enabled.is_empty() {
             continue;
         }
@@ -1432,17 +1572,17 @@ async fn t7_a_saved_configuration_reloads_exactly() {
 
     let parked = sandbox.snapshot();
     let parked_fingerprint = content_fingerprint(&parked);
-    let parked_names: Vec<RendezvousName> = sandbox.enabled_names();
+    let parked_names: Vec<RendezvousName> = sandbox.enabled_names().expect("enabled names");
     assert_eq!(parked_names.len(), 4);
 
     // Explore one branch destructively.
-    let enabled = sandbox.enabled();
+    let enabled = sandbox.enabled().expect("enabled roster");
     sandbox.fire(enabled[0].clone()).await.expect("fire");
     sandbox
-        .fire(sandbox.enabled()[0].clone())
+        .fire(sandbox.enabled().expect("enabled roster")[0].clone())
         .await
         .expect("fire");
-    assert!(sandbox.enabled().is_empty(), "the branch ran out");
+    assert!(sandbox.enabled().expect("enabled roster").is_empty(), "the branch ran out");
     assert_ne!(
         content_fingerprint(&sandbox.snapshot()),
         parked_fingerprint,
@@ -1457,7 +1597,7 @@ async fn t7_a_saved_configuration_reloads_exactly() {
         "the parked configuration reloads exactly"
     );
     assert_eq!(
-        sandbox.enabled_names(),
+        sandbox.enabled_names().expect("enabled names"),
         parked_names,
         "and it enables exactly the same rendezvous, in the same order"
     );
@@ -1471,21 +1611,47 @@ async fn t7_a_saved_configuration_reloads_exactly() {
 ///
 /// An unmetered speculative evaluation IS the DOS surface. `create_rho_runtime`
 /// gives the sandbox `CostAccounting::empty_cost()` — zero — and the sandbox
-/// deliberately does NOT raise that to `Cost::unsafe_max()`. So a sandbox nobody
-/// funded cannot evaluate a single send.
+/// deliberately does NOT raise that to `Cost::unsafe_max()`.
+///
+/// In the merged node a COMM is the only metered compute (DR-131), so staging
+/// a send and a receive costs nothing. Only `fund_from_standalone` binds the
+/// RestingCOMM authority of a standalone sandbox. So a sandbox nobody funded
+/// stages the program and then refuses its first COMM.
 #[tokio::test]
 async fn t8_an_unfunded_sandbox_refuses_to_evaluate() {
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
+    // Changed for the merged node (DR-131): staging is free, and the refusal
+    // comes at the first COMM. The code was:
+    // let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
+    // assert_eq!(sandbox.remaining().value, 0, "a fresh sandbox is funded with nothing");
+    //
+    // let outcome = sandbox.saturate(send("c", 1), seed()).await;
+    // match outcome {
+    //     Err(SpeculationError::Interpreter(error)) => {
+    //         println!("  unfunded sandbox refused: {error:?}");
+    //     },
+    //     Err(other) => panic!("expected a phlogiston refusal, got {other}"),
+    //     Ok(()) => panic!(
+    //         "an unfunded sandbox EVALUATED — the budget is not being enforced, \
+    //          which is exactly the denial-of-service surface metering exists to close"
+    //     ),
+    // }
+    let sandbox = SpeculativeSandbox::new_standalone().await.expect("sandbox");
     assert_eq!(sandbox.remaining().value, 0, "a fresh sandbox is funded with nothing");
 
-    let outcome = sandbox.saturate(send("c", 1), seed()).await;
-    match outcome {
-        Err(SpeculationError::Interpreter(error)) => {
-            println!("  unfunded sandbox refused: {error:?}");
+    sandbox
+        .saturate(send("c", 1).append(receive(&["c"], "fired", false, false, None)), seed())
+        .await
+        .expect("staging a send and a receive costs nothing");
+    let enabled = sandbox.enabled().expect("enabled roster");
+    assert_eq!(enabled.len(), 1, "teeth: the program enables exactly one rendezvous");
+    match sandbox.fire(enabled[0].clone()).await {
+        Err(SpeculationError::Bootstrap(reason)) => {
+            assert_eq!(reason, "resting rendezvous lacks local accounting authority");
+            println!("  unfunded sandbox refused: {reason}");
         },
-        Err(other) => panic!("expected a phlogiston refusal, got {other}"),
-        Ok(()) => panic!(
-            "an unfunded sandbox EVALUATED — the budget is not being enforced, \
+        Err(other) => panic!("expected a refusal for want of funding, got {other}"),
+        Ok(_) => panic!(
+            "an unfunded sandbox FIRED a COMM — the budget is not being enforced, \
              which is exactly the denial-of-service surface metering exists to close"
         ),
     }
@@ -1495,37 +1661,98 @@ async fn t8_an_unfunded_sandbox_refuses_to_evaluate() {
 /// the budget runs out — no node budget, no frontier cap, no new consensus
 /// parameter, just phlogiston.
 ///
-/// The consensus cost unit is one token per send or receive EVALUATED
-/// (`Reduce::eval_send` / `eval_receive` call `reserve_comm`), so a program with
-/// many sends costs many tokens. This test funds one sandbox generously and an
-/// identical one meanly, and requires the mean one to fail.
+/// In the merged node the cost unit is one token per COMM that the sandbox
+/// fires (the resting-COMM charge, DR-131), and staging a send or a receive
+/// costs nothing. So a program with many COMMs costs many tokens. This test
+/// fires a wide fan of COMMs in one generously funded sandbox and in one
+/// identical, meanly funded sandbox, and requires the mean one to fail.
 #[tokio::test]
 async fn t9_a_small_budget_stops_the_exploration() {
-    // A wide fan of sends: each one costs a token when evaluated.
-    let wide = parallel((0..64).map(|value| send("c", value)).collect());
+    // Changed for the merged node (DR-131): the sends and receives are free to
+    // stage, so the exploration fires the COMMs that the budget pays for. The
+    // code was:
+    // // A wide fan of sends: each one costs a token when evaluated.
+    // let wide = parallel((0..64).map(|value| send("c", value)).collect());
+    //
+    // let generous = funded_sandbox().await;
+    // generous
+    //     .saturate(wide.clone(), seed())
+    //     .await
+    //     .expect("a generously funded sandbox completes");
+    // let spent = generous.consumed().value;
+    // assert!(
+    //     spent > 0,
+    //     "teeth: the exploration must actually have COST something; \
+    //      a zero cost would make the mean arm below vacuous"
+    // );
+    // println!("  64 staged sends cost {spent} units");
+    //
+    // // Fund a second sandbox with strictly less than that.
+    // let mean = SpeculativeSandbox::new().await.expect("sandbox");
+    // mean.fund_from(&host_budget(spent / 2));
+    // match mean.saturate(wide, seed()).await {
+    //     Err(SpeculationError::Interpreter(error)) => {
+    //         println!("  under-funded sandbox stopped: {error:?}");
+    //     },
+    //     Err(other) => panic!("expected a phlogiston refusal, got {other}"),
+    //     Ok(()) => panic!(
+    //         "a sandbox funded with {} units ran a {spent}-unit program to completion \
+    //          — the budget is not bounding the exploration",
+    //         spent / 2
+    //     ),
+    // }
+
+    // A wide fan of COMMs: 64 channels, each with one send and one receive.
+    let wide = parallel(
+        (0..64)
+            .flat_map(|value| {
+                let channel = format!("c{value}");
+                [send(&channel, value), receive(&[channel.as_str()], "fired", false, false, None)]
+            })
+            .collect(),
+    );
 
     let generous = funded_sandbox().await;
     generous
         .saturate(wide.clone(), seed())
         .await
-        .expect("a generously funded sandbox completes");
+        .expect("a generously funded sandbox stages the program");
+    match generous.run_trace(64, |_| 0).await {
+        BranchOutcome::Quiescent { .. } => {},
+        BranchOutcome::Aborted { error, .. } => {
+            panic!("a generously funded sandbox completes, got {error}")
+        },
+        BranchOutcome::Truncated(_) => panic!("64 steps fire all 64 COMMs"),
+    }
     let spent = generous.consumed().value;
     assert!(
         spent > 0,
         "teeth: the exploration must actually have COST something; \
          a zero cost would make the mean arm below vacuous"
     );
-    println!("  64 staged sends cost {spent} units");
+    println!("  64 fired COMMs cost {spent} units");
 
     // Fund a second sandbox with strictly less than that.
-    let mean = SpeculativeSandbox::new().await.expect("sandbox");
-    mean.fund_from(&host_budget(spent / 2));
-    match mean.saturate(wide, seed()).await {
-        Err(SpeculationError::Interpreter(error)) => {
-            println!("  under-funded sandbox stopped: {error:?}");
+    let mean = SpeculativeSandbox::new_standalone().await.expect("sandbox");
+    mean.fund_from_standalone(&host_budget(spent / 2))
+        .expect("fund local sandbox");
+    mean.saturate(wide, seed())
+        .await
+        .expect("staging the program costs nothing");
+    match mean.run_trace(64, |_| 0).await {
+        BranchOutcome::Aborted {
+            error: SpeculationError::Space(RSpaceError::OutOfPhlogistons),
+            ..
+        } => {
+            println!(
+                "  under-funded sandbox stopped with {} units consumed",
+                mean.consumed().value
+            );
         },
-        Err(other) => panic!("expected a phlogiston refusal, got {other}"),
-        Ok(()) => panic!(
+        BranchOutcome::Aborted { error, .. } => {
+            panic!("expected a phlogiston refusal, got {error}")
+        },
+        BranchOutcome::Quiescent { .. } | BranchOutcome::Truncated(_) => panic!(
             "a sandbox funded with {} units ran a {spent}-unit program to completion \
              — the budget is not bounding the exploration",
             spent / 2
@@ -1538,15 +1765,16 @@ async fn t9_a_small_budget_stops_the_exploration() {
 /// what was spent through f1r3node's own `MeteredMachine::reserve_comm` — which
 /// fails shut if the deploy cannot afford it.
 ///
-/// ★ **Measured, and it corrects a natural misreading:** a budget unit is ONE
-/// COMM, not one unit of `Cost.value`. `reconcile_lane` "tallies ONE per
-/// committed `BillableKind::Comm` event and ZERO for every other kind", and
-/// `reserve_comm(amount)` charges one regardless of `amount` — the `Cost` it
-/// takes is the *diagnostic weight* that rides into the event log and the cost
-/// trace digest, not the amount charged. So `consumed()` is a COMM COUNT, and
-/// charging it back is `consumed()` calls to `reserve_comm`, not one call with
-/// `consumed()` as the argument. An earlier revision of this test made exactly
-/// that mistake and measured the host being charged 1 where 5 was owed.
+/// ★ **Measured on the merged node:** the sandbox charges one unit for each
+/// resting COMM that it fires, so `consumed()` is a COMM COUNT. One
+/// `reserve_comm(amount)` call lowers the host's remaining budget by
+/// `amount.value`: a weight of 11 lowered it by 11 (run of 2026-10-20). So the
+/// charge-back is `consumed()` calls to `reserve_comm`, each with a weight of
+/// one unit, which is what `speculation_weight()` in the request server
+/// passes. An earlier revision of this test passed one call with `consumed()`
+/// as the argument and measured the host being charged 1 where 5 was owed. A
+/// later revision passed a weight of 11 per call, which the node that MeTTaIL
+/// pinned before this merge charged as one unit.
 ///
 /// Nothing in the speculation module owns a budget; this test is the proof that
 /// it does not need to.
@@ -1557,8 +1785,12 @@ async fn t10_the_host_is_charged_what_the_exploration_spent() {
     let before = host.remaining().value;
     assert_eq!(before, HOST_UNITS);
 
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    let funded = sandbox.fund_from(&host);
+    let sandbox = SpeculativeSandbox::new_standalone()
+        .await
+        .expect("local sandbox");
+    let funded = sandbox
+        .fund_from_standalone(&host)
+        .expect("fund local sandbox");
     assert_eq!(
         funded.value, before,
         "the sandbox is funded with the host's REMAINING units, not a new allocation"
@@ -1566,18 +1798,28 @@ async fn t10_the_host_is_charged_what_the_exploration_spent() {
 
     let program = corpus()[0].par.clone();
     sandbox.saturate(program, seed()).await.expect("saturate");
-    let enabled = sandbox.enabled();
+    let enabled = sandbox.enabled().expect("enabled roster");
     sandbox.fire(enabled[0].clone()).await.expect("fire");
 
     let spent = sandbox.consumed().value;
     assert!(spent > 0, "the exploration spent something");
 
     // Charge it back: one `reserve_comm` per COMM the exploration committed.
-    // This is f1r3node's own charge, on the host's own budget; the weight passed
-    // is the same `send_eval_cost()`-shaped diagnostic weight the reducer uses.
+    // This is f1r3node's own charge, on the host's own budget.
+    // Changed for the merged node, where `reserve_comm` charges its weight:
+    // each call passes one unit, as `speculation_weight()` does. The code was:
+    // // the weight passed
+    // // is the same `send_eval_cost()`-shaped diagnostic weight the reducer uses.
+    // for index in 0..spent {
+    //     host_metering
+    //         .reserve_comm(Cost::create(11, "speculative comm"))
+    //         .unwrap_or_else(|error| {
+    //             panic!("the host must afford charge {index} of {spent}: {error:?}")
+    //         });
+    // }
     for index in 0..spent {
         host_metering
-            .reserve_comm(Cost::create(11, "speculative comm"))
+            .reserve_comm(Cost::create(1, "speculative comm"))
             .unwrap_or_else(|error| {
                 panic!("the host must afford charge {index} of {spent}: {error:?}")
             });
@@ -1597,9 +1839,20 @@ async fn t10_the_host_is_charged_what_the_exploration_spent() {
     let poor = host_budget(spent - 1);
     let poor_metering = MeteredMachine::new(poor.clone());
     let mut refused_at: Option<i64> = None;
+    // Changed for the merged node, where `reserve_comm` charges its weight:
+    // each call passes one unit. The code was:
+    // for index in 0..spent {
+    //     if poor_metering
+    //         .reserve_comm(Cost::create(11, "speculative comm"))
+    //         .is_err()
+    //     {
+    //         refused_at = Some(index);
+    //         break;
+    //     }
+    // }
     for index in 0..spent {
         if poor_metering
-            .reserve_comm(Cost::create(11, "speculative comm"))
+            .reserve_comm(Cost::create(1, "speculative comm"))
             .is_err()
         {
             refused_at = Some(index);
@@ -1671,7 +1924,7 @@ async fn t11_truncation_is_resumable_and_resumption_is_faithful() {
     let parked = handle.clone();
     broken.load(broken.baseline().clone()).await.expect("scrub");
     assert!(
-        broken.enabled().is_empty(),
+        broken.enabled().expect("enabled roster").is_empty(),
         "teeth: the sandbox really was scrubbed before the resume"
     );
 

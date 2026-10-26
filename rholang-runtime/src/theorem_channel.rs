@@ -184,6 +184,7 @@ impl RholangTheoremChannel {
         let datum = ListParWithRandom {
             pars: vec![message.value().clone()],
             random_state: Vec::new(),
+            ..ListParWithRandom::default()
         };
         if !pattern.admits_subject(&datum) {
             return Err(RholangTheoremChannelError::StructuralAdmissionRejected);

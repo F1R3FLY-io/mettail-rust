@@ -424,6 +424,12 @@ impl ParEncoder {
             | ExprInstance::GBigInt(_)
             | ExprInstance::GBigRat(_)
             | ExprInstance::GFixedPoint(_)
+            | ExprInstance::GFloat32(_)
+            | ExprInstance::GUint64(_)
+            | ExprInstance::GInt32(_)
+            | ExprInstance::GUint32(_)
+            | ExprInstance::GUint16(_)
+            | ExprInstance::GUint8(_)
             | ExprInstance::ENegBody(_)
             | ExprInstance::EPlusBody(_)
             | ExprInstance::EMinusBody(_)
@@ -639,6 +645,12 @@ impl ParEncoder {
                         | ExprInstance::GBigInt(_)
                         | ExprInstance::GBigRat(_)
                         | ExprInstance::GFixedPoint(_)
+                        | ExprInstance::GFloat32(_)
+                        | ExprInstance::GUint64(_)
+                        | ExprInstance::GInt32(_)
+                        | ExprInstance::GUint32(_)
+                        | ExprInstance::GUint16(_)
+                        | ExprInstance::GUint8(_)
                         | ExprInstance::ENotBody(_)
                         | ExprInstance::EAndBody(_)
                         | ExprInstance::EOrBody(_)
@@ -773,6 +785,8 @@ fn sole_expr_of(par: &Par) -> Option<&Expr> {
         && par.unforgeables.is_empty()
         && par.connectives.is_empty()
         && par.conditionals.is_empty()
+        && par.cost_signed_terms.is_empty()
+        && par.cost_stacks.is_empty()
         && par.exprs.len() == 1;
     is_pure_expression.then(|| &par.exprs[0])
 }
@@ -1159,6 +1173,20 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for SubstrateGuar
         }
         self.check_commit(k, matched)
             .then(rspace_plus_plus::rspace::r#match::PreparedCommit::default)
+    }
+
+    /// The checked native-trace replay selects through this hook (node
+    /// `native_candidate/selection.rs:420,485`, `native_session/installation.rs:136`).
+    /// The trait default calls `check_commit`, which has no language runtime and
+    /// so leaves an installed GSLT predicate undecided. Decide it as
+    /// `prepare_commit` does; the permit is dropped unused, because
+    /// authorization runs only in `with_commit`.
+    fn check_commit_by_reference(
+        &self,
+        k: &TaggedContinuation,
+        matched: &[&ListParWithRandom],
+    ) -> bool {
+        self.prepare_commit(k, matched).is_some()
     }
 
     /// Positional reflected FLT matching through the retained automaton; every
@@ -1747,6 +1775,12 @@ fn never_a_predicate(par: &Par) -> bool {
         | ExprInstance::GBigInt(_)
         | ExprInstance::GBigRat(_)
         | ExprInstance::GFixedPoint(_)
+        | ExprInstance::GFloat32(_)
+        | ExprInstance::GUint64(_)
+        | ExprInstance::GInt32(_)
+        | ExprInstance::GUint32(_)
+        | ExprInstance::GUint16(_)
+        | ExprInstance::GUint8(_)
         | ExprInstance::ENegBody(_)
         | ExprInstance::EPlusBody(_)
         | ExprInstance::EMinusBody(_)
@@ -1863,6 +1897,12 @@ fn unevaluable_node(par: &Par) -> Option<UnevaluableNode> {
                 | ExprInstance::GBigInt(_)
                 | ExprInstance::GBigRat(_)
                 | ExprInstance::GFixedPoint(_)
+                | ExprInstance::GFloat32(_)
+                | ExprInstance::GUint64(_)
+                | ExprInstance::GInt32(_)
+                | ExprInstance::GUint32(_)
+                | ExprInstance::GUint16(_)
+                | ExprInstance::GUint8(_)
                 | ExprInstance::EListBody(_)
                 | ExprInstance::ESetBody(_)
                 | ExprInstance::EMapBody(_)
@@ -2049,6 +2089,12 @@ pub fn substitute_bound_pars(par: &Par, bindings: &[Par]) -> Par {
                     | ExprInstance::GBigInt(_)
                     | ExprInstance::GBigRat(_)
                     | ExprInstance::GFixedPoint(_)
+                    | ExprInstance::GFloat32(_)
+                    | ExprInstance::GUint64(_)
+                    | ExprInstance::GInt32(_)
+                    | ExprInstance::GUint32(_)
+                    | ExprInstance::GUint16(_)
+                    | ExprInstance::GUint8(_)
                     | ExprInstance::EPercentPercentBody(_)
                     | ExprInstance::EPlusPlusBody(_)
                     | ExprInstance::EMinusMinusBody(_)
@@ -2090,6 +2136,8 @@ pub fn substitute_bound_pars(par: &Par, bindings: &[Par]) -> Par {
                     bundles: par.bundles.clone(),
                     connectives: par.connectives.clone(),
                     conditionals: par.conditionals.clone(),
+                    cost_signed_terms: par.cost_signed_terms.clone(),
+                    cost_stacks: par.cost_stacks.clone(),
                     locally_free: par.locally_free.clone(),
                     connective_used: par.connective_used,
                 }));
@@ -2178,6 +2226,22 @@ mod tests {
         let mut par = Par::default();
         par.exprs = vec![Expr { expr_instance: Some(instance) }];
         par
+    }
+
+    #[test]
+    fn signed_and_stack_cost_processes_are_not_bare_predicates() {
+        let mut signed = expr(EI::GBool(true));
+        assert!(sole_expr_of(&signed).is_some());
+        signed
+            .cost_signed_terms
+            .push(models::rhoapi::CostSignedTerm::default());
+        assert!(sole_expr_of(&signed).is_none());
+
+        let mut stacked = expr(EI::GBool(true));
+        stacked
+            .cost_stacks
+            .push(models::rhoapi::CostStack::default());
+        assert!(sole_expr_of(&stacked).is_none());
     }
 
     fn gint(n: i64) -> Par {
@@ -2442,12 +2506,14 @@ mod tests {
             .map(|pars| ListParWithRandom {
                 pars: pars.to_vec(),
                 random_state: Vec::new(),
+                ..ListParWithRandom::default()
             })
             .collect();
         let borrowed: Vec<&ListParWithRandom> = owned.iter().collect();
         let continuation = TaggedContinuation {
             guard: Some(guard.clone()),
             tagged_cont: None,
+            cost_authority: None,
         };
         matcher.check_commit(&continuation, &borrowed)
     }
@@ -2781,12 +2847,18 @@ mod tests {
         let matched = ListParWithRandom {
             pars: vec![gint(1)],
             random_state: Vec::new(),
+            ..ListParWithRandom::default()
         };
-        let guardless = TaggedContinuation { guard: None, tagged_cont: None };
+        let guardless = TaggedContinuation {
+            guard: None,
+            tagged_cont: None,
+            cost_authority: None,
+        };
         assert!(matcher.check_commit(&guardless, &[&matched]));
         let empty = TaggedContinuation {
             guard: Some(Par::default()),
             tagged_cont: None,
+            cost_authority: None,
         };
         assert!(matcher.check_commit(&empty, &[&matched]));
         // …byte-for-byte the reducer's own answer.
@@ -2805,6 +2877,7 @@ mod tests {
         let data = ListParWithRandom {
             pars: vec![gint(42)],
             random_state: Vec::new(),
+            ..ListParWithRandom::default()
         };
         assert_eq!(SubstrateGuardMatcher::new().get(&pattern, &data), Matcher.get(&pattern, &data));
         let mismatched = BindPattern {

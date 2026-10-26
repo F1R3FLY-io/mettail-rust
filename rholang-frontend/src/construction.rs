@@ -10,12 +10,19 @@
 #[derive(Debug, PartialEq, Eq)]
 pub enum ValueOp {
     Empty,
+    /// Rholang `()`; a one-head empty tuple, distinct from Nil/PZero.
+    UnitTuple,
     Integer(i64),
     Boolean(bool),
     Text(String),
     Append,
-    Bound { scope: usize, index: usize },
-    Wildcard { connective: bool },
+    Bound {
+        scope: usize,
+        index: usize,
+    },
+    Wildcard {
+        connective: bool,
+    },
 }
 
 impl ValueOp {
@@ -23,6 +30,7 @@ impl ValueOp {
         match self {
             Self::Append => 2,
             Self::Empty
+            | Self::UnitTuple
             | Self::Integer(_)
             | Self::Boolean(_)
             | Self::Text(_)

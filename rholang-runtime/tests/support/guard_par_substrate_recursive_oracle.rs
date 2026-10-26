@@ -136,6 +136,12 @@ fn operand_recursive(encoder: &mut ParEncoder, par: &Par) -> Operand {
         | ExprInstance::GBigInt(_)
         | ExprInstance::GBigRat(_)
         | ExprInstance::GFixedPoint(_)
+        | ExprInstance::GFloat32(_)
+        | ExprInstance::GUint64(_)
+        | ExprInstance::GInt32(_)
+        | ExprInstance::GUint32(_)
+        | ExprInstance::GUint16(_)
+        | ExprInstance::GUint8(_)
         | ExprInstance::ENotBody(_)
         | ExprInstance::EAndBody(_)
         | ExprInstance::EOrBody(_)
@@ -216,6 +222,8 @@ fn substitute_bound_pars_recursive(par: &Par, bindings: &[Par]) -> Par {
                     bundles: par.bundles.clone(),
                     connectives: par.connectives.clone(),
                     conditionals: par.conditionals.clone(),
+                    cost_signed_terms: par.cost_signed_terms.clone(),
+                    cost_stacks: par.cost_stacks.clone(),
                     locally_free: par.locally_free.clone(),
                     connective_used: par.connective_used,
                 }
@@ -312,6 +320,12 @@ fn substitute_expr_recursive(expr: &Expr, bindings: &[Par]) -> Expr {
         | ExprInstance::GBigInt(_)
         | ExprInstance::GBigRat(_)
         | ExprInstance::GFixedPoint(_)
+        | ExprInstance::GFloat32(_)
+        | ExprInstance::GUint64(_)
+        | ExprInstance::GInt32(_)
+        | ExprInstance::GUint32(_)
+        | ExprInstance::GUint16(_)
+        | ExprInstance::GUint8(_)
         | ExprInstance::EPercentPercentBody(_)
         | ExprInstance::EPlusPlusBody(_)
         | ExprInstance::EMinusMinusBody(_)

@@ -141,6 +141,16 @@ fn host_budget(units: i64) -> RuntimeBudget {
     budget
 }
 
+async fn funded_sandbox() -> SpeculativeSandbox {
+    let sandbox = SpeculativeSandbox::new_standalone()
+        .await
+        .expect("the standalone sandbox must build");
+    sandbox
+        .fund_from_standalone(&host_budget(HOST_UNITS))
+        .expect("fund local sandbox");
+    sandbox
+}
+
 /// The drive-lowered program: the installed Rho-net program (σ-receivers,
 /// `^drive` family, per-rule AC carriers) in parallel with the drive seed.
 /// Byte-for-byte the program an ordinary run injects.
@@ -173,10 +183,7 @@ async fn explore(
     mode: TraceMode,
     lookahead: Lookahead,
 ) -> Exploration {
-    let sandbox = SpeculativeSandbox::new()
-        .await
-        .expect("the speculative sandbox must build");
-    sandbox.fund_from(&host_budget(HOST_UNITS));
+    let sandbox = funded_sandbox().await;
     let mut explorer = Explorer::with_mode(&sandbox, mode);
     let exploration = explorer
         .explore(program, ordinary_rand(), lookahead)
@@ -415,8 +422,7 @@ async fn a_truncated_drive_resumes_to_the_unbroken_result() {
     .await;
     let unbroken_outcomes = outcomes(&unbroken);
 
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(HOST_UNITS));
+    let sandbox = funded_sandbox().await;
     let mut explorer = Explorer::new(&sandbox);
     let cut = explorer
         .explore(

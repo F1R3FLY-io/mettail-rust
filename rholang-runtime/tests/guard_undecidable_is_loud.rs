@@ -583,6 +583,7 @@ fn check_commit_feeds_the_ledger() {
                     random_state: Vec::new(),
                 },
             )),
+            cost_authority: None,
         }
     }
 
@@ -593,6 +594,7 @@ fn check_commit_feeds_the_ledger() {
     let payload = ListParWithRandom {
         pars: vec![gint(5)],
         random_state: Vec::new(),
+        ..ListParWithRandom::default()
     };
     let decider: &dyn Match<BindPattern, ListParWithRandom, TaggedContinuation> = &matcher;
 

@@ -167,7 +167,9 @@ use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::RuntimeBudget;
 use rholang::rust::interpreter::contract_call::ContractCall;
 use rholang::rust::interpreter::errors::InterpreterError;
-use rholang::rust::interpreter::metering::MeteredMachine;
+// Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered,
+// so no request-admission charge uses the host meter.
+// use rholang::rust::interpreter::metering::MeteredMachine;
 use rholang::rust::interpreter::system_processes::Definition;
 use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::rspace_interface::ProduceCommitGuard;
@@ -210,9 +212,10 @@ const SPEC_N_V2_INDEX: u8 = 3;
 const SPEC_ALL_V3_INDEX: u8 = 4;
 const SPEC_N_V3_INDEX: u8 = 5;
 
-/// The diagnostic weight each charged-back COMM rides into the host's event log with. The
-/// *amount* charged is one COMM per call regardless (see [`charge_host_comms`]); this is the
-/// label that makes speculation legible in a cost trace.
+/// The weight of each charged-back COMM on the host's lane. In the merged node
+/// `reserve_comm` lowers the host's budget by this weight, so it must stay one unit:
+/// a fired speculative COMM cost the sandbox one unit (see [`charge_host_comms`]).
+/// Its label makes speculation legible in a cost trace.
 fn speculation_weight() -> Cost {
     Cost::create(1, "speculative COMM charged back to the host deploy")
 }
@@ -340,12 +343,37 @@ impl std::fmt::Debug for SpeculationGuest {
 // The engine
 // ══════════════════════════════════════════════════════════════════════════
 
+/// One-way authority tag. In particular, a standalone binding has no
+/// conversion into an adopted-genesis consensus authority.
+enum BoundLookaheadHost {
+    /// Pre-CostV2 legacy callers retain their original epoch and cannot
+    /// authorize a RestingComm transition merely by presenting a payload.
+    Legacy(RuntimeBudget),
+    /// Only the trusted standalone node composition binds this variant. It
+    /// authorizes a local CostV2 sandbox, never a consensus root or replay.
+    Standalone(RuntimeBudget),
+}
+
+impl BoundLookaheadHost {
+    fn funding(&self) -> &RuntimeBudget {
+        match self {
+            Self::Legacy(funding) | Self::Standalone(funding) => funding,
+        }
+    }
+
+    fn is_standalone(&self) -> bool {
+        matches!(self, Self::Standalone(_))
+    }
+}
+
 /// **The installable request server.** Hand [`definitions`](Self::definitions) to
 /// `create_rho_runtime`'s `extra_system_processes` seam, then [`bind_host`](Self::bind_host)
-/// the runtime's budget, and `[*]` / `[n]` are live in every program that runtime reduces.
+/// the runtime's budget (or, in the standalone node,
+/// [`bind_standalone_host`](Self::bind_standalone_host)), and `[*]` / `[n]` are live in every
+/// program that runtime reduces.
 ///
-/// Cheap to clone (everything inside is behind an `Arc`), which is what lets one engine be
-/// captured by both `Definition` handlers and still share one host-budget binding.
+/// Cheap to clone (everything inside is behind an `Arc`), which is what lets
+/// the handlers share one immutable host binding.
 #[derive(Clone)]
 pub struct LookaheadEngine {
     guests: Arc<Vec<SpeculationGuest>>,
@@ -354,7 +382,7 @@ pub struct LookaheadEngine {
     /// The host deploy's budget, bound after `create_rho_runtime` returns. A `OnceLock`
     /// rather than a lock: it is written once, read from every handler invocation, and read
     /// on the reduction's hot path — so the read must not be able to block a reducer task.
-    host: Arc<OnceLock<RuntimeBudget>>,
+    host: Arc<OnceLock<BoundLookaheadHost>>,
 }
 
 impl Default for LookaheadEngine {
@@ -411,7 +439,18 @@ impl LookaheadEngine {
     /// because two different budgets behind one engine would mean two answers to *"whose
     /// tokens paid for this exploration?"*.
     pub fn bind_host(&self, budget: RuntimeBudget) -> bool {
-        self.host.set(budget).is_ok()
+        self.host.set(BoundLookaheadHost::Legacy(budget)).is_ok()
+    }
+
+    /// Bind a standalone-only CostV2 sandbox authority from the node's trusted
+    /// composition. This capability cannot be promoted to a consensus context;
+    /// the adopted-genesis policy path lives in Casper, not here. No host work
+    /// is metered (DR-131 extension to F1R3Lang, user decision 1 of 2026-10-16).
+    /// Returns whether this call bound the engine, as `bind_host` does.
+    pub fn bind_standalone_host(&self, funding: RuntimeBudget) -> bool {
+        self.host
+            .set(BoundLookaheadHost::Standalone(funding))
+            .is_ok()
     }
 
     /// Whether a host budget has been bound.
@@ -533,7 +572,9 @@ impl LookaheadEngine {
         binding: &WireOwnerBinding<'_>,
         subject: &Par,
         runtime: &RholangLanguageRuntime,
-        host: &RuntimeBudget,
+        // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+        // admission no longer charges the host. The parameter was `host`.
+        _host: &RuntimeBudget,
     ) -> Result<AdmittedLookaheadBinding, String> {
         if binding.context != 0 {
             return Err("v2 nonzero guest context is not supported by closed-term admission".into());
@@ -564,13 +605,15 @@ impl LookaheadEngine {
         }
         let limits = installed.language_core().theory.limits;
         let policy = runtime.service().policy().semantic_service;
-        let available = host.remaining().value.max(0) as u64;
-        let work_limit = u64::from(limits.max_steps)
-            .min(policy.execution.work)
-            .min(available);
-        if work_limit == 0 {
-            return Err("v2 installed admission has no funded host work".into());
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let available = host.remaining().value.max(0) as u64;
+        // let work_limit = u64::from(limits.max_steps)
+        //     .min(policy.execution.work)
+        //     .min(available);
+        // if work_limit == 0 {
+        //     return Err("v2 installed admission has no funded host work".into());
+        // }
+        let work_limit = u64::from(limits.max_steps).min(policy.execution.work);
         let byte_limit = (limits.max_output_bytes as usize)
             .min(policy.execution.term_bytes)
             .min(policy.boundary_payload_bytes);
@@ -622,16 +665,18 @@ impl LookaheadEngine {
                 })?;
             Ok::<_, String>((category, sort, input))
         })();
-        let spent = budget.work_used();
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let spent = budget.work_used();
         drop(budget);
-        if spent > 0 {
-            MeteredMachine::new(host.clone())
-                .reserve_primitive(Cost::create(
-                    i64::try_from(spent).unwrap_or(i64::MAX),
-                    "installed lookahead request admission",
-                ))
-                .map_err(|_| "v2 installed admission exhausted host phlogiston".to_string())?;
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // if spent > 0 {
+        //     MeteredMachine::new(host.clone())
+        //         .reserve_primitive(Cost::create(
+        //             i64::try_from(spent).unwrap_or(i64::MAX),
+        //             "installed lookahead request admission",
+        //         ))
+        //         .map_err(|_| "v2 installed admission exhausted host phlogiston".to_string())?;
+        // }
         let (category, sort, input) = checked?;
         let admitted = AdmittedLookaheadBinding {
             path: binding.path.clone(),
@@ -650,20 +695,24 @@ impl LookaheadEngine {
         &self,
         subject: &'a Par,
         path: &[u32],
-        host: &RuntimeBudget,
+        // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+        // the path lookup no longer charges the host. The parameter was `host`.
+        _host: &RuntimeBudget,
     ) -> Result<&'a Par, String> {
         let policy = self
             .installed_runtime
             .as_ref()
             .map(|runtime| runtime.service().policy().semantic_service)
             .unwrap_or_else(SemanticServiceLimits::default);
-        let work_limit = policy
-            .execution
-            .work
-            .min(host.remaining().value.max(0) as u64);
-        if work_limit == 0 {
-            return Err("v2 owner path lookup has no funded host work".into());
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let work_limit = policy
+        //     .execution
+        //     .work
+        //     .min(host.remaining().value.max(0) as u64);
+        // if work_limit == 0 {
+        //     return Err("v2 owner path lookup has no funded host work".into());
+        // }
+        let work_limit = policy.execution.work;
         let mut used = 0;
         let mut cancelled = || false;
         let mut budget = ReflectedCodecBudget::new(
@@ -673,16 +722,18 @@ impl LookaheadEngine {
             &mut cancelled,
         );
         let located = term_at_path(subject, path, &mut budget);
-        let spent = budget.work_used();
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let spent = budget.work_used();
         drop(budget);
-        if spent > 0 {
-            MeteredMachine::new(host.clone())
-                .reserve_primitive(Cost::create(
-                    i64::try_from(spent).unwrap_or(i64::MAX),
-                    "lookahead owner path lookup",
-                ))
-                .map_err(|_| "v2 owner path lookup exhausted host phlogiston".to_string())?;
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // if spent > 0 {
+        //     MeteredMachine::new(host.clone())
+        //         .reserve_primitive(Cost::create(
+        //             i64::try_from(spent).unwrap_or(i64::MAX),
+        //             "lookahead owner path lookup",
+        //         ))
+        //         .map_err(|_| "v2 owner path lookup exhausted host phlogiston".to_string())?;
+        // }
         located
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "v2 owner binding path does not exist in subject".to_string())
@@ -691,20 +742,24 @@ impl LookaheadEngine {
     fn scan_and_charge<'a>(
         &self,
         subject: &'a Par,
-        host: &RuntimeBudget,
+        // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+        // the scan no longer charges the host. The parameter was `host`.
+        _host: &RuntimeBudget,
     ) -> Result<Vec<SubjectOccurrence<'a>>, String> {
         let policy = self
             .installed_runtime
             .as_ref()
             .map(|runtime| runtime.service().policy().semantic_service)
             .unwrap_or_else(SemanticServiceLimits::default);
-        let work_limit = policy
-            .execution
-            .work
-            .min(host.remaining().value.max(0) as u64);
-        if work_limit == 0 {
-            return Err("lookahead subject scan has no funded host work".into());
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let work_limit = policy
+        //     .execution
+        //     .work
+        //     .min(host.remaining().value.max(0) as u64);
+        // if work_limit == 0 {
+        //     return Err("lookahead subject scan has no funded host work".into());
+        // }
+        let work_limit = policy.execution.work;
         let mut used = 0;
         let mut cancelled = || false;
         let mut budget = ReflectedCodecBudget::new(
@@ -714,36 +769,42 @@ impl LookaheadEngine {
             &mut cancelled,
         );
         let scanned = scan_installed_occurrences(subject, &mut budget);
-        let spent = budget.work_used();
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let spent = budget.work_used();
         drop(budget);
-        if spent > 0 {
-            MeteredMachine::new(host.clone())
-                .reserve_primitive(Cost::create(
-                    i64::try_from(spent).unwrap_or(i64::MAX),
-                    "lookahead subject occurrence scan",
-                ))
-                .map_err(|_| "lookahead subject scan exhausted host phlogiston".to_string())?;
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // if spent > 0 {
+        //     MeteredMachine::new(host.clone())
+        //         .reserve_primitive(Cost::create(
+        //             i64::try_from(spent).unwrap_or(i64::MAX),
+        //             "lookahead subject occurrence scan",
+        //         ))
+        //         .map_err(|_| "lookahead subject scan exhausted host phlogiston".to_string())?;
+        // }
         scanned.map_err(|error| error.to_string())
     }
 
     fn scan_top_level_and_charge<'a>(
         &self,
         subject: &'a Par,
-        host: &RuntimeBudget,
+        // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+        // the scan no longer charges the host. The parameter was `host`.
+        _host: &RuntimeBudget,
     ) -> Result<Vec<TopLevelExprOccurrence<'a>>, String> {
         let policy = self
             .installed_runtime
             .as_ref()
             .map(|runtime| runtime.service().policy().semantic_service)
             .unwrap_or_else(SemanticServiceLimits::default);
-        let work_limit = policy
-            .execution
-            .work
-            .min(host.remaining().value.max(0) as u64);
-        if work_limit == 0 {
-            return Err("v3 top-level scan has no funded host work".into());
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let work_limit = policy
+        //     .execution
+        //     .work
+        //     .min(host.remaining().value.max(0) as u64);
+        // if work_limit == 0 {
+        //     return Err("v3 top-level scan has no funded host work".into());
+        // }
+        let work_limit = policy.execution.work;
         let mut used = 0;
         let mut cancelled = || false;
         let mut budget = ReflectedCodecBudget::new(
@@ -753,37 +814,43 @@ impl LookaheadEngine {
             &mut cancelled,
         );
         let scanned = scan_top_level_reflected_exprs(subject, &mut budget);
-        let spent = budget.work_used();
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let spent = budget.work_used();
         drop(budget);
-        // One proportional charge for the scan and one for the bounded
-        // iterative clone performed by the caller after successful preflight.
-        let charged = spent
-            .checked_mul(2)
-            .and_then(|work| i64::try_from(work).ok())
-            .ok_or_else(|| "v3 scan and clone work exceeds the host charge domain".to_string())?;
-        MeteredMachine::new(host.clone())
-            .reserve_primitive(Cost::create(charged, "lookahead v3 scan and clone"))
-            .map_err(|_| "v3 scan and clone exhausted host phlogiston".to_string())?;
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // // One proportional charge for the scan and one for the bounded
+        // // iterative clone performed by the caller after successful preflight.
+        // let charged = spent
+        //     .checked_mul(2)
+        //     .and_then(|work| i64::try_from(work).ok())
+        //     .ok_or_else(|| "v3 scan and clone work exceeds the host charge domain".to_string())?;
+        // MeteredMachine::new(host.clone())
+        //     .reserve_primitive(Cost::create(charged, "lookahead v3 scan and clone"))
+        //     .map_err(|_| "v3 scan and clone exhausted host phlogiston".to_string())?;
         scanned.map_err(|error| error.to_string())
     }
 
     fn parse_envelope_v3_and_charge<'a>(
         &self,
         subject: &'a Par,
-        host: &RuntimeBudget,
+        // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+        // envelope parsing no longer charges the host. The parameter was `host`.
+        _host: &RuntimeBudget,
     ) -> Result<Option<(&'a Par, WireTopLevelBinding<'a>)>, String> {
         let policy = self
             .installed_runtime
             .as_ref()
             .map(|runtime| runtime.service().policy().semantic_service)
             .unwrap_or_else(SemanticServiceLimits::default);
-        let work_limit = policy
-            .execution
-            .work
-            .min(host.remaining().value.max(0) as u64);
-        if work_limit == 0 {
-            return Err("v3 envelope parsing has no funded host work".into());
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let work_limit = policy
+        //     .execution
+        //     .work
+        //     .min(host.remaining().value.max(0) as u64);
+        // if work_limit == 0 {
+        //     return Err("v3 envelope parsing has no funded host work".into());
+        // }
+        let work_limit = policy.execution.work;
         let mut used = 0;
         let mut cancelled = || false;
         let mut budget = ReflectedCodecBudget::new(
@@ -797,35 +864,41 @@ impl LookaheadEngine {
                 .charge(work, bytes)
                 .map_err(|_| "v3 envelope exceeds the funded request budget".to_string())
         });
-        let spent = budget.work_used();
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let spent = budget.work_used();
         drop(budget);
-        if spent != 0 {
-            let charged = i64::try_from(spent)
-                .map_err(|_| "v3 envelope work exceeds the host charge domain".to_string())?;
-            MeteredMachine::new(host.clone())
-                .reserve_primitive(Cost::create(charged, "lookahead v3 envelope parsing"))
-                .map_err(|_| "v3 envelope parsing exhausted host phlogiston".to_string())?;
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // if spent != 0 {
+        //     let charged = i64::try_from(spent)
+        //         .map_err(|_| "v3 envelope work exceeds the host charge domain".to_string())?;
+        //     MeteredMachine::new(host.clone())
+        //         .reserve_primitive(Cost::create(charged, "lookahead v3 envelope parsing"))
+        //         .map_err(|_| "v3 envelope parsing exhausted host phlogiston".to_string())?;
+        // }
         parsed
     }
 
     fn parse_envelope_and_charge<'a>(
         &self,
         subject: &'a Par,
-        host: &RuntimeBudget,
+        // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+        // envelope parsing no longer charges the host. The parameter was `host`.
+        _host: &RuntimeBudget,
     ) -> Result<Option<(&'a Par, Vec<WireOwnerBinding<'a>>)>, String> {
         let policy = self
             .installed_runtime
             .as_ref()
             .map(|runtime| runtime.service().policy().semantic_service)
             .unwrap_or_else(SemanticServiceLimits::default);
-        let work_limit = policy
-            .execution
-            .work
-            .min(host.remaining().value.max(0) as u64);
-        if work_limit == 0 {
-            return Err("v2 envelope parsing has no funded host work".into());
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let work_limit = policy
+        //     .execution
+        //     .work
+        //     .min(host.remaining().value.max(0) as u64);
+        // if work_limit == 0 {
+        //     return Err("v2 envelope parsing has no funded host work".into());
+        // }
+        let work_limit = policy.execution.work;
         let mut used = 0;
         let mut cancelled = || false;
         let mut budget = ReflectedCodecBudget::new(
@@ -839,21 +912,23 @@ impl LookaheadEngine {
                 .charge(work, bytes)
                 .map_err(|_| "v2 envelope exceeds the funded request budget".to_string())
         });
-        let spent = budget.work_used();
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let spent = budget.work_used();
         drop(budget);
-        if spent > 0 {
-            MeteredMachine::new(host.clone())
-                .reserve_primitive(Cost::create(
-                    i64::try_from(spent).unwrap_or(i64::MAX),
-                    "lookahead v2 envelope parsing",
-                ))
-                .map_err(|_| "v2 envelope parsing exhausted host phlogiston".to_string())?;
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // if spent > 0 {
+        //     MeteredMachine::new(host.clone())
+        //         .reserve_primitive(Cost::create(
+        //             i64::try_from(spent).unwrap_or(i64::MAX),
+        //             "lookahead v2 envelope parsing",
+        //         ))
+        //         .map_err(|_| "v2 envelope parsing exhausted host phlogiston".to_string())?;
+        // }
         parsed
     }
 
-    /// Four system-process definitions: the original two v1 channels and two
-    /// dedicated v2 channels, each retaining its family's outer arity.
+    /// Six system-process definitions cover v1, v2, and v3. Each version has an
+    /// unbounded request channel and a bounded request channel.
     ///
     /// The `fixed_channel`s are the **quoted strings** the lowering sends on, not band
     /// channels: a `Definition` installs a continuation on exactly the channel named, and the
@@ -990,7 +1065,7 @@ impl LookaheadEngine {
         };
 
         // ── the budget ───────────────────────────────────────────────────
-        let Some(host) = self.host.get() else {
+        let Some(bound_host) = self.host.get() else {
             let message = format!(
                 "{urn}: no host budget is bound to the lookahead engine, so this exploration \
                  cannot be funded or charged back. An unfunded sandbox evaluates nothing and \
@@ -1005,6 +1080,7 @@ impl LookaheadEngine {
                 .await?;
             return Err(InterpreterError::SetupError(message));
         };
+        let host = bound_host.funding();
 
         let (subject, installed_bindings) = match if composite {
             self.admit_top_level_subject(subject, host)
@@ -1093,7 +1169,11 @@ impl LookaheadEngine {
         .with_trace_mode(self.trace_mode);
 
         // ── the exploration ──────────────────────────────────────────────
-        let attempt = LookaheadService::serve(request, publisher.random.clone(), host).await;
+        let attempt = if bound_host.is_standalone() {
+            LookaheadService::serve_local(request, publisher.random.clone(), host).await
+        } else {
+            LookaheadService::serve(request, publisher.random.clone(), host).await
+        };
 
         // ── the charge-back, BEFORE anything is delivered ────────────────
         //
@@ -1414,6 +1494,7 @@ impl Publisher<'_> {
             vec![ListParWithRandom {
                 pars: Vec::new(),
                 random_state: random.to_bytes(),
+                ..ListParWithRandom::default()
             }],
             self.is_replay,
             self.previous.clone(),
@@ -2138,6 +2219,19 @@ mod tests {
                         )
                         .is_err());
                     let unfunded = RuntimeBudget::new(Cost::create(0, "unfunded v3 admission"));
+                    let log_before = unfunded.get_log().len();
+                    // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+                    // admission no longer charges host work, so an unfunded host is admitted
+                    // and is not charged.
+                    // prop_assert!(engine
+                    //     .admit_top_level_subject(
+                    //         spec_envelope_v3(
+                    //             subject.clone(),
+                    //             claim(token.clone(), guest_index, "Pattern", 0),
+                    //         ),
+                    //         &unfunded,
+                    //     )
+                    //     .is_err());
                     prop_assert!(engine
                         .admit_top_level_subject(
                             spec_envelope_v3(
@@ -2146,7 +2240,9 @@ mod tests {
                             ),
                             &unfunded,
                         )
-                        .is_err());
+                        .is_ok());
+                    prop_assert_eq!(unfunded.remaining().value, 0);
+                    prop_assert_eq!(unfunded.get_log().len(), log_before);
 
                     let wrong_index = if subject.exprs.len() == 1 {
                         1
@@ -2341,13 +2437,26 @@ mod tests {
                     )
                     .is_err());
                 let unfunded = RuntimeBudget::new(Cost::create(0, "unfunded v2 admission"));
+                let log_before = unfunded.get_log().len();
+                // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+                // admission no longer charges host work, so an unfunded host is admitted
+                // and is not charged.
+                // prop_assert!(engine
+                //     .admit_subject(
+                //         spec_envelope_v2(subject.clone(), vec![root_claim]),
+                //         &unfunded,
+                //         true,
+                //     )
+                //     .is_err());
                 prop_assert!(engine
                     .admit_subject(
                         spec_envelope_v2(subject.clone(), vec![root_claim]),
                         &unfunded,
                         true,
                     )
-                    .is_err());
+                    .is_ok());
+                prop_assert_eq!(unfunded.remaining().value, 0);
+                prop_assert_eq!(unfunded.get_log().len(), log_before);
 
                 let forged = models::rust::rholang::implicits::GPrivateBuilder::new_par_from_string(
                     format!("forged-native-owner-{salt}"),
@@ -2987,5 +3096,29 @@ mod tests {
         assert!(engine.bind_host(budget.clone()), "the first binding takes");
         assert!(engine.host_bound());
         assert!(!engine.bind_host(budget), "a second binding is refused, not silently swapped");
+    }
+
+    #[test]
+    fn standalone_host_binds_once_and_cannot_replace_a_legacy_binding() {
+        let funding =
+            rholang::rust::interpreter::accounting::cost_accounting::CostAccounting::empty_cost();
+        let engine = LookaheadEngine::new();
+        assert!(engine.bind_standalone_host(funding.clone()), "the first binding takes");
+        assert!(engine
+            .host
+            .get()
+            .is_some_and(BoundLookaheadHost::is_standalone));
+        assert!(!engine.bind_host(funding.clone()), "local cannot be replaced by legacy");
+        assert!(!engine.bind_standalone_host(funding), "a second binding is refused");
+
+        let legacy = LookaheadEngine::new();
+        let legacy_funding =
+            rholang::rust::interpreter::accounting::cost_accounting::CostAccounting::empty_cost();
+        assert!(legacy.bind_host(legacy_funding.clone()));
+        assert!(!legacy
+            .host
+            .get()
+            .is_some_and(BoundLookaheadHost::is_standalone));
+        assert!(!legacy.bind_standalone_host(legacy_funding), "legacy cannot be promoted");
     }
 }

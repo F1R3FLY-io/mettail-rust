@@ -721,10 +721,12 @@ fn original_query_sugar_never_consults_checked_reservation() {
     let mut work = 0;
     let mut cancel = || false;
     let mut budget = ReflectedCodecBudget::new(&mut work, 1_000_000, 1_000_000, &mut cancel);
-    assert!(matches!(
-        session::lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget),
-        Err(RholangAstLowerError::SourceProfile(_))
-    ));
+    let checked = session::lower_public_body_with_budget(&source, BoundEnv::new(), &mut budget)
+        .expect("public query sugar uses checked preparation");
+    assert!(budget.work_used() > 0);
+    let request = &checked.par.news[0].p.as_ref().unwrap().sends[0];
+    assert_eq!(request.data.len(), 2);
+    assert_eq!(request.data[1], new_gint_par(1, Vec::new(), false));
 }
 
 #[test]

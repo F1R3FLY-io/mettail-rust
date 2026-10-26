@@ -35,6 +35,11 @@ impl ConstructedValue {
         }
     }
 
+    pub(super) fn unit_tuple() -> Result<Self, RholangAstLowerError> {
+        let receipt = NativeReceipt::construct(NativeHead::Plain, 0, []).map_err(receipt_error)?;
+        Ok(Self { par: Target::unit_tuple(), receipt })
+    }
+
     pub(crate) fn integer(value: i64) -> Result<Self, RholangAstLowerError> {
         let receipt = NativeReceipt::construct(NativeHead::Plain, 0, []).map_err(receipt_error)?;
         Ok(Self { par: Target::integer(value), receipt })

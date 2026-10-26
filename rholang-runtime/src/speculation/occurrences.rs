@@ -530,8 +530,9 @@ fn direct_children_mode<'a, C: FnMut() -> bool>(
             Some(EPathmapBody(pathmap)) if pathmap.is_empty() => {},
             Some(EPathmapBody(_) | EZipperBody(_)) => return Err(ScanError::OpaquePathMap),
             Some(
-                GInt(_) | GBool(_) | GString(_) | GUri(_) | GByteArray(_) | GDouble(_) | GBigInt(_)
-                | GBigRat(_) | GFixedPoint(_) | EVarBody(_),
+                GInt(_) | GBool(_) | GString(_) | GUri(_) | GByteArray(_) | GDouble(_)
+                | GFloat32(_) | GUint64(_) | GInt32(_) | GUint32(_) | GUint16(_) | GUint8(_)
+                | GBigInt(_) | GBigRat(_) | GFixedPoint(_) | EVarBody(_),
             )
             | None => {},
         }

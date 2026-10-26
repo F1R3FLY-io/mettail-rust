@@ -58,6 +58,7 @@ fn forwarder(source: &str) -> Par {
             source: Some(chan(source)),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         Par::default().with_sends(vec![Send {
             chan: Some(chan(OUT)),
@@ -77,8 +78,10 @@ fn forwarder(source: &str) -> Par {
 }
 
 async fn explore(program: Par, label: &str) -> usize {
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(1_000_000));
+    let sandbox = SpeculativeSandbox::new_standalone().await.expect("sandbox");
+    sandbox
+        .fund_from_standalone(&host_budget(1_000_000))
+        .expect("fund local sandbox");
     let mut explorer =
         Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced).observing(move |report| {
             eprintln!(

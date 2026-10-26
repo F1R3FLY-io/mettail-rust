@@ -503,6 +503,7 @@ pub fn guard_as_tagged_continuation(cond_par: &Par) -> TaggedContinuation {
     TaggedContinuation {
         guard: Some(cond_par.clone()),
         tagged_cont: None,
+        cost_authority: None,
     }
 }
 
@@ -838,12 +839,17 @@ mod tests {
     #[test]
     fn an_absent_guard_commits_unconditionally() {
         let matcher = rholang::rust::interpreter::matcher::r#match::Matcher;
-        let absent = TaggedContinuation { guard: None, tagged_cont: None };
+        let absent = TaggedContinuation {
+            guard: None,
+            tagged_cont: None,
+            cost_authority: None,
+        };
         assert!(matcher.check_commit(&absent, &[]));
         // …and so does the empty-`Par` form `reduce.rs` collapses to `None`.
         let empty = TaggedContinuation {
             guard: Some(Par::default()),
             tagged_cont: None,
+            cost_authority: None,
         };
         assert!(matcher.check_commit(&empty, &[]));
     }

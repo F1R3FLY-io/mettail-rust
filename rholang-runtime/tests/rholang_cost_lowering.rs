@@ -92,7 +92,10 @@ fn parallel_stack_tail_retains_one_shared_prefix() {
     assert_eq!(stack.parallel_tail.len(), 2);
     assert_eq!(stack.parallel_tail[0].cells.len(), 1);
     assert_eq!(stack.parallel_tail[1].cells.len(), 1);
-    assert!(stack.parallel_tail.iter().all(|branch| branch.parallel_tail.is_empty()));
+    assert!(stack
+        .parallel_tail
+        .iter()
+        .all(|branch| branch.parallel_tail.is_empty()));
 }
 
 #[test]
@@ -187,4 +190,354 @@ fn quote_signature_keeps_enclosing_new_binding() {
         quoted.locally_free.iter().any(|bit| *bit != 0),
         "the quoted principal must retain the enclosing bound variable"
     );
+}
+
+fn assert_ground_signature(signature: Option<&models::rhoapi::CostSignature>, name: &str) {
+    let expected = ParSortMatcher::sort_match(&new_gstring_par(name.to_owned(), Vec::new(), false))
+        .term
+        .encode_to_vec();
+    assert_eq!(
+        signature.and_then(|signature| signature.value.as_ref()),
+        Some(&CostValue::Ground(expected)),
+        "expected the exact ground principal {name}",
+    );
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(16))]
+
+    #[test]
+    fn signed_semicolon_rows_keep_only_outer_and_authored_final_wrappers(
+        row_count in 2usize..=8,
+        transfer in any::<bool>(),
+        explicit_final in any::<bool>(),
+    ) {
+        let rows = (0..row_count)
+            .map(|index| format!("value{index} <- @\"channel{index}\""))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let body = if explicit_final { "{% Nil %}[carol]" } else { "Nil" };
+        let annotation = if transfer { "alice -o bob" } else { "alice" };
+        let source = format!("{{% for({rows}){{ {body} }} %}}[{annotation}]");
+        let rho = lower(&source).expect("signed semicolon rows lower");
+        prop_assert_eq!(rho.cost_signed_terms.len(), 1);
+        let outer = &rho.cost_signed_terms[0];
+        assert_ground_signature(outer.signature.as_ref(), "alice");
+        let mut current = outer.body.as_ref().expect("outer signed body");
+        for _ in 0..row_count {
+            prop_assert!(current.cost_signed_terms.is_empty(),
+                "nesting an authored row must not add another signature wrapper");
+            prop_assert_eq!(current.receives.len(), 1);
+            prop_assert_eq!(current.receives[0].binds.len(), 1);
+            current = current.receives[0].body.as_ref().expect("row continuation");
+        }
+        prop_assert_eq!(current.cost_signed_terms.len(), 1);
+        let final_signature = if transfer { "bob" } else if explicit_final { "carol" } else { "alice" };
+        let final_signed = &current.cost_signed_terms[0];
+        let final_body = final_signed.body.as_ref().expect("authored final body");
+        if transfer && explicit_final {
+            let Some(CostValue::Compound(compound)) = final_signed.signature.as_ref()
+                .and_then(|signature| signature.value.as_ref()) else {
+                    return Err(TestCaseError::fail("nested authority must retain both principals in its canonical compound"));
+                };
+            prop_assert_eq!(compound.elements.len(), 2);
+            assert_ground_signature(compound.elements.first(), "bob");
+            assert_ground_signature(compound.elements.get(1), "carol");
+        } else {
+            assert_ground_signature(final_signed.signature.as_ref(), final_signature);
+        }
+        prop_assert!(final_body.cost_signed_terms.is_empty());
+    }
+}
+
+#[test]
+fn explicitly_nested_for_retains_its_own_uniform_signature() {
+    let rho = lower("{% for(first <- @\"first\"){ for(second <- @\"second\"){ Nil } } %}[alice]")
+        .expect("an authored nested receive is uniformly signed at its own boundary");
+    let outer = &rho.cost_signed_terms[0];
+    assert_ground_signature(outer.signature.as_ref(), "alice");
+    let first = &outer.body.as_ref().unwrap().receives[0];
+    let nested = &first.body.as_ref().unwrap().cost_signed_terms[0];
+    assert_ground_signature(nested.signature.as_ref(), "alice");
+    let second = &nested.body.as_ref().unwrap().receives[0];
+    let final_signed = &second.body.as_ref().unwrap().cost_signed_terms[0];
+    assert_ground_signature(final_signed.signature.as_ref(), "alice");
+}
+
+mod source_bound_native {
+    use std::collections::{BTreeMap, HashMap};
+    use std::sync::Arc;
+
+    use crypto::rust::hash::blake2b512_random::Blake2b512Random;
+    use mettail_rholang_runtime::rholang_ast::{RholangPreparationPolicy, RholangProgramFrontend};
+    use mettail_rholang_runtime::{EmptyFltResolver, LoweringOptions};
+    use models::rhoapi::{BindPattern, ListParWithRandom, Par, TaggedContinuation};
+    use models::rust::phlo_schedule::{PhloGenesisPolicy, PhloScheduleV1};
+    use models::rust::utils::{new_gint_par, new_gstring_par};
+    use rholang::rust::interpreter::accounting::authority::{
+        authority_demand, cost_signature_to_sig, AuthorityByteEventKind,
+    };
+    use rholang::rust::interpreter::accounting::native_phlo_rules::{
+        native_resource_compatibility_rule, NativeBoundSource, NativeBudgetTraceLimits,
+        NativePhloDimension, NativePhloExecutionContract, NativePhloRegionLimits,
+    };
+    use rholang::rust::interpreter::accounting::phlo_controls::{
+        check_phlo_controls, PhloScheduleBinding, SignedPhloControls,
+    };
+    use rholang::rust::interpreter::accounting::{NativeRuntimeConfig, Sig};
+    use rholang::rust::interpreter::external_services::ExternalServices;
+    use rholang::rust::interpreter::frontend::{prepare_program, PreparedProgram};
+    use rholang::rust::interpreter::interpreter::EvaluateResult;
+    use rholang::rust::interpreter::matcher::r#match::Matcher;
+    use rholang::rust::interpreter::merging::mergeable_tags::default_mergeable_tags;
+    use rholang::rust::interpreter::rho_runtime::{
+        create_replay_rho_runtime, create_rho_runtime, RhoRuntime,
+    };
+    use rspace_plus_plus::rspace::hashing::stable_hash_provider::EventCodecEpoch;
+    use rspace_plus_plus::rspace::rspace::RSpace;
+    use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
+    use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
+
+    fn prepare(source: &str) -> PreparedProgram {
+        let frontend = RholangProgramFrontend::new(
+            RholangPreparationPolicy {
+                max_source_bytes: 16_384,
+                max_import_entries: 16,
+                max_import_nodes: 4096,
+                max_import_payload_bytes: 65_536,
+                lowering: LoweringOptions::NO_DISCHARGE,
+            },
+            Arc::new(EmptyFltResolver),
+        );
+        let prepared = prepare_program(&frontend, source, HashMap::new()).expect("checked source");
+        assert_eq!(prepared.source_binding().expect("source receipt").0, source.as_bytes());
+        prepared
+    }
+
+    fn config() -> NativeRuntimeConfig {
+        let descriptor = PhloScheduleV1 {
+            protocol_version: 6,
+            network: b"native-test",
+            shard: b"root",
+            settlement_asset: b"REV",
+            settlement_unit: b"atomic-REV",
+            decimal_scale: 8,
+            classes: NativePhloDimension::ALL
+                .into_iter()
+                .zip([2, 3, 5, 7])
+                .zip([b"c".as_slice(), b"i", b"t", b"r"])
+                .map(|((dimension, weight), name)| dimension.resource_class(name, weight))
+                .collect(),
+            actual_price: 2,
+            compatibility_rule: native_resource_compatibility_rule(),
+        };
+        let binding = PhloScheduleBinding::new(&descriptor, PhloGenesisPolicy::LIMITS)
+            .expect("native schedule");
+        let selected = binding.schedule();
+        let schedules = [selected];
+        let owner_ceilings = [2];
+        let controls = check_phlo_controls(
+            selected.environment,
+            0,
+            u64::MAX,
+            SignedPhloControls {
+                limit: 1_000_000,
+                price_ceiling: 2,
+                required_owner_ceilings: &owner_ceilings,
+                permitted_schedules: &schedules,
+            },
+            selected,
+            1_000_000,
+        )
+        .expect("checked native controls");
+        let contract =
+            NativePhloExecutionContract::new(controls, &binding, NativeBoundSource::Certificate)
+                .expect("checked native execution contract");
+        NativeRuntimeConfig::new(
+            contract,
+            NativeBudgetTraceLimits {
+                attempts: 100_000,
+                path_segments: 4096,
+                regions: NativePhloRegionLimits {
+                    regions: 1000,
+                    encoded_authority_bytes: 10_000_000,
+                },
+            },
+        )
+        .with_event_codec_epoch(EventCodecEpoch::CostV1)
+    }
+
+    fn assert_same_economic_trace(expected: &EvaluateResult, actual: &EvaluateResult) {
+        assert!(actual.errors.is_empty(), "{:?}", actual.errors);
+        assert_eq!(actual.native_phlo_usage, expected.native_phlo_usage);
+        assert_eq!(actual.byte_observations, expected.byte_observations);
+        let expected = expected
+            .native_budget_recording
+            .as_ref()
+            .expect("expected budget trace");
+        let actual = actual
+            .native_budget_recording
+            .as_ref()
+            .expect("actual budget trace");
+        assert_eq!(actual.session, expected.session);
+        assert_eq!(actual.used, expected.used);
+        let keyed = |recording: &rholang::rust::interpreter::accounting::NativeBudgetRecording| {
+            let mut keyed = BTreeMap::new();
+            for row in recording.attempts.iter() {
+                let path = recording
+                    .paths
+                    .suffix(row.occurrence.path, 0)
+                    .expect("recorded causal path");
+                keyed
+                    .entry((row.occurrence.session, path, row.occurrence.stage))
+                    .or_insert_with(Vec::new)
+                    .push((row.observation.clone(), row.granted));
+            }
+            keyed
+        };
+        assert_eq!(keyed(actual), keyed(expected));
+    }
+
+    #[tokio::test]
+    async fn checked_signed_query_executes_and_replays_the_explicit_native_trace() {
+        const SEED: &[u8] = b"source-bound-signed-query";
+        for (annotation, final_signature) in [("alice", "alice"), ("alice -o bob", "bob")] {
+            let source = format!(
+                r#"new svc in {{
+                {{% for(ret, @value <- svc) {{ ret!(value) }} %}}[alice] |
+                {{% for(@answer <- svc!?(7)) {{% @"signed-query-result"!(answer) %}} %}}[{annotation}]
+            }}"#
+            );
+            let expanded = format!(
+                r#"new svc in {{
+                {{% for(ret, @value <- svc) {{ ret!(value) }} %}}[alice] |
+                {{% new reply in {{ svc!(*reply, 7) | for(@answer <- reply) {{
+                    {{% @"signed-query-result"!(answer) %}}[{final_signature}]
+                }} }} %}}[alice]
+            }}"#
+            );
+            let mut manager = InMemoryStoreManager::new();
+            let stores = manager.r_space_stores().await.expect("runtime stores");
+            let (space, replay_space) = RSpace::<
+                Par,
+                BindPattern,
+                ListParWithRandom,
+                TaggedContinuation,
+            >::create_with_replay_for_epoch(
+                EventCodecEpoch::CostV1,
+                stores,
+                Arc::new(Box::new(Matcher)),
+            )
+            .expect("cost-bearing play and replay spaces");
+            let tags = Arc::new(default_mergeable_tags());
+            let mut play = create_rho_runtime(
+                space,
+                Arc::clone(&tags),
+                false,
+                &mut Vec::new(),
+                ExternalServices::noop(),
+            )
+            .await
+            .expect("cost-bearing live runtime");
+            let mut replay = create_replay_rho_runtime(
+                replay_space,
+                tags,
+                false,
+                &mut Vec::new(),
+                ExternalServices::noop(),
+            )
+            .await
+            .expect("cost-bearing replay runtime");
+            assert_eq!(play.reducer.space.codec_epoch(), EventCodecEpoch::CostV1);
+            assert_eq!(replay.reducer.space.codec_epoch(), EventCodecEpoch::CostV1);
+            for runtime in [&play, &replay] {
+                runtime
+                    .cost
+                    .set_deploy_signature_funded(SEED, Sig::Ground(vec![7]));
+            }
+            let initial_root = play.get_root().await;
+            let result = play
+                .evaluate_prepared_with_native_phlo(
+                    prepare(&source),
+                    Blake2b512Random::create_from_bytes(SEED),
+                    None,
+                    config(),
+                )
+                .await
+                .expect("native signed query evaluation");
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            assert!(result.native_phlo_usage.is_some_and(|usage| usage > 0));
+            assert!(result.byte_observations.has_complete_measurements());
+            assert!(result
+                .byte_observations
+                .rows
+                .iter()
+                .any(|row| row.kind == AuthorityByteEventKind::Comm));
+            let output = new_gstring_par("signed-query-result".to_owned(), Vec::new(), false);
+            let values = play.get_data(&output).await.expect("native query result");
+            assert_eq!(values.len(), 1);
+            assert_eq!(values[0].a.pars, vec![new_gint_par(7, Vec::new(), false)]);
+            let expected_principal = super::lower(&format!("{{% Nil %}}[{final_signature}]"))
+                .expect("continuation principal");
+            let principal = cost_signature_to_sig(
+                expected_principal.cost_signed_terms[0]
+                    .signature
+                    .as_ref()
+                    .unwrap(),
+            )
+            .expect("canonical principal")
+            .lane_hash();
+            let authority = values[0]
+                .a
+                .cost_authority
+                .as_ref()
+                .expect("output authority");
+            let demand = authority_demand(authority).expect("output authority demand");
+            assert_eq!(demand.get(&principal), 1);
+            assert_eq!(
+                demand.0.len(),
+                1,
+                "communication authority must not survive into the signed continuation"
+            );
+
+            let checkpoint = play.create_checkpoint().await;
+            replay
+                .reset(&initial_root)
+                .await
+                .expect("replay initial state");
+            replay.rig(checkpoint.log).await.expect("recorded COMM log");
+            let replayed = replay
+                .evaluate_prepared_with_native_phlo(
+                    prepare(&source),
+                    Blake2b512Random::create_from_bytes(SEED),
+                    None,
+                    config(),
+                )
+                .await
+                .expect("native signed query replay");
+            replay
+                .check_replay_data()
+                .await
+                .expect("replay log consumed exactly");
+            assert_same_economic_trace(&result, &replayed);
+            assert_eq!(replay.create_checkpoint().await.root, checkpoint.root);
+
+            play.reset(&initial_root)
+                .await
+                .expect("explicit expansion initial state");
+            let explicit = play
+                .evaluate_prepared_with_native_phlo(
+                    prepare(&expanded),
+                    Blake2b512Random::create_from_bytes(SEED),
+                    None,
+                    config(),
+                )
+                .await
+                .expect("explicit native query evaluation");
+            assert_same_economic_trace(&result, &explicit);
+            assert_eq!(play.create_checkpoint().await.root, checkpoint.root);
+            let explicit_values = play.get_data(&output).await.expect("explicit query result");
+            assert_eq!(explicit_values, values);
+        }
+    }
 }

@@ -42,6 +42,7 @@ pub enum ImportShapeError {
     OpenCollection,
     MissingMapField,
     UnsupportedExpression,
+    UnsupportedUnforgeable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,6 +296,10 @@ fn validate_value(
                     Some(UnfInstance::GDeployerIdBody(value)) => value.public_key.len(),
                     Some(UnfInstance::GSysAuthTokenBody(_)) => 0,
                     None => return shape(ImportShapeError::MissingInstance),
+                    // Cost-accounting authority/principal IDs are not public
+                    // import literals. A separate typed admission route must
+                    // authenticate them before they can enter this boundary.
+                    Some(_) => return shape(ImportShapeError::UnsupportedUnforgeable),
                 };
                 meter.bytes(bytes)?;
             },

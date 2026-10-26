@@ -134,22 +134,25 @@
 //!
 //! There is no node budget, no frontier cap, no new consensus parameter, and
 //! nothing in this module owns a budget. The sandbox is funded from the host
-//! deploy's remaining phlogiston ([`SpeculativeSandbox::fund_from`]); every
-//! administrative saturation and every fired continuation body passes through
-//! f1r3node's `MeteredMachine::reserve_comm`; an exploration that would run away
-//! exhausts the deploy and its branches arrive as
+//! deploy's remaining phlogiston ([`SpeculativeSandbox::fund_from`]). In the
+//! merged node a COMM is the only metered compute (DR-131): staging a send or a
+//! receive is free, and every step of the search fires one resting COMM, which
+//! the node's accounting observer charges one unit. An exploration that would
+//! run away exhausts the deploy and its branches arrive as
 //! [`BranchOutcome::Aborted`] one by one until the frontier empties. That is the
 //! termination argument for [`Lookahead::Unbounded`]: it is not "assume the
 //! guest terminates", it is "the deploy's budget is finite and every step spends
 //! from it".
 //!
-//! ⚠ A budget unit is **one COMM**, not one unit of `Cost.value`:
-//! `reserve_comm(amount)` charges one regardless of `amount`. So
-//! [`SpeculativeSandbox::consumed`] is a COMM **count** and charging it back to
-//! the host is `consumed()` *calls* to `reserve_comm` —
-//! [`Explorer::charge_host`] does exactly that, and exists so no caller has to
-//! rediscover it (Stage 1's own test measured the host charged 1 where 5 was
-//! owed before this was understood).
+//! ⚠ A fired COMM costs **one unit**, so [`SpeculativeSandbox::consumed`] is a
+//! COMM **count**. In the merged node `reserve_comm(amount)` lowers the budget
+//! by `amount.value` (measured: a weight of 11 lowered it by 11). Charging
+//! `consumed()` back to the host is `consumed()` *calls* to `reserve_comm`, each
+//! with a weight of one unit, so each speculative COMM is one COMM event of
+//! weight one on the host's lane. [`Explorer::charge_host`] does exactly that,
+//! and exists so no caller has to rediscover it. Stage 1's own test measured the
+//! host charged 1 where 5 was owed before the per-COMM charge-back was
+//! understood.
 //!
 //! ## What this module deliberately does NOT do
 //!
@@ -167,6 +170,7 @@ use rholang::rust::interpreter::accounting::RuntimeBudget;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::metering::MeteredMachine;
 
+use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
 use super::{
@@ -437,10 +441,11 @@ pub struct AbortedLeaf {
 #[repr(i64)]
 pub enum ErrorCode {
     /// The deploy could not afford the exploration:
-    /// `InterpreterError::OutOfPhlogistonsError`. Split out from every other
-    /// interpreter error because it is the one failure that is a statement
-    /// about the *budget* rather than about the program, and because it is the
-    /// failure metering-as-the-bound is expected to produce.
+    /// `InterpreterError::OutOfPhlogistonsError`, or the tuplespace's
+    /// `RSpaceError::OutOfPhlogistons` from the resting-COMM charge. Split out
+    /// from every other interpreter error because it is the one failure that is
+    /// a statement about the *budget* rather than about the program, and
+    /// because it is the failure metering-as-the-bound is expected to produce.
     OutOfPhlogistons = 1,
     /// The program called `abort`: `InterpreterError::UserAbortError`.
     UserAbort = 2,
@@ -526,6 +531,11 @@ impl ErrorCode {
     /// [`SpeculationError`] and every arm of [`InterpreterError`] that is
     /// distinguished has an explicit case, and the rest fall to
     /// [`ErrorCode::Interpreter`].
+    ///
+    /// The merged node charges a fired rendezvous in the resting-COMM observer
+    /// of the tuplespace. That observer converts `OutOfPhlogistonsError` to
+    /// `RSpaceError::OutOfPhlogistons`, so that space error is also a statement
+    /// about the budget and has its own case.
     pub fn of(error: &SpeculationError) -> Self {
         match error {
             SpeculationError::Interpreter(InterpreterError::OutOfPhlogistonsError) => {
@@ -533,6 +543,7 @@ impl ErrorCode {
             },
             SpeculationError::Interpreter(InterpreterError::UserAbortError) => ErrorCode::UserAbort,
             SpeculationError::Interpreter(_) => ErrorCode::Interpreter,
+            SpeculationError::Space(RSpaceError::OutOfPhlogistons) => ErrorCode::OutOfPhlogistons,
             SpeculationError::Space(_) => ErrorCode::Tuplespace,
             SpeculationError::NotFired => ErrorCode::NotFired,
             SpeculationError::Bootstrap(_) => ErrorCode::Bootstrap,
@@ -796,11 +807,12 @@ fn intersect_sleep(left: &SleepSet, right: &SleepSet) -> SleepSet {
 /// the charge-back; [`Explorer::charge_host`] is this with `owed` read off its
 /// own sandbox.
 ///
-/// ⚠ A budget unit is ONE COMM, not one unit of `Cost.value`:
-/// `MeteredMachine::reserve_comm(amount)` charges **one** regardless of `amount`
-/// (the `Cost` is the diagnostic weight that rides into the event log and the
-/// cost-trace digest). So charging back `k` COMMs is `k` *calls*, which is what
-/// this does — one call passing `owed` would charge 1.
+/// ⚠ A fired COMM costs one unit, so `owed` is a COMM count. In the merged node
+/// `MeteredMachine::reserve_comm(amount)` records one COMM event with the weight
+/// `amount.value` and lowers the budget by that weight. So charging back `k`
+/// COMMs is `k` *calls* with `weight`, which is what this does. With the weight
+/// of one unit that the request server passes (`speculation_weight()`), each
+/// speculative COMM is one COMM event of weight one on the host's lane.
 ///
 /// It is a free function because the charge-back has two callers with different
 /// lifetimes: the [`Explorer`], which still holds its sandbox, and the request
@@ -959,10 +971,13 @@ impl<'sandbox> Explorer<'sandbox> {
     /// eagerly, so it does not depend on the scheduler — measured,
     /// `tests/x1_stratified_monotonicity.rs::r1`.)
     ///
-    /// The sandbox must already be funded ([`SpeculativeSandbox::fund_from`]);
-    /// an unfunded one refuses to evaluate anything at all, which is the
-    /// fail-shut direction, and the refusal arrives as a single
-    /// [`ErrorCode::OutOfPhlogistons`] `failure` leaf with an empty trace.
+    /// The sandbox must already be funded
+    /// ([`SpeculativeSandbox::fund_from_standalone`]). An unfunded one stages the
+    /// program, because staging is free (DR-131), but it cannot fire a COMM.
+    /// That is the fail-shut direction, and the refusal arrives as a single
+    /// [`ErrorCode::Bootstrap`] `failure` leaf with an empty trace. A funded
+    /// sandbox that runs out of units reports each branch that it cannot afford
+    /// as an [`ErrorCode::OutOfPhlogistons`] `failure` leaf.
     pub async fn explore(
         &mut self,
         program: Par,
@@ -1081,12 +1096,11 @@ impl<'sandbox> Explorer<'sandbox> {
 
     /// **Charge the host what the exploration spent.**
     ///
-    /// ⚠ A budget unit is ONE COMM, not one unit of `Cost.value`:
-    /// `MeteredMachine::reserve_comm(amount)` charges **one** regardless of
-    /// `amount` (the `Cost` is the diagnostic weight that rides into the event
-    /// log and the cost-trace digest). So charging back `k` COMMs is `k`
-    /// *calls*, which is what this does — one call passing `consumed()` would
-    /// charge 1.
+    /// ⚠ A fired COMM costs one unit, so `consumed()` is a COMM count. In the
+    /// merged node `MeteredMachine::reserve_comm(amount)` records one COMM event
+    /// with the weight `amount.value` and lowers the budget by that weight. So
+    /// charging back `k` COMMs is `k` *calls* with `weight`, which is what this
+    /// does, through [`charge_host_comms`].
     ///
     /// Fails with `OutOfPhlogistonsError` on the call that exceeds the host's
     /// budget, exactly like any other over-budget program, and reports how many
@@ -1171,7 +1185,7 @@ impl<'sandbox> Explorer<'sandbox> {
                 // conflict class can now fire without cloning the complete
                 // HotStoreState at all.
                 self.sandbox.load(node_state).await?;
-                let enabled = self.sandbox.enabled();
+                let enabled = self.sandbox.enabled()?;
                 let guest_roster = match (&mut self.checked_guest, &node_guest) {
                     (Some(provider), Some(guest)) => {
                         // A checked roster is one atomic answer. An incomplete
@@ -1289,7 +1303,7 @@ impl<'sandbox> Explorer<'sandbox> {
                         };
                         self.sandbox.load(state).await?;
                     }
-                    let live = self.sandbox.enabled();
+                    let live = self.sandbox.enabled()?;
                     // Teeth: f1r3node's enumeration is deterministic (pinned by
                     // `enabled_rendezvous_spec.rs::t4`) and this does not assume
                     // it. A drift here would silently explore a different graph.
@@ -1418,7 +1432,7 @@ impl<'sandbox> Explorer<'sandbox> {
         // its last allotted step is the completed evaluation it is.
         for node in frontier.drain(..) {
             self.sandbox.load(node.state.clone()).await?;
-            let host_count = self.sandbox.enabled().len();
+            let host_count = self.sandbox.enabled()?.len();
             let guest_count = match (&mut self.checked_guest, &node.guest) {
                 (Some(provider), Some(guest)) => {
                     provider.complete_roster(&node.state, guest)?.len()
@@ -1548,10 +1562,12 @@ mod checked_guest_search_tests {
     }
 
     async fn sandbox() -> SpeculativeSandbox {
-        let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
+        let sandbox = SpeculativeSandbox::new_standalone().await.expect("sandbox");
         let budget = CostAccounting::empty_cost();
         budget.set(Cost::create(1_000_000, "checked guest search test"));
-        sandbox.fund_from(&budget);
+        sandbox
+            .fund_from_standalone(&budget)
+            .expect("fund local sandbox");
         sandbox
     }
 
@@ -1576,6 +1592,7 @@ mod checked_guest_search_tests {
                 source: Some(new_gstring_par(channel.to_string(), Vec::new(), false)),
                 remainder: None,
                 free_count: 1,
+                cost_signature: None,
             }],
             Par::default(),
             false,
@@ -1629,7 +1646,7 @@ mod checked_guest_search_tests {
                 .await
                 .expect("host source saturates");
             let root = direct.snapshot();
-            let enabled = direct.enabled();
+            let enabled = direct.enabled().expect("enabled roster");
             assert_eq!(enabled.len(), choices.len(), "case {case}: complete host roster");
 
             let search_sandbox = sandbox().await;
@@ -1649,7 +1666,7 @@ mod checked_guest_search_tests {
                     .load(root.clone())
                     .await
                     .expect("restore root before selected host edge");
-                let live = direct.enabled();
+                let live = direct.enabled().expect("enabled roster");
                 let expected = RendezvousName::of(&live[index]);
                 assert_eq!(expected, RendezvousName::of(rendezvous));
                 let fired = direct
@@ -2118,6 +2135,30 @@ mod checked_guest_search_tests {
             .await;
         assert!(
             matches!(result, Err(SpeculationError::Bootstrap(message)) if message == "checked roster refused")
+        );
+    }
+}
+
+#[cfg(test)]
+mod error_code_tests {
+    use super::*;
+
+    /// The resting-COMM charge of the merged node reports exhaustion as a space
+    /// error. Both spellings of out-of-phlogistons are budget failures, and any
+    /// other space refusal stays a tuplespace failure.
+    #[test]
+    fn both_out_of_phlogistons_spellings_are_budget_failures() {
+        assert_eq!(
+            ErrorCode::of(&SpeculationError::Space(RSpaceError::OutOfPhlogistons)),
+            ErrorCode::OutOfPhlogistons
+        );
+        assert_eq!(
+            ErrorCode::of(&SpeculationError::Interpreter(InterpreterError::OutOfPhlogistonsError)),
+            ErrorCode::OutOfPhlogistons
+        );
+        assert_eq!(
+            ErrorCode::of(&SpeculationError::Space(RSpaceError::ProduceCommitDenied)),
+            ErrorCode::Tuplespace
         );
     }
 }

@@ -257,6 +257,7 @@ fn build_node_process(
                 source: Some(new_gstring_par(intermediate_channel(child), Vec::new(), false)),
                 remainder: None,
                 free_count: 1,
+                cost_signature: None,
             })
             .collect();
         let receive = Receive {

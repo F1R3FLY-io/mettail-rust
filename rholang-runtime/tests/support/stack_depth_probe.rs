@@ -51,11 +51,14 @@
 use std::sync::Arc;
 
 use mettail_languages::rholang::{
+    source_constructor,
+    source_profile::{RholangSourceProfile, SourceRole},
     BigRat, Int, List, Name, Proc, RholangEnv, RholangLanguage, RholangTerm, RholangTermInner,
+    SourceConstructor, SourceProfile, SourceProfileError,
 };
 use mettail_rholang_codegen::FltReflect;
 use mettail_rholang_runtime::rholang_ast::{lower_proc_in_env, BoundEnv};
-use mettail_runtime::{Binder, HashBag, Scope};
+use mettail_runtime::{Binder, BindingOperation, CheckedIterativeBinding, HashBag, Scope};
 use models::rust::rholang::par_children::dismantle;
 
 // ---------------------------------------------------------------------------
@@ -572,6 +575,104 @@ fn ast_semantic_hash_body(depth: usize) {
     );
     std::mem::forget(a);
     std::mem::forget(b);
+}
+
+fn ast_checked_binding_body(depth: usize) {
+    let name = "probe_checked_binding_x";
+    let term = nested_list_var(depth, name);
+    let free = mettail_runtime::get_or_create_var(name.to_string());
+    let binders = [Binder(free.clone())];
+    let mut charged = 0usize;
+    let closed = term
+        .try_copy_iterative(
+            BindingOperation::Close {
+                state: BindingOperation::Clone.state(),
+                binders: &binders,
+            },
+            &mut |work, _| {
+                charged = charged
+                    .checked_add(work)
+                    .expect("binding probe work fits usize");
+                Ok::<(), ()>(())
+            },
+        )
+        .expect("checked closing reaches the leaf");
+    assert!(charged > depth, "checked closing must traverse the complete spine");
+    let mut leaf = &closed;
+    for _ in 0..depth {
+        let Proc::CastList(value) = leaf else {
+            panic!("checked binding lost a list wrapper")
+        };
+        let List::ListLit(items) = value.as_ref() else {
+            panic!("checked binding changed the list constructor")
+        };
+        assert_eq!(items.len(), 1, "checked binding changed list arity");
+        leaf = &items[0];
+    }
+    let Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Bound(bound))) = leaf else {
+        panic!("checked closing did not bind the deepest variable")
+    };
+    assert_eq!(bound.scope.0, 0);
+    assert_eq!(bound.binder.0, 0);
+    assert_eq!(bound.pretty_name, free.pretty_name);
+    let opened = closed
+        .try_copy_iterative(
+            BindingOperation::Open {
+                state: BindingOperation::Clone.state(),
+                binders: &binders,
+            },
+            &mut |_, _| Ok::<(), ()>(()),
+        )
+        .expect("checked opening reaches the leaf");
+    assert!(opened == term, "checked opening must restore the complete original term");
+    std::mem::forget(term);
+    std::mem::forget(closed);
+    std::mem::forget(opened);
+}
+
+struct RejectNumericSourceLeaf;
+
+impl SourceProfile for RejectNumericSourceLeaf {
+    type Role = SourceRole;
+
+    fn fields(
+        &self,
+        constructor: SourceConstructor,
+    ) -> Option<&'static [Option<fn(SourceRole) -> SourceRole>]> {
+        match constructor {
+            SourceConstructor::Int(source_constructor::Int::NumLit) => None,
+            other => RholangSourceProfile.fields(other),
+        }
+    }
+}
+
+fn ast_checked_source_body(depth: usize) {
+    let term = nested_list(depth);
+    let mut charged = 0usize;
+    term.try_check_source_profile(SourceRole::Term, &RholangSourceProfile, &mut |work, _| {
+        charged = charged
+            .checked_add(work)
+            .expect("source probe work fits usize");
+        Ok::<(), ()>(())
+    })
+    .expect("the production source profile admits the complete spine");
+    assert!(charged > depth, "the source check must traverse the complete spine");
+    let refusal =
+        term.try_check_source_profile(SourceRole::Term, &RejectNumericSourceLeaf, &mut |_, _| {
+            Ok::<(), ()>(())
+        });
+    assert!(
+        matches!(
+            refusal,
+            Err(SourceProfileError::Unsupported {
+                constructor: SourceConstructor::Int(source_constructor::Int::NumLit),
+                role: SourceRole::Term,
+                ordinal,
+            }) if ordinal == 2 * depth + 1
+        ),
+        "the source check must refuse the deepest numeric leaf at its exact ordinal"
+    );
+    std::mem::forget(term);
 }
 
 /// Capture-avoiding substitution — `subst.rs`.
@@ -1720,6 +1821,8 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     // -------- the GENERATED TRAIT DRIVERS (eight that had no subject) --------
     ("ast_eq", ast_eq_body),
     ("ast_cmp", ast_cmp_body),
+    ("ast_checked_binding", ast_checked_binding_body),
+    ("ast_checked_source", ast_checked_source_body),
     ("ast_hash", ast_hash_body),
     ("ast_debug", ast_debug_body),
     ("ast_display", ast_display_body),

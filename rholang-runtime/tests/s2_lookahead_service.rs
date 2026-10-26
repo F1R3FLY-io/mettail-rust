@@ -9,7 +9,7 @@
 //! ```text
 //!   x!(P)[*]  ⟿  @"^spec-all"!( ⟦P⟧ , x )
 //!                        │
-//!                        ▼            LookaheadService::serve
+//!                        ▼            LookaheadService::serve_local
 //!                 ┌──────────────────────────────────────────────┐
 //!                 │  fresh sandbox ─ fund from the host deploy    │
 //!                 │  inject `prelude | subject` ─ saturate        │
@@ -38,6 +38,7 @@ use mettail_rholang_runtime::lookahead::{
     spec_all_request, spec_n_request, unserved_requests, SPEC_ALL_CHANNEL,
 };
 use mettail_rholang_runtime::par_as_runtime_observation_value;
+use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::search::{Lookahead, TraceMode};
 use mettail_rholang_runtime::speculation::service::{
     LeafProjection, LookaheadRequest, LookaheadService,
@@ -75,6 +76,7 @@ fn forward(source: &str, target: &str) -> Par {
             source: Some(chan(source)),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         Par::default().with_sends(vec![Send {
             chan: Some(chan(target)),
@@ -102,6 +104,26 @@ fn rand() -> Blake2b512Random {
     Blake2b512Random::create_from_length(128)
 }
 
+#[tokio::test]
+async fn legacy_service_cannot_mint_a_resting_commit_from_the_request() {
+    let host = host_budget(1_000_000);
+    let response = LookaheadService::serve(
+        LookaheadRequest::new(racing_subject(), Lookahead::Unbounded),
+        rand(),
+        &host,
+    )
+    .await
+    .settle(&host, Cost::create(1, "legacy local refusal"))
+    .expect("committed work is charged before refusal")
+    .expect("the legacy request itself remains observable");
+    assert!(response.exploration.success.is_empty());
+    assert!(response
+        .exploration
+        .failure
+        .iter()
+        .any(|leaf| leaf.code == ErrorCode::Bootstrap));
+}
+
 /// ★ `[*]` through the service: the reply channel gets ONE BARE TERM per success
 /// branch, and the two branches deliver different terms.
 ///
@@ -111,7 +133,7 @@ fn rand() -> Blake2b512Random {
 #[tokio::test]
 async fn the_reply_carries_one_bare_term_per_success_branch() {
     let host = host_budget(1_000_000);
-    let attempt = LookaheadService::serve(
+    let attempt = LookaheadService::serve_local(
         LookaheadRequest::new(racing_subject(), Lookahead::Unbounded)
             .with_projection(LeafProjection::resting_on(OUT)),
         rand(),
@@ -156,7 +178,7 @@ async fn the_reply_carries_one_bare_term_per_success_branch() {
 #[tokio::test]
 async fn the_provenance_datum_is_a_trace_and_a_term() {
     let host = host_budget(1_000_000);
-    let response = LookaheadService::serve(
+    let response = LookaheadService::serve_local(
         LookaheadRequest::new(racing_subject(), Lookahead::Unbounded)
             .with_projection(LeafProjection::resting_on(OUT)),
         rand(),
@@ -220,7 +242,7 @@ async fn a_truncated_branch_is_published_with_a_resumable_handle() {
         .append(forward("c", "d"))
         .append(forward("d", OUT));
 
-    let cut = LookaheadService::serve(
+    let cut = LookaheadService::serve_local(
         LookaheadRequest::new(subject.clone(), Lookahead::Steps(1))
             .with_projection(LeafProjection::resting_on(OUT)),
         rand(),
@@ -257,7 +279,7 @@ async fn a_truncated_branch_is_published_with_a_resumable_handle() {
     );
 
     // Resume it: the answer must equal an unbroken `[*]`.
-    let unbroken = LookaheadService::serve(
+    let unbroken = LookaheadService::serve_local(
         LookaheadRequest::new(subject, Lookahead::Unbounded)
             .with_projection(LeafProjection::resting_on(OUT)),
         rand(),
@@ -273,7 +295,7 @@ async fn a_truncated_branch_is_published_with_a_resumable_handle() {
         .iter()
         .map(|(_, branch)| branch.clone())
         .collect();
-    let resumed = LookaheadService::resume(
+    let resumed = LookaheadService::resume_local(
         &handles,
         Lookahead::Unbounded,
         &LeafProjection::resting_on(OUT),
@@ -311,8 +333,13 @@ async fn a_truncated_branch_is_published_with_a_resumable_handle() {
 /// quiet empty success set.
 #[tokio::test]
 async fn an_unaffordable_request_publishes_typed_branch_failures() {
-    let host = host_budget(2);
-    let response = LookaheadService::serve(
+    // Changed for the merged node, where a COMM is the only metered operation
+    // (DR-131). Each branch of `racing_subject` commits one COMM, so a host
+    // with two units pays for both branches. A host with no units pays for
+    // none. The code was:
+    // let host = host_budget(2);
+    let host = host_budget(0);
+    let response = LookaheadService::serve_local(
         LookaheadRequest::new(racing_subject(), Lookahead::Unbounded)
             .with_projection(LeafProjection::resting_on(OUT)),
         rand(),
@@ -360,7 +387,7 @@ async fn an_unaffordable_request_publishes_typed_branch_failures() {
 #[tokio::test]
 async fn the_configuration_projection_delivers_a_process() {
     let host = host_budget(1_000_000);
-    let response = LookaheadService::serve(
+    let response = LookaheadService::serve_local(
         LookaheadRequest::new(racing_subject(), Lookahead::Unbounded)
             .with_projection(LeafProjection::Configuration),
         rand(),

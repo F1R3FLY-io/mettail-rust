@@ -131,7 +131,7 @@ use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{
-    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard, RSpaceAccountingObserver,
 };
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -539,27 +539,60 @@ pub struct CountingSpace {
 
 #[async_trait]
 impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for CountingSpace {
+    fn codec_epoch(&self) -> rspace_plus_plus::rspace::hashing::stable_hash_provider::EventCodecEpoch {
+        self.inner.codec_epoch()
+    }
+
+    fn set_accounting_observer(
+        &self,
+        observer: Option<
+            Arc<
+                dyn RSpaceAccountingObserver<
+                    Par,
+                    BindPattern,
+                    ListParWithRandom,
+                    TaggedContinuation,
+                >,
+            >,
+        >,
+    ) {
+        self.inner.set_accounting_observer(observer);
+    }
+
     async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         self.inner.create_checkpoint().await
     }
 
-    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         self.inner.get_data(channel).await
     }
 
     async fn get_waiting_continuations(
         &self,
         channels: Vec<Par>,
-    ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
+    ) -> Result<Vec<WaitingContinuation<BindPattern, TaggedContinuation>>, RSpaceError> {
         self.inner.get_waiting_continuations(channels).await
     }
 
-    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+    async fn get_joins(&self, channel: Par) -> Result<Vec<Vec<Par>>, RSpaceError> {
         self.inner.get_joins(channel).await
     }
 
     async fn remove_all_data(&self, channel: &Par) -> Result<(), RSpaceError> {
         self.inner.remove_all_data(channel).await
+    }
+    async fn remove_data_at(&self, channel: &Par, index: i32) -> Result<(), RSpaceError> {
+        self.inner.remove_data_at(channel, index).await
+    }
+    async fn remove_data_at_recorded(
+        &self,
+        channel: &Par,
+        index: i32,
+        operation_id: &[u8],
+    ) -> Result<(), RSpaceError> {
+        self.inner
+            .remove_data_at_recorded(channel, index, operation_id)
+            .await
     }
 
     async fn remove_all_continuations(&self, channels: Vec<Par>) -> Result<(), RSpaceError> {
@@ -767,6 +800,25 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for CountingMatch
     fn check_commit(&self, k: &TaggedContinuation, matched: &[&ListParWithRandom]) -> bool {
         self.guards.check_commit(k, matched)
     }
+
+    /// Forwarded so the wrapper decides an installed-predicate guard exactly as
+    /// the matcher it wraps; the trait defaults would route it through
+    /// `check_commit`. Uncounted, like `check_commit`.
+    fn prepare_commit(
+        &self,
+        k: &TaggedContinuation,
+        matched: &[&ListParWithRandom],
+    ) -> Option<rspace_plus_plus::rspace::r#match::PreparedCommit> {
+        self.guards.prepare_commit(k, matched)
+    }
+
+    fn check_commit_by_reference(
+        &self,
+        k: &TaggedContinuation,
+        matched: &[&ListParWithRandom],
+    ) -> bool {
+        self.guards.check_commit_by_reference(k, matched)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -815,7 +867,8 @@ pub async fn bench_runtime_with_counters(
         &mut extra_system_processes,
         ExternalServices::noop(), // inert — no ChromaDB/SBERT/OpenAI
     )
-    .await;
+    .await
+    .map_err(|error| format!("rho runtime construction: {error:?}"))?;
     Ok((runtime, comm_counters, match_counters))
 }
 
@@ -1014,7 +1067,10 @@ pub async fn bench_inj_and_read<R: RhoRuntime>(
 
     let readback_started = Instant::now();
     let channel = quoted_channel(out_channel);
-    let data = runtime.get_data(&channel).await;
+    let data = runtime
+        .get_data(&channel)
+        .await
+        .map_err(|error| format!("bench readback: {error:?}"))?;
     let mut observed: Vec<Par> =
         Vec::with_capacity(data.iter().map(|datum| datum.a.pars.len()).sum());
     for datum in data {
@@ -1238,7 +1294,7 @@ pub async fn drive_arm_with_counters(
     // the snapshot at quiescence makes the reduction-only invariant explicit.
     let snapshot = comm_counters.snapshot();
 
-    let out_raw = drive_peek_channel(&runtime, &channels.out).await;
+    let out_raw = drive_peek_channel(&runtime, &channels.out).await?;
     let mut out_values = Vec::with_capacity(out_raw.len());
     for par in &out_raw {
         match crate::run::par_as_runtime_observation_value(par) {
@@ -1252,9 +1308,9 @@ pub async fn drive_arm_with_counters(
             },
         }
     }
-    let fired_data = drive_peek_channel(&runtime, &channels.fired).await;
-    let err_data = drive_peek_channel(&runtime, &channels.err).await;
-    let fuel_data = drive_peek_channel(&runtime, &channels.fuel).await;
+    let fired_data = drive_peek_channel(&runtime, &channels.fired).await?;
+    let err_data = drive_peek_channel(&runtime, &channels.err).await?;
+    let fuel_data = drive_peek_channel(&runtime, &channels.fuel).await?;
     Ok((
         crate::run::DriveObservationSet {
             out_values,
@@ -1321,16 +1377,19 @@ pub fn corrupt_reflected_label(
 /// no COMM is recorded on the counting space), the counting-runtime twin of
 /// `run::read_ground_from_runtime` with the verbatim reader.
 #[cfg(feature = "bench-scion")]
-async fn drive_peek_channel<R: RhoRuntime>(runtime: &R, channel: &str) -> Vec<Par> {
+async fn drive_peek_channel<R: RhoRuntime>(runtime: &R, channel: &str) -> Result<Vec<Par>, String> {
     let channel = quoted_channel(channel);
-    let data = runtime.get_data(&channel).await;
+    let data = runtime
+        .get_data(&channel)
+        .await
+        .map_err(|error| format!("drive channel read: {error:?}"))?;
     let mut out = Vec::with_capacity(data.iter().map(|datum| datum.a.pars.len()).sum());
     for datum in data {
         for par in &datum.a.pars {
             out.push(par.clone());
         }
     }
-    out
+    Ok(out)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1381,6 +1440,7 @@ mod tests {
                 TaggedContinuation {
                     tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
                     guard: None,
+                    cost_authority: None,
                 },
                 false,
                 BTreeSet::new(),
@@ -1390,6 +1450,7 @@ mod tests {
         let data = ListParWithRandom {
             pars: vec![quoted("value")],
             random_state: vec![7; 32],
+            ..ListParWithRandom::default()
         };
         let before = counters.snapshot();
         assert_eq!(
@@ -1653,6 +1714,7 @@ mod tests {
                 source: Some(quoted(accept_channel)),
                 remainder: None,
                 free_count: (arity + 1) as i32,
+                cost_signature: None,
             }],
             body,
             false,
@@ -1685,6 +1747,7 @@ mod tests {
                 source: Some(quoted(from_channel)),
                 remainder: None,
                 free_count: 1,
+                cost_signature: None,
             }],
             body,
             true, // persistent: forward EVERY OUT value
@@ -1876,6 +1939,7 @@ mod tests {
                 source: Some(quoted("a")),
                 remainder: None,
                 free_count: 1,
+                cost_signature: None,
             }],
             inner,
             false,

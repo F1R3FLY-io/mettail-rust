@@ -248,7 +248,8 @@ async fn build_runtime_with_matcher(
             &mut extra_system_processes, // held-fold + native-handler contracts (usually none)
             ExternalServices::noop(), // inert — no ChromaDB/SBERT/OpenAI
         )
-        .await,
+        .await
+        .map_err(|error| format!("rho runtime construction: {error:?}"))?,
         driver_handle,
     ))
 }
@@ -391,12 +392,15 @@ async fn read_ground_from_runtime<R, T>(
     runtime: &R,
     out_channel: &str,
     reader: fn(&Par) -> Option<T>,
-) -> Vec<T>
+) -> Result<Vec<T>, String>
 where
     R: RhoRuntime,
 {
     let channel = quoted_channel(out_channel);
-    let data = runtime.get_data(&channel).await;
+    let data = runtime
+        .get_data(&channel)
+        .await
+        .map_err(|error| format!("RSpace data read: {error:?}"))?;
     let mut out = Vec::new();
     for datum in data {
         for par in &datum.a.pars {
@@ -405,22 +409,28 @@ where
             }
         }
     }
-    out
+    Ok(out)
 }
 
-async fn read_string_tuples_from_runtime<R>(runtime: &R, out_channel: &str) -> Vec<Vec<String>>
+async fn read_string_tuples_from_runtime<R>(
+    runtime: &R,
+    out_channel: &str,
+) -> Result<Vec<Vec<String>>, String>
 where
     R: RhoRuntime,
 {
     let channel = quoted_channel(out_channel);
-    let data = runtime.get_data(&channel).await;
+    let data = runtime
+        .get_data(&channel)
+        .await
+        .map_err(|error| format!("RSpace tuple read: {error:?}"))?;
     let mut out = Vec::new();
     for datum in data {
         if let Some(tuple) = matched_string_tuple(&datum.a) {
             out.push(tuple);
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(feature = "source-oracle")]
@@ -468,7 +478,7 @@ async fn run_and_read_ground<T>(
     reader: fn(&Par) -> Option<T>,
 ) -> Result<Vec<T>, String> {
     let runtime = evaluate(program).await?;
-    Ok(read_ground_from_runtime(&runtime, out_channel, reader).await)
+    read_ground_from_runtime(&runtime, out_channel, reader).await
 }
 
 async fn run_par_and_read_ground<T>(
@@ -477,7 +487,7 @@ async fn run_par_and_read_ground<T>(
     reader: fn(&Par) -> Option<T>,
 ) -> Result<Vec<T>, String> {
     let runtime = evaluate_par(program).await?;
-    Ok(read_ground_from_runtime(&runtime, out_channel, reader).await)
+    read_ground_from_runtime(&runtime, out_channel, reader).await
 }
 
 async fn run_validated_program_and_read_ground<T>(
@@ -486,7 +496,7 @@ async fn run_validated_program_and_read_ground<T>(
     reader: fn(&Par) -> Option<T>,
 ) -> Result<Vec<T>, String> {
     let runtime = evaluate_validated_program(program).await?;
-    Ok(read_ground_from_runtime(&runtime, out_channel, reader).await)
+    read_ground_from_runtime(&runtime, out_channel, reader).await
 }
 
 async fn run_validated_program_with_call_and_read_ground<T>(
@@ -496,7 +506,7 @@ async fn run_validated_program_with_call_and_read_ground<T>(
     reader: fn(&Par) -> Option<T>,
 ) -> Result<Vec<T>, String> {
     let runtime = evaluate_validated_program_with_call(program, call).await?;
-    Ok(read_ground_from_runtime(&runtime, out_channel, reader).await)
+    read_ground_from_runtime(&runtime, out_channel, reader).await
 }
 
 /// Build an in-memory `RhoRuntime` and evaluate hand-authored Rholang source to
@@ -632,7 +642,7 @@ pub async fn run_validated_program_and_read_string_channels(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_as_string).await,
+            read_ground_from_runtime(&runtime, channel, par_as_string).await?,
         );
     }
     Ok(result)
@@ -653,8 +663,8 @@ pub async fn run_validated_program_and_read_runtime_value_and_string_channels(
 ) -> Result<(Vec<RuntimeObservationValue>, Vec<String>), String> {
     let runtime = evaluate_validated_program(program).await?;
     let values =
-        read_ground_from_runtime(&runtime, value_channel, par_as_runtime_observation_value).await;
-    let strings = read_ground_from_runtime(&runtime, string_channel, par_as_string).await;
+        read_ground_from_runtime(&runtime, value_channel, par_as_runtime_observation_value).await?;
+    let strings = read_ground_from_runtime(&runtime, string_channel, par_as_string).await?;
     Ok((values, strings))
 }
 
@@ -791,7 +801,7 @@ pub async fn run_installed_program_with_call_definitions_and_read_runtime_values
         inj_on_runtime(&mut runtime, composed, &matcher).await?;
         runtime
     };
-    Ok(read_ground_from_runtime(&runtime, out_channel, par_as_runtime_observation_value).await)
+    read_ground_from_runtime(&runtime, out_channel, par_as_runtime_observation_value).await
 }
 
 /// The four observation channels of one in-Rho quiescence-driver execution
@@ -1460,7 +1470,7 @@ async fn read_drive_observation_set<R: RhoRuntime>(
     runtime: &R,
     channels: &DriveObservationChannels,
 ) -> Result<DriveObservationSet, String> {
-    let out_raw = read_ground_from_runtime(runtime, &channels.out, par_verbatim).await;
+    let out_raw = read_ground_from_runtime(runtime, &channels.out, par_verbatim).await?;
     let mut out_values = Vec::with_capacity(out_raw.len());
     for par in &out_raw {
         match par_as_runtime_observation_value(par) {
@@ -1475,9 +1485,9 @@ async fn read_drive_observation_set<R: RhoRuntime>(
         }
     }
 
-    let fired_data = read_ground_from_runtime(runtime, &channels.fired, par_verbatim).await;
-    let err_data = read_ground_from_runtime(runtime, &channels.err, par_verbatim).await;
-    let fuel_data = read_ground_from_runtime(runtime, &channels.fuel, par_verbatim).await;
+    let fired_data = read_ground_from_runtime(runtime, &channels.fired, par_verbatim).await?;
+    let err_data = read_ground_from_runtime(runtime, &channels.err, par_verbatim).await?;
+    let fuel_data = read_ground_from_runtime(runtime, &channels.fuel, par_verbatim).await?;
 
     Ok(DriveObservationSet {
         out_values,
@@ -1607,7 +1617,7 @@ pub async fn run_normalized_par_for_oracle_and_read_string_channels(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_as_string).await,
+            read_ground_from_runtime(&runtime, channel, par_as_string).await?,
         );
     }
     Ok(result)
@@ -1640,7 +1650,7 @@ pub async fn run_normalized_par_for_oracle_and_read_runtime_value_channels(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_as_runtime_observation_value).await,
+            read_ground_from_runtime(&runtime, channel, par_as_runtime_observation_value).await?,
         );
     }
     Ok(result)
@@ -1666,7 +1676,7 @@ pub async fn run_normalized_par_and_read_runtime_value_channels_with_guard_refus
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_as_runtime_observation_value).await,
+            read_ground_from_runtime(&runtime, channel, par_as_runtime_observation_value).await?,
         );
     }
     let reported = refusals
@@ -1704,6 +1714,28 @@ pub async fn run_normalized_par_with_lookahead_engine(
     engine: &crate::speculation::server::LookaheadEngine,
     out_channels: &[&str],
 ) -> Result<HashMap<String, Vec<Par>>, String> {
+    run_normalized_par_with_lookahead_host(program, engine, out_channels, false).await
+}
+
+/// Run the local, non-consensus lookahead path. This trusted function binds the
+/// engine as a standalone CostV2 host; the program cannot. It cannot select an
+/// event epoch for Casper block execution or replay.
+#[cfg(feature = "runtime-report")]
+pub async fn run_normalized_par_with_standalone_lookahead_engine(
+    program: &Par,
+    engine: &crate::speculation::server::LookaheadEngine,
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<Par>>, String> {
+    run_normalized_par_with_lookahead_host(program, engine, out_channels, true).await
+}
+
+#[cfg(feature = "runtime-report")]
+async fn run_normalized_par_with_lookahead_host(
+    program: &Par,
+    engine: &crate::speculation::server::LookaheadEngine,
+    out_channels: &[&str],
+    standalone: bool,
+) -> Result<HashMap<String, Vec<Par>>, String> {
     use rholang::rust::interpreter::accounting::has_cost::HasCost;
 
     let mut definitions = take_pending_fold_definitions();
@@ -1712,14 +1744,21 @@ pub async fn run_normalized_par_with_lookahead_engine(
     // The budget is the RUNTIME's, and `RuntimeBudget` is a handle over shared atomics — so
     // this clone observes `inj_on_runtime`'s later `set`, rather than a snapshot taken before
     // the deploy was funded.
-    engine.bind_host(runtime.cost().clone());
+    let bound = if standalone {
+        engine.bind_standalone_host(runtime.cost().clone())
+    } else {
+        engine.bind_host(runtime.cost().clone())
+    };
+    if !bound {
+        return Err("lookahead engine host authority was already bound".into());
+    }
     inj_on_runtime(&mut runtime, program.clone(), &matcher).await?;
 
     let mut result = HashMap::with_capacity(out_channels.len());
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_verbatim).await,
+            read_ground_from_runtime(&runtime, channel, par_verbatim).await?,
         );
     }
     Ok(result)
@@ -1748,7 +1787,7 @@ pub async fn run_normalized_par_for_oracle_and_read_par_channels(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_verbatim).await,
+            read_ground_from_runtime(&runtime, channel, par_verbatim).await?,
         );
     }
     Ok(result)
@@ -1772,7 +1811,7 @@ pub async fn run_normalized_par_with_definitions_and_read_par_channels(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_verbatim).await,
+            read_ground_from_runtime(&runtime, channel, par_verbatim).await?,
         );
     }
     Ok(result)
@@ -1797,7 +1836,7 @@ pub async fn run_normalized_par_with_language_runtime_and_read_par_channels(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_verbatim).await,
+            read_ground_from_runtime(&runtime, channel, par_verbatim).await?,
         );
     }
     Ok(result)
@@ -1822,7 +1861,7 @@ pub async fn run_normalized_par_for_oracle_and_read_string_tuples(
     out_channel: &str,
 ) -> Result<Vec<Vec<String>>, String> {
     let runtime = evaluate_par(program).await?;
-    Ok(read_string_tuples_from_runtime(&runtime, out_channel).await)
+    read_string_tuples_from_runtime(&runtime, out_channel).await
 }
 
 /// Evaluate hand-authored Rholang source, then directly ask RSpace to consume
@@ -1883,7 +1922,7 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_strings(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_as_string).await,
+            read_ground_from_runtime(&runtime, channel, par_as_string).await?,
         );
     }
     Ok(result)
@@ -1923,7 +1962,7 @@ pub async fn run_rholang_source_and_read_ints_with_guard_refusals(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_as_i64).await,
+            read_ground_from_runtime(&runtime, channel, par_as_i64).await?,
         );
     }
     let reported = refusals
@@ -1951,7 +1990,7 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_ints(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_as_i64).await,
+            read_ground_from_runtime(&runtime, channel, par_as_i64).await?,
         );
     }
     Ok(result)
@@ -1974,7 +2013,7 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_bools(
     for channel in out_channels {
         result.insert(
             (*channel).to_string(),
-            read_ground_from_runtime(&runtime, channel, par_as_bool).await,
+            read_ground_from_runtime(&runtime, channel, par_as_bool).await?,
         );
     }
     Ok(result)

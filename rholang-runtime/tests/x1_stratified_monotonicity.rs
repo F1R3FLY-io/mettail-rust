@@ -100,12 +100,14 @@ use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
 use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
-use rspace_plus_plus::rspace::hot_store::HotStoreState;
+use rspace_plus_plus::rspace::hashing::stable_hash_provider::EventCodecEpoch;
+use rspace_plus_plus::rspace::hot_store::{shard_of, HotStoreState};
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{
     commit_produce, ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+    RSpaceAccountingObserver,
 };
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -149,6 +151,7 @@ mod guarded_publication {
         ListParWithRandom {
             pars: vec![new_gint_par(42, Vec::new(), false)],
             random_state: vec![7; 32],
+            ..ListParWithRandom::default()
         }
     }
 
@@ -238,11 +241,18 @@ mod guarded_publication {
                 .expect("allowed staging")
                 .is_none());
             assert_eq!(staged.staged_produces.load(AtomicOrdering::Relaxed), 1);
-            let stored = staged.get_data(&channel).await;
+            let stored = staged.get_data(&channel).await.expect("read staged data");
             assert_eq!(stored.len(), 1);
             assert_eq!(*stored[0].a, data());
             assert_eq!(stored[0].persist, persistent);
-            assert_eq!(staged.get_waiting_continuations(vec![channel]).await.len(), 1);
+            assert_eq!(
+                staged
+                    .get_waiting_continuations(vec![channel])
+                    .await
+                    .expect("read staged waiting continuations")
+                    .len(),
+                1
+            );
             assert!(staged.take_event_log().await.is_empty());
         }
     }
@@ -265,7 +275,14 @@ mod guarded_publication {
                 RSpaceError::ProduceCommitProtocolViolation
             );
             assert_eq!(staged.staged_produces.load(AtomicOrdering::Relaxed), usize::from(invoke));
-            assert_eq!(staged.get_data(&channel).await.len(), usize::from(invoke));
+            assert_eq!(
+                staged
+                    .get_data(&channel)
+                    .await
+                    .expect("read staged data")
+                    .len(),
+                usize::from(invoke)
+            );
         }
     }
 
@@ -314,7 +331,11 @@ mod guarded_publication {
                         .expect("retain verified state");
                 }
                 assert_eq!(
-                    space.get_waiting_continuations(vec![channel]).await.len(),
+                    space
+                        .get_waiting_continuations(vec![channel])
+                        .await
+                        .expect("read waiting continuations")
+                        .len(),
                     usize::from(!invoke)
                 );
                 let ledger = space.fired.lock().expect("recorded COMMs");
@@ -342,7 +363,7 @@ mod guarded_publication {
             .expect("allowed storage")
             .is_none());
         assert!(space.fired.lock().expect("recorded COMMs").is_empty());
-        assert_eq!(space.get_data(&channel).await.len(), 1);
+        assert_eq!(space.get_data(&channel).await.expect("read data").len(), 1);
     }
 }
 
@@ -385,6 +406,26 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for CountingMatch
             .fetch_add(1, AtomicOrdering::Relaxed);
         self.inner.check_commit(k, matched)
     }
+
+    fn prepare_commit(
+        &self,
+        k: &TaggedContinuation,
+        matched: &[&ListParWithRandom],
+    ) -> Option<rspace_plus_plus::rspace::r#match::PreparedCommit> {
+        self.check_commit_calls
+            .fetch_add(1, AtomicOrdering::Relaxed);
+        self.inner.prepare_commit(k, matched)
+    }
+
+    fn check_commit_by_reference(
+        &self,
+        k: &TaggedContinuation,
+        matched: &[&ListParWithRandom],
+    ) -> bool {
+        self.check_commit_calls
+            .fetch_add(1, AtomicOrdering::Relaxed);
+        self.inner.check_commit_by_reference(k, matched)
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -408,6 +449,7 @@ async fn install(space: &Space, state: State) {
             cache_snapshot: state,
             log: Vec::new(),
             produce_counter: BTreeMap::new(),
+            replay_cursor: None,
         })
         .await
         .expect("install must succeed on a fresh sandbox");
@@ -447,16 +489,36 @@ impl SpeculativeSpace {
     > {
         let source = Produce::create(&channel, &data, persist);
         let datum = Datum { a: Arc::new(data), persist, source };
-        commit_produce(guard, || {
-            self.inner.get_store().put_datum(&channel, datum);
+        commit_produce(guard, || -> Result<_, RSpaceError> {
+            self.inner.get_store().put_datum(&channel, datum)?;
             self.staged_produces.fetch_add(1, AtomicOrdering::Relaxed);
-            None
-        })
+            Ok(None)
+        })?
     }
 }
 
 #[async_trait]
 impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for SpeculativeSpace {
+    fn codec_epoch(&self) -> EventCodecEpoch {
+        self.inner.codec_epoch()
+    }
+
+    fn set_accounting_observer(
+        &self,
+        observer: Option<
+            Arc<
+                dyn RSpaceAccountingObserver<
+                    Par,
+                    BindPattern,
+                    ListParWithRandom,
+                    TaggedContinuation,
+                >,
+            >,
+        >,
+    ) {
+        self.inner.set_accounting_observer(observer);
+    }
+
     // ── THE TWO OVERRIDDEN OPERATIONS ────────────────────────────────────
 
     /// Stage, never fire. `put_datum` is exactly what `RSpace::store_data`
@@ -503,9 +565,9 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Specula
     > {
         let wk = WaitingContinuation::create(&channels, &patterns, &continuation, persist, peeks);
         let store = self.inner.get_store();
-        let _ = store.put_continuation(&channels, wk);
+        store.put_continuation(&channels, wk)?;
         for channel in channels.iter() {
-            store.put_join(channel, &channels);
+            store.put_join(channel, &channels)?;
         }
         self.staged_consumes.fetch_add(1, AtomicOrdering::Relaxed);
         Ok(None)
@@ -516,20 +578,33 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Specula
     async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         self.inner.create_checkpoint().await
     }
-    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         self.inner.get_data(channel).await
     }
     async fn get_waiting_continuations(
         &self,
         channels: Vec<Par>,
-    ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
+    ) -> Result<Vec<WaitingContinuation<BindPattern, TaggedContinuation>>, RSpaceError> {
         self.inner.get_waiting_continuations(channels).await
     }
-    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+    async fn get_joins(&self, channel: Par) -> Result<Vec<Vec<Par>>, RSpaceError> {
         self.inner.get_joins(channel).await
     }
     async fn remove_all_data(&self, channel: &Par) -> Result<(), RSpaceError> {
         self.inner.remove_all_data(channel).await
+    }
+    async fn remove_data_at(&self, channel: &Par, index: i32) -> Result<(), RSpaceError> {
+        self.inner.remove_data_at(channel, index).await
+    }
+    async fn remove_data_at_recorded(
+        &self,
+        channel: &Par,
+        index: i32,
+        operation_id: &[u8],
+    ) -> Result<(), RSpaceError> {
+        self.inner
+            .remove_data_at_recorded(channel, index, operation_id)
+            .await
     }
     async fn remove_all_continuations(&self, channels: Vec<Par>) -> Result<(), RSpaceError> {
         self.inner.remove_all_continuations(channels).await
@@ -664,6 +739,26 @@ impl RecordingSpace {
 
 #[async_trait]
 impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for RecordingSpace {
+    fn codec_epoch(&self) -> EventCodecEpoch {
+        self.inner.codec_epoch()
+    }
+
+    fn set_accounting_observer(
+        &self,
+        observer: Option<
+            Arc<
+                dyn RSpaceAccountingObserver<
+                    Par,
+                    BindPattern,
+                    ListParWithRandom,
+                    TaggedContinuation,
+                >,
+            >,
+        >,
+    ) {
+        self.inner.set_accounting_observer(observer);
+    }
+
     async fn consume(
         &self,
         channels: Vec<Par>,
@@ -728,20 +823,33 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Recordi
     async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         self.inner.create_checkpoint().await
     }
-    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         self.inner.get_data(channel).await
     }
     async fn get_waiting_continuations(
         &self,
         channels: Vec<Par>,
-    ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
+    ) -> Result<Vec<WaitingContinuation<BindPattern, TaggedContinuation>>, RSpaceError> {
         self.inner.get_waiting_continuations(channels).await
     }
-    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+    async fn get_joins(&self, channel: Par) -> Result<Vec<Vec<Par>>, RSpaceError> {
         self.inner.get_joins(channel).await
     }
     async fn remove_all_data(&self, channel: &Par) -> Result<(), RSpaceError> {
         self.inner.remove_all_data(channel).await
+    }
+    async fn remove_data_at(&self, channel: &Par, index: i32) -> Result<(), RSpaceError> {
+        self.inner.remove_data_at(channel, index).await
+    }
+    async fn remove_data_at_recorded(
+        &self,
+        channel: &Par,
+        index: i32,
+        operation_id: &[u8],
+    ) -> Result<(), RSpaceError> {
+        self.inner
+            .remove_data_at_recorded(channel, index, operation_id)
+            .await
     }
     async fn remove_all_continuations(&self, channels: Vec<Par>) -> Result<(), RSpaceError> {
         self.inner.remove_all_continuations(channels).await
@@ -853,6 +961,7 @@ fn receive(
             source: Some(chan(source)),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         })
         .collect();
     let bind_count = binds.len() as i32;
@@ -988,7 +1097,8 @@ async fn run_speculative(par: Par) -> SpeculativeRun {
         &mut Vec::new(),
         ExternalServices::noop(),
     )
-    .await;
+    .await
+    .expect("test runtime must build");
     runtime.cost().set(Cost::unsafe_max());
     runtime
         .inj(par, Env::new(), Blake2b512Random::create_from_bytes(FIXED_SEED))
@@ -1025,7 +1135,8 @@ async fn run_ordinary(par: Par) -> OrdinaryRun {
         &mut Vec::new(),
         ExternalServices::noop(),
     )
-    .await;
+    .await
+    .expect("test runtime must build");
     runtime.cost().set(Cost::unsafe_max());
     runtime
         .inj(par, Env::new(), Blake2b512Random::create_from_bytes(FIXED_SEED))
@@ -1061,21 +1172,21 @@ async fn enabled_set(quiescent: &State) -> Vec<EnabledRendezvous> {
     let groups: Vec<(Vec<Par>, usize)> = quiescent
         .continuations
         .iter()
+        .flat_map(|shard| shard.iter())
         .flat_map(|(group, wks)| (0..wks.len()).map(move |i| (group.clone(), i)))
         .collect();
 
     for (group, index) in groups {
-        let wk = quiescent.continuations[&group][index].clone();
+        let wk = quiescent.continuations[shard_of(&group)][&group][index].clone();
 
         let mut trimmed = quiescent.clone();
         {
-            let bucket = trimmed
-                .continuations
+            let bucket = trimmed.continuations[shard_of(&group)]
                 .get_mut(&group)
                 .expect("the group exists by construction");
             bucket.remove(index);
             if bucket.is_empty() {
-                trimmed.continuations.remove(&group);
+                trimmed.continuations[shard_of(&group)].remove(&group);
             }
         }
 
@@ -1132,6 +1243,7 @@ async fn enabled_pairs(quiescent: &State) -> Vec<(Consume, Vec<i64>)> {
     let groups: Vec<(Vec<Par>, usize)> = quiescent
         .continuations
         .iter()
+        .flat_map(|shard| shard.iter())
         .flat_map(|(group, wks)| (0..wks.len()).map(move |i| (group.clone(), i)))
         .collect();
 
@@ -1140,22 +1252,24 @@ async fn enabled_pairs(quiescent: &State) -> Vec<(Consume, Vec<i64>)> {
             continue; // joins: see `enabled_set`
         }
         let channel = group[0].clone();
-        let wk = quiescent.continuations[&group][index].clone();
-        let resting = quiescent.data.get(&channel).cloned().unwrap_or_default();
+        let wk = quiescent.continuations[shard_of(&group)][&group][index].clone();
+        let resting = quiescent.data[shard_of(&channel)]
+            .get(&channel)
+            .cloned()
+            .unwrap_or_default();
 
         for datum in resting {
             let mut trimmed = quiescent.clone();
             {
-                let bucket = trimmed
-                    .continuations
+                let bucket = trimmed.continuations[shard_of(&group)]
                     .get_mut(&group)
                     .expect("the group exists by construction");
                 bucket.remove(index);
                 if bucket.is_empty() {
-                    trimmed.continuations.remove(&group);
+                    trimmed.continuations[shard_of(&group)].remove(&group);
                 }
             }
-            trimmed.data.insert(channel.clone(), vec![datum.clone()]);
+            trimmed.data[shard_of(&channel)].insert(channel.clone(), vec![datum.clone()]);
 
             let probe = fresh_space(Arc::new(Box::new(Matcher))).await;
             install(&probe, trimmed).await;
@@ -1205,8 +1319,7 @@ fn describe_channels(channels: &[Par]) -> String {
 }
 
 fn resting_ints(state: &State, channel: &Par) -> Vec<i64> {
-    let mut values: Vec<i64> = state
-        .data
+    let mut values: Vec<i64> = state.data[shard_of(channel)]
         .get(channel)
         .map(|data| {
             data.iter()
@@ -1262,9 +1375,7 @@ async fn t0_teeth_the_two_spaces_differ_exactly_as_intended() {
         "TEETH FAILED: the datum did not rest in the speculative store"
     );
     assert_eq!(
-        speculative
-            .quiescent
-            .continuations
+        speculative.quiescent.continuations[shard_of(&vec![chan("x1-teeth")])]
             .get(&vec![chan("x1-teeth")])
             .map(|v| v.len())
             .unwrap_or(0),
@@ -1488,12 +1599,11 @@ async fn t2_peek() {
         &ListParWithRandom {
             pars: vec![new_gint_par(7, Vec::new(), false)],
             random_state: Vec::new(),
+            ..ListParWithRandom::default()
         },
         false,
     );
-    let resting_sources: Vec<Blake2b256Hash> = ordinary
-        .final_state
-        .data
+    let resting_sources: Vec<Blake2b256Hash> = ordinary.final_state.data[shard_of(&chan("x1-pk"))]
         .get(&chan("x1-pk"))
         .map(|data| data.iter().map(|d| d.source.hash.clone()).collect())
         .unwrap_or_default();
@@ -1529,9 +1639,7 @@ async fn t2b_persistent() {
     );
     println!(
         "   continuation resting AFTER : {}",
-        ordinary
-            .final_state
-            .continuations
+        ordinary.final_state.continuations[shard_of(&vec![chan("x1-ps")])]
             .get(&vec![chan("x1-ps")])
             .map(|v| v.len())
             .unwrap_or(0)
@@ -1623,6 +1731,7 @@ async fn t2c2_the_fresh_datum_index_moves_the_least_admissible_selection() {
         ListParWithRandom {
             pars: vec![new_gint_par(value, Vec::new(), false)],
             random_state: Vec::new(),
+            ..ListParWithRandom::default()
         }
     }
     fn taken(
@@ -1679,7 +1788,8 @@ async fn t2c2_the_fresh_datum_index_moves_the_least_admissible_selection() {
                 // installed receive and must wait in the pool.
                 arrival
                     .get_store()
-                    .put_datum(&channel, Datum::create(&channel, item(resting), false));
+                    .put_datum(&channel, Datum::create(&channel, item(resting), false))
+                    .expect("rest the datum");
                 let arrival_taken = taken(
                     &arrival
                         .produce(channel.clone(), item(arriving), false)
@@ -1692,10 +1802,12 @@ async fn t2c2_the_fresh_datum_index_moves_the_least_admissible_selection() {
                 let stratified = fresh_space(Arc::new(Box::new(Matcher))).await;
                 stratified
                     .get_store()
-                    .put_datum(&channel, Datum::create(&channel, item(resting), false));
+                    .put_datum(&channel, Datum::create(&channel, item(resting), false))
+                    .expect("rest the datum");
                 stratified
                     .get_store()
-                    .put_datum(&channel, Datum::create(&channel, item(arriving), false));
+                    .put_datum(&channel, Datum::create(&channel, item(arriving), false))
+                    .expect("rest the datum");
                 let stratified_taken = taken(
                     &stratified
                         .consume(
@@ -1812,7 +1924,8 @@ async fn t2e_join() {
         speculative
             .quiescent
             .joins
-            .keys()
+            .iter()
+            .flat_map(|shard| shard.keys())
             .map(|k| describe_channels(std::slice::from_ref(k)))
             .collect::<Vec<_>>()
     );
@@ -1826,7 +1939,16 @@ async fn t2e_join() {
          quiescence"
     );
     assert_eq!(enabled[0].selected, vec![1, 2]);
-    assert_eq!(speculative.quiescent.joins.len(), 2, "both join-index entries must be staged");
+    assert_eq!(
+        speculative
+            .quiescent
+            .joins
+            .iter()
+            .map(|shard| shard.len())
+            .sum::<usize>(),
+        2,
+        "both join-index entries must be staged"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1872,6 +1994,7 @@ fn store_fingerprint(state: &State) -> Vec<String> {
     let mut lines: Vec<String> = state
         .data
         .iter()
+        .flat_map(|shard| shard.iter())
         .flat_map(|(channel, data)| {
             let channel_bytes = hex(&channel.encode_to_vec());
             data.iter()
@@ -1947,6 +2070,14 @@ async fn r1_randomness_splitting_is_structural() {
 /// so even the contended outcome should be reproducible. If it is not, the
 /// speculative trace model would have to enumerate schedules it cannot
 /// reproduce.
+///
+/// Changed by DR-129 (merge of feature/cost-accounted-rho): play now shuffles
+/// candidates with an unseeded `rand::rng()` (node
+/// `rspace++/src/rspace/rspace/ops_produce.rs:345-355`), so which receiver
+/// takes which datum is not reproducible. The assertions below still hold:
+/// they compare sorted per-COMM selections and a sorted store fingerprint, and
+/// each receiver sends only its fixed marker (`receive`), so every valid
+/// pairing gives the same values.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn r2_the_whole_run_is_reproducible_under_the_multi_threaded_runtime() {
     const RUNS: usize = 5;
@@ -2012,10 +2143,12 @@ async fn c1_check_commit_is_a_pure_predicate() {
     let admissible = ListParWithRandom {
         pars: vec![new_gint_par(42, Vec::new(), false)],
         random_state: Vec::new(),
+        ..ListParWithRandom::default()
     };
     let inadmissible = ListParWithRandom {
         pars: vec![new_gint_par(55, Vec::new(), false)],
         random_state: Vec::new(),
+        ..ListParWithRandom::default()
     };
     let guarded = TaggedContinuation {
         guard: Some(guard),

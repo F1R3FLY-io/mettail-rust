@@ -912,6 +912,7 @@ fn commit_verdict(
     let matched = models::rhoapi::ListParWithRandom {
         pars: payloads.to_vec(),
         random_state: Vec::new(),
+        ..models::rhoapi::ListParWithRandom::default()
     };
     matcher.check_commit(&guard_as_tagged_continuation(condition), &[&matched])
 }

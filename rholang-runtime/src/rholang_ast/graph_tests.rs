@@ -203,6 +203,7 @@ fn primitive_graphs_match_node_constructors_and_independent_wire_examples() {
     maximum.push(1);
     for (operation, expected_wire, work, units) in [
         (ValueOp::Empty, vec![], 6, 20),
+        (ValueOp::UnitTuple, vec![0x2a, 3, 0xaa, 1, 0], 7, 24),
         (ValueOp::Boolean(false), vec![0x2a, 2, 8, 0], 7, 24),
         (ValueOp::Boolean(true), vec![0x2a, 2, 8, 1], 7, 24),
         (ValueOp::Integer(i64::MIN), minimum, 7, 24),

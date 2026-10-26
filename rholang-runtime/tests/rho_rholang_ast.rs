@@ -220,6 +220,33 @@ fn ambiguous_term_rejects_cross_category_alternative_instead_of_dropping_it() {
     assert_eq!(err, RholangAstLowerError::ExpectedProcTerm);
 }
 
+#[tokio::test]
+async fn ambiguous_parenthesized_names_execute_one_lowered_program() {
+    let name = Name::NQuote(Arc::new(output_to_out(text_proc("once"))));
+    let direct = Proc::PDrop(Arc::new(name.clone()));
+    let grouped = Proc::PDrop(Arc::new(Name::NParen(Arc::new(name))));
+    assert_eq!(lower_rholang_proc(&direct).unwrap(), lower_rholang_proc(&grouped).unwrap());
+    let term = RholangTerm(RholangTermInner::Ambiguous(vec![
+        RholangTermInner::Proc(direct),
+        RholangTermInner::Proc(grouped),
+    ]));
+    let par = lower_rholang_term(&term).expect("equivalent alternatives lower");
+    assert_eq!(read_strings_from_par(&par).await, vec!["once"]);
+}
+
+#[tokio::test]
+async fn ambiguous_deduplication_preserves_parallel_multiplicity() {
+    let output = output_to_out(text_proc("twice"));
+    let parallel = Proc::PPar([output.clone(), output].into_iter().collect());
+    let name = Name::NQuote(Arc::new(parallel));
+    let term = RholangTerm(RholangTermInner::Ambiguous(vec![
+        RholangTermInner::Proc(Proc::PDrop(Arc::new(name.clone()))),
+        RholangTermInner::Proc(Proc::PDrop(Arc::new(Name::NParen(Arc::new(name))))),
+    ]));
+    let par = lower_rholang_term(&term).expect("parallel alternatives lower");
+    assert_eq!(read_strings_from_par(&par).await, vec!["twice", "twice"]);
+}
+
 // End-to-end: the generated `RholangLanguage` (defined by the `language!` macro)
 // driven through the public `Language` trait and evaluated on the REAL
 // f1r3node-rust Rholang interpreter, this variant focusing on the observed VALUE.
@@ -311,6 +338,43 @@ fn held_fold_over_comm_received_value_execs_to_the_folded_value() {
         .observations_for_channel("OUT")
         .expect("the folded value lands on OUT");
     assert_eq!(out.values, vec![RuntimeObservationValue::Int(5)], "int(5,8) = 5");
+}
+
+#[test]
+fn ambiguous_fold_contracts_preserve_distinct_outputs_and_multiplicity() {
+    let language = dovetail_rho_backed_rholang("OUT").unwrap();
+    let output = |value, grouped| {
+        let mut channel = quoted_name("OUT");
+        if grouped {
+            channel = Name::NParen(Arc::new(channel));
+        }
+        Proc::POutput(
+            Arc::new(channel),
+            Arc::new(Proc::IntBinProc(
+                Arc::new(Proc::CastInt(Arc::new(Int::NumLit(value)))),
+                Arc::new(Int::NumLit(8)),
+            )),
+        )
+    };
+    let repeated = |grouped| Proc::PPar(std::iter::repeat_n(output(5, grouped), 2).collect());
+    let term = RholangTerm(RholangTermInner::Ambiguous(vec![
+        RholangTermInner::Proc(repeated(false)),
+        RholangTermInner::Proc(repeated(true)),
+        RholangTermInner::Proc(output(6, false)),
+    ]));
+    let report = language.run_default_backend_report(&term).unwrap();
+    let mut values: Vec<_> = report
+        .observations_for_channel("OUT")
+        .unwrap()
+        .values
+        .iter()
+        .map(|value| match value {
+            RuntimeObservationValue::Int(value) => *value,
+            value => panic!("expected an integer, got {value:?}"),
+        })
+        .collect();
+    values.sort();
+    assert_eq!(values, [5, 5, 6]);
 }
 
 #[test]

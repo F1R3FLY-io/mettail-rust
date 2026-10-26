@@ -4,13 +4,12 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "M-RHO bridge: the generic OslfResourceLogic<MettaGslt> cost/funding adapter. Depends on node core libraries, never the upper application."
+description = "MeTTaIL resource-analysis adapter for the host OslfResourceLogic trait"
 
-# Pure funding/cost analysis: implements f1r3node-rust's OslfResourceLogic<MettaGslt>
-# by delegating demand/is_funded to the host's VERIFIED delta_sigma over a
-# canonicalized Par. NO RSpace, NO Tokio. Depends ONE-WAY on node core libraries
-# (component independence: formal/rocq/rho_bridge/theories/BridgeInertness.v).
-# Fully integrated (no feature gating): the f1r3node deps are mandatory.
+# Pure resource analysis over an already-lowered Par. It implements the host
+# OslfResourceLogic<MettaGslt> trait through delta_sigma. No RSpace or Tokio.
+# The host core does not depend on this crate. Mandatory Cargo dependencies
+# do not imply that the production offered-funded path invokes this adapter.
 
 [lib]
 name = "mettail_rholang_adapter"
@@ -18,3 +17,6 @@ name = "mettail_rholang_adapter"
 [dependencies]
 models.workspace = true
 rholang.workspace = true
+
+[dev-dependencies]
+proptest = "1"

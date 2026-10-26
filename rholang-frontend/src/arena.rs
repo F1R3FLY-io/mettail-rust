@@ -262,7 +262,9 @@ impl<'id, C: FnMut() -> bool> ValueTarget for NeutralTarget<'id, C> {
         let fact = match &operation {
             ValueOp::Empty => Fact::closed(HeadShape::Empty),
             ValueOp::Text(_) => Fact::closed(HeadShape::SingleText),
-            ValueOp::Integer(_) | ValueOp::Boolean(_) => Fact::closed(HeadShape::Other),
+            ValueOp::UnitTuple | ValueOp::Integer(_) | ValueOp::Boolean(_) => {
+                Fact::closed(HeadShape::Other)
+            },
             ValueOp::Bound { index, .. } => {
                 let mut locally_free = Vec::new();
                 locally_free

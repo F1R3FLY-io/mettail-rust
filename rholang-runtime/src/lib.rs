@@ -229,7 +229,8 @@ pub use run::{
     run_normalized_par_and_read_runtime_value_channels_with_guard_refusals,
     run_normalized_par_for_oracle_and_read_runtime_value_channels,
     run_normalized_par_for_oracle_and_read_runtime_values,
-    run_normalized_par_with_lookahead_engine, run_validated_program_and_read_runtime_values,
+    run_normalized_par_with_lookahead_engine, run_normalized_par_with_standalone_lookahead_engine,
+    run_validated_program_and_read_runtime_values,
     run_validated_program_with_call_and_read_runtime_values, DriveCrossCheckError, DriveNfScan,
     DriveObservationChannels, DriveObservationSet,
 };

@@ -19,6 +19,86 @@ pub(crate) struct DirectLoweringOutput {
 
 thread_local! {
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static ALTERNATIVE_FOLDS: std::cell::RefCell<Option<AlternativeFolds>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[derive(Default)]
+struct AlternativeFolds {
+    next: usize,
+    candidates: Vec<Vec<u8>>,
+}
+
+pub(super) struct AlternativeFoldScope(PhantomData<Rc<()>>);
+
+impl AlternativeFoldScope {
+    pub(super) fn enter() -> Result<Self, RholangAstLowerError> {
+        ALTERNATIVE_FOLDS.with(|state| {
+            let mut state = state.borrow_mut();
+            if state.is_some() {
+                return Err(RholangAstLowerError::ReentrantLoweringSession);
+            }
+            *state = Some(AlternativeFolds::default());
+            Ok(Self(PhantomData))
+        })
+    }
+
+    pub(super) fn begin_alternative(&self) {
+        ALTERNATIVE_FOLDS.with(|state| {
+            state
+                .borrow_mut()
+                .as_mut()
+                .expect("live alternative scope")
+                .next = 0;
+        });
+    }
+}
+
+impl Drop for AlternativeFoldScope {
+    fn drop(&mut self) {
+        ALTERNATIVE_FOLDS.with(|state| *state.borrow_mut() = None);
+    }
+}
+
+pub(super) fn register_fold_site(
+    kind: FoldKind,
+    width: i64,
+    fingerprint: &str,
+) -> Result<u8, RholangAstLowerError> {
+    HELD_FOLD_SITES.with(|sites| {
+        ALTERNATIVE_FOLDS.with(|state| {
+            let mut sites = sites.borrow_mut();
+            let mut state = state.borrow_mut();
+            let candidates = state.as_mut().map(|state| {
+                let ordinal = state.next;
+                state.next += 1;
+                if ordinal == state.candidates.len() {
+                    state.candidates.push(Vec::new());
+                }
+                &mut state.candidates[ordinal]
+            });
+            if let Some(index) = candidates.as_ref().and_then(|candidates| {
+                candidates.iter().copied().find(|&index| {
+                    let spec = &sites[usize::from(index)];
+                    spec.kind == kind && spec.width == width && spec.fingerprint == fingerprint
+                })
+            }) {
+                return Ok(index);
+            }
+            let site_index = checked_fold_site_index(sites.len())?;
+            sites.push(FoldSpec {
+                kind,
+                width,
+                site_index,
+                fingerprint: fingerprint.to_owned(),
+            });
+            if let Some(candidates) = candidates {
+                candidates.push(site_index);
+            }
+            Ok(site_index)
+        })
+    })
 }
 
 /// Private and non-Send: the bracket cannot migrate between threads.
@@ -26,6 +106,9 @@ pub(super) struct SessionGuard(PhantomData<Rc<()>>);
 
 impl SessionGuard {
     fn enter() -> Result<Self, RholangAstLowerError> {
+        if ALTERNATIVE_FOLDS.with(|state| state.borrow().is_some()) {
+            return Err(RholangAstLowerError::ReentrantLoweringSession);
+        }
         let already_active = ACTIVE.with(|active| active.replace(true));
         if already_active {
             return Err(RholangAstLowerError::ReentrantLoweringSession);
@@ -57,7 +140,7 @@ impl SessionGuard {
                 .charge(work, bytes)
                 .map_err(RholangAstLowerError::Preparation)
         };
-        drive_machine_preparing(seed, context, &mut reserve, SourcePreparation::Checked)
+        drive_machine_preparing(seed, context, &mut reserve, SourcePreparation::Checked, None)
     }
 }
 
@@ -78,8 +161,8 @@ pub(super) fn ensure_inactive() -> Result<(), RholangAstLowerError> {
 
 pub(super) fn assert_legacy_output_access() {
     assert!(
-        ensure_inactive().is_ok(),
-        "legacy output access is forbidden during an owned lowering session"
+        ensure_inactive().is_ok() && ALTERNATIVE_FOLDS.with(|state| state.borrow().is_none()),
+        "legacy output access is forbidden during an owned lowering or alternative session"
     );
 }
 
@@ -122,6 +205,39 @@ pub(crate) fn lower_public_body_with_budget<C: FnMut() -> bool>(
         )
         .map_err(RholangAstLowerError::SourceProfile)?;
         owner.drive_with_budget(Seed::Body(proc), &context, budget)
+    })
+}
+
+/// Changed by the DR-131 extension to F1R3Lang (user decision 1): public
+/// source preparation has no work or storage-unit ceiling. `reserve` sees
+/// each existing reservation point and may refuse only on cancellation.
+pub(super) type PreparationReservation<'a> =
+    dyn FnMut(usize, usize) -> Result<(), mettail_rholang_codegen::DynamicReflectionError> + 'a;
+
+/// Check the closed source profile, then enter the checked owned driver, for
+/// public source preparation. `parsed_source` binds the receipt to the exact
+/// source text; the test-only tree path passes `None`.
+pub(super) fn lower_public_checked(
+    proc: &Proc,
+    parsed_source: Option<&prepared_frontend::ParsedSource<'_>>,
+    mut context: BoundEnv,
+    reserve: &mut PreparationReservation<'_>,
+) -> Result<DirectLoweringOutput, RholangAstLowerError> {
+    with_owned_outputs(|_owner| {
+        context.admission = SourceAdmissionMode::Public;
+        proc.try_check_source_profile(
+            mettail_languages::rholang::source_profile::SourceRole::Term,
+            &mettail_languages::rholang::source_profile::RholangSourceProfile,
+            &mut |work, bytes| reserve(work, bytes),
+        )
+        .map_err(RholangAstLowerError::SourceProfile)?;
+        drive_machine_preparing(
+            Seed::Body(proc),
+            &context,
+            &mut |work, bytes| reserve(work, bytes).map_err(RholangAstLowerError::Preparation),
+            SourcePreparation::Checked,
+            parsed_source,
+        )
     })
 }
 

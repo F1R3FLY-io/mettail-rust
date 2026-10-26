@@ -69,6 +69,8 @@ fn par_has_only_ground_value_fields(par: &Par) -> bool {
         && par.bundles.is_empty()
         && par.connectives.is_empty()
         && par.conditionals.is_empty()
+        && par.cost_signed_terms.is_empty()
+        && par.cost_stacks.is_empty()
         && par.locally_free.is_empty()
         && !par.connective_used
 }
@@ -104,6 +106,9 @@ fn par_as_unforgeable_observation(par: &Par) -> Option<RuntimeObservationValue> 
             Some(RuntimeObservationValue::DeployerId(value.public_key.clone()))
         },
         UnfInstance::GSysAuthTokenBody(_) => Some(RuntimeObservationValue::SysAuthToken),
+        // New cost authority/principal identity carriers are not ordinary
+        // observable names. No unverified byte interpretation is admitted.
+        UnfInstance::GAuthorityIdBody(_) | UnfInstance::GPrincipalIdBody(_) => None,
     }
 }
 
@@ -917,6 +922,22 @@ pub fn render_par_text(par: &Par) -> String {
 mod tests {
     use super::*;
     use models::rust::utils::{new_elist_par, new_gint_par, new_gstring_par, new_send_par};
+
+    #[test]
+    fn cost_carriers_are_not_plain_ground_observations() {
+        let mut signed = new_gint_par(7, Vec::new(), false);
+        assert!(par_has_only_ground_value_fields(&signed));
+        signed
+            .cost_signed_terms
+            .push(models::rhoapi::CostSignedTerm::default());
+        assert!(!par_has_only_ground_value_fields(&signed));
+
+        let mut stacked = new_gint_par(7, Vec::new(), false);
+        stacked
+            .cost_stacks
+            .push(models::rhoapi::CostStack::default());
+        assert!(!par_has_only_ground_value_fields(&stacked));
+    }
 
     /// A reflected constructor node `EList[GPrivate("mettail.term.{fp}.{label}"), children…]`.
     fn reflected(label: &str, children: Vec<Par>) -> Par {

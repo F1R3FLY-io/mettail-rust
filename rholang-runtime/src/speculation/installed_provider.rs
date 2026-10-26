@@ -9,16 +9,18 @@
 use std::sync::Arc;
 
 use mettail_dovetail_runtime::{
-    SemanticInputLimits, SemanticTransitionDecision, SemanticTransitionInput,
-    SemanticTransitionLimits,
+    SemanticInputLimits, SemanticResourceReceipt, SemanticTransitionDecision,
+    SemanticTransitionInput, SemanticTransitionLimits,
 };
-use mettail_grammar_core::LanguageRight;
+use mettail_grammar_core::{InstallCommitment, LanguageRight, TheoryResourceProfileV1};
 use mettail_rholang_codegen::{
     encode_dynamic_native_label, DynamicNativeRef, ReflectedCodecBudget, ReflectedPositionalContext,
 };
 use models::rhoapi::{expr::ExprInstance, tagged_continuation::TaggedCont, Par};
-use rholang::rust::interpreter::accounting::{costs::Cost, RuntimeBudget};
-use rholang::rust::interpreter::metering::MeteredMachine;
+// Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+// use rholang::rust::interpreter::accounting::{costs::Cost, RuntimeBudget};
+// use rholang::rust::interpreter::metering::MeteredMachine;
+use rholang::rust::interpreter::accounting::RuntimeBudget;
 
 use crate::installed_flt::InstalledFltAdapter;
 use crate::language_install::{exact_expr, grammar_fingerprint_label, RholangLanguageRuntime};
@@ -46,13 +48,43 @@ fn never_cancelled() -> bool {
     false
 }
 
+/// A kernel-produced roster is not, by itself, host funding authority. Check
+/// that its opaque grade has the exact installed Cost(G) owner before retaining
+/// a successor; host projection and live supply admission remain separate.
+fn validate_roster_resource(
+    profile: TheoryResourceProfileV1,
+    commitment: &InstallCommitment,
+    resource: &SemanticResourceReceipt,
+) -> Result<(), SpeculationError> {
+    match (profile, resource) {
+        (TheoryResourceProfileV1::Uncosted, SemanticResourceReceipt::NoSemanticGrade) => Ok(()),
+        (
+            TheoryResourceProfileV1::Costed { grade_sort },
+            SemanticResourceReceipt::Checked {
+                grade_sort: actual_sort,
+                cost_image_fingerprint,
+                ..
+            },
+        ) if *actual_sort == grade_sort
+            && commitment.cost_image_fingerprint == Some(*cost_image_fingerprint) =>
+        {
+            Ok(())
+        },
+        _ => Err(refuse("installed lookahead resource receipt has wrong owner or profile")),
+    }
+}
+
+// Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): was
+// "All kernel and codec work is charged to `host`, even if the operation later refuses."
 /// An operation-local bridge from sealed installed bindings to the searcher's
-/// checked edge roster. All kernel and codec work is charged to `host`, even if
-/// the operation later refuses. The host snapshot is never edited here.
+/// checked edge roster. Kernel and codec work is bounded by the installed
+/// theory's limits; host work is not metered (DR-131 extension to F1R3Lang,
+/// user decision 1). The host snapshot is never edited here.
 pub(crate) struct InstalledCheckedGuestProvider {
     runtime: Arc<RholangLanguageRuntime>,
     bindings: Vec<AdmittedLookaheadBinding>,
-    host: RuntimeBudget,
+    // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+    // host: RuntimeBudget,
     staged_guest: Option<Par>,
 }
 
@@ -60,7 +92,9 @@ impl InstalledCheckedGuestProvider {
     pub(crate) fn new(
         runtime: Arc<RholangLanguageRuntime>,
         bindings: Vec<AdmittedLookaheadBinding>,
-        host: RuntimeBudget,
+        // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+        // the provider no longer charges the host. The parameter was `host`.
+        _host: RuntimeBudget,
     ) -> Result<Self, SpeculationError> {
         if bindings.len() != 1 || !bindings[0].path.is_empty() || bindings[0].context != 0 {
             return Err(refuse("installed lookahead currently requires one closed root binding"));
@@ -68,7 +102,8 @@ impl InstalledCheckedGuestProvider {
         Ok(Self {
             runtime,
             bindings,
-            host,
+            // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+            // host,
             staged_guest: None,
         })
     }
@@ -87,11 +122,13 @@ impl InstalledCheckedGuestProvider {
         let policy = self.runtime.service().policy().semantic_service;
         let limits =
             policy.effective(self.binding().installed.language_core().theory.limits, policy);
-        let available = self.host.remaining().value.max(0) as u64;
-        let ceiling = limits.execution.work.min(available);
-        if ceiling == 0 {
-            return Err(refuse("installed lookahead has no funded host work"));
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let available = self.host.remaining().value.max(0) as u64;
+        // let ceiling = limits.execution.work.min(available);
+        // if ceiling == 0 {
+        //     return Err(refuse("installed lookahead has no funded host work"));
+        // }
+        let ceiling = limits.execution.work;
         let mut used = 0;
         let mut cancelled: fn() -> bool = never_cancelled;
         let mut budget = ReflectedCodecBudget::new(
@@ -102,15 +139,17 @@ impl InstalledCheckedGuestProvider {
         );
         let result =
             operation(&mut budget, SemanticTransitionLimits { work: ceiling, ..limits.execution });
-        let spent = budget.work_used();
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let spent = budget.work_used();
         drop(budget);
-        if spent != 0 {
-            let charge = i64::try_from(spent)
-                .map_err(|_| refuse("installed lookahead work exceeds host charge domain"))?;
-            MeteredMachine::new(self.host.clone())
-                .reserve_primitive(Cost::create(charge, "installed lookahead guest operation"))
-                .map_err(|_| refuse("installed lookahead exhausted host phlogiston"))?;
-        }
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // if spent != 0 {
+        //     let charge = i64::try_from(spent)
+        //         .map_err(|_| refuse("installed lookahead work exceeds host charge domain"))?;
+        //     MeteredMachine::new(self.host.clone())
+        //         .reserve_primitive(Cost::create(charge, "installed lookahead guest operation"))
+        //         .map_err(|_| refuse("installed lookahead exhausted host phlogiston"))?;
+        // }
         result
     }
 
@@ -139,9 +178,21 @@ impl InstalledCheckedGuestProvider {
         // continuation or join means this is not a direct-root-only request.
         // Inspect the store maps without reifying (and allocating) a hostile
         // composite configuration before a budget is available.
-        if !host.data.values().all(Vec::is_empty)
-            || !host.continuations.values().all(Vec::is_empty)
-            || !host.joins.values().all(Vec::is_empty)
+        if !host
+            .data
+            .iter()
+            .flat_map(|shard| shard.values())
+            .all(Vec::is_empty)
+            || !host
+                .continuations
+                .iter()
+                .flat_map(|shard| shard.values())
+                .all(Vec::is_empty)
+            || !host
+                .joins
+                .iter()
+                .flat_map(|shard| shard.values())
+                .all(Vec::is_empty)
         {
             return Err(refuse("installed lookahead mixed host/guest state is not yet supported"));
         }
@@ -200,7 +251,7 @@ impl InstalledCheckedGuestProvider {
         guest: &Par,
         budget: &mut ReflectedCodecBudget<'_, C>,
     ) -> Result<Par, SpeculationError> {
-        for (channel, data) in &host.data {
+        for (channel, data) in host.data.iter().flat_map(|shard| shard.iter()) {
             validate_reifiable_host_par(channel, COMPOSITE_REIFICATION_DEPTH, budget)
                 .map_err(|_| refuse("installed lookahead host channel is not safely reifiable"))?;
             for datum in data {
@@ -215,7 +266,7 @@ impl InstalledCheckedGuestProvider {
                 }
             }
         }
-        for (channels, waiting) in &host.continuations {
+        for (channels, waiting) in host.continuations.iter().flat_map(|shard| shard.iter()) {
             for channel in channels {
                 validate_reifiable_host_par(channel, COMPOSITE_REIFICATION_DEPTH, budget).map_err(
                     |_| refuse("installed lookahead receive channel is not safely reifiable"),
@@ -247,7 +298,7 @@ impl InstalledCheckedGuestProvider {
                 }
             }
         }
-        for channel in host.joins.keys() {
+        for channel in host.joins.iter().flat_map(|shard| shard.keys()) {
             validate_reifiable_host_par(channel, COMPOSITE_REIFICATION_DEPTH, budget)
                 .map_err(|_| refuse("installed lookahead join channel is not safely reifiable"))?;
         }
@@ -365,7 +416,7 @@ impl CheckedGuestProvider for InstalledCheckedGuestProvider {
                 ));
             }
             let binding = self.binding();
-            let prepared = InstalledSemanticBundle::prepare(
+            let prepared = InstalledSemanticBundle::prepare_rewrite_roster(
                 self.runtime.service().table(),
                 &binding.handle,
                 &[LanguageRight::Reduce],
@@ -382,6 +433,9 @@ impl CheckedGuestProvider for InstalledCheckedGuestProvider {
                 return Err(refuse("installed lookahead root changed under its binding"));
             }
             let admission = input.admission_work();
+            let cost_image = prepared
+                .prepare_costed_roster_image(self.runtime.service().policy().semantic_image, budget)
+                .map_err(|_| refuse("installed lookahead cost image verification failed"))?;
             let executed = budget
                 .run_accounted_stage(|remaining, cancel| {
                     let Some(ceiling) = admission.checked_add(remaining) else {
@@ -390,6 +444,7 @@ impl CheckedGuestProvider for InstalledCheckedGuestProvider {
                     match prepared.execute_step_roster_accounted(
                         binding.sort,
                         input,
+                        cost_image,
                         SemanticTransitionLimits { work: ceiling, ..limits },
                         cancel,
                     ) {
@@ -420,10 +475,26 @@ impl CheckedGuestProvider for InstalledCheckedGuestProvider {
                 },
             };
             let commitment = binding.installed.commitment();
+            let roster_image =
+                if cost_image.is_some() && binding.installed.projected_image().is_some() {
+                    binding.installed.base_semantic_image()
+                } else {
+                    binding.installed.semantic_image()
+                }
+                .ok_or_else(|| refuse("installed lookahead semantic image disappeared"))?;
+            let roster_fingerprint = if cost_image.is_some() {
+                binding
+                    .installed
+                    .projected_image()
+                    .map(|projected| projected.base_image_fingerprint)
+                    .or(commitment.semantic_image_fingerprint)
+            } else {
+                commitment.semantic_image_fingerprint
+            };
             if proven.work != aggregate
-                || proven.language_fingerprint != commitment.language_fingerprint
+                || proven.language_fingerprint != roster_image.language_fingerprint
                 || proven.theory_fingerprint != commitment.theory_fingerprint
-                || Some(proven.image_fingerprint) != commitment.semantic_image_fingerprint
+                || Some(proven.image_fingerprint) != roster_fingerprint
                 || proven.relation_sort != binding.sort
                 || proven.input != slot.exact_key
             {
@@ -455,6 +526,15 @@ impl CheckedGuestProvider for InstalledCheckedGuestProvider {
                 {
                     return Err(refuse("installed lookahead rewrite occurrence is out of order"));
                 }
+                validate_roster_resource(
+                    binding
+                        .installed
+                        .semantic_image()
+                        .ok_or_else(|| refuse("installed lookahead semantic image disappeared"))?
+                        .resource_profile,
+                    commitment,
+                    &occurrence.resource,
+                )?;
                 let checked = self.checked_input(&output, &adapter, limits, budget)?;
                 let key = checked.exact_key().as_bytes();
                 budget
@@ -553,10 +633,11 @@ impl CheckedGuestProvider for InstalledCheckedGuestProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rholang::rust::interpreter::accounting::costs::Cost;
     use std::collections::BTreeMap;
 
     use crypto::rust::hash::blake2b512_random::Blake2b512Random;
-    use mettail_grammar_core::RuntimeTemplatePiece;
+    use mettail_grammar_core::{RuntimeTemplatePiece, TheorySortId};
 
     use crate::speculation::search::{Explorer, Lookahead};
     use crate::speculation::service::{LeafProjection, LookaheadRequest, LookaheadService};
@@ -564,6 +645,47 @@ mod tests {
 
     use models::rhoapi::{ReceiveBind, Send};
     use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par, new_receive_par};
+
+    #[test]
+    fn costed_roster_receipt_checks_owner_but_does_not_project_host_funding() {
+        let (_, _, installed) = crate::language_install::tests::installed_flt_adapter_fixture();
+        let mut commitment = installed.commitment().clone();
+        let grade_sort = TheorySortId(9);
+        let fingerprint = [7; 32];
+        commitment.cost_image_fingerprint = Some(fingerprint);
+        let profile = TheoryResourceProfileV1::Costed { grade_sort };
+        let checked = SemanticResourceReceipt::Checked {
+            grade_sort,
+            // Opaque grade bytes are never interpreted as a host purse here.
+            grade: vec![1, 2, 3],
+            cost_image_fingerprint: fingerprint,
+        };
+        assert!(validate_roster_resource(profile, &commitment, &checked).is_ok());
+        assert!(
+            validate_roster_resource(TheoryResourceProfileV1::Uncosted, &commitment, &checked,)
+                .is_err()
+        );
+        assert!(validate_roster_resource(
+            profile,
+            &commitment,
+            &SemanticResourceReceipt::NoSemanticGrade,
+        )
+        .is_err());
+        let wrong_sort = SemanticResourceReceipt::Checked {
+            grade_sort: TheorySortId(10),
+            grade: vec![1, 2, 3],
+            cost_image_fingerprint: fingerprint,
+        };
+        assert!(validate_roster_resource(profile, &commitment, &wrong_sort).is_err());
+        let wrong_image = SemanticResourceReceipt::Checked {
+            grade_sort,
+            grade: vec![1, 2, 3],
+            cost_image_fingerprint: [8; 32],
+        };
+        assert!(validate_roster_resource(profile, &commitment, &wrong_image).is_err());
+        commitment.cost_image_fingerprint = None;
+        assert!(validate_roster_resource(profile, &commitment, &checked).is_err());
+    }
 
     fn one_host_comm(value: i64) -> Par {
         let channel = new_gstring_par("installed-composite-host".into(), Vec::new(), false);
@@ -580,6 +702,7 @@ mod tests {
                 source: Some(channel),
                 remainder: None,
                 free_count: 1,
+                cost_signature: None,
             }],
             Par::default(),
             false,
@@ -651,27 +774,35 @@ mod tests {
         let mut host = SpeculativeState::default();
         let channel = Par::default();
         let group = vec![channel.clone()];
-        host.data.insert(channel.clone(), Vec::new());
-        host.continuations.insert(group.clone(), Vec::new());
-        host.joins.insert(channel.clone(), Vec::new());
+        let channel_shard = rspace_plus_plus::rspace::hot_store::shard_of(&channel);
+        let group_shard = rspace_plus_plus::rspace::hot_store::shard_of(&group);
+        host.data[channel_shard].insert(channel.clone(), Vec::new());
+        host.continuations[group_shard].insert(group.clone(), Vec::new());
+        host.joins[channel_shard].insert(channel.clone(), Vec::new());
         InstalledCheckedGuestProvider::require_empty_host(&host)
             .expect("empty history-cache buckets carry no host process");
 
-        host.data
+        host.data[channel_shard]
             .get_mut(&channel)
             .unwrap()
             .push(Default::default());
         assert!(InstalledCheckedGuestProvider::require_empty_host(&host).is_err());
-        host.data.get_mut(&channel).unwrap().clear();
+        host.data[channel_shard].get_mut(&channel).unwrap().clear();
 
-        host.continuations
+        host.continuations[group_shard]
             .get_mut(&group)
             .unwrap()
-            .push(Default::default());
+            .push(Arc::new(Default::default()));
         assert!(InstalledCheckedGuestProvider::require_empty_host(&host).is_err());
-        host.continuations.get_mut(&group).unwrap().clear();
+        host.continuations[group_shard]
+            .get_mut(&group)
+            .unwrap()
+            .clear();
 
-        host.joins.get_mut(&channel).unwrap().push(group);
+        host.joins[channel_shard]
+            .get_mut(&channel)
+            .unwrap()
+            .push(group);
         assert!(InstalledCheckedGuestProvider::require_empty_host(&host).is_err());
     }
 
@@ -817,8 +948,22 @@ mod tests {
                     &mut codec,
                 )
                 .map_err(|error| TestCaseError::fail(format!("kernel preparation: {error:?}")))?;
+                let cost_image = prepared
+                    .prepare_costed_roster_image(
+                        runtime.service().policy().semantic_image,
+                        &mut codec,
+                    )
+                    .map_err(|error| {
+                        TestCaseError::fail(format!("cost-image preparation: {error:?}"))
+                    })?;
                 let (decision, aggregate) = prepared
-                    .execute_step_roster_accounted(sort, kernel_input, limits.execution, || false)
+                    .execute_step_roster_accounted(
+                        sort,
+                        kernel_input,
+                        cost_image,
+                        limits.execution,
+                        || false,
+                    )
                     .map_err(|error| TestCaseError::fail(format!("kernel roster: {error:?}")))?;
                 let SemanticTransitionDecision::ProvenSteps(proven) = decision else {
                     return Err(TestCaseError::fail("kernel did not prove complete step roster"));
@@ -871,9 +1016,12 @@ mod tests {
                 let edges = provider
                     .complete_roster(&empty, &root)
                     .map_err(|error| TestCaseError::fail(format!("provider roster: {error:?}")))?;
-                // Primitive work is a diagnostic cost in cost-accounted Rholang;
-                // only COMM consumes source-token units. Compare the exact
-                // additional primitive receipt, not remaining phlogiston.
+                // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): was
+                // "Primitive work is a diagnostic cost in cost-accounted Rholang; only COMM
+                // consumes source-token units. Compare the exact additional primitive receipt,
+                // not remaining phlogiston."
+                // Only COMM consumes source-token units, and installed lookahead host work is
+                // not metered: the roster adds no receipt and leaves remaining phlogiston as is.
                 prop_assert_eq!(host.remaining().value, remaining_before_roster);
                 let mut additional_charges = host.get_log();
                 for prior in prior_charges {
@@ -883,14 +1031,20 @@ mod tests {
                     };
                     additional_charges.remove(position);
                 }
-                prop_assert_eq!(additional_charges.len(), 1);
-                prop_assert_eq!(
-                    additional_charges[0].operation.as_ref(),
-                    "installed lookahead guest operation"
-                );
+                // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+                // the roster no longer writes a host receipt.
+                // prop_assert_eq!(additional_charges.len(), 1);
+                // prop_assert_eq!(
+                //     additional_charges[0].operation.as_ref(),
+                //     "installed lookahead guest operation"
+                // );
+                // prop_assert!(
+                //     additional_charges[0].value
+                //         >= i64::try_from(aggregate).expect("bounded kernel aggregate")
+                // );
                 prop_assert!(
-                    additional_charges[0].value
-                        >= i64::try_from(aggregate).expect("bounded kernel aggregate")
+                    additional_charges.is_empty(),
+                    "installed lookahead host work is not metered"
                 );
                 prop_assert_eq!(edges.len(), expected.len());
                 for (edge, (ordinal, output, receipt, after)) in edges.iter().zip(&expected) {
@@ -985,7 +1139,11 @@ mod tests {
     async fn top_level_installed_guest_and_host_comm_share_one_every_trace_search() {
         let (runtime, _, subject, binding) = mixed_regex_fixture(1);
         let host = RuntimeBudget::new(Cost::create(10_000_000, "mixed lookahead test"));
-        let response = LookaheadService::serve(
+        // Changed by the merge of feature/cost-accounted-rho: the node now refuses a
+        // resting commit in a space that is not CostV2 (rspace++ `ops_resting.rs`), so
+        // a search that fires a host COMM takes the standalone path. The call was
+        // `LookaheadService::serve(`.
+        let response = LookaheadService::serve_local(
             LookaheadRequest::new(subject.clone(), Lookahead::Steps(2))
                 .with_projection(LeafProjection::Configuration)
                 .with_installed_bindings(runtime, vec![binding]),
@@ -1031,10 +1189,12 @@ mod tests {
     async fn revoked_installed_owner_refuses_retained_host_comm_resume_before_firing() {
         let (runtime, token, subject, binding) = mixed_regex_fixture(7);
         let host = RuntimeBudget::new(Cost::create(10_000_000, "revoked mixed lookahead test"));
-        let sandbox = crate::speculation::SpeculativeSandbox::new()
+        let sandbox = crate::speculation::SpeculativeSandbox::new_standalone()
             .await
             .expect("speculative sandbox");
-        sandbox.fund_from(&host);
+        sandbox
+            .fund_from_standalone(&host)
+            .expect("fund local sandbox");
         let provider =
             InstalledCheckedGuestProvider::new(Arc::clone(&runtime), vec![binding], host)
                 .expect("one checked top-level guest");
@@ -1136,8 +1296,12 @@ mod tests {
                     input,
                 };
                 let host = RuntimeBudget::new(Cost::create(10_000_000, "mixed trace property"));
+                // Changed by the merge of feature/cost-accounted-rho: the node now refuses a
+                // resting commit in a space that is not CostV2 (rspace++ `ops_resting.rs`),
+                // so a search that fires a host COMM takes the standalone path. The call was
+                // `LookaheadService::serve(`.
                 let response = tokio
-                    .block_on(LookaheadService::serve(
+                    .block_on(LookaheadService::serve_local(
                         LookaheadRequest::new(subject, Lookahead::Steps(2))
                             .with_projection(LeafProjection::Configuration)
                             .with_installed_bindings(Arc::clone(&runtime), vec![binding]),

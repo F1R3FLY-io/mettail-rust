@@ -3,6 +3,7 @@ use crate::language_install::{exact_expr, exact_list, wire_list};
 use crate::semantic_service::tests::transport_receipt;
 use crate::semantic_wire::{decode_receipt_v1, encode_receipt_v1, encode_u64};
 use mettail_dovetail_runtime::{
+    SemanticGradedNormalizationHopReceiptV2, SemanticGradedNormalizationProofReceiptV2,
     SemanticIntrinsicOpcodeV1, SemanticJudgmentProofReceipt, SemanticJudgmentProofStep,
     SemanticPremiseReceipt,
 };
@@ -10,7 +11,7 @@ use mettail_grammar_core::{
     SemanticEffectClassV1, TheoryJudgmentId, TheoryJudgmentRuleProgramId, TheoryRuleProgramId,
     TheorySortId,
 };
-use models::rhoapi::{Par, expr::ExprInstance};
+use models::rhoapi::{expr::ExprInstance, Par};
 use models::rust::utils::{new_gbytearray_par, new_gint_par};
 use num_bigint::BigInt;
 
@@ -245,6 +246,36 @@ fn semantic_wire_order_matches_complete_wire_oracle_for_every_leaf() {
             assert_eq!(compare(a, b), ak.cmp(bk));
         }
     }
+}
+
+#[test]
+fn graded_v2_order_preserves_selected_equal_output_proof() {
+    let mut first = transport_receipt();
+    let proof = first.normalization_hops[0].exhaustive_proofs[0].clone();
+    first.resource = SemanticResourceReceipt::CheckedTraceV2 {
+        grade_sort: TheorySortId(3),
+        grade: vec![1, 2],
+        cost_image_fingerprint: [9; 32],
+        entry_grade: vec![1],
+        hops: vec![SemanticGradedNormalizationHopReceiptV2 {
+            before: proof.before.clone(),
+            after: proof.after.clone(),
+            exhaustive_proofs: vec![
+                SemanticGradedNormalizationProofReceiptV2 { proof: proof.clone(), grade: vec![3] },
+                SemanticGradedNormalizationProofReceiptV2 { proof, grade: vec![4] },
+            ],
+            selected_proof: 0,
+            charged_work: 7,
+        }],
+    };
+    let mut second = first.clone();
+    let SemanticResourceReceipt::CheckedTraceV2 { hops, .. } = &mut second.resource else {
+        unreachable!()
+    };
+    hops[0].selected_proof = 1;
+    assert_eq!(compare(&first, &second), key(&first).cmp(&key(&second)));
+    assert_eq!(compare(&second, &first), key(&second).cmp(&key(&first)));
+    assert_ne!(compare(&first, &second), Ordering::Equal);
 }
 
 fn records(count: usize) -> Vec<SemanticServiceResult> {

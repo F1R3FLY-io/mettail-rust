@@ -45,10 +45,11 @@ use rholang::rust::interpreter::system_processes::Definition;
 use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::hashing::stable_hash_provider::EventCodecEpoch;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::rspace::RSpace;
 use rspace_plus_plus::rspace::rspace_interface::{
-    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard,
+    ISpace, MaybeConsumeResult, MaybeProduceResult, ProduceCommitGuard, RSpaceAccountingObserver,
 };
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
@@ -377,27 +378,60 @@ impl SteppingSpace {
 
 #[async_trait]
 impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for SteppingSpace {
+    fn codec_epoch(&self) -> EventCodecEpoch {
+        self.inner.codec_epoch()
+    }
+
+    fn set_accounting_observer(
+        &self,
+        observer: Option<
+            Arc<
+                dyn RSpaceAccountingObserver<
+                    Par,
+                    BindPattern,
+                    ListParWithRandom,
+                    TaggedContinuation,
+                >,
+            >,
+        >,
+    ) {
+        self.inner.set_accounting_observer(observer);
+    }
+
     async fn create_checkpoint(&self) -> Result<Checkpoint, RSpaceError> {
         self.inner.create_checkpoint().await
     }
 
-    async fn get_data(&self, channel: &Par) -> Vec<Datum<ListParWithRandom>> {
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         self.inner.get_data(channel).await
     }
 
     async fn get_waiting_continuations(
         &self,
         channels: Vec<Par>,
-    ) -> Vec<WaitingContinuation<BindPattern, TaggedContinuation>> {
+    ) -> Result<Vec<WaitingContinuation<BindPattern, TaggedContinuation>>, RSpaceError> {
         self.inner.get_waiting_continuations(channels).await
     }
 
-    async fn get_joins(&self, channel: Par) -> Vec<Vec<Par>> {
+    async fn get_joins(&self, channel: Par) -> Result<Vec<Vec<Par>>, RSpaceError> {
         self.inner.get_joins(channel).await
     }
 
     async fn remove_all_data(&self, channel: &Par) -> Result<(), RSpaceError> {
         self.inner.remove_all_data(channel).await
+    }
+    async fn remove_data_at(&self, channel: &Par, index: i32) -> Result<(), RSpaceError> {
+        self.inner.remove_data_at(channel, index).await
+    }
+    async fn remove_data_at_recorded(
+        &self,
+        channel: &Par,
+        index: i32,
+        operation_id: &[u8],
+    ) -> Result<(), RSpaceError> {
+        self.inner
+            .remove_data_at_recorded(channel, index, operation_id)
+            .await
     }
 
     async fn remove_all_continuations(&self, channels: Vec<Par>) -> Result<(), RSpaceError> {
@@ -678,7 +712,8 @@ fn run_stepped_inj(
             &mut fold_defs, // Tier-3 fold-contract Definitions (empty for pure-COMM terms)
             ExternalServices::noop(), // inert — no AI/gRPC/Chroma
         )
-        .await;
+        .await
+        .map_err(|error| format!("rho runtime construction: {error:?}"))?;
         let checkpoint = rho_runtime.create_soft_checkpoint().await;
         let rand = Blake2b512Random::create_from_bytes(FIXED_SEED);
         rho_runtime.cost().set(Cost::unsafe_max());
@@ -690,7 +725,10 @@ fn run_stepped_inj(
                 // send (e.g. `@"c"`, now empty) is never surfaced. Emitted after the reduction steps
                 // with no gate pause — the driver collects them, then the dropped `Sender` ⇒ quiescence.
                 if let Some(out) = &out_channel {
-                    let data = rho_runtime.get_data(&crate::run::quoted_channel(out)).await;
+                    let data = rho_runtime
+                        .get_data(&crate::run::quoted_channel(out))
+                        .await
+                        .map_err(|error| format!("stepper output read: {error:?}"))?;
                     for datum in data {
                         // Datum payloads are Arc-shared; materialize this cold-path
                         // readback once per run.
@@ -862,6 +900,7 @@ mod tests {
                 TaggedContinuation {
                     tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
                     guard: None,
+                    cost_authority: None,
                 },
                 false,
                 BTreeSet::new(),
@@ -871,6 +910,7 @@ mod tests {
         let data = ListParWithRandom {
             pars: vec![new_gint_par(42, Vec::new(), false)],
             random_state: vec![7; 32],
+            ..ListParWithRandom::default()
         };
         assert_eq!(
             space
@@ -907,7 +947,11 @@ mod tests {
             ordinal: AtomicU64::new(0),
         };
         gate.abort();
-        let continuation = TaggedContinuation { tagged_cont: None, guard: None };
+        let continuation = TaggedContinuation {
+            tagged_cont: None,
+            guard: None,
+            cost_authority: None,
+        };
         let error = observer
             .emit_comm("comm.produce", Vec::new(), Vec::new(), continuation.clone())
             .expect_err("an aborted gate must return a typed error");

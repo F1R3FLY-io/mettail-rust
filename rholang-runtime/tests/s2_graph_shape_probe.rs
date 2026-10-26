@@ -84,6 +84,14 @@ fn host_budget(units: i64) -> RuntimeBudget {
     budget
 }
 
+async fn funded_sandbox() -> SpeculativeSandbox {
+    let sandbox = SpeculativeSandbox::new_standalone().await.expect("sandbox");
+    sandbox
+        .fund_from_standalone(&host_budget(4_000_000))
+        .expect("fund local sandbox");
+    sandbox
+}
+
 /// A hand-rolled BFS with per-level reporting, stopping at `max_levels` so the
 /// probe always terminates and always prints.
 #[tokio::test]
@@ -102,8 +110,7 @@ async fn graph_shape_of_the_open_race() {
     );
     let program = installed.append(seed);
 
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(4_000_000));
+    let sandbox = funded_sandbox().await;
 
     let started = Instant::now();
     sandbox
@@ -118,9 +125,9 @@ async fn graph_shape_of_the_open_race() {
     eprintln!(
         "[root] saturated in {:?}; data channels={} continuation groups={} installed={} consumed={}",
         started.elapsed(),
-        root.data.len(),
-        root.continuations.len(),
-        root.installed_continuations.len(),
+        root.data.iter().map(|shard| shard.len()).sum::<usize>(),
+        root.continuations.iter().map(|shard| shard.len()).sum::<usize>(),
+        root.installed_continuations.iter().map(|shard| shard.len()).sum::<usize>(),
         sandbox.consumed().value
     );
 
@@ -137,7 +144,7 @@ async fn graph_shape_of_the_open_race() {
         let mut merged = 0usize;
         for (state, trace) in frontier.drain(..) {
             sandbox.load(state.clone()).await.expect("load");
-            let enabled = sandbox.enabled();
+            let enabled = sandbox.enabled().expect("enabled roster");
             degrees.push(enabled.len());
             if enabled.is_empty() {
                 quiescent += 1;
@@ -147,7 +154,7 @@ async fn graph_shape_of_the_open_race() {
                 if index > 0 {
                     sandbox.load(state.clone()).await.expect("load");
                 }
-                let live = sandbox.enabled();
+                let live = sandbox.enabled().expect("enabled roster");
                 let Ok(step) = sandbox.fire(live[index].clone()).await else {
                     continue;
                 };
@@ -205,8 +212,7 @@ async fn independence_reduced_exploration_terminates() {
     );
     let program = installed.append(seed);
 
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(4_000_000));
+    let sandbox = funded_sandbox().await;
     let started = Instant::now();
     let mut explorer =
         Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced).observing(|report| {
@@ -262,8 +268,7 @@ async fn what_is_enabled_at_depth() {
         DRIVE_DEFAULT_FUEL,
         OUT,
     );
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(4_000_000));
+    let sandbox = funded_sandbox().await;
     sandbox
         .load(SpeculativeState::default())
         .await
@@ -276,7 +281,7 @@ async fn what_is_enabled_at_depth() {
     // Walk the least element repeatedly (one path) and report the enabled set's
     // channels at each depth.
     for depth in 0..16 {
-        let enabled = sandbox.enabled();
+        let enabled = sandbox.enabled().expect("enabled roster");
         let mut rows: Vec<String> = Vec::with_capacity(enabled.len());
         for rendezvous in enabled.iter() {
             let channels: Vec<String> = rendezvous.channels.iter().map(render_channel).collect();
@@ -383,8 +388,7 @@ async fn match_path_conflict_structure() {
         },
     };
 
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(4_000_000));
+    let sandbox = funded_sandbox().await;
     let mut explorer =
         Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced).observing(|report| {
             eprintln!(
@@ -448,8 +452,7 @@ async fn frontier_growth_without_any_race() {
         DRIVE_DEFAULT_FUEL,
         OUT,
     );
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(4_000_000));
+    let sandbox = funded_sandbox().await;
     let mut explorer =
         Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced).observing(|report| {
             eprintln!(

@@ -38,8 +38,10 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         .authorize(&handle, LanguageRight::Parse)
         .expect("installed Regex artifact");
     let core = installed.core();
-    assert!(core.wpda_token_observations.is_some(),
-        "DDL lowering must retain the original token-kind observations, not guess them at parse time");
+    assert!(
+        core.wpda_token_observations.is_some(),
+        "DDL lowering must retain the original token-kind observations, not guess them at parse time"
+    );
     // The DDL lowerer's terms loop emits exactly one production per authored
     // source term, in that order. It does not append bridge helper productions.
     assert!(core
@@ -115,9 +117,16 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
     let collect = |source: &OwnedTokenSource<'_, '_, '_, '_>, primary, input: &str| {
         let actions = OwnedActionProvider::new(source, &descriptors, |_| Ok(()))
             .expect("all original Regex action rows admitted");
-        let engine =
-            OwnedWpdaEngine::new(&descriptors, &actions, primary, &[], &absorption, |_| Ok(()))
-                .expect("all original Regex routing rows admitted");
+        let engine = OwnedWpdaEngine::new(
+            &descriptors,
+            &actions,
+            primary,
+            &[],
+            &absorption,
+            |_| Ok(()),
+            |_| Ok(()),
+        )
+        .expect("all original Regex routing rows admitted");
         let mut walker = WpdaWalker::new_for_category(engine, primary, 0);
         walker
             .run_to_end_of_input(100_000, source)
@@ -284,15 +293,33 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
                     let expected = quantifier(core, outer, quantifier(core, inner, literal));
                     assert_exact_ground_family(&actual, &expected, &expected, &input);
                 } else {
-                    assert!(matches!(runtime.service.table()
-                        .parse(&handle, &input, Some(pattern), runtime.host.as_ref(), policy),
-                        Err(mettail_grammar_core::InstalledParseError::Parse(
-                            mettail_grammar_core::RuntimeError::NoParse))),
-                        "installed route must reject adjacent nonassociative quantifiers: {input:?}");
+                    assert!(
+                        matches!(
+                            runtime.service.table().parse(
+                                &handle,
+                                &input,
+                                Some(pattern),
+                                runtime.host.as_ref(),
+                                policy
+                            ),
+                            Err(mettail_grammar_core::InstalledParseError::Parse(
+                                mettail_grammar_core::RuntimeError::NoParse
+                            ))
+                        ),
+                        "installed route must reject adjacent nonassociative quantifiers: {input:?}"
+                    );
                     match result {
-                        Ok(actual) => assert!(actual.is_empty(), "all readings must reject {input:?}: {actual:?}"),
-                        Err(WpdaResolveResult::ParseError { .. } | WpdaResolveResult::AcceptedWithTrailing { .. }) => {},
-                        Err(other) => panic!("resource/action failure is not quantifier rejection for {input:?}: {other:?}"),
+                        Ok(actual) => assert!(
+                            actual.is_empty(),
+                            "all readings must reject {input:?}: {actual:?}"
+                        ),
+                        Err(
+                            WpdaResolveResult::ParseError { .. }
+                            | WpdaResolveResult::AcceptedWithTrailing { .. },
+                        ) => {},
+                        Err(other) => panic!(
+                            "resource/action failure is not quantifier rejection for {input:?}: {other:?}"
+                        ),
                     }
                 }
             }
@@ -382,9 +409,6 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         }
     }
 
-    // Even this one-reading noadmit input must exercise the owned persistent-key
-    // hook. Exhaustion is a failed realization request, never an empty family
-    // or a successfully published prefix of that request's results.
     let session = parser
         .lexical_session("a")
         .expect("ground literal witness lexes");
@@ -401,9 +425,16 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         let actions = OwnedActionProvider::new(&source, &descriptors, |_| Ok(()))
             .expect("complete owned actions");
         let primary = primary_for("Pattern");
-        let engine =
-            OwnedWpdaEngine::new(&descriptors, &actions, primary, &[], &absorption, |_| Ok(()))
-                .expect("complete owned routing");
+        let engine = OwnedWpdaEngine::new(
+            &descriptors,
+            &actions,
+            primary,
+            &[],
+            &absorption,
+            |_| Ok(()),
+            |_| Ok(()),
+        )
+        .expect("complete owned routing");
         let walker = WpdaWalker::new_for_category(engine, primary, 0);
         let mut walker = if entry_limit {
             walker.with_semantic_key_cache_entries(0)
@@ -413,6 +444,26 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         walker
             .run_to_end_of_input(100_000, &source)
             .expect("bounded recognition");
+        if entry_limit {
+            let WpdaResolveResult::Accepted { roots, .. } = walker.resolve_at_end_of_input(&source)
+            else {
+                panic!("disabled memoization must preserve recognition");
+            };
+            let mut readings = Vec::new();
+            for root in roots {
+                readings.extend(
+                    walker
+                        .realize_root_to_terms_with_weights(
+                            root,
+                            Some(256),
+                            RealizeRequestMode::BoundedEnumeration,
+                        )
+                        .expect("disabled memoization must preserve realization"),
+                );
+            }
+            assert!(!readings.is_empty());
+            continue;
+        }
         let error = match walker.resolve_at_end_of_input(&source) {
             WpdaResolveResult::RealizationFailed { error, .. } => error,
             WpdaResolveResult::Accepted { roots, .. } => roots
@@ -431,23 +482,16 @@ fn practical_regex_ddl_drives_original_wpda_with_complete_owned_metadata() {
         };
         use mettail_prattail::wpda_runtime::RealizationError;
         use mettail_runtime::exact_semantic_key::ContentKeyCacheError;
-        match (entry_limit, error) {
-            (
-                true,
-                RealizationError::SemanticKey(ContentKeyCacheError::ResourceExhausted {
-                    limit: 0,
-                    ..
-                }),
-            )
-            | (
-                false,
+        assert!(
+            matches!(
+                error,
                 RealizationError::SemanticKey(ContentKeyCacheError::KeyBytesExhausted {
                     limit: 0,
                     ..
-                }),
-            ) => {},
-            (_, error) => panic!("retain the exact exhausted resource: {error:?}"),
-        }
+                })
+            ),
+            "retain the exact construction error: {error:?}"
+        );
     }
 }
 

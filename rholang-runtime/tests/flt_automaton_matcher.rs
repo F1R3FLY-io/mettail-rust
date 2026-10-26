@@ -38,6 +38,7 @@ fn datum(pars: Vec<Par>) -> ListParWithRandom {
     ListParWithRandom {
         pars,
         random_state: vec![3, 1, 4, 1, 5, 9],
+        ..ListParWithRandom::default()
     }
 }
 
@@ -57,6 +58,7 @@ fn receive_program(patterns: Vec<BindPattern>) -> Par {
                 source: Some(new_gstring_par(format!("flt-prepare-{index}"), Vec::new(), false)),
                 remainder: pattern.remainder,
                 free_count: pattern.free_count,
+                cost_signature: None,
             }],
             body: Some(Par::default()),
             persistent: false,

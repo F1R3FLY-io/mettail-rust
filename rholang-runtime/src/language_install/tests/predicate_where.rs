@@ -449,6 +449,7 @@ async fn where_carrier_relation_guards_actual_rspace_comm() {
                 TaggedContinuation {
                     tagged_cont: Some(TaggedCont::ScalaBodyRef(716)),
                     guard: Some(carrier_descriptor(&token)),
+                    cost_authority: None,
                 },
                 false,
                 std::collections::BTreeSet::new(),
@@ -458,17 +459,26 @@ async fn where_carrier_relation_guards_actual_rspace_comm() {
         let datum = ListParWithRandom {
             pars: vec![new_gint_par(8, vec![], false)],
             random_state: vec![4; 32],
+            ..ListParWithRandom::default()
         };
         let committed = space
             .produce(channel.clone(), datum, false)
             .await
             .expect("offer guarded datum");
         assert_eq!(committed.is_some(), accepts, "{rewrites}");
-        assert_eq!(space.get_data(&channel).await.is_empty(), accepts);
+        assert_eq!(
+            space
+                .get_data(&channel)
+                .await
+                .expect("read data")
+                .is_empty(),
+            accepts
+        );
         assert_eq!(
             space
                 .get_waiting_continuations(vec![channel])
                 .await
+                .expect("read waiting continuations")
                 .is_empty(),
             accepts
         );
@@ -785,6 +795,7 @@ async fn where_predicate_actual_comm_unknown_is_nonconsuming_and_true_commits_on
         let k = TaggedContinuation {
             tagged_cont: Some(TaggedCont::ScalaBodyRef(712)),
             guard: Some(descriptor(&token, source)),
+            cost_authority: None,
         };
         space
             .consume(
@@ -803,19 +814,32 @@ async fn where_predicate_actual_comm_unknown_is_nonconsuming_and_true_commits_on
         let data = ListParWithRandom {
             pars: vec![new_gint_par(8, vec![], false)],
             random_state: vec![1; 32],
+            ..ListParWithRandom::default()
         };
         let result = space.produce(channel.clone(), data, false).await.unwrap();
         if source == "call" && accepting {
             assert!(result.is_some());
-            assert!(space.get_data(&channel).await.is_empty());
+            assert!(space
+                .get_data(&channel)
+                .await
+                .expect("read data")
+                .is_empty());
             assert!(space
                 .get_waiting_continuations(vec![channel])
                 .await
+                .expect("read waiting continuations")
                 .is_empty());
         } else {
             assert!(result.is_none());
-            assert_eq!(space.get_data(&channel).await.len(), 1);
-            assert_eq!(space.get_waiting_continuations(vec![channel]).await.len(), 1);
+            assert_eq!(space.get_data(&channel).await.expect("read data").len(), 1);
+            assert_eq!(
+                space
+                    .get_waiting_continuations(vec![channel])
+                    .await
+                    .expect("read waiting continuations")
+                    .len(),
+                1
+            );
             assert_eq!(ledger.decider_gap_error().is_some(), source == "yes");
         }
     }
@@ -850,6 +874,7 @@ async fn where_native_boolean_actual_comm_requires_complete_true_evidence() {
                 TaggedContinuation {
                     tagged_cont: Some(TaggedCont::ScalaBodyRef(713)),
                     guard: Some(descriptor(&token, "call")),
+                    cost_authority: None,
                 },
                 false,
                 std::collections::BTreeSet::new(),
@@ -859,14 +884,23 @@ async fn where_native_boolean_actual_comm_requires_complete_true_evidence() {
         let data = ListParWithRandom {
             pars: vec![new_gint_par(8, vec![], false)],
             random_state: vec![2; 32],
+            ..ListParWithRandom::default()
         };
         let result = space.produce(channel.clone(), data, false).await.unwrap();
         assert_eq!(result.is_some(), accepts, "outcomes: {outcomes:?}");
-        assert_eq!(space.get_data(&channel).await.is_empty(), accepts);
+        assert_eq!(
+            space
+                .get_data(&channel)
+                .await
+                .expect("read data")
+                .is_empty(),
+            accepts
+        );
         assert_eq!(
             space
                 .get_waiting_continuations(vec![channel])
                 .await
+                .expect("read waiting continuations")
                 .is_empty(),
             accepts
         );
@@ -905,6 +939,7 @@ async fn where_authored_projection_actual_comm_requires_complete_true_evidence()
                 TaggedContinuation {
                     tagged_cont: Some(TaggedCont::ScalaBodyRef(715)),
                     guard: Some(descriptor(&token, "call")),
+                    cost_authority: None,
                 },
                 false,
                 std::collections::BTreeSet::new(),
@@ -914,6 +949,7 @@ async fn where_authored_projection_actual_comm_requires_complete_true_evidence()
         let data = ListParWithRandom {
             pars: vec![new_gint_par(8, vec![], false)],
             random_state: vec![3; 32],
+            ..ListParWithRandom::default()
         };
         let committed = space
             .produce(channel.clone(), data, false)
@@ -924,11 +960,19 @@ async fn where_authored_projection_actual_comm_requires_complete_true_evidence()
             accepts,
             "result {result}, false rule {include_false_rule}"
         );
-        assert_eq!(space.get_data(&channel).await.is_empty(), accepts);
+        assert_eq!(
+            space
+                .get_data(&channel)
+                .await
+                .expect("read data")
+                .is_empty(),
+            accepts
+        );
         assert_eq!(
             space
                 .get_waiting_continuations(vec![channel])
                 .await
+                .expect("read waiting continuations")
                 .is_empty(),
             accepts
         );
@@ -972,6 +1016,7 @@ fn where_native_boolean_negation_requires_determinate_evidence() {
         let continuation = TaggedContinuation {
             tagged_cont: Some(TaggedCont::ScalaBodyRef(714)),
             guard: Some(not),
+            cost_authority: None,
         };
         assert_eq!(matcher.prepare_commit(&continuation, &[]).is_some(), expected);
     }
@@ -989,6 +1034,7 @@ fn where_unknown_stays_unknown_under_not_and_short_circuit_does_not_execute_it()
     let continuation = |guard| TaggedContinuation {
         tagged_cont: Some(TaggedCont::ScalaBodyRef(712)),
         guard: Some(guard),
+        cost_authority: None,
     };
     assert!(matcher.prepare_commit(&continuation(not), &[]).is_none());
     let _ = matcher.refusals().take();

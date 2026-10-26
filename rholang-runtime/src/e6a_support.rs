@@ -367,6 +367,7 @@ pub fn discovery_call_par(
                 source: Some(quoted(&e6a_index_channel(language_fingerprint, root_site))),
                 remainder: None,
                 free_count: 1,
+                cost_signature: None,
             }],
             publish,
             false,
@@ -807,6 +808,7 @@ fn index_query_receive_par(body: Par, language_fingerprint: &str, root_site: &st
             source: Some(quoted(&e6a_index_channel(language_fingerprint, root_site))),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         body,
         false,
@@ -985,7 +987,10 @@ pub async fn drive_e6a_treatment(
     let mut all_sites: Vec<String> = Vec::new();
     for op in &ops {
         let channel = quoted(&e6a_sites_channel(language_fingerprint, root_site, op));
-        let data = runtime.get_data(&channel).await;
+        let data = runtime
+            .get_data(&channel)
+            .await
+            .map_err(|error| E6aDriveFailure::new(format!("site read: {error:?}")))?;
         let [datum] = data.as_slice() else {
             return Err(E6aDriveFailure::new(format!(
                 "expected exactly one discovery result on {}, got {}",
@@ -1068,7 +1073,10 @@ pub async fn drive_e6a_treatment(
     // ── OUT readback ────────────────────────────────────────────────────────
     let consumed_cost_units = runtime.cost().total_cost().value;
     let out_read_started = Instant::now();
-    let out_data = runtime.get_data(&quoted(out_channel)).await;
+    let out_data = runtime
+        .get_data(&quoted(out_channel))
+        .await
+        .map_err(|error| E6aDriveFailure::new(format!("output read: {error:?}")))?;
     let mut observed: Vec<Par> =
         Vec::with_capacity(out_data.iter().map(|datum| datum.a.pars.len()).sum());
     for datum in out_data {

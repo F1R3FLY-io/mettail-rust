@@ -55,10 +55,16 @@ and `Right` in canonical module order. Installation returns this shape:
       {"name": "Left", "handle": left},
       {"name": "Right", "handle": right}
     ],
+    "exports_by_name": {"Left": left, "Right": right},
     "programs": []
   }
 }
 ```
+
+The `exports` list keeps the canonical module order. The `exports_by_name` map
+gives the same handles by export name, so a caller can select a handle without
+a dependency on that order. A Rholang map pattern matches only a map with the
+same keys, so the application pattern names all four keys.
 
 `left` and `right` are unforgeable process-local capabilities. The URI,
 module name, export name, content commitment, semantic fingerprint, and any

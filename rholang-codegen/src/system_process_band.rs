@@ -162,8 +162,8 @@ pub const NATIVE_HANDLER_BAND: SystemProcessBand = SystemProcessBand {
     channel_tag: MTL_NATIVE_CHANNEL_TAG,
 };
 
-/// The `[*]` / `[n]` LOOKAHEAD band — the request server's two system processes
-/// (`^spec-all`, `^spec-n`; `rholang-runtime/src/speculation/server.rs`).
+/// The `[*]` / `[n]` LOOKAHEAD band supplies six versioned request processes
+/// in `rholang-runtime/src/speculation/server.rs`.
 ///
 /// ⚠ This band supplies the `body_ref` only. A lookahead request is a send on a **quoted
 /// string** channel (`@"^spec-all"`), because that is what the surface lowering emits and a
@@ -172,8 +172,8 @@ pub const NATIVE_HANDLER_BAND: SystemProcessBand = SystemProcessBand {
 /// is needed for: a deterministic `body_ref` that provably cannot collide with f1r3node's own
 /// (`0..=36`, `101..=108`), with the held-fold band, or with the native-handler band.
 ///
-/// The `index` field distinguishes four request channels: legacy `[*]` and
-/// `[n]` at 0 and 1, and installed-language v2 `[*]` and `[n]` at 2 and 3.
+/// The `index` field distinguishes six request channels. Legacy `[*]` and
+/// `[n]` use 0 and 1. Installed-language v2 uses 2 and 3. Composite v3 uses 4 and 5.
 /// Separate channels keep an envelope-shaped legacy subject ordinary data.
 /// The "fingerprint" input is an ABI version string rather than a language
 /// fingerprint, because the request wire is shared across languages.

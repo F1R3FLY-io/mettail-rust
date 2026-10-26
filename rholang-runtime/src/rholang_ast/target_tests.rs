@@ -220,6 +220,14 @@ fn same_graph_interpretation(
 fn primitive_target_reuses_exact_node_constructors() {
     let mut target = DirectNodeTarget;
     same_bytes(&target.construct(ValueOp::Empty, vec![]).expect("empty"), &Par::default());
+    let unit = target
+        .construct(ValueOp::UnitTuple, vec![])
+        .expect("unit tuple");
+    same_bytes(&unit, &new_etuple_par(Vec::new()));
+    // RhoTypes.proto: Par.exprs=5; Expr.e_tuple_body=21. A present empty
+    // ETuple message must not collapse into Nil's empty Par encoding.
+    assert_eq!(unit.encode_to_vec(), [0x2a, 3, 0xaa, 1, 0]);
+    assert!(!DirectNodeTarget::observation(&unit).single_string);
     for value in [i64::MIN, -1, 0, 1, i64::MAX] {
         same_bytes(
             &target
@@ -296,6 +304,7 @@ fn direct_target_rejects_every_wrong_arity_in_initial_family() {
     let mut target = DirectNodeTarget;
     for operation in [
         ValueOp::Empty,
+        ValueOp::UnitTuple,
         ValueOp::Integer(0),
         ValueOp::Boolean(false),
         ValueOp::Text("".into()),

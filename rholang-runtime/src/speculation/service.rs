@@ -49,15 +49,24 @@
 //! [`LookaheadService::serve`] funds its sandbox from the host deploy's
 //! remaining phlogiston, runs, and reports what it spent
 //! ([`LookaheadAttempt::consumed`]) — a **COMM count** even if exploration
-//! later refuses. The caller charges it
-//! back with [`crate::speculation::search::Explorer::charge_host`], which is
-//! `consumed()` *calls* to f1r3node's own `reserve_comm`, not one call passing
-//! `consumed()`. Nothing here owns a budget; budgets are F1r3node's.
+//! later refuses. A fired COMM costs one unit, and staging is free (DR-131).
+//! The caller charges it back with
+//! [`crate::speculation::search::Explorer::charge_host`], which is `consumed()`
+//! *calls* to f1r3node's own `reserve_comm`. The request server passes a weight
+//! of one unit for each call, so each speculative COMM is one COMM event of
+//! weight one on the host's lane. Nothing here owns a budget; budgets are
+//! F1r3node's.
 //!
 //! `serve` and `resume` do **not** charge the host themselves. The public
 //! handler consumes the attempt with [`LookaheadAttempt::settle`] against its
 //! live host budget before it can inspect either a response or a refusal. The
 //! charge amount remains the one defined by f1r3node's `reserve_comm`.
+//!
+//! Standalone requests use [`LookaheadService::serve_local`] and
+//! [`LookaheadService::resume_local`]. Each builds a fresh local CostV2
+//! sandbox that can commit a resting rendezvous; its COMMs are charged back
+//! like any other. Native consensus and replay cannot use this authority, and
+//! no host work is metered (DR-131 extension to F1R3Lang, user decision 1).
 
 use std::sync::Arc;
 
@@ -374,6 +383,33 @@ impl LookaheadService {
         rand: Blake2b512Random,
         host: &RuntimeBudget,
     ) -> LookaheadAttempt {
+        Self::serve_with_authority(request, rand, host, false).await
+    }
+
+    /// Serve a standalone local request. This creates an isolated local
+    /// CostV2 sandbox that can commit a resting rendezvous; it does not
+    /// configure a native recording, authorize consensus, or permit replay.
+    /// Production node requests obtain the same authority through the
+    /// trusted, one-shot `LookaheadEngine::bind_standalone_host` binding.
+    pub async fn serve_local(
+        request: LookaheadRequest,
+        rand: Blake2b512Random,
+        host: &RuntimeBudget,
+    ) -> LookaheadAttempt {
+        Self::serve_with_authority(request, rand, host, true).await
+    }
+
+    async fn serve_with_authority(
+        request: LookaheadRequest,
+        rand: Blake2b512Random,
+        host: &RuntimeBudget,
+        standalone: bool,
+    ) -> LookaheadAttempt {
+        if standalone && host.native_execution_active() {
+            return LookaheadAttempt::before_sandbox(SpeculationError::Bootstrap(
+                "standalone lookahead cannot enter active native accounting or consensus".into(),
+            ));
+        }
         // `Definition` is not `Clone` (it carries a boxed system-process fn), so
         // the request is destructured and its definitions MOVED into the
         // sandbox. Nothing else needs them.
@@ -387,11 +423,22 @@ impl LookaheadService {
             installed_bindings,
             installed_runtime,
         } = request;
-        let sandbox = match SpeculativeSandbox::with_definitions(definitions).await {
+        let sandbox = if standalone {
+            SpeculativeSandbox::with_definitions_for_standalone(definitions).await
+        } else {
+            SpeculativeSandbox::with_definitions(definitions).await
+        };
+        let sandbox = match sandbox {
             Ok(sandbox) => sandbox,
             Err(error) => return LookaheadAttempt::before_sandbox(error),
         };
-        sandbox.fund_from(host);
+        if standalone {
+            if let Err(error) = sandbox.fund_from_standalone(host) {
+                return LookaheadAttempt::after_sandbox(&sandbox, Err(error));
+            }
+        } else {
+            sandbox.fund_from(host);
+        }
         let program = prelude.append(subject);
         let outcome = async {
             let mut explorer = if installed_bindings.is_empty() {
@@ -427,16 +474,76 @@ impl LookaheadService {
         definitions: Vec<Definition>,
         host: &RuntimeBudget,
     ) -> LookaheadAttempt {
+        Self::resume_with_authority(
+            handles,
+            lookahead,
+            projection,
+            trace_mode,
+            definitions,
+            host,
+            false,
+        )
+        .await
+    }
+
+    /// Resume local-only handles in a fresh local CostV2 sandbox. The handle
+    /// carries state, not authority; the trusted caller supplies funding on
+    /// every resumed request.
+    pub async fn resume_local(
+        handles: &[ResumableBranch],
+        lookahead: Lookahead,
+        projection: &LeafProjection,
+        trace_mode: TraceMode,
+        definitions: Vec<Definition>,
+        host: &RuntimeBudget,
+    ) -> LookaheadAttempt {
+        Self::resume_with_authority(
+            handles,
+            lookahead,
+            projection,
+            trace_mode,
+            definitions,
+            host,
+            true,
+        )
+        .await
+    }
+
+    async fn resume_with_authority(
+        handles: &[ResumableBranch],
+        lookahead: Lookahead,
+        projection: &LeafProjection,
+        trace_mode: TraceMode,
+        definitions: Vec<Definition>,
+        host: &RuntimeBudget,
+        standalone: bool,
+    ) -> LookaheadAttempt {
+        if standalone && host.native_execution_active() {
+            return LookaheadAttempt::before_sandbox(SpeculationError::Bootstrap(
+                "standalone lookahead cannot enter active native accounting or consensus".into(),
+            ));
+        }
         if handles.iter().any(|handle| handle.guest.is_some()) {
             return LookaheadAttempt::before_sandbox(SpeculationError::Bootstrap(
                 "installed guest resumption requires a live checked provider and is not admitted by the host-only resume API".into(),
             ));
         }
-        let sandbox = match SpeculativeSandbox::with_definitions(definitions).await {
+        let sandbox = if standalone {
+            SpeculativeSandbox::with_definitions_for_standalone(definitions).await
+        } else {
+            SpeculativeSandbox::with_definitions(definitions).await
+        };
+        let sandbox = match sandbox {
             Ok(sandbox) => sandbox,
             Err(error) => return LookaheadAttempt::before_sandbox(error),
         };
-        sandbox.fund_from(host);
+        if standalone {
+            if let Err(error) = sandbox.fund_from_standalone(host) {
+                return LookaheadAttempt::after_sandbox(&sandbox, Err(error));
+            }
+        } else {
+            sandbox.fund_from(host);
+        }
         let outcome = async {
             let mut explorer = Explorer::with_mode(&sandbox, trace_mode);
             let exploration = explorer.resume(handles, lookahead).await?;

@@ -89,6 +89,7 @@ fn forward(source: &str, target: &str) -> Par {
             source: Some(chan(source)),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         Par::default().with_sends(vec![Send {
             chan: Some(chan(target)),
@@ -179,11 +180,18 @@ fn host_budget(units: i64) -> RuntimeBudget {
     budget
 }
 
-async fn explore_with(program: Par, mode: TraceMode, lookahead: Lookahead) -> Exploration {
-    let sandbox = SpeculativeSandbox::new()
+async fn funded_sandbox(units: i64) -> SpeculativeSandbox {
+    let sandbox = SpeculativeSandbox::new_standalone()
         .await
-        .expect("the speculative sandbox must build");
-    sandbox.fund_from(&host_budget(HOST_UNITS));
+        .expect("the standalone sandbox must build");
+    sandbox
+        .fund_from_standalone(&host_budget(units))
+        .expect("the standalone sandbox must fund");
+    sandbox
+}
+
+async fn explore_with(program: Par, mode: TraceMode, lookahead: Lookahead) -> Exploration {
+    let sandbox = funded_sandbox(HOST_UNITS).await;
     let mut explorer = Explorer::with_mode(&sandbox, mode);
     let exploration = explorer
         .explore(program, Blake2b512Random::create_from_length(128), lookahead)
@@ -522,8 +530,7 @@ async fn a_truncated_branch_resumes_to_the_unbroken_result() {
     let unbroken = explore(program.clone()).await;
     let unbroken_outcomes = outcomes(&unbroken);
 
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(HOST_UNITS));
+    let sandbox = funded_sandbox(HOST_UNITS).await;
     let mut explorer = Explorer::new(&sandbox);
     let cut = explorer
         .explore(program, Blake2b512Random::create_from_length(128), Lookahead::Steps(1))
@@ -558,8 +565,7 @@ async fn two_bounded_rounds_equal_one_double_bounded_round() {
     let direct =
         explore_with(program.clone(), TraceMode::IndependenceReduced, Lookahead::Steps(2)).await;
 
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    sandbox.fund_from(&host_budget(HOST_UNITS));
+    let sandbox = funded_sandbox(HOST_UNITS).await;
     let mut explorer = Explorer::new(&sandbox);
     let first = explorer
         .explore(program, Blake2b512Random::create_from_length(128), Lookahead::Steps(1))
@@ -582,13 +588,18 @@ async fn two_bounded_rounds_equal_one_double_bounded_round() {
 // ══════════════════════════════════════════════════════════════════════════
 
 /// ★ Metering IS the bound. An under-funded sandbox does not hang and does not
-/// quietly return a partial success set: its branches arrive as
-/// [`ErrorCode::OutOfPhlogistons`] failures and the exploration terminates.
+/// quietly return a partial success set: each branch that it cannot afford
+/// arrives as an [`ErrorCode::OutOfPhlogistons`] failure and the exploration
+/// terminates.
 #[tokio::test]
 async fn an_exhausted_budget_aborts_rather_than_hangs() {
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    // Two units: enough to evaluate a send or two, not enough for the program.
-    sandbox.fund_from(&host_budget(2));
+    // Changed for the merged node, where a COMM is the only metered operation
+    // (DR-131). Each branch of this program commits one COMM, and the
+    // branches share the sandbox's budget, so two units pay for both
+    // branches. One unit pays for the first branch only. The code was:
+    // // Two units: enough to evaluate a send or two, not enough for the program.
+    // let sandbox = funded_sandbox(2).await;
+    let sandbox = funded_sandbox(1).await;
     let mut explorer = Explorer::new(&sandbox);
     let exploration = explorer
         .explore(
@@ -625,12 +636,16 @@ async fn an_exhausted_budget_aborts_rather_than_hangs() {
     );
 }
 
-/// ★ An UNFUNDED sandbox refuses to evaluate anything at all — the fail-shut
-/// direction, and what makes an unmetered speculative evaluation
-/// unrepresentable rather than merely discouraged.
+/// ★ An UNFUNDED sandbox cannot fire a COMM — the fail-shut direction, and
+/// what makes an unmetered speculative COMM unrepresentable rather than merely
+/// discouraged. Staging the program is free (DR-131).
+///
+/// In the merged node only `fund_from_standalone` binds the RestingCOMM
+/// authority of a standalone sandbox. So the sandbox refuses the first COMM of
+/// a sandbox nobody funded with [`ErrorCode::Bootstrap`], and no COMM fires.
 #[tokio::test]
 async fn an_unfunded_sandbox_refuses() {
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
+    let sandbox = SpeculativeSandbox::new_standalone().await.expect("sandbox");
     // No `fund_from`: `create_rho_runtime` leaves the budget at zero.
     let mut explorer = Explorer::new(&sandbox);
     let exploration = explorer
@@ -643,18 +658,31 @@ async fn an_unfunded_sandbox_refuses() {
         .expect("the refusal is an answer");
     assert!(exploration.success.is_empty(), "an unfunded sandbox computes nothing");
     assert_eq!(exploration.failure.len(), 1);
-    assert_eq!(exploration.failure[0].code, ErrorCode::OutOfPhlogistons);
+    // Changed for the merged node: the refusal is the missing RestingCOMM
+    // authority (`SpeculativeSandbox::fire`). The code was:
+    // assert_eq!(exploration.failure[0].code, ErrorCode::OutOfPhlogistons);
+    assert_eq!(exploration.failure[0].code, ErrorCode::Bootstrap);
+    assert!(
+        exploration.failure[0]
+            .message
+            .contains("resting rendezvous lacks local accounting authority"),
+        "the refusal names the missing authority: {}",
+        exploration.failure[0].message
+    );
     assert!(exploration.failure[0].trace.is_empty(), "it refused before any COMM");
 }
 
-/// ★ The charge-back is `consumed()` CALLS to `reserve_comm`, not one call
-/// passing `consumed()` — a budget unit is one COMM regardless of the `Cost`
-/// argument. The host's remaining budget falls by exactly the COMM count.
+/// ★ The charge-back is `consumed()` CALLS to `reserve_comm`, each with a
+/// weight of one unit. A fired COMM costs the sandbox one unit, and in the
+/// merged node `reserve_comm` lowers the host's budget by its weight. The
+/// host's remaining budget falls by exactly the COMM count.
 #[tokio::test]
 async fn the_host_is_charged_one_per_comm() {
-    let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
+    let sandbox = SpeculativeSandbox::new_standalone().await.expect("sandbox");
     let host = host_budget(HOST_UNITS);
-    sandbox.fund_from(&host);
+    sandbox
+        .fund_from_standalone(&host)
+        .expect("fund local sandbox");
     let mut explorer = Explorer::new(&sandbox);
     let _ = explorer
         .explore(
@@ -674,7 +702,10 @@ async fn the_host_is_charged_one_per_comm() {
     let after = host.remaining().value;
     eprintln!("[charge] owed={owed} charged={charged} Δhost={}", before - after);
     assert_eq!(charged as i64, owed, "one call per COMM");
-    assert_eq!(before - after, owed, "a single call passing consumed() would have charged 1");
+    // Changed for the merged node, where `reserve_comm` charges its weight, so
+    // the old failure message no longer states the cause. The code was:
+    // assert_eq!(before - after, owed, "a single call passing consumed() would have charged 1");
+    assert_eq!(before - after, owed, "the host is charged one unit for each COMM");
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -765,7 +796,8 @@ async fn a_truncated_leaf_reifies_the_work_that_remains() {
         .branch
         .state
         .data
-        .values()
+        .iter()
+        .flat_map(|shard| shard.values())
         .flat_map(|data| data.iter().map(|datum| datum.source.hash.bytes()))
         .collect();
     sources.sort();
@@ -773,8 +805,10 @@ async fn a_truncated_leaf_reifies_the_work_that_remains() {
     assert_eq!(sources.len(), 2, "the two staged data must have distinct Produce hashes");
 
     let mut permuted = leaf.branch.state.clone();
-    for data in permuted.data.values_mut() {
-        data.reverse();
+    for shard in permuted.data.iter_mut() {
+        for (_, data) in shard.iter_mut() {
+            data.reverse();
+        }
     }
     assert_eq!(
         reify(&permuted)

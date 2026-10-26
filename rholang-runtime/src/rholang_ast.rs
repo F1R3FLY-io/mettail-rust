@@ -16,7 +16,7 @@ use crate::guard_discharge::{self, GuardDischargeReport, LoweringOptions};
 use crate::language_install::NamedRuntimeTemplateHole;
 use mettail_grammar_core::RuntimeTemplatePiece;
 use mettail_languages::rholang::receive::{
-    desugar_for_rows, eval_guard_bool, pfor_user_still_has_query_rows,
+    desugar_for_rows, eval_guard_bool, pfor_user_still_has_query_rows, query_request,
 };
 use mettail_languages::rholang::{
     Bag, BigInt, BigRat, Bool, Bytes, CostSig, CostStack as SurfaceCostStack,
@@ -1001,6 +1001,23 @@ pub fn lower_rholang_host_proc_with_budget<C: FnMut() -> bool>(
     proc: &Proc,
     budget: &mut mettail_rholang_codegen::ReflectedCodecBudget<'_, C>,
 ) -> Result<Par, RholangAstLowerError> {
+    // The installed V2 finite-fragment verifier admits precisely this
+    // constructor tree for a generator. Product is interpreted separately by
+    // canonical CostSig composition, never by an arbitrary projected Proc.
+    // Check again at the typed boundary: even a corrupted or ambiguous
+    // projected e-graph cannot make an unbounded sorter path into funding.
+    let Proc::PCostSignedTerm(body, signature) = proc else {
+        return Err(RholangAstLowerError::CostPlanUnavailable(
+            "projected funding host value is not the fixed signed template",
+        ));
+    };
+    if !matches!(body.as_ref(), Proc::PZero)
+        || !matches!(signature.as_ref(), CostSig::CostSigHash(hash_body) if matches!(hash_body.as_ref(), Proc::PZero))
+    {
+        return Err(RholangAstLowerError::CostPlanUnavailable(
+            "projected funding host value changed its certified template",
+        ));
+    }
     let output = session::lower_public_body_with_budget(
         proc,
         BoundEnv::with_options(LoweringOptions::PRODUCTION),
@@ -1162,11 +1179,19 @@ fn lower_proc_alternatives_with<'a>(
     alternatives: impl IntoIterator<Item = &'a Proc>,
     mut lower: impl FnMut(&Proc) -> Result<Par, RholangAstLowerError>,
 ) -> Result<Par, RholangAstLowerError> {
+    let fold_scope = session::AlternativeFoldScope::enter()?;
     let mut seen = BTreeSet::new();
+    let mut programs = Vec::new();
     let mut lowered = Vec::new();
     for proc in alternatives {
         if seen.insert(rholang_proc_semantic_key(proc)) {
-            lowered.push(lower(proc)?);
+            fold_scope.begin_alternative();
+            let program = lower(proc)?;
+            let canonical = ParSortMatcher::sort_match(&program).term;
+            if !programs.contains(&canonical) {
+                programs.push(canonical);
+                lowered.push(program);
+            }
         }
     }
 
@@ -1418,6 +1443,7 @@ struct ForState<'a> {
     /// `rows[0]`'s binds, BORROWED. The recursive `decompose_for_row` cloned each
     /// `InputBind` out of its `Arc`; nothing reads the clone, so the driver borrows.
     binds: Vec<&'a InputBind>,
+    query_sources: Vec<Option<&'a Name>>,
     /// Per-bind prepared-pattern token binder. `Some` means this bind's FLT
     /// selector is lexical and its pattern must use the opaque token envelope.
     pattern_tokens: Vec<Option<FreeVar<String>>>,
@@ -1483,10 +1509,9 @@ enum Job<'a> {
     Body(&'a Proc, EnvId),
     /// `lower_pfor_user` — the receive rows still to nest, and the body under all of them.
     ForRows(&'a [ForRow], &'a Proc, EnvId),
-    /// A receive whose continuation must be signed by `sig`.
+    /// Remaining rows whose final authored continuation must be signed by `sig`.
     ForRowsSigned(&'a [ForRow], &'a Proc, EnvId, &'a CostSig),
-    /// The signed wrapper around the next row of a multi-row receive.
-    SignedForRows(&'a [ForRow], &'a Proc, EnvId, &'a CostSig),
+    PreparedForRow(Box<ForState<'a>>),
     /// `lower_pattern_proc` — a receive pattern, whose free variables become binders in
     /// `pattern_states[slot]`.
     Pattern(&'a Proc, u32),
@@ -2539,6 +2564,7 @@ struct Drive<'a> {
     /// inherits lexical bindings from the enclosing receive continuation.
     empty_env: Option<EnvId>,
     source_preparation: SourcePreparation,
+    parsed_source: Option<&'a prepared_frontend::ParsedSource<'a>>,
 }
 
 impl<'a> Drive<'a> {
@@ -2664,7 +2690,7 @@ fn drive_machine_with_reservation(
     root_env: &BoundEnv,
     reservation: &mut StorageReservation<'_>,
 ) -> Result<Par, RholangAstLowerError> {
-    drive_machine_preparing(seed, root_env, reservation, SourcePreparation::Original)
+    drive_machine_preparing(seed, root_env, reservation, SourcePreparation::Original, None)
 }
 
 fn drive_machine_preparing(
@@ -2672,6 +2698,7 @@ fn drive_machine_preparing(
     root_env: &BoundEnv,
     reservation: &mut StorageReservation<'_>,
     source_preparation: SourcePreparation,
+    parsed_source: Option<&prepared_frontend::ParsedSource<'_>>,
 ) -> Result<Par, RholangAstLowerError> {
     let arena: Arena<Arc<Proc>> = Arena::new();
     let seed_job = match seed {
@@ -2688,6 +2715,7 @@ fn drive_machine_preparing(
         direct_flt_results: HashMap::new(),
         empty_env: None,
         source_preparation,
+        parsed_source,
     };
 
     loop {
@@ -2707,10 +2735,7 @@ fn drive_machine_preparing(
             Job::ForRowsSigned(rows, body, env, sig) => {
                 drive.enter_for_rows(rows, body, env, Some(sig))?
             },
-            Job::SignedForRows(rows, body, env, sig) => drive.push_children(
-                Kont::CostSigned,
-                [Job::CostSig(sig, env), Job::ForRowsSigned(rows, body, env, sig)],
-            )?,
+            Job::PreparedForRow(state) => drive.schedule_bind_source(state)?,
             Job::Pattern(pat, slot) => drive.enter_pattern(pat, slot)?,
             Job::Formula(formula, env) => drive.enter_formula(formula, env)?,
             Job::Guard(guard, env) => drive.enter_guard(guard, env)?,
@@ -2749,17 +2774,14 @@ impl<'a> Drive<'a> {
             },
             SurfaceCostStack::CostStackPar(left, right) => self.push_children(
                 Kont::CostStackParallel,
-                [
-                    Job::CostStack(left.as_ref(), env),
-                    Job::CostStackChain(right.as_ref(), env),
-                ],
+                [Job::CostStack(left.as_ref(), env), Job::CostStackChain(right.as_ref(), env)],
             ),
             // Generated higher-order carrier variants are not authored
             // stack cells or branch constructors. Refuse rather than erasing
             // an authority-bearing subtree during lowering.
-            _ => Err(RholangAstLowerError::CostPlanUnavailable(
-                "unsupported cost stack constructor",
-            )),
+            _ => {
+                Err(RholangAstLowerError::CostPlanUnavailable("unsupported cost stack constructor"))
+            },
         }
     }
 
@@ -2903,10 +2925,14 @@ impl<'a> Drive<'a> {
         }
         match sig {
             CostSig::CostSigTransfer(first, rest) => {
-                let Proc::PForUser(rows, continuation) = body else {
-                    return Err(RholangAstLowerError::UnfundableCostSignature);
+                let (rows, continuation) = match body {
+                    Proc::PForUser(rows, continuation) => (rows, continuation),
+                    Proc::PForCostSigned(rows, continuation) if self.parsed_source.is_some() => {
+                        (rows, continuation)
+                    },
+                    _ => return Err(RholangAstLowerError::UnfundableCostSignature),
                 };
-                if pfor_user_still_has_query_rows(rows) {
+                if self.parsed_source.is_none() && pfor_user_still_has_query_rows(rows) {
                     return Err(RholangAstLowerError::CostPlanUnavailable(
                         "signed query receive needs a checked authority rewrite",
                     ));
@@ -2926,10 +2952,14 @@ impl<'a> Drive<'a> {
             },
             _ => {
                 let body_job = match body {
-                    Proc::PForUser(rows, continuation) => {
-                        if pfor_user_still_has_query_rows(rows) {
+                    Proc::PForUser(rows, continuation)
+                    | Proc::PForCostSigned(rows, continuation) => {
+                        if self.parsed_source.is_none()
+                            && (matches!(body, Proc::PForCostSigned(..))
+                                || pfor_user_still_has_query_rows(rows))
+                        {
                             return Err(RholangAstLowerError::CostPlanUnavailable(
-                                "signed query receive needs a checked authority rewrite",
+                                "signed receive needs source-bound preparation",
                             ));
                         }
                         if matches!(continuation.as_ref(), Proc::PCostSignedTerm(..)) {
@@ -2937,11 +2967,6 @@ impl<'a> Drive<'a> {
                         } else {
                             Job::ForRowsSigned(rows.as_slice(), continuation.as_ref(), env, sig)
                         }
-                    },
-                    Proc::PForCostSigned(..) => {
-                        return Err(RholangAstLowerError::CostPlanUnavailable(
-                            "signed continuation slot requires a fingerprint-bound cost plan",
-                        ));
                     },
                     other => Job::Proc(other, env),
                 };
@@ -3446,10 +3471,14 @@ impl<'a> Drive<'a> {
                 }
                 self.method(method_name.as_str(), receiver, arguments, env)?;
             },
-            Proc::PForCostSigned(..) => {
-                return Err(RholangAstLowerError::CostPlanUnavailable(
-                    "a standalone signed continuation requires a fingerprint-bound cost plan",
-                ));
+            Proc::PForCostSigned(rows, continuation) => {
+                if self.parsed_source.is_none() {
+                    return Err(RholangAstLowerError::CostPlanUnavailable(
+                        "a standalone signed continuation requires a fingerprint-bound cost plan",
+                    ));
+                }
+                self.stacks
+                    .push(Job::ForRows(rows.as_slice(), continuation.as_ref(), env))?;
             },
             // A-S4 fail-closed: every remaining construct has no machine algebra. The typed
             // error NAMES the construct; nothing silently host-evaluates.
@@ -3638,8 +3667,8 @@ impl<'a> Drive<'a> {
     ///
     /// The fold-site REGISTER is written at Enter, before either child is entered, which is
     /// where the recursive form wrote it. Order matters: the operand's own subtree may register
-    /// further sites (a `new` inside an operand), and the site index is `HELD_FOLD_SITES.len()`
-    /// at the moment of registration.
+    /// further sites (a `new` inside an operand). Registration allocates the next site index,
+    /// or reuses an identical contract at the same fold position in an earlier alternative.
     fn enter_body(&mut self, body: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
         if let Some(node) = find_dynamic_flt_preparing(
             body,
@@ -3717,17 +3746,8 @@ impl<'a> Drive<'a> {
             self.stacks.push(Job::Proc(body, env))?;
             return Ok(());
         };
-        let site_index =
-            session::checked_fold_site_index(HELD_FOLD_SITES.with(|sites| sites.borrow().len()))?;
         let fingerprint = held_fold_language_fingerprint();
-        HELD_FOLD_SITES.with(|sites| {
-            sites.borrow_mut().push(FoldSpec {
-                kind,
-                width,
-                site_index,
-                fingerprint: fingerprint.clone(),
-            })
-        });
+        let site_index = session::register_fold_site(kind, width, &fingerprint)?;
         let channel = fold_channel(site_index, &fingerprint);
         let ret_var = mettail_runtime::get_or_create_var(format!("__mtl_ret_{site_index}"));
         let r_var = mettail_runtime::get_or_create_var(format!("__mtl_r_{site_index}"));
@@ -4563,20 +4583,63 @@ impl<'a> Drive<'a> {
         if binds.is_empty() {
             return Err(RholangAstLowerError::EmptyInputJoin);
         }
+        let (query_binders, query_returns) = match self.source_preparation {
+            SourcePreparation::Original => (Vec::new(), Vec::new()),
+            SourcePreparation::Checked => preparation_source::SourceBuilder::new(
+                self.source_preparation,
+                self.stacks.reservation,
+            )
+            .query_returns(&binds)?,
+        };
+        let query_count = query_binders.len();
+        let mut query_sources = Vec::new();
+        let mut query_requests = Vec::new();
+        let mut query_wrapper = None;
+        let query_env = if query_count == 0 {
+            env
+        } else {
+            let records = binds
+                .len()
+                .checked_add(query_count)
+                .and_then(|count| count.checked_add(2))
+                .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+            self.stacks.charge_storage(records, records)?;
+            query_sources = vec![None; binds.len()];
+            query_requests = Vec::with_capacity(query_count);
+            for (index, returned) in query_returns {
+                self.stacks.charge_storage(3, 2)?;
+                let returned = self.keep(Arc::new(returned));
+                let Proc::PDrop(name) = returned else {
+                    unreachable!("query return construction produces a name dereference");
+                };
+                let (channel, arguments) = query_request(binds[index])
+                    .expect("query return belongs to a classified query bind");
+                query_sources[index] = Some(name.as_ref());
+                query_requests.push((channel, arguments, returned));
+            }
+            let descriptor = preparation_scope::descriptor(
+                FreshShape::Plain { binder_count: query_count },
+                &self.envs.get(env).caller_imports,
+                self.stacks.reservation,
+            )?;
+            query_wrapper = Some(Kont::New { descriptor, env });
+            self.derive_environment(env, EnvironmentDerivation::Binders(&query_binders))?
+        };
         let (env, pattern_tokens, pattern_preparations) =
-            self.prepare_dynamic_patterns(&binds, env)?;
+            self.prepare_dynamic_patterns(&binds, query_env)?;
         let records = binds
             .len()
             .checked_add(3)
             .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
         self.stacks.charge_storage(4, records)?;
         let binds_rho = Vec::with_capacity(binds.len());
-        self.schedule_bind_source(Box::new(ForState {
+        let state = Box::new(ForState {
             rows,
             body,
             continuation_sig,
             env,
             binds,
+            query_sources,
             pattern_tokens,
             pattern_preparations,
             persistent,
@@ -4588,7 +4651,27 @@ impl<'a> Drive<'a> {
             pending_signature: None,
             extended_env: ROOT_ENV,
             lowered_body: None,
-        }))
+        });
+        let Some(wrapper) = query_wrapper else {
+            return self.schedule_bind_source(state);
+        };
+        let child_count = query_count
+            .checked_add(1)
+            .ok_or(RholangAstLowerError::PreparationSizeOverflow)?;
+        self.stacks.push(Job::Combine(wrapper))?;
+        self.stacks.push(Job::Combine(Kont::ParFold(child_count)))?;
+        self.stacks.push(Job::PreparedForRow(state))?;
+        for (channel, arguments, returned) in query_requests.into_iter().rev() {
+            self.stacks.charge_storage(1, 0)?;
+            self.enter_send(
+                Job::Name(channel, query_env),
+                Some(returned),
+                arguments,
+                query_env,
+                false,
+            )?;
+        }
+        Ok(())
     }
 
     fn prepare_dynamic_patterns(
@@ -4679,7 +4762,12 @@ impl<'a> Drive<'a> {
                         return Ok(());
                     }
                 }
-                let channel = bind_channel_name(bind)
+                let channel = state
+                    .query_sources
+                    .get(state.next_bind)
+                    .copied()
+                    .flatten()
+                    .or_else(|| bind_channel_name(bind))
                     .ok_or(RholangAstLowerError::UnsupportedProc("for-row channel"))?;
                 let env = state.env;
                 self.push_children(Kont::ForSource(state), [Job::Name(channel, env)])?;
@@ -4842,10 +4930,10 @@ impl<'a> Drive<'a> {
             self.derive_environment(state.env, EnvironmentDerivation::Slots(&state.slots))?;
         state.extended_env = extended;
         let job = match (state.rows.len() > 1, state.continuation_sig) {
-            // More rows in THIS `for`: they nest as this row's continuation. These rows are
-            // query-free by construction — `enter_proc` expanded every row of this `for`
-            // together before scheduling it.
-            (true, Some(sig)) => Job::SignedForRows(&state.rows[1..], state.body, extended, sig),
+            // Signing precedes semicolon-row nesting: carry the signature to
+            // the authored final body, not to each synthetic nested receive.
+            // An explicitly authored final `for` still takes SignedProc below.
+            (true, Some(sig)) => Job::ForRowsSigned(&state.rows[1..], state.body, extended, sig),
             (true, None) => Job::ForRows(&state.rows[1..], state.body, extended),
             (false, Some(sig)) => Job::SignedProc(state.body, sig, extended),
             (false, None) => match state.body {
@@ -7714,6 +7802,159 @@ fn bitvec_from_indices(indices: &[usize]) -> Vec<u8> {
 #[cfg(test)]
 mod alternative_collection_tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn quoted_alternative(value: i64, grouping: usize, multiplicity: usize) -> Proc {
+        let value = Proc::CastInt(Arc::new(Int::NumLit(value)));
+        let body = if multiplicity == 1 {
+            value
+        } else {
+            Proc::PPar(std::iter::repeat_n(value, multiplicity).collect())
+        };
+        let mut name = Name::NQuote(Arc::new(body));
+        for _ in 0..grouping {
+            name = Name::NParen(Arc::new(name));
+        }
+        Proc::PDrop(Arc::new(name))
+    }
+
+    #[test]
+    fn parenthesized_alternatives_have_distinct_keys_and_equal_lowerings() {
+        let direct = quoted_alternative(7, 0, 1);
+        let grouped = quoted_alternative(7, 1, 1);
+        assert_ne!(rholang_proc_semantic_key(&direct), rholang_proc_semantic_key(&grouped));
+        let expected = lower_rholang_proc(&direct).unwrap();
+        assert_eq!(expected, lower_rholang_proc(&grouped).unwrap());
+        assert_eq!(lower_proc_alternatives([&direct, &grouped]).unwrap(), expected);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn lowering_alternatives_preserves_distinct_programs_and_internal_multiplicity(
+            cases in proptest::collection::vec((0i64..6, 0usize..5, 1usize..5), 0..30),
+        ) {
+            let alternatives: Vec<_> = cases.iter()
+                .map(|&(value, grouping, count)| quoted_alternative(value, grouping, count))
+                .collect();
+            let actual = lower_proc_alternatives(&alternatives);
+            if alternatives.is_empty() {
+                prop_assert_eq!(actual, Err(RholangAstLowerError::ExpectedProcTerm));
+            } else {
+                let mut first_programs = Vec::new();
+                for &(value, _, count) in &cases {
+                    if !first_programs.contains(&(value, count)) {
+                        first_programs.push((value, count));
+                    }
+                }
+                let mut expected = Par::default();
+                for (value, count) in first_programs {
+                    for _ in 0..count {
+                        expected = expected.append(new_gint_par(value, Vec::new(), false));
+                    }
+                }
+                prop_assert_eq!(actual.unwrap(), expected);
+            }
+        }
+
+        #[test]
+        fn fold_alternatives_preserve_distinct_programs_and_internal_multiplicity(
+            cases in proptest::collection::vec((0i64..6, 1i64..12, 0usize..5, 1usize..4), 1..8),
+        ) {
+            let make = |value, width, grouping, count| {
+                let mut name = Name::NQuote(Arc::new(Proc::CastStr(Arc::new(Str::StringLit("OUT".into())))));
+                for _ in 0..grouping {
+                    name = Name::NParen(Arc::new(name));
+                }
+                let output = Proc::POutput(Arc::new(name), Arc::new(Proc::IntBinProc(
+                    Arc::new(Proc::CastInt(Arc::new(Int::NumLit(value)))),
+                    Arc::new(Int::NumLit(width)),
+                )));
+                RholangTermInner::Proc(Proc::PPar(std::iter::repeat_n(output, count).collect()))
+            };
+            let alternatives = RholangTerm(RholangTermInner::Ambiguous(cases.iter()
+                .map(|&(value, width, grouping, count)| make(value, width, grouping, count)).collect()));
+            let mut distinct = Vec::new();
+            for &(value, width, _, count) in &cases {
+                if !distinct.contains(&(value, width, count)) {
+                    distinct.push((value, width, count));
+                }
+            }
+            let expected = RholangTerm(RholangTermInner::Ambiguous(distinct.into_iter()
+                .map(|(value, width, count)| make(value, width, 0, count)).collect()));
+            let (actual, actual_folds) = lower_rholang_term_with_folds(&alternatives).unwrap();
+            let (expected, expected_folds) = lower_rholang_term_with_folds(&expected).unwrap();
+            prop_assert_eq!(ParSortMatcher::sort_match(&actual).term,
+                ParSortMatcher::sort_match(&expected).term);
+            let specs = |folds: Vec<FoldSpec>| folds.into_iter()
+                .map(|spec| (spec.kind, spec.width, spec.site_index, spec.fingerprint)).collect::<Vec<_>>();
+            prop_assert_eq!(specs(actual_folds), specs(expected_folds));
+        }
+
+        #[test]
+        fn canonical_duplicate_comparison_retains_the_first_original_program(
+            values in proptest::collection::vec(0i64..6, 0..20),
+        ) {
+            let first = values.iter().fold(Par::default(), |par, &value|
+                par.append(new_gint_par(value, Vec::new(), false)));
+            let reordered = values.iter().rev().fold(Par::default(), |par, &value|
+                par.append(new_gint_par(value, Vec::new(), false)));
+            let sources = [quoted_alternative(1, 0, 1), quoted_alternative(2, 0, 1)];
+            let mut programs = [first.clone(), reordered].into_iter();
+            let actual = lower_proc_alternatives_with(&sources, |_| Ok(programs.next().unwrap()));
+            prop_assert_eq!(actual.unwrap(), first);
+            prop_assert!(programs.next().is_none());
+        }
+
+        #[test]
+        fn alternative_lowering_rejects_failure_at_every_position(
+            duplicate_counts in proptest::collection::vec(1usize..4, 1..12),
+            selector in any::<usize>(),
+        ) {
+            let failing_index = selector % duplicate_counts.len();
+            let alternatives: Vec<_> = duplicate_counts.iter().enumerate()
+                .flat_map(|(value, count)| std::iter::repeat_n(
+                    quoted_alternative(value as i64, 0, 1), *count,
+                ))
+                .collect();
+            let mut calls = 0;
+            let result = lower_proc_alternatives_with(&alternatives, |body| {
+                let index = calls;
+                calls += 1;
+                if index == failing_index {
+                    Err(RholangAstLowerError::UnsupportedProc("test lowering rejection"))
+                } else {
+                    lower_rholang_proc(body)
+                }
+            });
+            prop_assert_eq!(result,
+                Err(RholangAstLowerError::UnsupportedProc("test lowering rejection")));
+            prop_assert_eq!(calls, failing_index + 1);
+        }
+    }
+
+    #[test]
+    fn alternative_lowering_preserves_first_error_and_key_selection() {
+        let first = quoted_alternative(1, 0, 1);
+        let second = quoted_alternative(2, 0, 1);
+        let third = quoted_alternative(3, 0, 1);
+        let mut calls = Vec::new();
+        let error = RholangAstLowerError::UnsupportedProc("test lowering rejection");
+        let result = lower_proc_alternatives_with([&first, &first, &second, &third], |body| {
+            calls.push(rholang_proc_semantic_key(body));
+            if calls.len() == 2 {
+                Err(error.clone())
+            } else {
+                lower_rholang_proc(body)
+            }
+        });
+        assert_eq!(result, Err(error));
+        assert_eq!(
+            calls,
+            vec![rholang_proc_semantic_key(&first), rholang_proc_semantic_key(&second)]
+        );
+    }
 
     /// The RECURSIVE form of [`collect_proc_alternatives`], retained verbatim as a
     /// differential ORACLE.

@@ -169,6 +169,7 @@ const MATRIX: &[(&str, &str, bool)] = &[
     // than rejecting a conflict, so the host imposes no equality constraint —
     // which is exactly what two independent wildcards do on the machine.
     (r#"@"a"!(1)"#, r#"@"a"!(v) and @"a"!(v)"#, true),
+    (r#"@"a"!({1 | 2})"#, r#"@"a"!({v | v})"#, true),
     // ── Free variables under each COMPOSITE the lowering builds ───────────────
     //
     // `connective_used` is a per-node cached summary and the matcher

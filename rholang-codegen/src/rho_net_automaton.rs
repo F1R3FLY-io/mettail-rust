@@ -112,6 +112,7 @@ fn for_receive(channel: &str, body: Par, body_free: &[usize]) -> Par {
             source: Some(new_gstring_par(channel.to_string(), Vec::new(), false)),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         body,
         false,
@@ -457,6 +458,7 @@ fn join_capture_receiver(capture_channels: &[String], partition: &[usize], accep
             source: Some(new_gstring_par(channel.clone(), Vec::new(), false)),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         })
         .collect();
     let guard = consistency_guard(capture_channels.len(), partition);

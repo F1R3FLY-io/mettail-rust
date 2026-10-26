@@ -4,11 +4,13 @@
 //! This crate lowers a MeTTaIL `LanguageDef` into a **parallel-optimized Rholang
 //! VM**. The `LanguageDef` is the structured value produced by the `language!`
 //! macro expansion; reader-facing display strings and pretty-printed examples
-//! are never parsed back into compiler input. The lowering emits three
+//! are never parsed back into compiler input. The lowering emits two
 //! artifacts:
 //!  1. reduction rules as `Par` contracts (the COMM family),
-//!  2. native `Vec<Definition>` system processes (HOL `fold`/`step`),
-//!  3. the `OslfResourceLogic` adapter wiring (see `mettail-rho-adapter`).
+//!  2. native `Vec<Definition>` system processes (HOL `fold`/`step`).
+//! The separate `rholang-adapter` crate implements the resource-analysis
+//! trait over a lowered `Par`. This code generator does not wire that trait
+//! into offered-funded admission.
 //!
 //! Rule classification drives the lowering: COMM/interaction → RSpace
 //! produce/consume; structural/congruence → par-context (`eval_par` — the AMBIENT
@@ -19,10 +21,10 @@
 //! existing matcher/join/lock/`check_commit` — speed + parallelism without
 //! forking the runtime.
 //!
-//! ## Dependency direction (STRICTLY one-way)
-//! Depends ONE-WAY on f1r3node-rust; never the reverse (proven in
-//! `formal/rocq/rho_bridge/theories/BridgeInertness.v`; enforced by the host
-//! guard test `mettail_rust_is_not_a_cargo_dependency`).
+//! ## Dependency direction
+//! This crate depends on f1r3node-rust's core libraries. Those libraries do
+//! not depend on this crate. `BridgeInertness.v` models that intended boundary;
+//! it does not verify the current Cargo graph or a live funding call.
 //!
 //! ## Status
 //! Integrated scalar lowering plus Rho-default backend planning.

@@ -59,6 +59,7 @@ fn receive_program(patterns: Vec<BindPattern>) -> Par {
                 source: Some(new_gstring_par(format!("flt-bench-{index}"), Vec::new(), false)),
                 remainder: pattern.remainder,
                 free_count: pattern.free_count,
+                cost_signature: None,
             }],
             body: Some(Par::default()),
             persistent: false,

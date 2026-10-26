@@ -101,6 +101,10 @@
 //! or silently emit a receive whose body is `Nil` — which would be a strictly
 //! weaker process presented as the configuration — reification fails closed with
 //! [`ReificationError::SystemContinuation`].
+//! The same refusal discipline applies when persisted channel/pattern arity
+//! differs or a continuation retains aggregate cost authority without its
+//! individual signed-bind signatures. Neither an invented default pattern nor
+//! an unsigned replacement is a faithful process.
 
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::tagged_continuation::TaggedCont;
@@ -109,6 +113,7 @@ use models::rust::utils::{
     new_elist_par, new_etuple_par, new_gbytearray_par, new_gint_par, new_gstring_par, union,
 };
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+use rspace_plus_plus::rspace::hot_store::shard_of;
 
 use super::search::{AbortedLeaf, Exploration, QuiescentLeaf, TruncatedLeaf};
 use super::{ReductionTrace, RendezvousName, SpeculativeState};
@@ -190,9 +195,13 @@ pub fn step_digest(name: &RendezvousName) -> Blake2b256Hash {
 
 #[cfg(test)]
 mod reify_tests {
+    use super::super::search::ExplorationStats;
     use super::*;
-    use models::rhoapi::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
+    use models::rhoapi::{
+        BindPattern, CostAuthority, ListParWithRandom, ParWithRandom, TaggedContinuation,
+    };
     use models::rust::utils::new_freevar_par;
+    use proptest::prelude::*;
     use prost::Message;
     use rspace_plus_plus::rspace::internal::{Datum, WaitingContinuation};
 
@@ -213,6 +222,7 @@ mod reify_tests {
             ListParWithRandom {
                 pars: vec![new_gint_par(value, Vec::new(), false)],
                 random_state: Vec::new(),
+                ..ListParWithRandom::default()
             },
             false,
         )
@@ -240,12 +250,135 @@ mod reify_tests {
                 body: Some(new_gint_par(body, Vec::new(), false)),
                 random_state: Vec::new(),
             })),
+            cost_authority: None,
         };
         let peeks = match peek {
             true => std::collections::BTreeSet::from([0i32]),
             false => std::collections::BTreeSet::new(),
         };
         WaitingContinuation::create(&channels.to_vec(), &patterns, &continuation, persist, peeks)
+    }
+
+    #[test]
+    fn reification_refuses_retained_cost_authority_without_per_bind_signatures() {
+        let channels = vec![channel("signed")];
+        let ordinary = waiting(&channels, 7, false, false);
+        let mut ordinary_state = SpeculativeState::default();
+        ordinary_state.continuations[shard_of(&channels)]
+            .insert(channels.clone(), vec![std::sync::Arc::new(ordinary.clone())]);
+        let ordinary_process = reify(&ordinary_state).expect("plain receive reifies");
+        assert_eq!(ordinary_process.receives.len(), 1);
+        assert!(ordinary_process.receives[0].binds[0]
+            .cost_signature
+            .is_none());
+
+        // Reconstruct through the store constructor so Consume identity is
+        // computed from the authority-bearing continuation, as in production.
+        let mut tagged = ordinary.continuation.as_ref().clone();
+        tagged.cost_authority = Some(CostAuthority::default());
+        let retained = WaitingContinuation::create(
+            &channels,
+            ordinary.patterns.as_ref(),
+            &tagged,
+            false,
+            std::collections::BTreeSet::new(),
+        );
+        let mut signed_state = SpeculativeState::default();
+        signed_state.continuations[shard_of(&channels)]
+            .insert(channels, vec![std::sync::Arc::new(retained)]);
+        assert_eq!(reify(&signed_state), Err(ReificationError::UnreifiableCostAuthority));
+
+        // Authority is inspected before the continuation body. Even an
+        // otherwise unreifiable system continuation must not be reconstructed
+        // as a weaker unsigned receive.
+        let system_channels = vec![channel("signed-system")];
+        let mut system_tagged = ordinary.continuation.as_ref().clone();
+        system_tagged.tagged_cont = Some(TaggedCont::ScalaBodyRef(42));
+        system_tagged.cost_authority = Some(CostAuthority::default());
+        let system_waiting = WaitingContinuation::create(
+            &system_channels,
+            ordinary.patterns.as_ref(),
+            &system_tagged,
+            false,
+            std::collections::BTreeSet::new(),
+        );
+        let mut system_state = SpeculativeState::default();
+        system_state.continuations[shard_of(&system_channels)]
+            .insert(system_channels, vec![std::sync::Arc::new(system_waiting)]);
+        assert_eq!(reify(&system_state), Err(ReificationError::UnreifiableCostAuthority));
+
+        let exploration = Exploration {
+            success: vec![QuiescentLeaf {
+                trace: ReductionTrace::from_process(Par::default()),
+                state: signed_state,
+                guest: None,
+            }],
+            truncated: Vec::new(),
+            failure: Vec::new(),
+            stats: ExplorationStats::default(),
+        };
+        assert_eq!(deliver(&exploration), Err(ReificationError::UnreifiableCostAuthority));
+    }
+
+    #[test]
+    fn reification_refuses_a_missing_pattern_instead_of_inventing_a_bind() {
+        let channels = vec![channel("left"), channel("right")];
+        let patterns = vec![BindPattern {
+            patterns: vec![new_freevar_par(0, Vec::new())],
+            remainder: None,
+            free_count: 1,
+        }];
+        let continuation = TaggedContinuation::default();
+        let waiting = WaitingContinuation::create(
+            &channels,
+            &patterns,
+            &continuation,
+            false,
+            std::collections::BTreeSet::new(),
+        );
+        let mut state = SpeculativeState::default();
+        state.continuations[shard_of(&channels)]
+            .insert(channels, vec![std::sync::Arc::new(waiting)]);
+        assert_eq!(
+            reify(&state),
+            Err(ReificationError::PatternArityMismatch { channels: 2, patterns: 1 })
+        );
+    }
+
+    proptest! {
+        /// Extracted from SpeculativeCostAuthority.v: successful publication
+        /// of a roster implies no retained continuation had aggregate cost
+        /// authority. The converse holds for these otherwise plain fixtures.
+        #[test]
+        fn reification_never_publishes_a_roster_with_lost_authority(
+            authority_flags in proptest::collection::vec(any::<bool>(), 1..9)
+        ) {
+            let mut state = SpeculativeState::default();
+            for (index, has_authority) in authority_flags.iter().copied().enumerate() {
+                let channels = vec![channel(&format!("signed-{index}"))];
+                let ordinary = waiting(&channels, index as i64, false, false);
+                let mut continuation = ordinary.continuation.as_ref().clone();
+                if has_authority {
+                    continuation.cost_authority = Some(CostAuthority::default());
+                }
+                let retained = WaitingContinuation::create(
+                    &channels,
+                    ordinary.patterns.as_ref(),
+                    &continuation,
+                    false,
+                    std::collections::BTreeSet::new(),
+                );
+                state.continuations[shard_of(&channels)]
+                    .insert(channels, vec![std::sync::Arc::new(retained)]);
+            }
+
+            let result = reify(&state);
+            if authority_flags.iter().any(|flag| *flag) {
+                prop_assert_eq!(result, Err(ReificationError::UnreifiableCostAuthority));
+            } else {
+                prop_assert!(result.is_ok());
+            }
+        }
     }
 
     /// ★ Insertion order into the store must not reach the reified bytes.
@@ -269,7 +402,7 @@ mod reify_tests {
                 let index = order(slot);
                 let chan = channel(names[index]);
                 let value = datum(&chan, index as i64);
-                state.data.insert(chan, vec![value]);
+                state.data[shard_of(&chan)].insert(chan, vec![value]);
             }
             reify(&state).expect("a data-only configuration reifies")
         };
@@ -319,8 +452,7 @@ mod reify_tests {
 
         let build = |order: &[usize]| -> Vec<u8> {
             let mut state = SpeculativeState::default();
-            state
-                .data
+            state.data[shard_of(&chan)]
                 .insert(chan.clone(), order.iter().map(|index| data[*index].clone()).collect());
             reify(&state)
                 .expect("a data-only configuration reifies")
@@ -342,7 +474,7 @@ mod reify_tests {
         );
         let reified = reify(&{
             let mut state = SpeculativeState::default();
-            state.data.insert(chan.clone(), data.clone());
+            state.data[shard_of(&chan)].insert(chan.clone(), data.clone());
             state
         })
         .expect("reify");
@@ -372,9 +504,13 @@ mod reify_tests {
         let build = |order: &[usize]| -> Vec<u8> {
             let members = [first.clone(), second.clone(), peeking.clone()];
             let mut state = SpeculativeState::default();
-            state
-                .continuations
-                .insert(group.clone(), order.iter().map(|index| members[*index].clone()).collect());
+            state.continuations[shard_of(&group)].insert(
+                group.clone(),
+                order
+                    .iter()
+                    .map(|index| std::sync::Arc::new(members[*index].clone()))
+                    .collect(),
+            );
             reify(&state)
                 .expect("a continuation-only configuration reifies")
                 .encode_to_vec()
@@ -397,7 +533,7 @@ mod reify_tests {
         for name in ["gamma", "alpha", "beta"] {
             let chan = channel(name);
             let value = datum(&chan, 0);
-            state.data.insert(chan, vec![value]);
+            state.data[shard_of(&chan)].insert(chan, vec![value]);
         }
         let reified = reify(&state).expect("a data-only configuration reifies");
 
@@ -437,8 +573,7 @@ mod reify_tests {
 
         let build = |order: &[usize]| -> Vec<Vec<u8>> {
             let mut state = SpeculativeState::default();
-            state
-                .data
+            state.data[shard_of(&chan)]
                 .insert(chan.clone(), order.iter().map(|index| data[*index].clone()).collect());
             resting_on(&state, &chan)
                 .iter()
@@ -475,13 +610,14 @@ mod reify_tests {
                         new_gint_par(second, Vec::new(), false),
                     ],
                     random_state: Vec::new(),
+                    ..ListParWithRandom::default()
                 },
                 false,
             )
         };
         let read = |datum: Datum<ListParWithRandom>| -> Vec<i64> {
             let mut state = SpeculativeState::default();
-            state.data.insert(chan.clone(), vec![datum]);
+            state.data[shard_of(&chan)].insert(chan.clone(), vec![datum]);
             resting_on(&state, &chan)
                 .iter()
                 .map(|par| match par.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
@@ -593,6 +729,7 @@ mod publication_law {
             ListParWithRandom {
                 pars: vec![new_gint_par(value, Vec::new(), false)],
                 random_state: Vec::new(),
+                ..ListParWithRandom::default()
             },
             false,
         )
@@ -618,6 +755,7 @@ mod publication_law {
                 body: Some(new_gint_par(body, Vec::new(), false)),
                 random_state: Vec::new(),
             })),
+            cost_authority: None,
         };
         let peeks = match peek {
             true => std::collections::BTreeSet::from([0i32]),
@@ -643,7 +781,10 @@ mod publication_law {
             // A repeated channel index in the blueprint is a legitimate shape (`insert`
             // replaces); it is not special-cased because the two realisations agree on which
             // entry wins only if they agree on the whole multiset, which is the point.
-            state.data.entry(chan).or_default().extend(ordered);
+            state.data[shard_of(&chan)]
+                .entry(chan)
+                .or_default()
+                .extend(ordered);
         }
 
         let group_order = permutation(blueprint.continuations.len(), seed, 1_000);
@@ -656,11 +797,10 @@ mod publication_law {
                 .collect();
             let within = permutation(built.len(), seed, 1_001 + slot as u64);
             let ordered: Vec<_> = within.into_iter().map(|at| built[at].clone()).collect();
-            state
-                .continuations
+            state.continuations[shard_of(&group)]
                 .entry(group)
                 .or_default()
-                .extend(ordered);
+                .extend(ordered.into_iter().map(std::sync::Arc::new));
         }
 
         state
@@ -1405,9 +1545,17 @@ pub enum ReificationError {
         /// The `scala_body_ref` that could not be reified.
         body_ref: i64,
     },
+    /// The waiting continuation retains aggregate cost authority, but its
+    /// persisted patterns do not retain the individual signed-bind signatures.
+    /// Reifying it as an unsigned receive would erase authority. Until a
+    /// versioned per-bind carrier exists, refuse the entire publication.
+    UnreifiableCostAuthority,
     /// A waiting continuation's channel group is empty. A `for` with no binds is
     /// not a process.
     EmptyChannelGroup,
+    /// The persisted pattern count does not equal the channel count. Supplying
+    /// a default pattern would invent a receive bind absent from the state.
+    PatternArityMismatch { channels: usize, patterns: usize },
     /// The retained leaf state and the final configuration already recorded
     /// in its trace disagree. This is an internal search/trace integrity
     /// failure; publishing either value would make the trace lie.
@@ -1424,9 +1572,17 @@ impl std::fmt::Display for ReificationError {
                 formatter,
                 "a waiting continuation is the system process {body_ref}, which has no Par body"
             ),
+            ReificationError::UnreifiableCostAuthority => write!(
+                formatter,
+                "a waiting continuation has cost authority but no reifiable per-bind signatures"
+            ),
             ReificationError::EmptyChannelGroup => {
                 write!(formatter, "a waiting continuation has no channels")
             },
+            ReificationError::PatternArityMismatch { channels, patterns } => write!(
+                formatter,
+                "a waiting continuation has {channels} channels but {patterns} patterns"
+            ),
             ReificationError::TraceTerminalMismatch => {
                 write!(formatter, "the trace terminal differs from the retained leaf state")
             },
@@ -1531,7 +1687,7 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
     let mut process = Par::default();
 
     // ★ Canonical, not `HashMap` order. See the header above.
-    let mut data_channels: Vec<_> = state.data.iter().collect();
+    let mut data_channels: Vec<_> = state.data.iter().flat_map(|shard| shard.iter()).collect();
     data_channels.sort_by_cached_key(|(channel, _)| channel.encode_to_vec());
 
     for (channel, data) in data_channels {
@@ -1562,7 +1718,11 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
     // encodings in their own order — group order is load-bearing (it pairs
     // positionally with `WaitingContinuation::patterns`) and must not be sorted
     // away, only the ORDER AMONG GROUPS is the map's arbitrary contribution.
-    let mut continuation_groups: Vec<_> = state.continuations.iter().collect();
+    let mut continuation_groups: Vec<_> = state
+        .continuations
+        .iter()
+        .flat_map(|shard| shard.iter())
+        .collect();
     continuation_groups.sort_by_cached_key(|(channels, _)| {
         let mut key = Vec::new();
         for channel in channels.iter() {
@@ -1585,6 +1745,17 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
             (waiting.source.hash.bytes(), waiting.persist, !waiting.peeks.is_empty())
         });
         for waiting in ordered {
+            if waiting.patterns.len() != channels.len() {
+                return Err(ReificationError::PatternArityMismatch {
+                    channels: channels.len(),
+                    patterns: waiting.patterns.len(),
+                });
+            }
+            // Refuse before cloning any potentially deep continuation body.
+            // Aggregate authority cannot reconstruct each bind's signature.
+            if waiting.continuation.cost_authority.is_some() {
+                return Err(ReificationError::UnreifiableCostAuthority);
+            }
             let (body, guard) = match &waiting.continuation.tagged_cont {
                 Some(TaggedCont::ParBody(body_with_random)) => (
                     body_with_random.body.clone().unwrap_or_default(),
@@ -1606,7 +1777,7 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
             let mut patterns_locally_free: Vec<u8> = Vec::new();
             let mut connective_used = false;
             for (position, channel) in channels.iter().enumerate() {
-                let pattern = waiting.patterns.get(position).cloned().unwrap_or_default();
+                let pattern = waiting.patterns[position].clone();
                 bind_count += pattern.free_count;
                 sources_locally_free = union(sources_locally_free, channel.locally_free.clone());
                 for par in pattern.patterns.iter() {
@@ -1618,6 +1789,7 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
                     source: Some(channel.clone()),
                     remainder: pattern.remainder,
                     free_count: pattern.free_count,
+                    cost_signature: None,
                 });
             }
 
@@ -1864,7 +2036,7 @@ pub fn deliver(exploration: &Exploration) -> Result<SpeculationDelivery, Reifica
 /// across data since it was written, which is the third witness in this file
 /// that within-channel order is not content.
 pub fn resting_on(state: &SpeculativeState, channel: &Par) -> Vec<Par> {
-    let Some(data) = state.data.get(channel) else {
+    let Some(data) = state.data[shard_of(channel)].get(channel) else {
         return Vec::new();
     };
     // ★ Canonical, not store order. See the header above.

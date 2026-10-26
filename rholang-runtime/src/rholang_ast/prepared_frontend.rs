@@ -5,13 +5,18 @@
 //! enters the existing Public preparation session. The node remains responsible
 //! for provider/matcher enrollment and funded execution of the returned artifact.
 //!
-//! Preparation limits below govern the existing import and lowering meters.
+// Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): was
+// "Preparation limits below govern the existing import and lowering meters."
+//! The limits below govern caller imports and the source size. Lowering has no
+//! work or storage-unit ceiling (DR-131 extension to F1R3Lang, user decision 1);
+//! its reservation points only poll cancellation.
 //! The source-byte limit is not a lexer/WPDA work or allocator/RSS certificate.
 //! Public activation additionally requires the enclosing preparation and parser
 //! admission gates; implementing this trait alone does not establish those gates.
 
 use super::imports::{CheckedCallerImports, ImportLimits};
 use super::*;
+use models::rust::rholang::protobuf_encoder;
 use rholang::rust::interpreter::frontend::{
     PreparationError, PreparedProgram, ProgramFrontend, PREPARED_PROGRAM_ABI_V1,
 };
@@ -23,9 +28,10 @@ pub struct RholangPreparationPolicy {
     pub max_import_entries: usize,
     pub max_import_nodes: usize,
     pub max_import_payload_bytes: usize,
-    pub max_preparation_work: u64,
-    /// Existing preparation payload units, not physical allocator bytes.
-    pub max_preparation_units: usize,
+    // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+    // pub max_preparation_work: u64,
+    // /// Existing preparation payload units, not physical allocator bytes.
+    // pub max_preparation_units: usize,
     pub lowering: LoweringOptions,
 }
 
@@ -37,6 +43,23 @@ pub struct RholangProgramFrontend {
     policy: RholangPreparationPolicy,
     resolver: Arc<dyn FltResolve + Send + Sync>,
     cancelled: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+pub(super) struct ParsedSource<'a> {
+    source: &'a str,
+    proc: Proc,
+}
+
+impl ParsedSource<'_> {
+    pub(super) fn proc(&self) -> &Proc {
+        &self.proc
+    }
+}
+
+enum PreparationInput<'a> {
+    Source(&'a ParsedSource<'a>),
+    #[cfg(test)]
+    Tree(&'a Proc),
 }
 
 impl RholangProgramFrontend {
@@ -51,8 +74,10 @@ impl RholangProgramFrontend {
         }
     }
 
+    // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): was
+    // "Cancellation never falls back to unmetered preparation."
     /// Supply the enclosing request/service cancellation signal.
-    /// Cancellation never falls back to unmetered preparation.
+    /// Cancellation refuses preparation; it never publishes a partial artifact.
     pub fn with_cancellation(mut self, cancelled: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
         self.cancelled = cancelled;
         self
@@ -82,12 +107,21 @@ impl RholangProgramFrontend {
         let proc = Proc::parse_via_wpda(source)
             .map_err(|error| PreparationError::new(error.to_string()))?;
         self.check_cancelled()?;
-        self.prepare_process(&proc, environment)
+        self.prepare_input(PreparationInput::Source(&ParsedSource { source, proc }), environment)
     }
 
+    #[cfg(test)]
     fn prepare_process(
         &self,
         proc: &Proc,
+        environment: HashMap<String, Par>,
+    ) -> Result<(PreparedProgram, GuardDischargeReport), PreparationError> {
+        self.prepare_input(PreparationInput::Tree(proc), environment)
+    }
+
+    fn prepare_input(
+        &self,
+        input: PreparationInput<'_>,
         environment: HashMap<String, Par>,
     ) -> Result<(PreparedProgram, GuardDischargeReport), PreparationError> {
         let mut cancelled = || (self.cancelled)();
@@ -108,17 +142,65 @@ impl RholangProgramFrontend {
             SourceAdmissionMode::Public,
         )
         .with_caller_imports(imports);
-        let mut work = 0;
-        let mut budget = mettail_rholang_codegen::ReflectedCodecBudget::new(
-            &mut work,
-            self.policy.max_preparation_work,
-            self.policy.max_preparation_units,
-            &mut cancelled,
-        );
-        let output = session::lower_public_body_with_budget(proc, context, &mut budget)
-            .map_err(lowering_error)?;
+        // Disabled by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16): host work is not metered.
+        // let mut work = 0;
+        // let mut budget = mettail_rholang_codegen::ReflectedCodecBudget::new(
+        //     &mut work,
+        //     self.policy.max_preparation_work,
+        //     self.policy.max_preparation_units,
+        //     &mut cancelled,
+        // );
+        // Changed by the DR-131 extension to F1R3Lang (user decision 1 of 2026-10-16):
+        // lowering keeps its reservation points, but they only poll cancellation.
+        // let output = session::lower_public_body_with_budget(proc, context, &mut budget)
+        //     .map_err(lowering_error)?;
+        let mut reserve = |_work: usize,
+                           _units: usize|
+         -> Result<(), mettail_rholang_codegen::DynamicReflectionError> {
+            if (self.cancelled)() {
+                Err(mettail_rholang_codegen::DynamicReflectionError::Cancelled)
+            } else {
+                Ok(())
+            }
+        };
+        let output = match &input {
+            PreparationInput::Source(parsed) => session::lower_public_checked(
+                parsed.proc(),
+                Some(*parsed),
+                context,
+                &mut reserve,
+            ),
+            #[cfg(test)]
+            PreparationInput::Tree(proc) => {
+                session::lower_public_checked(proc, None, context, &mut reserve)
+            },
+        }
+        .map_err(lowering_error)?;
         self.check_cancelled()?;
-        finish_output(output)
+        check_output(&output)?;
+        match input {
+            PreparationInput::Source(parsed) => {
+                let identity = self.language_identity().ok_or_else(|| {
+                    PreparationError::new("Generated Rholang definition identity is unavailable")
+                })?;
+                let output_len = protobuf_encoder::encoded_len(&output.par);
+                let source = copy_receipt_bytes(parsed.source.as_bytes())?;
+                let language = copy_receipt_bytes(identity)?;
+                let mut encoded = Vec::new();
+                encoded.try_reserve_exact(output_len).map_err(|_| {
+                    PreparationError::new("Rholang receipt output allocation failed")
+                })?;
+                protobuf_encoder::encode_into(&output.par, &mut encoded);
+                self.check_cancelled()?;
+                let program = PreparedProgram::from_normalized_with_binding(
+                    output.par, source, language, encoded,
+                )?;
+                self.check_cancelled()?;
+                Ok((program, output.guard_report))
+            },
+            #[cfg(test)]
+            PreparationInput::Tree(_) => finish_output(output),
+        }
     }
 
     fn check_cancelled(&self) -> Result<(), PreparationError> {
@@ -135,6 +217,13 @@ impl ProgramFrontend for RholangProgramFrontend {
         PREPARED_PROGRAM_ABI_V1
     }
 
+    fn language_identity(&self) -> Option<&[u8]> {
+        RholangLanguage
+            .metadata()
+            .definition_fingerprint()
+            .map(str::as_bytes)
+    }
+
     fn prepare(
         &self,
         source: &str,
@@ -147,9 +236,15 @@ impl ProgramFrontend for RholangProgramFrontend {
     }
 }
 
+#[cfg(test)]
 fn finish_output(
     output: session::DirectLoweringOutput,
 ) -> Result<(PreparedProgram, GuardDischargeReport), PreparationError> {
+    check_output(&output)?;
+    Ok((PreparedProgram::from_normalized(output.par), output.guard_report))
+}
+
+fn check_output(output: &session::DirectLoweringOutput) -> Result<(), PreparationError> {
     // No fold constructor belongs to the checked source profile. If the profile
     // grows, this boundary must gain real enrollment before accepting its output.
     if !output.folds.is_empty() {
@@ -158,7 +253,16 @@ fn finish_output(
     if output.guard_report.disagreements != 0 {
         return Err(PreparationError::new("Guard discharge disagreement in prepared Rholang"));
     }
-    Ok((PreparedProgram::from_normalized(output.par), output.guard_report))
+    Ok(())
+}
+
+fn copy_receipt_bytes(bytes: &[u8]) -> Result<Vec<u8>, PreparationError> {
+    let mut owned = Vec::new();
+    owned
+        .try_reserve_exact(bytes.len())
+        .map_err(|_| PreparationError::new("Rholang receipt identity allocation failed"))?;
+    owned.extend_from_slice(bytes);
+    Ok(owned)
 }
 
 fn lowering_error(error: RholangAstLowerError) -> PreparationError {

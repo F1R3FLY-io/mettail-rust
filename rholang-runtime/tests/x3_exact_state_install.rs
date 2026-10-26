@@ -99,6 +99,7 @@ async fn install(space: &Space, state: State) {
         cache_snapshot: state,
         log: Vec::new(),
         produce_counter: BTreeMap::new(),
+        replay_cursor: None,
     };
     space
         .revert_to_soft_checkpoint(checkpoint)
@@ -122,6 +123,7 @@ fn payload(value: i64) -> ListParWithRandom {
     ListParWithRandom {
         pars: vec![new_gint_par(value, Vec::new(), false)],
         random_state: Blake2b512Random::create_from_bytes(&[7u8, 7, 7]).to_bytes(),
+        ..ListParWithRandom::default()
     }
 }
 
@@ -151,6 +153,7 @@ fn continuation_body(marker: i64) -> TaggedContinuation {
         })),
         // No `where` guard on these fixtures — the guard path is X1's subject.
         guard: None,
+        cost_authority: None,
     }
 }
 
@@ -175,45 +178,44 @@ fn fixture_state() -> State {
     let mut state = State::default();
 
     // ── data ──
-    state.data.insert(
+    state.data[rspace_plus_plus::rspace::hot_store::shard_of(&chan("alpha"))].insert(
         chan("alpha"),
         vec![datum(&chan("alpha"), 1, false), datum(&chan("alpha"), 2, false)],
     );
-    state
-        .data
+    state.data[rspace_plus_plus::rspace::hot_store::shard_of(&chan("gamma"))]
         .insert(chan("gamma"), vec![datum(&chan("gamma"), 3, true)]);
 
     // ── a linear continuation on a channel that HAS data ──
-    state.continuations.insert(
-        vec![chan("alpha")],
-        vec![waiting(&vec![chan("alpha")], false, BTreeSet::new(), 10)],
-    );
+    state.continuations[rspace_plus_plus::rspace::hot_store::shard_of(&vec![chan("alpha")])]
+        .insert(
+            vec![chan("alpha")],
+            vec![Arc::new(waiting(&vec![chan("alpha")], false, BTreeSet::new(), 10))],
+        );
 
     // ── a PEEK continuation on a channel with NO data (a continuation-only row) ──
     let mut peeks = BTreeSet::new();
     peeks.insert(0i32);
-    state
-        .continuations
-        .insert(vec![chan("beta")], vec![waiting(&vec![chan("beta")], false, peeks, 11)]);
+    state.continuations[rspace_plus_plus::rspace::hot_store::shard_of(&vec![chan("beta")])].insert(
+        vec![chan("beta")],
+        vec![Arc::new(waiting(&vec![chan("beta")], false, peeks, 11))],
+    );
 
     // ── a PERSISTENT continuation, and a JOIN over two channels ──
     let join_channels = vec![chan("delta"), chan("epsilon")];
-    state
-        .continuations
-        .insert(join_channels.clone(), vec![waiting(&join_channels, true, BTreeSet::new(), 12)]);
-    state
-        .joins
+    state.continuations[rspace_plus_plus::rspace::hot_store::shard_of(&join_channels)].insert(
+        join_channels.clone(),
+        vec![Arc::new(waiting(&join_channels, true, BTreeSet::new(), 12))],
+    );
+    state.joins[rspace_plus_plus::rspace::hot_store::shard_of(&chan("delta"))]
         .insert(chan("delta"), vec![join_channels.clone()]);
-    state
-        .joins
+    state.joins[rspace_plus_plus::rspace::hot_store::shard_of(&chan("epsilon"))]
         .insert(chan("epsilon"), vec![join_channels.clone()]);
 
     // ── the `install` lane ──
-    state
-        .installed_continuations
-        .insert(vec![chan("zeta")], waiting(&vec![chan("zeta")], true, BTreeSet::new(), 13));
-    state
-        .installed_joins
+    state.installed_continuations
+        [rspace_plus_plus::rspace::hot_store::shard_of(&vec![chan("zeta")])]
+    .insert(vec![chan("zeta")], waiting(&vec![chan("zeta")], true, BTreeSet::new(), 13));
+    state.installed_joins[rspace_plus_plus::rspace::hot_store::shard_of(&chan("zeta"))]
         .insert(chan("zeta"), vec![vec![chan("zeta")]]);
 
     state
@@ -230,17 +232,17 @@ fn diff(expected: &State, actual: &State) -> Vec<String> {
     if expected.data != actual.data {
         out.push(format!(
             "data differs:\n  expected {} channel(s): {:?}\n  actual   {} channel(s): {:?}",
-            expected.data.len(),
-            sorted_keys(&expected.data),
-            actual.data.len(),
-            sorted_keys(&actual.data)
+            expected.data.iter().map(|shard| shard.len()).sum::<usize>(),
+            sorted_keys(expected.data.iter().flat_map(|shard| shard.keys())),
+            actual.data.iter().map(|shard| shard.len()).sum::<usize>(),
+            sorted_keys(actual.data.iter().flat_map(|shard| shard.keys()))
         ));
     }
     if expected.continuations != actual.continuations {
         out.push(format!(
             "continuations differ:\n  expected {:?}\n  actual   {:?}",
-            sorted_group_keys(&expected.continuations),
-            sorted_group_keys(&actual.continuations)
+            sorted_group_keys(expected.continuations.iter().flat_map(|shard| shard.keys())),
+            sorted_group_keys(actual.continuations.iter().flat_map(|shard| shard.keys()))
         ));
     }
     if expected.installed_continuations != actual.installed_continuations {
@@ -249,8 +251,8 @@ fn diff(expected: &State, actual: &State) -> Vec<String> {
     if expected.joins != actual.joins {
         out.push(format!(
             "joins differ:\n  expected {:?}\n  actual   {:?}",
-            sorted_keys(&expected.joins),
-            sorted_keys(&actual.joins)
+            sorted_keys(expected.joins.iter().flat_map(|shard| shard.keys())),
+            sorted_keys(actual.joins.iter().flat_map(|shard| shard.keys()))
         ));
     }
     if expected.installed_joins != actual.installed_joins {
@@ -259,15 +261,14 @@ fn diff(expected: &State, actual: &State) -> Vec<String> {
     out
 }
 
-fn sorted_keys<V>(map: &HashMap<Par, V>) -> Vec<String> {
-    let mut keys: Vec<String> = map.keys().map(describe).collect();
+fn sorted_keys<'a>(keys: impl Iterator<Item = &'a Par>) -> Vec<String> {
+    let mut keys: Vec<String> = keys.map(describe).collect();
     keys.sort();
     keys
 }
 
-fn sorted_group_keys<V>(map: &HashMap<Vec<Par>, V>) -> Vec<String> {
-    let mut keys: Vec<String> = map
-        .keys()
+fn sorted_group_keys<'a>(groups: impl Iterator<Item = &'a Vec<Par>>) -> Vec<String> {
+    let mut keys: Vec<String> = groups
         .map(|group| group.iter().map(describe).collect::<Vec<_>>().join("+"))
         .collect();
     keys.sort();
@@ -288,24 +289,38 @@ fn describe(par: &Par) -> String {
 }
 
 fn total_data(state: &State) -> usize {
-    state.data.values().map(|v| v.len()).sum()
+    state
+        .data
+        .iter()
+        .flat_map(|shard| shard.values())
+        .map(Vec::len)
+        .sum()
 }
 
 fn total_continuations(state: &State) -> usize {
-    state.continuations.values().map(|v| v.len()).sum::<usize>()
-        + state.installed_continuations.len()
+    state
+        .continuations
+        .iter()
+        .flat_map(|shard| shard.values())
+        .map(Vec::len)
+        .sum::<usize>()
+        + state
+            .installed_continuations
+            .iter()
+            .map(|shard| shard.len())
+            .sum::<usize>()
 }
 
 fn describe_state(label: &str, state: &State) {
     println!(
         "  {label:22} data={} ({} channels)  conts={} ({} groups)  installed_conts={}  joins={}  installed_joins={}",
         total_data(state),
-        state.data.len(),
+        state.data.iter().map(|shard| shard.len()).sum::<usize>(),
         total_continuations(state),
-        state.continuations.len(),
-        state.installed_continuations.len(),
-        state.joins.len(),
-        state.installed_joins.len(),
+        state.continuations.iter().map(|shard| shard.len()).sum::<usize>(),
+        state.installed_continuations.iter().map(|shard| shard.len()).sum::<usize>(),
+        state.joins.iter().map(|shard| shard.len()).sum::<usize>(),
+        state.installed_joins.iter().map(|shard| shard.len()).sum::<usize>(),
     );
 }
 
@@ -321,8 +336,7 @@ async fn d0_teeth_the_comparator_sees_a_planted_difference() {
 
     // (1) one extra datum
     let mut plus_datum = fixture_state();
-    plus_datum
-        .data
+    plus_datum.data[rspace_plus_plus::rspace::hot_store::shard_of(&chan("alpha"))]
         .get_mut(&chan("alpha"))
         .expect("alpha has data")
         .push(datum(&chan("alpha"), 999, false));
@@ -333,14 +347,17 @@ async fn d0_teeth_the_comparator_sees_a_planted_difference() {
 
     // (2) one extra waiting continuation, on a channel with NO data
     let mut plus_cont = fixture_state();
-    plus_cont.continuations.insert(
+    plus_cont.continuations[rspace_plus_plus::rspace::hot_store::shard_of(&vec![chan(
+        "x3-planted-continuation-channel",
+    )])]
+    .insert(
         vec![chan("x3-planted-continuation-channel")],
-        vec![waiting(
+        vec![Arc::new(waiting(
             &vec![chan("x3-planted-continuation-channel")],
             false,
             BTreeSet::new(),
             777,
-        )],
+        ))],
     );
     assert!(
         !diff(&base, &plus_cont).is_empty(),
@@ -349,9 +366,9 @@ async fn d0_teeth_the_comparator_sees_a_planted_difference() {
 
     // (3) one extra join
     let mut plus_join = fixture_state();
-    plus_join
-        .joins
-        .insert(chan("x3-planted-join-channel"), vec![vec![chan("x3-planted-join-channel")]]);
+    plus_join.joins
+        [rspace_plus_plus::rspace::hot_store::shard_of(&chan("x3-planted-join-channel"))]
+    .insert(chan("x3-planted-join-channel"), vec![vec![chan("x3-planted-join-channel")]]);
     assert!(
         !diff(&base, &plus_join).is_empty(),
         "TEETH FAILED: the comparator cannot see an extra join"
@@ -380,11 +397,23 @@ async fn d0_teeth_to_map_covers_rows_but_not_exact_state() {
     println!("\n── X3 D0: snapshot() vs to_map() over the same installed state ──");
     describe_state("installed", &planted);
     describe_state("snapshot()", &read_back);
-    println!("  to_map()               {} row(s): {:?}", map.len(), sorted_group_keys(&map));
+    println!(
+        "  to_map()               {} row(s): {:?}",
+        map.len(),
+        sorted_group_keys(map.keys())
+    );
 
     // The exact snapshot sees every state field.
     assert_eq!(total_continuations(&read_back), 4, "snapshot must see all 4 continuations");
-    assert_eq!(read_back.joins.len(), 2, "snapshot must see both join index entries");
+    assert_eq!(
+        read_back
+            .joins
+            .iter()
+            .map(|shard| shard.len())
+            .sum::<usize>(),
+        2,
+        "snapshot must see both join index entries"
+    );
 
     // The repaired row view covers the union of data and both continuation key domains.
     assert_eq!(map.len(), 5, "the row view must contain every distinct row key");
@@ -416,8 +445,12 @@ async fn d0_teeth_to_map_covers_rows_but_not_exact_state() {
     // extensionally: erase only those indexes, install that distinct exact state elsewhere, and
     // observe the same row map.
     let mut without_join_indexes = planted.clone();
-    without_join_indexes.joins.clear();
-    without_join_indexes.installed_joins.clear();
+    for shard in without_join_indexes.joins.iter_mut() {
+        shard.clear();
+    }
+    for shard in without_join_indexes.installed_joins.iter_mut() {
+        shard.clear();
+    }
     assert_eq!(
         diff(&planted, &without_join_indexes).len(),
         2,
@@ -471,15 +504,24 @@ async fn d1_hand_built_state_installs_exactly() {
     // And the reads that the RUNTIME uses (not just the raw snapshot) agree:
     // `get_data` consults the cold history layer, so this is where a non-empty
     // cold root would show up.
-    let alpha = space.get_data(&chan("alpha")).await;
+    let alpha = space
+        .get_data(&chan("alpha"))
+        .await
+        .expect("read alpha data");
     assert_eq!(alpha.len(), 2, "get_data must see exactly the planted data, got {alpha:?}");
-    let beta_conts = space.get_waiting_continuations(vec![chan("beta")]).await;
+    let beta_conts = space
+        .get_waiting_continuations(vec![chan("beta")])
+        .await
+        .expect("read beta continuations");
     assert_eq!(
         beta_conts.len(),
         1,
         "get_waiting_continuations must see the planted data-less continuation"
     );
-    let joins = space.get_joins(chan("delta")).await;
+    let joins = space
+        .get_joins(chan("delta"))
+        .await
+        .expect("read delta joins");
     assert_eq!(joins.len(), 1, "get_joins must see the planted join, got {joins:?}");
 }
 
@@ -514,6 +556,7 @@ fn residue_program() -> Par {
             source: Some(chan("x3-run-waiting")),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         body: Some(Par::default()),
         persistent: false,
@@ -543,7 +586,8 @@ async fn d2_reinstall_erases_a_previous_runs_effects() {
         &mut Vec::new(),
         ExternalServices::noop(),
     )
-    .await;
+    .await
+    .expect("test runtime must build");
     runtime.cost().set(Cost::unsafe_max());
     runtime
         .inj(
@@ -564,13 +608,14 @@ async fn d2_reinstall_erases_a_previous_runs_effects() {
          below would pass vacuously"
     );
     assert!(
-        dirty.data.contains_key(&chan("x3-run-residue")),
+        dirty.data[rspace_plus_plus::rspace::hot_store::shard_of(&chan("x3-run-residue"))]
+            .contains_key(&chan("x3-run-residue")),
         "TEETH FAILED: the two sends did not rest on @\"x3-run-residue\""
     );
     assert!(
-        dirty
-            .continuations
-            .contains_key(&vec![chan("x3-run-waiting")]),
+        dirty.continuations
+            [rspace_plus_plus::rspace::hot_store::shard_of(&vec![chan("x3-run-waiting")])]
+        .contains_key(&vec![chan("x3-run-waiting")]),
         "TEETH FAILED: the receive did not wait on @\"x3-run-waiting\""
     );
 
@@ -587,26 +632,32 @@ async fn d2_reinstall_erases_a_previous_runs_effects() {
         residue.join("\n  ")
     );
     assert!(
-        !clean.data.contains_key(&chan("x3-run-residue")),
+        !clean.data[rspace_plus_plus::rspace::hot_store::shard_of(&chan("x3-run-residue"))]
+            .contains_key(&chan("x3-run-residue")),
         "the run's resting sends survived the re-install"
     );
     assert!(
-        !clean
-            .continuations
-            .contains_key(&vec![chan("x3-run-waiting")]),
+        !clean.continuations
+            [rspace_plus_plus::rspace::hot_store::shard_of(&vec![chan("x3-run-waiting")])]
+        .contains_key(&vec![chan("x3-run-waiting")]),
         "the run's waiting receive survived the re-install"
     );
 
     // The runtime-facing reads agree too — this is where a cold-layer leak
     // would surface, since `get_data` (unlike `snapshot`) consults history.
     assert!(
-        space.get_data(&chan("x3-run-residue")).await.is_empty(),
+        space
+            .get_data(&chan("x3-run-residue"))
+            .await
+            .expect("read erased data")
+            .is_empty(),
         "get_data still sees the erased run's data — the COLD layer leaked"
     );
     assert!(
         space
             .get_waiting_continuations(vec![chan("x3-run-waiting")])
             .await
+            .expect("read erased continuations")
             .is_empty(),
         "get_waiting_continuations still sees the erased run's receive"
     );
@@ -626,7 +677,8 @@ async fn d3_reinstall_of_the_empty_state_returns_a_pristine_sandbox() {
         &mut Vec::new(),
         ExternalServices::noop(),
     )
-    .await;
+    .await
+    .expect("test runtime must build");
     runtime.cost().set(Cost::unsafe_max());
     runtime
         .inj(

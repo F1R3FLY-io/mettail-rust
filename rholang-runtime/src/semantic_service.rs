@@ -7,23 +7,26 @@
 use crate::installed_flt::{InstalledFltAdapter, InstalledFltBindingError, InstalledFltError};
 use crate::language_install::{LanguageRuntimeError, RholangLanguageRuntime};
 use mettail_dovetail_runtime::{
-    theory_positional_native_view, ProjectedMatcherRestoreError, RuntimeLiteralRef,
-    SemanticActionExecutionRequest, SemanticInputLimits, SemanticMatchRefutation,
-    SemanticMatchUndetermined, SemanticNormalizationHopReceiptV1, SemanticPremiseReceipt,
-    SemanticProjectionDecision, SemanticProjectionExecutionRequest, SemanticProjectionReceipt,
-    SemanticRelationExecutionRequest, SemanticRelationNormalFormReceipt, SemanticResourceReceipt,
-    SemanticTransition, SemanticTransitionDecision, SemanticTransitionInput,
-    SemanticTransitionLimits, SemanticTransitionMatcher, SemanticTransitionReceipt,
-    TheoryPatternRestoreError, TheoryPositionalNativeView,
+    theory_positional_native_view, ProjectedMatcherRestoreError, ProvenSemanticRewriteSteps,
+    RuntimeLiteralRef, SemanticActionExecutionRequest, SemanticInputDecision, SemanticInputLimits,
+    SemanticMatchRefutation, SemanticMatchUndetermined, SemanticNormalizationHopReceiptV1,
+    SemanticPremiseReceipt, SemanticProjectionDecision, SemanticProjectionExecutionRequest,
+    SemanticProjectionReceipt, SemanticRelationExecutionRequest, SemanticRelationNormalFormReceipt,
+    SemanticResourceReceipt, SemanticTransition, SemanticTransitionDecision,
+    SemanticTransitionInput, SemanticTransitionLimits, SemanticTransitionMatcher,
+    SemanticTransitionReceipt, TheoryPatternRestoreError, TheoryPositionalNativeView,
 };
 use mettail_grammar_core::{
-    BuiltinCarrier, Carrier, InstalledHostProfileHandle, InstalledLanguage,
+    BuiltinCarrier, Carrier, InstallCommitment, InstalledHostProfileHandle, InstalledLanguage,
     InstalledLanguageHandle, InstalledLanguageTable, LanguageAccessError,
     LanguageAndHostAccessError, LanguageRight, ProjectionDirectionV1, TheoryActionExecutionImageV1,
-    TheoryActionId, TheoryActionImageV1, TheoryImageOperatorV1, TheoryLimitsV1,
-    TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternStateFormV1, TheoryPatternStateV1,
-    TheoryResourceProfileV1, TheoryRuleDispositionV1, TheorySemanticImageV1, TheorySortId,
-    TheorySortKindImageV1, TheorySortKindV1, TheoryVariableId,
+    TheoryActionId, TheoryActionImageV1, TheoryImageAdmissionLimits, TheoryImageOperatorV1,
+    TheoryLimitsV1, TheoryLiteralCarrierV1, TheoryLiteralV1, TheoryPatternStateFormV1,
+    TheoryPatternStateV1, TheoryResourceProfileV1, TheoryRuleDispositionV1, TheorySemanticImageV1,
+    TheorySortId, TheorySortKindImageV1, TheorySortKindV1, TheoryVariableId, VerifiedCostImageV1,
+};
+use mettail_languages::rholang::{
+    reconstruct_host_proc_v2_with_meter, RholangHostReconstructErrorV2,
 };
 use mettail_rholang_codegen::{DynamicReflectionError, ReflectedCodecBudget};
 use models::rhoapi::Par;
@@ -31,6 +34,9 @@ use rspace_plus_plus::rspace::{errors::RSpaceError, rspace_interface::ProduceCom
 use std::sync::Arc;
 
 mod display;
+mod funding_projection;
+#[cfg(test)]
+mod funding_roster_tests;
 pub(crate) mod predicate;
 mod relation_observation;
 mod wire;
@@ -528,10 +534,14 @@ impl RholangLanguageRuntime {
                 if !Arc::ptr_eq(&authorized, &installed) {
                     return Err(InstalledSemanticError::InvalidEvidence("installed owner changed"));
                 }
-                let bundle = InstalledSemanticBundle::prepare_authorized(
+                let source_cost_action = selection.is_some()
+                    && selected_projection.is_none()
+                    && authorized.language_core().theory.cost.is_some();
+                let bundle = InstalledSemanticBundle::prepare_authorized_with_route(
                     authorized,
                     &retained.handle,
                     &mut budget,
+                    source_cost_action,
                 )?;
                 let keys = match selected_role.filter(|_| selected_projection.is_none()) {
                     Some(index) => {
@@ -548,6 +558,7 @@ impl RholangLanguageRuntime {
                         },
                         request.input,
                         limits,
+                        self.service().policy().semantic_image,
                         &mut budget,
                         &mut kernel_work,
                     )?;
@@ -621,6 +632,7 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
     selection: SelectedSemanticExecution<'_>,
     input: &Par,
     limits: SemanticServiceLimits,
+    image_limits: TheoryImageAdmissionLimits,
     budget: &mut ReflectedCodecBudget<'_, C>,
     kernel_work: &mut Option<u64>,
 ) -> Result<Vec<SemanticServiceResult>, InstalledSemanticError> {
@@ -640,6 +652,7 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
     let admission = input.admission_work();
     budget.charge(1, 8)?; // one shared key handle, not a key/tree copy
     let expected_input = input.exact_key().clone();
+    let cost_image = prepared.prepare_costed_roster_image(image_limits, budget)?;
     let decision = budget.run_accounted_stage(|remaining, cancel| {
         let Some(ceiling) = admission.checked_add(remaining) else {
             return (Err(InstalledSemanticError::InvalidEvidence("admission ceiling overflow")), 0);
@@ -647,6 +660,7 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
         let execution = prepared.execute_accounted(
             selection.action.id,
             input,
+            cost_image,
             SemanticTransitionLimits { work: ceiling, ..limits.execution },
             cancel,
         );
@@ -689,7 +703,7 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
     // externally supplied or mutated ProvenSemanticTransitions. The shared key
     // already has its byte cache populated by successful kernel execution.
     let expected_input = expected_input.as_bytes();
-    for transition in &proven.transitions {
+    for (index, transition) in proven.transitions.iter().enumerate() {
         validate_fresh_receipt(
             installed,
             selection.action,
@@ -698,11 +712,324 @@ fn prepare_semantic_results<C: FnMut() -> bool>(
             transition,
             budget,
         )?;
+        if cost_image.is_some() {
+            let (admitted, grade_work) = budget.run_accounted_stage(|remaining, cancel| {
+                let (admitted, used) = proven.admit_grade_at(
+                    index,
+                    SemanticInputLimits {
+                        work: remaining,
+                        nodes: limits.execution.output_nodes,
+                        bytes: limits.execution.output_bytes,
+                    },
+                    cancel,
+                );
+                ((admitted, used), used)
+            })?;
+            *kernel_work = Some(
+                kernel_work
+                    .unwrap_or(0)
+                    .checked_add(grade_work)
+                    .ok_or(InstalledSemanticError::InvalidEvidence("grade work overflow"))?,
+            );
+            match admitted {
+                SemanticInputDecision::Proven(_) => {},
+                SemanticInputDecision::Refuted(_) => {
+                    return Err(InstalledSemanticError::InvalidEvidence(
+                        "checked action grade readmission refuted",
+                    ));
+                },
+                SemanticInputDecision::Undetermined { reason, .. } => {
+                    return Err(InstalledSemanticError::Undetermined(reason));
+                },
+            }
+        }
         charge_receipt_transport(&transition.receipt, budget)?;
     }
     let terms = adapter.reflect_transitions(&proven, selection.action.codomain, budget)?;
     let (_graph, transitions) = proven.into_parts();
     pair_semantic_results(terms, transitions, budget)
+}
+
+/// Every candidate retains its own checked projection occurrence and receipt.
+pub(crate) struct PreparedHostDemandCandidateV2 {
+    par: Par,
+    projection_receipt: SemanticProjectionReceipt,
+}
+
+/// A complete prepared roster carries one retained guest grade. It grants no
+/// purse or settlement authority and preserves equal-output occurrences.
+pub(crate) struct PreparedHostDemandRosterV2<'a> {
+    grade_receipt: &'a SemanticResourceReceipt,
+    candidates: Vec<PreparedHostDemandCandidateV2>,
+}
+
+impl PreparedHostDemandCandidateV2 {
+    pub(crate) fn par(&self) -> &Par {
+        &self.par
+    }
+
+    pub(crate) fn projection_receipt(&self) -> &SemanticProjectionReceipt {
+        &self.projection_receipt
+    }
+}
+
+impl<'a> PreparedHostDemandRosterV2<'a> {
+    pub(crate) fn grade_receipt(&self) -> &'a SemanticResourceReceipt {
+        self.grade_receipt
+    }
+
+    pub(crate) fn candidates(&self) -> &[PreparedHostDemandCandidateV2] {
+        &self.candidates
+    }
+}
+
+fn prepare_complete_funding_candidates<T, C: FnMut() -> bool>(
+    count: usize,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+    mut prepare: impl FnMut(
+        usize,
+        &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<T, InstalledSemanticError>,
+) -> Result<Vec<T>, InstalledSemanticError> {
+    if count == 0 {
+        return Err(InstalledSemanticError::InvalidEvidence(
+            "funding projection returned an empty complete roster",
+        ));
+    }
+    let bytes = count
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+    budget.charge(count, bytes)?;
+    let mut candidates = Vec::new();
+    candidates
+        .try_reserve_exact(count)
+        .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+    for index in 0..count {
+        candidates.push(prepare(index, budget)?);
+    }
+    budget.charge(0, 0)?;
+    Ok(candidates)
+}
+
+/// Interpret one retained Cost(G) grade through the *installed* selected
+/// GuestToHost relation. Every traversal shares `budget`; a base rewrite
+/// matcher is never reused as a projected matcher. This does not verify the
+/// authored projection's conservative funding law or admit live supply: those
+/// require the separately installed proof verifier and host resource logic.
+pub(crate) fn prepare_checked_host_demand_v2<'a, C: FnMut() -> bool>(
+    table: &InstalledLanguageTable,
+    handle: &InstalledLanguageHandle,
+    roster: &'a ProvenSemanticRewriteSteps,
+    index: usize,
+    limits: SemanticTransitionLimits,
+    budget: &mut ReflectedCodecBudget<'_, C>,
+) -> Result<PreparedHostDemandRosterV2<'a>, InstalledSemanticError> {
+    budget.charge(1, 0)?;
+    let occurrence = roster
+        .occurrences
+        .get(index)
+        .ok_or(InstalledSemanticError::InvalidEvidence("funding grade occurrence is absent"))?;
+    let prepared = InstalledSemanticBundle::prepare(
+        table,
+        handle,
+        &[LanguageRight::Reduce, LanguageRight::Bridge],
+        budget,
+    )?;
+    let installed = prepared.installed();
+    let commitment = installed.commitment();
+    let projected_image = installed
+        .projected_image()
+        .ok_or(InstalledSemanticError::InvalidEvidence("funding projection image is absent"))?;
+    let binding = installed
+        .funding_projection_v2()
+        .ok_or(InstalledSemanticError::InvalidEvidence("funding selector is not installed"))?;
+    let base_image = installed
+        .base_semantic_image()
+        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+    budget.charge(4, 0)?;
+    if roster.language_fingerprint != base_image.language_fingerprint
+        || roster.theory_fingerprint != base_image.theory_fingerprint
+        || roster.image_fingerprint != projected_image.base_image_fingerprint
+    {
+        return Err(InstalledSemanticError::InvalidEvidence(
+            "funding grade roster is not from the installed base image",
+        ));
+    }
+    match (&base_image.resource_profile, &occurrence.resource) {
+        (
+            TheoryResourceProfileV1::Costed { grade_sort },
+            SemanticResourceReceipt::Checked {
+                grade_sort: actual_sort,
+                cost_image_fingerprint,
+                ..
+            },
+        ) if actual_sort == grade_sort
+            && commitment.cost_image_fingerprint == Some(*cost_image_fingerprint) => {},
+        _ => {
+            return Err(InstalledSemanticError::InvalidEvidence(
+                "funding grade receipt is not from the installed cost image",
+            ));
+        },
+    }
+    let host_handle = installed
+        .projected_host_profile()
+        .ok_or(InstalledSemanticError::InvalidEvidence("funding host handle is absent"))?;
+    let host = table
+        .authorize_compound_host_profile_v2(host_handle, &[LanguageRight::Bridge])
+        .map_err(|_| InstalledSemanticError::InvalidEvidence("funding host handle was revoked"))?;
+
+    let grade = budget.run_accounted_stage(|remaining, cancel| {
+        roster.admit_grade_at(
+            index,
+            SemanticInputLimits {
+                work: remaining,
+                nodes: limits.output_nodes,
+                bytes: limits.output_bytes,
+            },
+            cancel,
+        )
+    })?;
+    let grade = match grade {
+        SemanticInputDecision::Proven(input) => input,
+        SemanticInputDecision::Refuted(_) => {
+            return Err(InstalledSemanticError::InvalidEvidence(
+                "retained funding grade root was refuted",
+            ));
+        },
+        SemanticInputDecision::Undetermined { reason, .. } => {
+            return Err(InstalledSemanticError::Undetermined(reason));
+        },
+    };
+    let admission = grade.admission_work();
+    let key = grade.exact_key().as_bytes();
+    budget.charge(key.len(), key.len())?;
+    let mut expected_input = Vec::new();
+    expected_input
+        .try_reserve_exact(key.len())
+        .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+    expected_input.extend_from_slice(key);
+
+    let (decision, aggregate) = budget.run_accounted_stage(|remaining, cancel| {
+        let Some(ceiling) = admission.checked_add(remaining) else {
+            return (
+                Err(InstalledSemanticError::InvalidEvidence("funding projection ceiling overflow")),
+                0,
+            );
+        };
+        let (decision, aggregate) = prepared.matcher.execute_rule_projection_accounted(
+            SemanticProjectionExecutionRequest {
+                image: projected_image,
+                projection: binding.projection,
+                direction: ProjectionDirectionV1::GuestToHost,
+                granted_rights: handle.rights(),
+                input: grade,
+                limits: SemanticTransitionLimits { work: ceiling, ..limits },
+            },
+            cancel,
+        );
+        match aggregate.checked_sub(admission) {
+            Some(increment) => (Ok((decision, aggregate)), increment),
+            None => (
+                Err(InstalledSemanticError::InvalidEvidence(
+                    "funding projection underreported grade admission",
+                )),
+                0,
+            ),
+        }
+    })??;
+    let proven = match decision {
+        SemanticProjectionDecision::Proven(proven) => proven,
+        SemanticProjectionDecision::Refuted(reason) => {
+            return Err(InstalledSemanticError::Refuted(reason));
+        },
+        SemanticProjectionDecision::Undetermined { reason, .. } => {
+            return Err(InstalledSemanticError::Undetermined(reason));
+        },
+    };
+    if proven.work != aggregate {
+        return Err(InstalledSemanticError::InvalidEvidence(
+            "funding projection work differs from complete roster",
+        ));
+    }
+    let terms = prepare_complete_funding_candidates(
+        proven.values.len(),
+        budget,
+        |candidate_index, budget| {
+            let checked = funding_projection::project_checked_host_value_v2(
+                installed,
+                &host,
+                &proven,
+                candidate_index,
+                &expected_input,
+                SemanticInputLimits {
+                    work: limits.work,
+                    nodes: limits.output_nodes,
+                    bytes: limits.output_bytes,
+                },
+                budget,
+            )?;
+            let typed = reconstruct_host_proc_v2_with_meter(&checked.value, |work, bytes| {
+                budget.charge(work, bytes)
+            })
+            .map_err(|error| match error {
+                RholangHostReconstructErrorV2::Meter(error) => {
+                    InstalledSemanticError::Resource(error)
+                },
+                RholangHostReconstructErrorV2::Allocation => {
+                    InstalledSemanticError::Resource(DynamicReflectionError::AllocationFailed)
+                },
+                _ => InstalledSemanticError::InvalidEvidence("typed funding host route refused"),
+            })?;
+            let par = crate::rholang_ast::lower_rholang_host_proc_with_budget(&typed, budget)
+                .map_err(|error| match error {
+                    crate::rholang_ast::RholangAstLowerError::Preparation(resource) => {
+                        InstalledSemanticError::Resource(resource)
+                    },
+                    _ => InstalledSemanticError::InvalidEvidence(
+                        "canonical funding host lowering refused",
+                    ),
+                })?;
+            charge_projection_receipt_transport(checked.receipt, budget)?;
+            Ok(par)
+        },
+    )?;
+    let (_graph, values) = proven.into_parts();
+    if terms.len() != values.len() {
+        return Err(InstalledSemanticError::InvalidEvidence(
+            "funding result/receipt count mismatch",
+        ));
+    }
+    let bytes = values
+        .len()
+        .checked_mul(std::mem::size_of::<PreparedHostDemandCandidateV2>())
+        .ok_or(DynamicReflectionError::PayloadByteLimit)?;
+    budget.charge(values.len(), bytes)?;
+    let mut candidates = Vec::new();
+    candidates
+        .try_reserve_exact(values.len())
+        .map_err(|_| DynamicReflectionError::AllocationFailed)?;
+    for (par, value) in terms.into_iter().zip(values) {
+        candidates.push(PreparedHostDemandCandidateV2 { par, projection_receipt: value.receipt });
+    }
+    // This is still only a prepared demand. Recheck both revocable owners at
+    // the operation boundary; a later supply admission must check them again.
+    budget.charge(2, 0)?;
+    let live_language = table
+        .authorize_all(handle, &[LanguageRight::Reduce, LanguageRight::Bridge])
+        .map_err(InstalledSemanticError::Access)?;
+    if !Arc::ptr_eq(&live_language, installed) {
+        return Err(InstalledSemanticError::InvalidEvidence(
+            "funding language owner changed during projection",
+        ));
+    }
+    table
+        .authorize_compound_host_profile_v2(host_handle, &[LanguageRight::Bridge])
+        .map_err(|_| InstalledSemanticError::InvalidEvidence("funding host handle was revoked"))?;
+    budget.charge(0, 0)?;
+    Ok(PreparedHostDemandRosterV2 {
+        grade_receipt: &occurrence.resource,
+        candidates,
+    })
 }
 
 /// Compose each complete ordinary action result with one selected, installed
@@ -1078,12 +1405,24 @@ fn validate_fresh_receipt<C: FnMut() -> bool>(
     budget.charge(96, 0)?;
     let receipt = &transition.receipt;
     let commitment = installed.commitment();
-    let image = installed
-        .semantic_image()
-        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+    let costed = installed.language_core().theory.cost.is_some();
+    let image = if costed {
+        installed.base_semantic_image()
+    } else {
+        installed.semantic_image()
+    }
+    .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+    let expected_image_fingerprint = if costed {
+        installed
+            .projected_image()
+            .map(|projected| projected.base_image_fingerprint)
+            .or(commitment.semantic_image_fingerprint)
+    } else {
+        commitment.semantic_image_fingerprint
+    };
     if receipt.language_fingerprint != commitment.language_fingerprint
         || receipt.theory_fingerprint != commitment.theory_fingerprint
-        || Some(receipt.image_fingerprint) != commitment.semantic_image_fingerprint
+        || Some(receipt.image_fingerprint) != expected_image_fingerprint
         || receipt.action != action.id
         || receipt.work != aggregate
         || transition.output_sort != action.codomain
@@ -1116,10 +1455,22 @@ fn validate_fresh_receipt<C: FnMut() -> bool>(
     }
     match (image.resource_profile, &receipt.resource) {
         (TheoryResourceProfileV1::Uncosted, SemanticResourceReceipt::NoSemanticGrade) => {},
+        (
+            TheoryResourceProfileV1::Costed { grade_sort },
+            SemanticResourceReceipt::Checked {
+                grade_sort: actual_sort,
+                cost_image_fingerprint,
+                ..
+            }
+            | SemanticResourceReceipt::CheckedTraceV2 {
+                grade_sort: actual_sort,
+                cost_image_fingerprint,
+                ..
+            },
+        ) if *actual_sort == grade_sort
+            && commitment.cost_image_fingerprint == Some(*cost_image_fingerprint) => {},
         (TheoryResourceProfileV1::Costed { .. }, _) => {
-            return Err(InstalledSemanticError::Undetermined(
-                SemanticMatchUndetermined::ResourceGradeUnavailable,
-            ));
+            return Err(InstalledSemanticError::InvalidEvidence("checked cost action grade"));
         },
         _ => return Err(InstalledSemanticError::InvalidEvidence("receipt resource profile")),
     }
@@ -1127,6 +1478,53 @@ fn validate_fresh_receipt<C: FnMut() -> bool>(
         && !receipt.normalization_hops.is_empty()
     {
         return Err(InstalledSemanticError::InvalidEvidence("unexpected normalization hops"));
+    }
+    if let SemanticResourceReceipt::CheckedTraceV2 { hops, .. } = &receipt.resource {
+        if hops.len() != receipt.normalization_hops.len() {
+            return Err(InstalledSemanticError::InvalidEvidence(
+                "graded normalization trace length",
+            ));
+        }
+        for (graded, plain) in hops.iter().zip(&receipt.normalization_hops) {
+            let endpoint_work = graded
+                .before
+                .len()
+                .max(plain.before.len())
+                .checked_add(graded.after.len().max(plain.after.len()))
+                .and_then(|work| work.checked_add(1))
+                .ok_or(DynamicReflectionError::WorkLimit)?;
+            budget.charge(endpoint_work, 0)?;
+            if graded.before != plain.before
+                || graded.after != plain.after
+                || graded.charged_work != plain.charged_work
+                || graded.exhaustive_proofs.len() != plain.exhaustive_proofs.len()
+                || graded.selected_proof >= graded.exhaustive_proofs.len()
+            {
+                return Err(InstalledSemanticError::InvalidEvidence("graded normalization hop"));
+            }
+            for (proof, plain_proof) in graded
+                .exhaustive_proofs
+                .iter()
+                .zip(&plain.exhaustive_proofs)
+            {
+                let proof_work = proof
+                    .proof
+                    .before
+                    .len()
+                    .max(plain_proof.before.len())
+                    .checked_add(proof.proof.after.len().max(plain_proof.after.len()))
+                    .and_then(|work| work.checked_add(1))
+                    .ok_or(DynamicReflectionError::WorkLimit)?;
+                budget.charge(proof_work, 0)?;
+                charge_receipt_premises(&proof.proof.premises, budget)?;
+                charge_receipt_premises(&plain_proof.premises, budget)?;
+                if proof.proof != *plain_proof {
+                    return Err(InstalledSemanticError::InvalidEvidence(
+                        "graded normalization roster",
+                    ));
+                }
+            }
+        }
     }
     let mut previous: Option<&[u8]> = None;
     for hop in &receipt.normalization_hops {
@@ -1146,6 +1544,17 @@ fn validate_fresh_receipt<C: FnMut() -> bool>(
         }
     }
     Ok(())
+}
+
+fn require_cost_image_admission_profile(
+    commitment: &InstallCommitment,
+    limits: TheoryImageAdmissionLimits,
+) -> Result<(), InstalledSemanticError> {
+    if commitment.semantic_limits_fingerprint == Some(limits.fingerprint()) {
+        Ok(())
+    } else {
+        Err(InstalledSemanticError::InvalidEvidence("cost image admission profile"))
+    }
 }
 
 fn validate_fresh_relation_receipt<C: FnMut() -> bool>(
@@ -1314,6 +1723,9 @@ pub(crate) fn select_semantic_operation<'a, C: FnMut() -> bool>(
 pub(crate) struct InstalledSemanticBundle<'a> {
     installed: Arc<InstalledLanguage>,
     matcher: SemanticTransitionMatcher,
+    /// Costed rewrite rosters use the original source-exact matcher when a
+    /// projected image also exists. Projection queries keep the appended one.
+    base_rewrite_roster: bool,
     handle: &'a InstalledLanguageHandle,
 }
 
@@ -1330,10 +1742,31 @@ impl<'a> InstalledSemanticBundle<'a> {
         Self::prepare_authorized(installed, handle, budget)
     }
 
+    pub(crate) fn prepare_rewrite_roster<C: FnMut() -> bool>(
+        table: &InstalledLanguageTable,
+        handle: &'a InstalledLanguageHandle,
+        required: &[LanguageRight],
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Self, InstalledSemanticError> {
+        let installed = table
+            .authorize_all(handle, required)
+            .map_err(InstalledSemanticError::Access)?;
+        Self::prepare_authorized_with_route(installed, handle, budget, true)
+    }
+
     fn prepare_authorized<C: FnMut() -> bool>(
         installed: Arc<InstalledLanguage>,
         handle: &'a InstalledLanguageHandle,
         budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Self, InstalledSemanticError> {
+        Self::prepare_authorized_with_route(installed, handle, budget, false)
+    }
+
+    fn prepare_authorized_with_route<C: FnMut() -> bool>(
+        installed: Arc<InstalledLanguage>,
+        handle: &'a InstalledLanguageHandle,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+        rewrite_roster: bool,
     ) -> Result<Self, InstalledSemanticError> {
         let image = installed
             .semantic_image()
@@ -1358,20 +1791,46 @@ impl<'a> InstalledSemanticBundle<'a> {
             .map_err(InstalledSemanticError::PredicateRole)?;
         // Restoring a projected matcher retains the appended host signature
         // and projection rules, so its complete image must be charged here.
-        let setup_image = installed
-            .projected_image()
-            .map_or(image, |projected| &projected.execution);
+        let base_rewrite_roster = rewrite_roster
+            && installed.projected_image().is_some()
+            && matches!(image.resource_profile, TheoryResourceProfileV1::Costed { .. });
+        let setup_image = if base_rewrite_roster {
+            installed
+                .base_semantic_image()
+                .ok_or(InstalledSemanticError::MissingSemanticImage)?
+        } else {
+            installed
+                .projected_image()
+                .map_or(image, |projected| &projected.execution)
+        };
         charge_matcher_setup(setup_image, budget)?;
-        let matcher = match installed.projected_image() {
-            Some(projected) => SemanticTransitionMatcher::restore_projected(projected)
-                .map_err(InstalledSemanticError::ProjectedRestore)?,
-            None => SemanticTransitionMatcher::restore(image)
+        let matcher = match installed.projected_image().filter(|_| !base_rewrite_roster) {
+            Some(projected) => {
+                let witness = installed.verified_projected_image().ok_or(
+                    InstalledSemanticError::InvalidEvidence(
+                        "projected image lacks its sealed installation fingerprint",
+                    ),
+                )?;
+                if !witness.same_image(projected) {
+                    return Err(InstalledSemanticError::InvalidEvidence(
+                        "projected image is not the installed Arc",
+                    ));
+                }
+                SemanticTransitionMatcher::restore_projected_verified(witness)
+                    .map_err(InstalledSemanticError::ProjectedRestore)?
+            },
+            None => SemanticTransitionMatcher::restore(setup_image)
                 .map_err(InstalledSemanticError::Restore)?,
         };
         // The existing restorer has no cancellation callback. Never expose its
         // completed preparation if cancellation arrived during restoration.
         budget.charge(0, 0)?;
-        Ok(Self { installed, matcher, handle })
+        Ok(Self {
+            installed,
+            matcher,
+            base_rewrite_roster,
+            handle,
+        })
     }
 
     pub(crate) fn installed(&self) -> &Arc<InstalledLanguage> {
@@ -1385,23 +1844,37 @@ impl<'a> InstalledSemanticBundle<'a> {
         &self,
         action: TheoryActionId,
         input: SemanticTransitionInput,
+        cost_image: Option<VerifiedCostImageV1<'_>>,
         limits: SemanticTransitionLimits,
         is_cancelled: C,
     ) -> Result<(SemanticTransitionDecision, u64), InstalledSemanticError> {
-        let image = self
-            .installed
-            .semantic_image()
-            .ok_or(InstalledSemanticError::MissingSemanticImage)?;
-        Ok(self.matcher.execute_action_accounted(
-            SemanticActionExecutionRequest {
-                image,
-                action,
-                granted_rights: self.handle.rights(),
-                input,
-                limits,
+        let image = if self.base_rewrite_roster {
+            self.installed.base_semantic_image()
+        } else {
+            self.installed.semantic_image()
+        }
+        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+        let request = SemanticActionExecutionRequest {
+            image,
+            action,
+            granted_rights: self.handle.rights(),
+            input,
+            limits,
+        };
+        match (image.resource_profile, cost_image) {
+            (TheoryResourceProfileV1::Uncosted, None) => {
+                Ok(self.matcher.execute_action_accounted(request, is_cancelled))
             },
-            is_cancelled,
-        ))
+            (TheoryResourceProfileV1::Costed { .. }, Some(cost))
+                if std::ptr::eq(cost.language(), self.installed.language_core())
+                    && std::ptr::eq(cost.semantic_image(), image) =>
+            {
+                Ok(self
+                    .matcher
+                    .execute_costed_action_accounted(request, cost, is_cancelled))
+            },
+            _ => Err(InstalledSemanticError::InvalidEvidence("cost action image owner")),
+        }
     }
 
     pub(crate) fn execute_relation_accounted<C: FnMut() -> bool>(
@@ -1411,10 +1884,12 @@ impl<'a> InstalledSemanticBundle<'a> {
         limits: SemanticTransitionLimits,
         is_cancelled: C,
     ) -> Result<(SemanticTransitionDecision, u64), InstalledSemanticError> {
-        let image = self
-            .installed
-            .semantic_image()
-            .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+        let image = if self.base_rewrite_roster {
+            self.installed.base_semantic_image()
+        } else {
+            self.installed.semantic_image()
+        }
+        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
         Ok(self.matcher.execute_rewrite_relation_accounted(
             SemanticRelationExecutionRequest {
                 image,
@@ -1427,6 +1902,45 @@ impl<'a> InstalledSemanticBundle<'a> {
         ))
     }
 
+    /// Borrow the sealed install-time Cost(G) validation witness under the
+    /// exact admitted profile. This performs constant-time commitment checks,
+    /// not another full semantic-image validation on each roster call. The
+    /// result is grade evidence, never a host funding purse.
+    pub(crate) fn prepare_costed_roster_image<C: FnMut() -> bool>(
+        &self,
+        image_limits: TheoryImageAdmissionLimits,
+        budget: &mut ReflectedCodecBudget<'_, C>,
+    ) -> Result<Option<VerifiedCostImageV1<'_>>, InstalledSemanticError> {
+        let image = if self.base_rewrite_roster {
+            self.installed.base_semantic_image()
+        } else {
+            self.installed.semantic_image()
+        }
+        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+        if matches!(image.resource_profile, TheoryResourceProfileV1::Uncosted) {
+            return Ok(None);
+        }
+        require_cost_image_admission_profile(self.installed.commitment(), image_limits)?;
+        // The matcher was already prepared with charged structural setup.
+        // Conservatively reserve the dense grade table's work and bytes for
+        // this call before the kernel can consult its checked roots.
+        let cost_image = self
+            .installed
+            .cost_image()
+            .ok_or(InstalledSemanticError::InvalidEvidence("missing cost image"))?;
+        let row_bytes = cost_image
+            .rules
+            .len()
+            .checked_mul(8)
+            .ok_or(InstalledSemanticError::InvalidEvidence("cost image row length"))?;
+        budget.charge(cost_image.rules.len(), row_bytes)?;
+        self.installed
+            .verified_cost_image(image_limits)
+            .map_err(|_| InstalledSemanticError::InvalidEvidence("installed cost image"))?
+            .ok_or(InstalledSemanticError::InvalidEvidence("missing cost image"))
+            .map(Some)
+    }
+
     /// Enumerate complete, ungrouped one-step rewrite proofs for installed
     /// lookahead. The matcher is the same restored image used by the normal
     /// relation service; this boundary supplies neither a second evaluator nor
@@ -1436,23 +1950,39 @@ impl<'a> InstalledSemanticBundle<'a> {
         &self,
         sort: TheorySortId,
         input: SemanticTransitionInput,
+        cost_image: Option<VerifiedCostImageV1<'_>>,
         limits: SemanticTransitionLimits,
         is_cancelled: C,
     ) -> Result<(SemanticTransitionDecision, u64), InstalledSemanticError> {
-        let image = self
-            .installed
-            .semantic_image()
-            .ok_or(InstalledSemanticError::MissingSemanticImage)?;
-        Ok(self.matcher.execute_rewrite_step_roster_accounted(
-            SemanticRelationExecutionRequest {
-                image,
-                relation_sort: sort,
-                granted_rights: self.handle.rights(),
-                input,
-                limits,
+        let image = if self.base_rewrite_roster {
+            self.installed.base_semantic_image()
+        } else {
+            self.installed.semantic_image()
+        }
+        .ok_or(InstalledSemanticError::MissingSemanticImage)?;
+        let request = SemanticRelationExecutionRequest {
+            image,
+            relation_sort: sort,
+            granted_rights: self.handle.rights(),
+            input,
+            limits,
+        };
+        match (image.resource_profile, cost_image) {
+            (TheoryResourceProfileV1::Uncosted, None) => Ok(self
+                .matcher
+                .execute_rewrite_step_roster_accounted(request, is_cancelled)),
+            (TheoryResourceProfileV1::Costed { .. }, Some(cost))
+                if std::ptr::eq(cost.language(), self.installed.language_core())
+                    && std::ptr::eq(cost.semantic_image(), image) =>
+            {
+                Ok(self.matcher.execute_costed_rewrite_step_roster_accounted(
+                    request,
+                    cost,
+                    is_cancelled,
+                ))
             },
-            is_cancelled,
-        ))
+            _ => Err(InstalledSemanticError::InvalidEvidence("cost roster image owner")),
+        }
     }
 }
 
@@ -1533,6 +2063,25 @@ fn charge_receipt_transport<C: FnMut() -> bool>(
             budget.charge(1, 37)?; // tag, sort, cost-image commitment
             charge_receipt_payload(grade, budget)?;
         },
+        SemanticResourceReceipt::CheckedTraceV2 { grade, entry_grade, hops, .. } => {
+            budget.charge(1, 37)?;
+            charge_receipt_payload(grade, budget)?;
+            charge_receipt_payload(entry_grade, budget)?;
+            budget.charge(1, 8)?;
+            for hop in hops {
+                budget.charge(1, 16)?;
+                charge_receipt_payload(&hop.before, budget)?;
+                charge_receipt_payload(&hop.after, budget)?;
+                budget.charge(1, 8)?;
+                for proof in &hop.exhaustive_proofs {
+                    budget.charge(1, 4)?;
+                    charge_receipt_payload(&proof.proof.before, budget)?;
+                    charge_receipt_payload(&proof.proof.after, budget)?;
+                    charge_receipt_premises(&proof.proof.premises, budget)?;
+                    charge_receipt_payload(&proof.grade, budget)?;
+                }
+            }
+        },
     }
     charge_receipt_premises(&receipt.premises, budget)?;
     charge_normalization_hops(&receipt.normalization_hops, budget)
@@ -1563,6 +2112,25 @@ fn charge_projection_receipt_transport<C: FnMut() -> bool>(
         SemanticResourceReceipt::Checked { grade, .. } => {
             budget.charge(1, 37)?;
             charge_receipt_payload(grade, budget)?;
+        },
+        SemanticResourceReceipt::CheckedTraceV2 { grade, entry_grade, hops, .. } => {
+            budget.charge(1, 37)?;
+            charge_receipt_payload(grade, budget)?;
+            charge_receipt_payload(entry_grade, budget)?;
+            budget.charge(1, 8)?;
+            for hop in hops {
+                budget.charge(1, 16)?;
+                charge_receipt_payload(&hop.before, budget)?;
+                charge_receipt_payload(&hop.after, budget)?;
+                budget.charge(1, 8)?;
+                for proof in &hop.exhaustive_proofs {
+                    budget.charge(1, 4)?;
+                    charge_receipt_payload(&proof.proof.before, budget)?;
+                    charge_receipt_payload(&proof.proof.after, budget)?;
+                    charge_receipt_premises(&proof.proof.premises, budget)?;
+                    charge_receipt_payload(&proof.grade, budget)?;
+                }
+            }
         },
     }
     charge_receipt_premises(&receipt.premises, budget)
@@ -1674,6 +2242,147 @@ pub(crate) mod tests {
         TheoryPatternEntryV1, TheoryPatternInvocationV1, TheoryPatternStateId,
         TheoryResourceProfileV1, TheoryRuleProgramId, TheorySortId,
     };
+
+    mod funding_roster {
+        use super::*;
+        use proptest::prelude::*;
+
+        #[test]
+        fn empty_and_overflowing_rosters_refuse_before_preparation() {
+            let mut work = 0;
+            let mut cancel = || panic!("invalid roster must fail before reservation");
+            let mut budget =
+                ReflectedCodecBudget::new(&mut work, u64::MAX, usize::MAX, &mut cancel);
+            assert_eq!(
+                prepare_complete_funding_candidates::<u16, _>(0, &mut budget, |_, _| {
+                    panic!("empty roster has no candidate")
+                }),
+                Err(InstalledSemanticError::InvalidEvidence(
+                    "funding projection returned an empty complete roster"
+                ))
+            );
+            assert_eq!(
+                prepare_complete_funding_candidates::<u16, _>(usize::MAX, &mut budget, |_, _| {
+                    panic!("overflowing reservation must not prepare candidates")
+                }),
+                Err(InstalledSemanticError::Resource(DynamicReflectionError::PayloadByteLimit))
+            );
+            assert_eq!(budget.work_used(), 0);
+        }
+
+        #[test]
+        fn equal_outputs_retain_distinct_source_occurrences() {
+            let mut work = 0;
+            let mut cancel = || false;
+            let mut budget = ReflectedCodecBudget::new(&mut work, 10, 1024, &mut cancel);
+            let prepared = prepare_complete_funding_candidates(2, &mut budget, |index, budget| {
+                budget.charge(1, 0)?;
+                Ok((7u8, index))
+            })
+            .unwrap();
+            assert_eq!(prepared, vec![(7, 0), (7, 1)]);
+            assert_eq!(budget.work_used(), 4);
+        }
+
+        proptest! {
+            #[test]
+            fn complete_roster_preserves_order_receipts_and_cumulative_budget(
+                entries in prop::collection::vec((0u8..4, 0usize..32, 0usize..32), 1..40),
+                prefix in 0u64..128,
+                spare_work in 0u64..128,
+                spare_bytes in 0usize..128,
+            ) {
+                let count = entries.len();
+                let used = count as u64 + entries.iter().map(|e| e.1 as u64).sum::<u64>();
+                let bytes = count * std::mem::size_of::<(u8, usize)>()
+                    + entries.iter().map(|e| e.2).sum::<usize>();
+                let mut work = prefix;
+                let mut cancel = || false;
+                let mut budget = ReflectedCodecBudget::new(
+                    &mut work, prefix + used + spare_work, bytes + spare_bytes, &mut cancel,
+                );
+                let prepared = prepare_complete_funding_candidates(count, &mut budget, |index, budget| {
+                    let (value, units, payload) = entries[index];
+                    budget.charge(units, payload)?;
+                    Ok((value, index))
+                }).unwrap();
+                let expected: Vec<_> = entries.iter().enumerate().map(|(i, e)| (e.0, i)).collect();
+                prop_assert_eq!(prepared, expected);
+                prop_assert_eq!(budget.work_used(), prefix + used);
+                prop_assert_eq!(budget.remaining_bytes(), spare_bytes);
+            }
+
+            #[test]
+            fn insufficient_shared_budget_never_returns_a_prefix(
+                costs in prop::collection::vec((1usize..32, 1usize..32), 2..40),
+                exhaust_work in any::<bool>(),
+            ) {
+                let count = costs.len();
+                let total_work = count as u64 + costs.iter().map(|e| e.0 as u64).sum::<u64>();
+                let total_bytes = count * std::mem::size_of::<usize>()
+                    + costs.iter().map(|e| e.1).sum::<usize>();
+                let limit = total_work - u64::from(exhaust_work);
+                let bytes = total_bytes - usize::from(!exhaust_work);
+                let mut work = 0;
+                let mut cancel = || false;
+                let mut budget = ReflectedCodecBudget::new(&mut work, limit, bytes, &mut cancel);
+                let mut visited = Vec::new();
+                let result = prepare_complete_funding_candidates(count, &mut budget, |index, budget| {
+                    visited.push(index);
+                    budget.charge(costs[index].0, costs[index].1)?;
+                    Ok(index)
+                });
+                let expected = if exhaust_work {
+                    DynamicReflectionError::WorkLimit
+                } else {
+                    DynamicReflectionError::PayloadByteLimit
+                };
+                prop_assert_eq!(result, Err(InstalledSemanticError::Resource(expected)));
+                prop_assert_eq!(visited, (0..count).collect::<Vec<_>>());
+                prop_assert_eq!(budget.work_used(), total_work - costs[count - 1].0 as u64);
+                prop_assert_eq!(budget.remaining_bytes(), costs[count - 1].1 - usize::from(!exhaust_work));
+            }
+
+            #[test]
+            fn any_refused_candidate_refuses_the_whole_roster(
+                count in 1usize..40,
+                failed_seed in any::<usize>(),
+            ) {
+                let failed = failed_seed % count;
+                let mut work = 0;
+                let mut cancel = || false;
+                let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 4096, &mut cancel);
+                let mut visited = Vec::new();
+                let result = prepare_complete_funding_candidates(count, &mut budget, |index, budget| {
+                    visited.push(index);
+                    budget.charge(1, 0)?;
+                    if index == failed {
+                        Err(InstalledSemanticError::InvalidEvidence("candidate refused"))
+                    } else {
+                        Ok(index)
+                    }
+                });
+                prop_assert_eq!(result, Err(InstalledSemanticError::InvalidEvidence("candidate refused")));
+                prop_assert_eq!(visited, (0..=failed).collect::<Vec<_>>());
+                prop_assert_eq!(budget.work_used(), (count + failed + 1) as u64);
+            }
+
+            #[test]
+            fn cancellation_at_any_stage_prevents_publication(count in 1usize..40) {
+                for stop in 1..=count + 2 {
+                    let mut work = 0;
+                    let mut calls = 0;
+                    let mut cancel = || { calls += 1; calls == stop };
+                    let mut budget = ReflectedCodecBudget::new(&mut work, 1000, 4096, &mut cancel);
+                    let result = prepare_complete_funding_candidates(count, &mut budget, |index, budget| {
+                        budget.charge(1, 0)?;
+                        Ok(index)
+                    });
+                    prop_assert_eq!(result, Err(InstalledSemanticError::Resource(DynamicReflectionError::Cancelled)));
+                }
+            }
+        }
+    }
 
     #[test]
     fn semantic_service_preparation_preserves_wire_prefixes_and_delays_publication() {
@@ -2043,6 +2752,7 @@ pub(crate) mod tests {
                 let data = ListParWithRandom {
                     pars: vec![new_gint_par(42, Vec::new(), false)],
                     random_state: vec![7; 32],
+                    ..ListParWithRandom::default()
                 };
                 if matched {
                     space
@@ -2056,6 +2766,7 @@ pub(crate) mod tests {
                             TaggedContinuation {
                                 tagged_cont: Some(TaggedCont::ScalaBodyRef(777)),
                                 guard: None,
+                                cost_authority: None,
                             },
                             false,
                             BTreeSet::new(),
@@ -2076,11 +2787,16 @@ pub(crate) mod tests {
                         result.expect_err("stale authority"),
                         RSpaceError::ProduceCommitDenied
                     );
-                    assert!(space.get_data(&channel).await.is_empty());
+                    assert!(space
+                        .get_data(&channel)
+                        .await
+                        .expect("read data")
+                        .is_empty());
                     assert_eq!(
                         space
                             .get_waiting_continuations(vec![channel.clone()])
                             .await
+                            .expect("read waiting continuations")
                             .len(),
                         usize::from(matched),
                     );
@@ -2091,7 +2807,7 @@ pub(crate) mod tests {
                         assert_eq!(results.len(), 1);
                         assert_eq!(results[0].matched_datum, data);
                     } else {
-                        let stored = space.get_data(&channel).await;
+                        let stored = space.get_data(&channel).await.expect("read data");
                         assert_eq!(stored.len(), 1);
                         assert_eq!(*stored[0].a, data);
                     }
@@ -2164,6 +2880,7 @@ pub(crate) mod tests {
             .execute_accounted(
                 selected.action.id,
                 input,
+                None,
                 installed.language_core().theory.limits.into(),
                 || false,
             )
@@ -2174,6 +2891,39 @@ pub(crate) mod tests {
         let (_, mut transitions) = proven.into_parts();
         assert_eq!(transitions.len(), 1);
         (installed, transitions.pop().expect("one transition"))
+    }
+
+    #[test]
+    fn cost_image_admission_uses_exact_custom_install_profile() {
+        use crate::language_install::{LanguageInstallPolicy, LANGUAGE_CAPABILITY_ABI_CURRENT};
+        use mettail_grammar_core::{LanguageRights, RuntimePolicy};
+
+        let default_limits = TheoryImageAdmissionLimits::default();
+        let mut custom_limits = default_limits;
+        custom_limits.max_rules += 1;
+        let policy = LanguageInstallPolicy::with_language_and_semantic_limits(
+            LanguageRights::all(),
+            RuntimePolicy::default(),
+            custom_limits,
+            1_024,
+            LANGUAGE_CAPABILITY_ABI_CURRENT,
+        )
+        .with_host_profile_grants(LanguageRights::from_rights([
+            LanguageRight::Bridge,
+            LanguageRight::ReflectAst,
+        ]));
+        let (_, _, installed) =
+            crate::language_install::tests::installed_flt_adapter_fixture_with_policy(policy);
+        let mut commitment = installed.commitment().clone();
+        assert_eq!(commitment.semantic_limits_fingerprint, Some(custom_limits.fingerprint()));
+
+        assert_eq!(require_cost_image_admission_profile(&commitment, custom_limits), Ok(()));
+        assert!(matches!(
+            require_cost_image_admission_profile(&commitment, default_limits),
+            Err(InstalledSemanticError::InvalidEvidence("cost image admission profile"))
+        ));
+        commitment.semantic_limits_fingerprint = None;
+        assert!(require_cost_image_admission_profile(&commitment, custom_limits).is_err());
     }
 
     #[test]

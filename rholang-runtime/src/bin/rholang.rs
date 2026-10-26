@@ -68,7 +68,7 @@ use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
 use mettail_rholang_runtime::{
     lower_rholang_proc_with_resolver, par_as_runtime_observation_value,
-    render_observation_text_with, run_normalized_par_with_lookahead_engine,
+    render_observation_text_with, run_normalized_par_with_standalone_lookahead_engine,
     DriveObservationChannels, ObservationTermNotation, PlannedRhoBackend, RholangAstLowerError,
 };
 use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
@@ -745,7 +745,7 @@ async fn run_process_to_rest(program: &Par) -> Result<(), InterpError> {
     channels.push(SPEC_DELIVERY_CHANNEL);
     channels.extend_from_slice(SPEC_REQUEST_CHANNELS);
 
-    let rest = run_normalized_par_with_lookahead_engine(program, &engine, &channels)
+    let rest = run_normalized_par_with_standalone_lookahead_engine(program, &engine, &channels)
         .await
         .map_err(InterpError::Reduce)?;
     let on = |channel: &str| rest.get(channel).map(Vec::as_slice).unwrap_or_default();

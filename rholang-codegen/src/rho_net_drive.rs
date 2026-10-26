@@ -1474,6 +1474,7 @@ fn ac_carrier_receiver_par(
             source: Some(carrier_channel),
             remainder: None,
             free_count: free_count as i32,
+            cost_signature: None,
         }],
         body: Some(body.par),
         persistent: true,

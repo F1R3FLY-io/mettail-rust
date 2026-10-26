@@ -37,6 +37,10 @@ new install(`rho:mettail:install`) in {
                 },
                 *installed
               ) |
+              // Changed for the install reply of 5e65e2be, which also carries
+              // "exports_by_name". A map pattern matches only a map with the same
+              // keys, so the old pattern with only "module", "exports" and
+              // "programs" never matched the reply.
               for(@{
                 "ok": {
                   "module": "InlineDemo",
@@ -45,6 +49,7 @@ new install(`rho:mettail:install`) in {
                     {"name": "Right", "handle": right},
                     {"name": "Ambiguous", "handle": ambiguous}
                   ],
+                  "exports_by_name": exportsByName,
                   "programs": []
                 }
               } <- installed) {

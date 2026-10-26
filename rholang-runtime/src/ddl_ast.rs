@@ -12,9 +12,9 @@ use mettail_languages::rholang::{
     DdlOptionSection, DdlParam, DdlPath, DdlPremise, DdlPremiseInput, DdlPremises,
     DdlProjectionBinding, DdlProjectionDirection, DdlProjectionPremise, DdlProjectionPremises,
     DdlProjectionRowHead, DdlProjectionRule, DdlRegClassPiece, DdlRegPiece, DdlReplacement,
-    DdlRewrite, DdlRewriteBinding, DdlRuleAst, DdlRuleAstItems, DdlRuleAstRemainderName,
-    DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem, DdlTermAttr, DdlTermRule, DdlTheoryExpr,
-    Fixed, Float, Int, Proc,
+    DdlRewrite, DdlRewriteBinding, DdlRewriteContextBinding, DdlRewriteContextType, DdlRuleAst,
+    DdlRuleAstItems, DdlRuleAstRemainderName, DdlRuleAstRemainderTail, DdlSort, DdlSyntaxItem,
+    DdlTermAttr, DdlTermRule, DdlTheoryExpr, Fixed, Float, Int, Proc,
 };
 use models::rhoapi::Par;
 use models::rust::utils::{
@@ -565,7 +565,7 @@ impl<'a> DdlLowerPlan<'a> {
                             tag: "rewrite-typed",
                             children: vec![
                                 Task::Text(name),
-                                sequence(context.iter().map(Task::RewriteBinding).collect()),
+                                sequence(context.iter().map(Task::RewriteContextBinding).collect()),
                                 sequence(Vec::new()),
                                 Task::RuleAst(left.as_ref()),
                                 Task::RuleAst(right.as_ref()),
@@ -583,7 +583,7 @@ impl<'a> DdlLowerPlan<'a> {
                             tag: "rewrite-typed",
                             children: vec![
                                 Task::Text(name),
-                                sequence(context.iter().map(Task::RewriteBinding).collect()),
+                                sequence(context.iter().map(Task::RewriteContextBinding).collect()),
                                 sequence(premise_tasks(premises.as_ref())),
                                 Task::RuleAst(left.as_ref()),
                                 Task::RuleAst(right.as_ref()),
@@ -723,6 +723,72 @@ impl<'a> DdlLowerPlan<'a> {
                         tag: "rewrite-binding",
                         children: vec![Task::Text(name), Task::Sort(sort.as_ref())],
                     }),
+                },
+                Task::RewriteContextBinding(
+                    DdlRewriteContextBinding::DdlRewriteContextBinding(name, sort),
+                ) => {
+                    tasks.push(Task::Node {
+                        tag: "rewrite-binding",
+                        children: vec![
+                            Task::Text(name),
+                            Task::RewriteContextType(sort.as_ref(), true),
+                        ],
+                    });
+                },
+                Task::RewriteContextType(sort, legacy) => {
+                    let task = match sort {
+                        DdlRewriteContextType::DdlRewriteContextCategory(name) => {
+                            if legacy {
+                                Task::Node {
+                                    tag: "sort-category",
+                                    children: vec![Task::Text(name)],
+                                }
+                            } else {
+                                Task::Text(name)
+                            }
+                        },
+                        DdlRewriteContextType::DdlRewriteContextArrow(domain, codomain) => {
+                            Task::Node {
+                                tag: "arrow",
+                                children: vec![
+                                    Task::RewriteContextType(domain, false),
+                                    Task::RewriteContextType(codomain, false),
+                                ],
+                            }
+                        },
+                        DdlRewriteContextType::DdlRewriteContextMulti(element) => {
+                            context_unary_task("multi", element, None)
+                        },
+                        DdlRewriteContextType::DdlRewriteContextHashBag(_, element) => {
+                            context_unary_task("bag", element, legacy.then_some("sort-bag"))
+                        },
+                        DdlRewriteContextType::DdlRewriteContextSet(_, element) => {
+                            context_unary_task("set", element, legacy.then_some("sort-set"))
+                        },
+                        DdlRewriteContextType::DdlRewriteContextList(_, element) => {
+                            context_unary_task("vec", element, legacy.then_some("sort-list"))
+                        },
+                        DdlRewriteContextType::DdlRewriteContextRewrite(_, element) => {
+                            context_unary_task("rewrite", element, None)
+                        },
+                        DdlRewriteContextType::DdlRewriteContextMap(_, key, value) => Task::Node {
+                            tag: "map",
+                            children: vec![
+                                Task::RewriteContextType(key, false),
+                                Task::RewriteContextType(value, false),
+                            ],
+                        },
+                        DdlRewriteContextType::DdlRewriteContextPathMap(_, key, value) => {
+                            Task::Node {
+                                tag: "pathmap",
+                                children: vec![
+                                    Task::RewriteContextType(key, false),
+                                    Task::RewriteContextType(value, false),
+                                ],
+                            }
+                        },
+                    };
+                    tasks.push(task);
                 },
                 Task::RuleAst(ast) => {
                     let node = rule_ast_task(ast)?;
@@ -1408,8 +1474,30 @@ enum Task<'a> {
     Premise(&'a DdlPremise),
     PremiseInput(&'a DdlPremiseInput),
     RewriteBinding(&'a DdlRewriteBinding),
+    RewriteContextBinding(&'a DdlRewriteContextBinding),
+    RewriteContextType(&'a DdlRewriteContextType, bool),
     RuleAst(&'a DdlRuleAst),
 }
+
+fn context_unary_task<'a>(
+    tag: &'static str,
+    element: &'a DdlRewriteContextType,
+    legacy_tag: Option<&'static str>,
+) -> Task<'a> {
+    if let Some(tag) = legacy_tag {
+        if let DdlRewriteContextType::DdlRewriteContextCategory(name) = element {
+            return Task::Node { tag, children: vec![Task::Text(name)] };
+        }
+    }
+    Task::Node {
+        tag,
+        children: vec![Task::RewriteContextType(element, false)],
+    }
+}
+
+#[cfg(test)]
+#[path = "ddl_ast/context_tests.rs"]
+mod context_tests;
 
 #[cfg(test)]
 #[path = "ddl_ast/admission_tests.rs"]

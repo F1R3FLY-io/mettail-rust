@@ -613,3 +613,32 @@ fn the_residue_guard_sees_every_query_form_in_every_row_shape() {
     );
     assert!(!pfor_user_still_has_query_rows(&[]), "an empty row list has no residue");
 }
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+
+    #[test]
+    fn query_expansion_preserves_argument_boundaries(
+        arguments in proptest::collection::vec((proptest::prelude::any::<i16>(), proptest::prelude::any::<bool>()), 0..12),
+    ) {
+        use proptest::prelude::*;
+        let rendered = arguments.iter().map(|(value, list)| {
+            if *list { format!("[{value}]") } else { value.to_string() }
+        }).collect::<Vec<_>>().join(", ");
+        let request = if rendered.is_empty() { "*reply".to_owned() } else { format!("*reply, {rendered}") };
+        for (pattern, body, patterns) in [("x", "@\"OUT\"!(*x)", 1), ("@x", "@\"OUT\"!(x)", 1), ("", "@\"OUT\"!(1)", 0)] {
+            let source = format!("for({pattern} <- @\"svc\"!?({rendered})) {{ {body} }}");
+            let expanded = format!("new reply in {{ @\"svc\"!({request}) | for({pattern} <- reply) {{ {body} }} }}");
+            let actual = lower_rholang_proc(&parse(&source)).expect("query lowers");
+            let expected = lower_rholang_proc(&parse(&expanded)).expect("explicit expansion lowers");
+            prop_assert_eq!(actual.encode_to_vec(), expected.encode_to_vec());
+            prop_assert_eq!(actual.news.len(), 1);
+            let scoped = actual.news[0].p.as_ref().expect("private request scope");
+            prop_assert_eq!(scoped.sends.len(), 1);
+            prop_assert_eq!(scoped.sends[0].data.len(), arguments.len() + 1);
+            prop_assert_eq!(scoped.receives.len(), 1);
+            prop_assert_eq!(scoped.receives[0].binds.len(), 1);
+            prop_assert_eq!(scoped.receives[0].binds[0].patterns.len(), patterns);
+        }
+    }
+}

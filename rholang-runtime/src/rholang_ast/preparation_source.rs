@@ -440,7 +440,8 @@ impl<'a, 'r> SourceBuilder<'a, 'r> {
         Ok(match bind {
             InputBind::InputBind(lhs, _)
             | InputBind::InputBindPersistent(lhs, _)
-            | InputBind::InputBindQuery(lhs, _, _) => {
+            | InputBind::InputBindQuery(lhs, _, _)
+            | InputBind::InputBindCostSigned(lhs, _, _) => {
                 let pattern = self.name_pattern(lhs)?;
                 self.reserve(1, 1)?;
                 Some(vec![pattern])
@@ -472,9 +473,35 @@ impl<'a, 'r> SourceBuilder<'a, 'r> {
             },
             InputBind::InputBindEmpty(_)
             | InputBind::InputBindEmptyPersistent(_)
-            | InputBind::InputBindEmptyQuery(_, _) => Some(Vec::new()),
+            | InputBind::InputBindEmptyQuery(_, _)
+            | InputBind::InputBindCostSignedEmpty(_, _) => Some(Vec::new()),
             _ => None,
         })
+    }
+
+    pub(super) fn query_returns(
+        &mut self,
+        binds: &[&InputBind],
+    ) -> Result<(Vec<Binder<String>>, Vec<(usize, Proc)>), RholangAstLowerError> {
+        let mut binders = self.worklist()?;
+        let mut returns = self.worklist()?;
+        let mut binds = binds.iter().enumerate();
+        loop {
+            self.reserve(2, 0)?;
+            let Some((index, bind)) = binds.next() else {
+                break;
+            };
+            if query_request(bind).is_none() {
+                continue;
+            }
+            self.reserve(5, 3)?;
+            let variable = FreeVar::<String>::fresh(None);
+            let binder = Binder(variable.clone());
+            let returned = Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(variable)))));
+            self.push(&mut binders, || binder)?;
+            self.push(&mut returns, || (index, returned))?;
+        }
+        Ok((binders, returns))
     }
 
     pub(super) fn bind_pattern_variable(

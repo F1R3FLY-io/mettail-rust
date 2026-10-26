@@ -928,21 +928,16 @@ async fn divergence_a2_target_int_division_by_zero_fails_closed() {
 /// that emits `EPlusPlus` **iff** `is_single_gstring_value` holds of the *already-lowered* operand
 /// `Par`s (`rholang_ast.rs:1107-1121`) — a purely static test.
 ///
-/// The `§17.11-B` inventory predicted that for a COMM-bound operand the FOLD would concatenate
-/// while the machine errored. **Measurement partially refutes that.** For
-/// `for (@s <- @("c")) { … "hello " + s … }`, `s` is a `Proc`-category variable, so the only
-/// available reading of `+` is the `Proc`-level one; the fold fires the rendezvous and then leaves
-/// the expression **unreduced**, resting as `@("OUT")!([@Nil!("hello ") + @Nil!("world")])`. So the
-/// real divergence is:
+/// The native collection lowerer exposes category-valued elements as e-class children.
+/// The fold can therefore concatenate the strings after communication supplies the bound operand.
+/// The measurement on 2026-10-22 confirms the following divergence:
 ///
 /// | | statically ground operands | COMM-bound operand |
 /// |---|---|---|
-/// | fold ① | `"hello world"` | **silently unreduced** (a resting term, no error, no value) |
+/// | fold ① | `"hello world"` | `"hello world"` |
 /// | reducer ② | `"hello world"` (via the shim ▸ `EPlusPlus`) | **`OperatorNotDefined`** — the whole reduction aborts |
 ///
-/// Both sides fail to answer, with opposite failure modes: a silent resting term versus a hard
-/// reduction error. That is still one operator with two meanings, and it is still decided by
-/// static shape rather than by the value.
+/// The fold concatenates the bound strings. The runtime reducer reports an error for the same operation.
 ///
 /// *Delete when C1 lands* (the fold body is gone, so `+`-on-strings means exactly one thing —
 /// whatever Rholang means by it, per USER decision D-4).
@@ -951,11 +946,11 @@ async fn divergence_b_witness_runtime_bound_string_add_diverges_by_static_shape(
     let source = r#"@("c")!("world") | for (@s <- @("c")) { @("OUT")!("hello " + s) }"#;
     let proc = parse(source);
 
-    // ① The fold fires the COMM and then rests with the `+` UNREDUCED — no error, no value.
+    // The structural list lowerer permits the bound addition to reduce after communication.
     let folded = fold_program(&proc).expect("the COMM+fold fixpoint settles");
     assert!(
-        folded.contains('+') && !folded.contains(r#""hello world""#),
-        "B: the fold rests with an unreduced `+` rather than answering, got {folded:?}"
+        folded.contains(r#""hello world""#),
+        "B: the fold must concatenate the bound strings, got {folded:?}"
     );
 
     // ② The machine raises a hard reduction error instead.
@@ -1691,7 +1686,10 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
         (
             "{1 : 10}.values()",
             "{1:10}.values()",
-            r#"reduce: inj: ReduceError("Unimplemented method: values")"#,
+            // Changed by the merge of feature/cost-accounted-rho: DR-128 reports an unknown
+            // method as `MethodNotDefined` on "any type" (node `reduce.rs`). The pin was:
+            // r#"reduce: inj: ReduceError("Unimplemented method: values")"#,
+            r#"reduce: inj: MethodNotDefined { method: "values", other_type: "any type" }"#,
         ),
         // ★★ `.last()` WAS PINNED HERE AS RESIDUE, AND HAS MOVED OUT DELIBERATELY (2026-07-28).
         //
@@ -1909,7 +1907,11 @@ async fn c1_length_on_a_map_or_set_is_rejected_by_the_reducer() {
 /// **The E3 residue: identifiers with NO key in `reduce.rs::method_table` fail closed and named.**
 ///
 /// The grammar accepts each spelling as identifier data and lowering always emits `EMethod`.
-/// The reducer's `ReduceError("Unimplemented method: …")` diagnostic is therefore the single,
+// Changed by the merge of feature/cost-accounted-rho: was "The reducer's
+// `ReduceError("Unimplemented method: …")` diagnostic is therefore the single,". DR-128 reports
+// an unknown method as `MethodNotDefined` (node `reduce.rs`).
+/// The reducer's `MethodNotDefined { method: …, other_type: "any type" }` diagnostic is
+/// therefore the single,
 /// non-duplicated
 /// answer. In particular, E3 does not preserve former host-only names (`concat`, `values`, bag
 /// `count`/`remove`, or the PathMap aliases) as hidden language semantics.
@@ -1929,7 +1931,12 @@ async fn c1_residue_without_an_interpreter_counterpart_fails_closed_and_named() 
         let proc = parse(source);
         assert_eq!(
             reduce(&proc).await.expect_err("no counterpart exists"),
-            format!(r#"reduce: inj: ReduceError("Unimplemented method: {method}")"#),
+            // Changed by the merge of feature/cost-accounted-rho: DR-128 reports an unknown
+            // method as `MethodNotDefined` on "any type" (node `reduce.rs`). The pin was:
+            // format!(r#"reduce: inj: ReduceError("Unimplemented method: {method}")"#),
+            format!(
+                r#"reduce: inj: MethodNotDefined {{ method: "{method}", other_type: "any type" }}"#
+            ),
             "E3: {source:?} must fail closed through the reducer's method table"
         );
     }
@@ -2943,7 +2950,11 @@ async fn c1_zipper_walk_cannot_continue_past_exhaustion() {
          difference here means the two shapes need two walk bodies"
     );
     assert_eq!(
-        list_path, r#"reduce: inj: ReduceError("Error: Multiple expressions given.")"#,
+        list_path,
+        // Changed by the merge of feature/cost-accounted-rho: DR-128 classes this failure as
+        // `ValueTypeError` (node `reduce.rs` and `fused_pathmap_chain.rs`). The pin was:
+        // r#"reduce: inj: ReduceError("Error: Multiple expressions given.")"#,
+        r#"reduce: inj: ValueTypeError("Error: Multiple expressions given.")"#,
         "★ The exhausted accessor raises `eval_single_expr`'s `_`-arm. `Nil` has ZERO \
          expressions, so the wording is wrong and DELIBERATELY pinned upstream \
          (`fused_pathmap_chain.rs::NIL_MID_CHAIN_ERROR`) because the fused chain must fail with \

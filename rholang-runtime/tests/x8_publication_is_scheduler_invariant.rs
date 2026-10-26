@@ -69,7 +69,10 @@ use mettail_rholang_runtime::lookahead::{
     spec_all_request, SPEC_ALL_CHANNEL, SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL,
     SPEC_FAILURE_CHANNEL, SPEC_N_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
 };
-use mettail_rholang_runtime::run_normalized_par_with_lookahead_engine;
+// Changed by the merge of feature/cost-accounted-rho: the only caller below now takes the
+// standalone path. The import was:
+// use mettail_rholang_runtime::run_normalized_par_with_lookahead_engine;
+use mettail_rholang_runtime::run_normalized_par_with_standalone_lookahead_engine;
 use mettail_rholang_runtime::speculation::server::LookaheadEngine;
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -104,6 +107,7 @@ fn forward(source: &str, target: &str) -> Par {
             source: Some(chan(source)),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         Par::default().with_sends(vec![Send {
             chan: Some(chan(target)),
@@ -210,7 +214,11 @@ fn publish_at_width(threads: usize, program: Par) -> Published {
         // needed and none is registered. That also keeps this file independent of which
         // generated languages the build happens to include.
         let engine = LookaheadEngine::new();
-        run_normalized_par_with_lookahead_engine(&program, &engine, &observed())
+        // Changed by the merge of feature/cost-accounted-rho: the node now refuses a resting
+        // commit in a space that is not CostV2 (rspace++ `ops_resting.rs`), so a `[*]`
+        // exploration that fires a COMM takes the standalone path. The call was
+        // `run_normalized_par_with_lookahead_engine(`.
+        run_normalized_par_with_standalone_lookahead_engine(&program, &engine, &observed())
             .await
             .expect("the lookahead-bearing program must run to rest")
     });
@@ -465,7 +473,13 @@ fn the_published_leaf_is_invariant_under_permuting_the_retained_store() {
 
     assert_eq!(exploration.success.len(), 1, "an inert subject reaches one leaf");
     let leaf = &exploration.success[0];
-    let staged: usize = leaf.state.data.values().map(Vec::len).sum();
+    let staged: usize = leaf
+        .state
+        .data
+        .iter()
+        .flat_map(|shard| shard.values())
+        .map(Vec::len)
+        .sum();
     assert_eq!(
         staged, FAN as usize,
         "★ the premise: the REAL reducer staged {FAN} data, all on one channel — without that \
@@ -475,8 +489,10 @@ fn the_published_leaf_is_invariant_under_permuting_the_retained_store() {
     let permuted = {
         let mut exploration = exploration.clone();
         for leaf in exploration.success.iter_mut() {
-            for data in leaf.state.data.values_mut() {
-                data.reverse();
+            for shard in leaf.state.data.iter_mut() {
+                for (_, data) in shard.iter_mut() {
+                    data.reverse();
+                }
             }
         }
         exploration

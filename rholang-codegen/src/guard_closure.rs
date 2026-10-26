@@ -82,7 +82,11 @@ use models::rhoapi::{
 /// `machine_verdict`'s job, not this predicate's; keeping the two orthogonal is what lets a
 /// caller ask "does this mention a variable?" without also asking "does this evaluate?".
 pub fn is_binder_closed(par: &Par) -> bool {
-    par.sends.iter().all(send_is_binder_closed)
+    // Cost wrappers carry signature/stack authority that this guard shortcut does
+    // not project. They must not be silently classified by their ordinary slots.
+    par.cost_signed_terms.is_empty()
+        && par.cost_stacks.is_empty()
+        && par.sends.iter().all(send_is_binder_closed)
         && par.receives.iter().all(receive_is_binder_closed)
         && par.news.iter().all(new_is_binder_closed)
         && par.matches.iter().all(match_is_binder_closed)
@@ -136,9 +140,18 @@ fn receive_is_binder_closed(receive: &Receive) -> bool {
 }
 
 fn receive_bind_is_binder_closed(bind: &ReceiveBind) -> bool {
-    let ReceiveBind { patterns, source, remainder, free_count } = bind;
+    let ReceiveBind {
+        patterns,
+        source,
+        remainder,
+        free_count,
+        cost_signature,
+    } = bind;
     *free_count == 0
         && remainder.is_none()
+        // A signed bind carries admission evidence beyond its ordinary pattern/source.
+        // The guard-closure shortcut has not proved that evidence closed, so fail closed.
+        && cost_signature.is_none()
         && patterns.iter().all(is_binder_closed)
         && opt_par_is_binder_closed(source.as_ref())
 }
@@ -243,10 +256,16 @@ fn expr_is_binder_closed(expr: &Expr) -> bool {
         // ── Ground literals: no variable, by definition. ────────────────────────────────────
         ExprInstance::GBool(_)
         | ExprInstance::GInt(_)
+        | ExprInstance::GUint64(_)
+        | ExprInstance::GInt32(_)
+        | ExprInstance::GUint32(_)
+        | ExprInstance::GUint16(_)
+        | ExprInstance::GUint8(_)
         | ExprInstance::GString(_)
         | ExprInstance::GUri(_)
         | ExprInstance::GByteArray(_)
         | ExprInstance::GDouble(_)
+        | ExprInstance::GFloat32(_)
         | ExprInstance::GBigInt(_)
         | ExprInstance::GBigRat(_)
         | ExprInstance::GFixedPoint(_) => true,
@@ -356,7 +375,9 @@ pub fn all_operands_ground(par: &Par) -> bool {
     // A settled operand is a pure VALUE: no process slots at all (a send/receive/new/match/
     // bundle/conditional is a computation, not a value), no unforgeable (run-time identity),
     // no connective (a pattern fragment, copied through unevaluated).
-    par.sends.is_empty()
+    par.cost_signed_terms.is_empty()
+        && par.cost_stacks.is_empty()
+        && par.sends.is_empty()
         && par.receives.is_empty()
         && par.news.is_empty()
         && par.matches.is_empty()
@@ -381,10 +402,16 @@ fn expr_operands_ground(expr: &Expr) -> bool {
     match instance {
         ExprInstance::GBool(_)
         | ExprInstance::GInt(_)
+        | ExprInstance::GUint64(_)
+        | ExprInstance::GInt32(_)
+        | ExprInstance::GUint32(_)
+        | ExprInstance::GUint16(_)
+        | ExprInstance::GUint8(_)
         | ExprInstance::GString(_)
         | ExprInstance::GUri(_)
         | ExprInstance::GByteArray(_)
         | ExprInstance::GDouble(_)
+        | ExprInstance::GFloat32(_)
         | ExprInstance::GBigInt(_)
         | ExprInstance::GBigRat(_)
         | ExprInstance::GFixedPoint(_) => true,
@@ -486,6 +513,17 @@ mod tests {
             new_gbool_par(true, Vec::new(), false),
             new_gstring_par("hi".to_string(), Vec::new(), false),
         ] {
+            assert!(is_binder_closed(&par), "{par:?}");
+            assert!(all_operands_ground(&par), "{par:?}");
+        }
+        for instance in [
+            ExprInstance::GUint64(7),
+            ExprInstance::GInt32(-7),
+            ExprInstance::GUint32(7),
+            ExprInstance::GUint16(7),
+            ExprInstance::GUint8(7),
+        ] {
+            let par = expr_par(instance);
             assert!(is_binder_closed(&par), "{par:?}");
             assert!(all_operands_ground(&par), "{par:?}");
         }
@@ -602,6 +640,7 @@ mod tests {
                 source: Some(new_gstring_par("c".to_string(), Vec::new(), false)),
                 remainder: None,
                 free_count: 1,
+                cost_signature: None,
             }],
             body: Some(Par::default()),
             persistent: false,
@@ -612,6 +651,38 @@ mod tests {
             condition: None,
         }];
         assert!(!is_binder_closed(&recv));
+    }
+
+    #[test]
+    fn signed_receive_evidence_is_not_erased_by_guard_closure() {
+        let bind = ReceiveBind {
+            patterns: vec![new_gint_par(1, Vec::new(), false)],
+            source: Some(new_gstring_par("c".to_string(), Vec::new(), false)),
+            remainder: None,
+            free_count: 0,
+            cost_signature: Some(Default::default()),
+        };
+        assert!(!receive_bind_is_binder_closed(&bind));
+    }
+
+    #[test]
+    fn float32_bits_are_ground_without_lossy_conversion() {
+        let float = expr_par(ExprInstance::GFloat32(1.5_f32.to_bits()));
+        assert!(is_binder_closed(&float));
+        assert!(all_operands_ground(&float));
+    }
+
+    #[test]
+    fn cost_wrappers_are_not_classified_as_plain_ground_values() {
+        let mut signed = Par::default();
+        signed.cost_signed_terms.push(Default::default());
+        assert!(!is_binder_closed(&signed));
+        assert!(!all_operands_ground(&signed));
+
+        let mut stack = Par::default();
+        stack.cost_stacks.push(Default::default());
+        assert!(!is_binder_closed(&stack));
+        assert!(!all_operands_ground(&stack));
     }
 
     /// Closedness and groundness are genuinely different questions: a literal-only `Send`
@@ -672,10 +743,16 @@ mod tests {
                 // Ground literals: closed.
                 ExprInstance::GBool(_)
                 | ExprInstance::GInt(_)
+                | ExprInstance::GUint64(_)
+                | ExprInstance::GInt32(_)
+                | ExprInstance::GUint32(_)
+                | ExprInstance::GUint16(_)
+                | ExprInstance::GUint8(_)
                 | ExprInstance::GString(_)
                 | ExprInstance::GUri(_)
                 | ExprInstance::GByteArray(_)
                 | ExprInstance::GDouble(_)
+                | ExprInstance::GFloat32(_)
                 | ExprInstance::GBigInt(_)
                 | ExprInstance::GBigRat(_)
                 | ExprInstance::GFixedPoint(_) => true,

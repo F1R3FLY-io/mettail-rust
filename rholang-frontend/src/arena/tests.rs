@@ -197,6 +197,33 @@ fn primitive_values_have_exact_owned_payloads_and_observations() {
 }
 
 #[test]
+fn unit_tuple_is_a_closed_value_head_distinct_from_empty_process() {
+    let graph = with_neutral_target(
+        LIMITS,
+        || false,
+        |mut target| {
+            let nil = target.construct(ValueOp::Empty, vec![]).expect("nil");
+            let unit = target
+                .construct(ValueOp::UnitTuple, vec![])
+                .expect("unit tuple");
+            assert_eq!(
+                target.observe(&unit),
+                Ok(StructuralObservation {
+                    single_string: false,
+                    locally_free: &[],
+                    connective_used: false,
+                })
+            );
+            assert_eq!(target.observe(&nil), target.observe(&unit));
+            target.finish_graph(unit).expect("unit graph")
+        },
+    );
+    assert_eq!(graph.node(0).expect("nil").operation, &ValueOp::Empty);
+    assert_eq!(graph.node(1).expect("unit").operation, &ValueOp::UnitTuple);
+    assert_eq!(graph.root(), 1);
+}
+
+#[test]
 fn append_observes_constructed_heads_and_retains_order_and_repetition() {
     let graph = with_neutral_target(
         LIMITS,

@@ -488,6 +488,7 @@ fn contract_ast(
             source: Some(new_gstring_par(label.to_string(), Vec::new(), false)),
             remainder: None,
             free_count: formal_count as i32,
+            cost_signature: None,
         }],
         body: Some(body),
         persistent: true,

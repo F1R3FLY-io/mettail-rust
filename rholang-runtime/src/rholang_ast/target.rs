@@ -11,7 +11,8 @@ use mettail_rholang_frontend::construction::{
 };
 use models::rhoapi::Par;
 use models::rust::utils::{
-    new_boundvar_par, new_gbool_par, new_gint_par, new_gstring_par, new_new_par, new_wildcard_par,
+    new_boundvar_par, new_etuple_par, new_gbool_par, new_gint_par, new_gstring_par, new_new_par,
+    new_wildcard_par,
 };
 
 pub(super) struct DirectNodeTarget;
@@ -19,6 +20,10 @@ pub(super) struct DirectNodeTarget;
 impl DirectNodeTarget {
     pub(super) fn empty() -> Par {
         Par::default()
+    }
+
+    pub(super) fn unit_tuple() -> Par {
+        new_etuple_par(Vec::new())
     }
 
     pub(super) fn integer(value: i64) -> Par {
@@ -100,6 +105,7 @@ impl ValueTarget for DirectNodeTarget {
         }
         Ok(match operation {
             ValueOp::Empty => Self::empty(),
+            ValueOp::UnitTuple => Self::unit_tuple(),
             ValueOp::Integer(value) => Self::integer(value),
             ValueOp::Boolean(value) => Self::boolean(value),
             ValueOp::Text(value) => Self::text(value),

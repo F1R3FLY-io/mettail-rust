@@ -451,6 +451,7 @@ fn polyadic_receive(source: Par, n_formals: usize, body: Node, persistent: bool)
             source: Some(source),
             remainder: None,
             free_count: n_formals as i32,
+            cost_signature: None,
         }],
         body: Some(body.par),
         persistent,
@@ -479,6 +480,7 @@ pub(crate) fn for1(source: Node, body: Node) -> Node {
             source: Some(source.par),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         body: Some(body.par),
         persistent: false,
@@ -521,6 +523,7 @@ pub(crate) fn join(sources: Vec<Node>, body: Node) -> Node {
             source: Some(source.par),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         })
         .collect();
     let receive = Receive {

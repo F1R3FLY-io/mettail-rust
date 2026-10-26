@@ -108,7 +108,29 @@ pub(super) fn expansion(
             },
         },
         Task::PremiseInput(_) => (1, 1),
-        Task::RewriteBinding(_) => (1, 2),
+        Task::RewriteBinding(_) | Task::RewriteContextBinding(_) => (1, 2),
+        Task::RewriteContextType(sort, legacy) => match sort {
+            DdlRewriteContextType::DdlRewriteContextCategory(_) => {
+                if *legacy {
+                    (1, 1)
+                } else {
+                    (0, 0)
+                }
+            },
+            DdlRewriteContextType::DdlRewriteContextHashBag(..)
+            | DdlRewriteContextType::DdlRewriteContextSet(..)
+            | DdlRewriteContextType::DdlRewriteContextList(..) => {
+                if *legacy {
+                    parts(1, 0, 0, reserve)?;
+                }
+                (1, 1)
+            },
+            DdlRewriteContextType::DdlRewriteContextMulti(_)
+            | DdlRewriteContextType::DdlRewriteContextRewrite(..) => (1, 1),
+            DdlRewriteContextType::DdlRewriteContextArrow(..)
+            | DdlRewriteContextType::DdlRewriteContextMap(..)
+            | DdlRewriteContextType::DdlRewriteContextPathMap(..) => (1, 2),
+        },
         Task::Path(path) => (
             1,
             match path {

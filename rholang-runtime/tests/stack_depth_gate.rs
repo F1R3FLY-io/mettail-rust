@@ -1101,6 +1101,8 @@ enum Shape {
 const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     // ── the alternating ladder: where the discrimination lives ──
     ("ast_cmp", Shape::Flat),
+    ("ast_checked_binding", Shape::Flat),
+    ("ast_checked_source", Shape::Flat),
     ("ast_debug", Shape::Flat),
     ("ast_eq", Shape::Flat),
     ("ast_match_pattern", Shape::Flat),
@@ -1201,7 +1203,7 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
 /// a renamed mode, a probe that failed to run, a redirect that swallowed stdout — every
 /// assertion below would iterate an empty set and PASS. This is the count at the time of writing;
 /// it may only grow, and it must never be silently reduced to match a shrunken enumeration.
-const MIN_DRIVER_SUBJECTS: usize = 40;
+const MIN_DRIVER_SUBJECTS: usize = 42;
 
 /// The `ast_*` subjects the PROBE dispatches, read from the probe itself.
 ///
@@ -1454,6 +1456,16 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
     // membership is the rows below; `every_generated_traversal_has_a_probe_subject` is
     // what enforces that each has a subject, and its failure message prints the set.
     ("iterative_cmp.rs", "cmp", Coverage::Subject("ast_cmp")),
+    (
+        "checked_binding.rs",
+        "try_copy_iterative",
+        Coverage::Subject("ast_checked_binding"),
+    ),
+    (
+        "checked_source.rs",
+        "try_check_source_profile",
+        Coverage::Subject("ast_checked_source"),
+    ),
     ("iterative_clone.rs", "clone_iterative", Coverage::Subject("ast_clone_owned")),
     ("iterative_hash.rs", "hash", Coverage::Subject("ast_hash")),
     ("iterative_drop.rs", "drop", Coverage::Subject("ast_drop")),
@@ -1590,6 +1602,7 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
         Coverage::NotADepthTraversal("fixed-arity scalar shim, no term-depth recursion"),
     ),
     // ── files with no self-recursive call at all ────────────────────────────────────
+    ("iterative_cmp_hash.rs", "", Coverage::Inert),
     ("ast_enums.rs", "", Coverage::Inert),
     ("ast.rs", "", Coverage::Inert),
     ("binder_congruence.rs", "", Coverage::Inert),
@@ -1607,7 +1620,7 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
 /// ⚠ The non-vacuity floor on the DERIVED file universe. If the scan ever returned
 /// nothing — a relocated `target`, a rename, a build that did not run the macro — every
 /// assertion below would iterate an empty set and PASS. It may only grow.
-const MIN_GENERATED_FILES: usize = 40;
+const MIN_GENERATED_FILES: usize = 47;
 
 /// Historical closure ledger for the generated-traversal exception set.
 ///

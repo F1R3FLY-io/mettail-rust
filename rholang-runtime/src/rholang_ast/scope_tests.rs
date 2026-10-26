@@ -293,6 +293,7 @@ fn public_fresh_pattern_environment_does_not_reenable_harness() {
         direct_flt_results: HashMap::new(),
         empty_env: None,
         source_preparation: SourcePreparation::Original,
+        parsed_source: None,
     };
     let id = driver.empty_env().expect("fresh environment");
     same_context(driver.env(id), &root);

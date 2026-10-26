@@ -361,6 +361,7 @@ pub fn flt_receive_par(
             source: Some(source),
             remainder: None,
             free_count,
+            cost_signature: None,
         }],
         continuation,
         false,

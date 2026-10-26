@@ -1204,6 +1204,7 @@ fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RholangA
         source: Some(ret_channel),
         remainder: None,
         free_count: 1,
+        cost_signature: None,
     };
     let recv_locally_free = receive_locally_free(&[bind.clone()], &for_body, 1);
     let recv = new_receive_par(
@@ -1445,6 +1446,7 @@ fn lower_pfor_user(
                 source: Some(source),
                 remainder: None,
                 free_count,
+                cost_signature: None,
             });
             continue;
         }
@@ -1473,6 +1475,7 @@ fn lower_pfor_user(
             source: Some(source),
             remainder: None,
             free_count,
+            cost_signature: None,
         });
     }
 

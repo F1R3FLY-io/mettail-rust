@@ -642,8 +642,11 @@ fn beat_6_a_vetoed_guard_produces_no_committed_comm_at_all() {
 #[test]
 fn beat_7_a_construct_the_machine_cannot_run_is_a_typed_refusal() {
     let transcript = run_repl(&[BEAT_7_MAP_VALUES]);
-    assert_shows(&transcript, "Running RhoMachine backend... exit");
-    assert_shows(&transcript, r#"ReduceError("Unimplemented method: values")"#);
+    assert_shows(&transcript, "Running RhoMachine backend... Rholang> exit");
+    // Changed by the merge of feature/cost-accounted-rho: DR-128 reports an unknown method as
+    // `MethodNotDefined` on "any type" (node `reduce.rs`). The pin was:
+    // assert_shows(&transcript, r#"ReduceError("Unimplemented method: values")"#);
+    assert_shows(&transcript, r#"MethodNotDefined { method: "values", other_type: "any type" }"#);
     assert_absent(&transcript, "OUT: [");
 }
 

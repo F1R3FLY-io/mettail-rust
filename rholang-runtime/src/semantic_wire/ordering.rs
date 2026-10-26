@@ -5,10 +5,11 @@
 //! permutation reuse the design in vinary-math-ir/src/canonical.rs. No Par
 //! ordering, receipt encoding, proof deduplication or candidate pruning occurs.
 
-use super::SemanticWireError;
 use super::receipt::{effect_tag, opcode_tag, premise_tag};
+use super::SemanticWireError;
 use crate::semantic_service::SemanticServiceResult;
 use mettail_dovetail_runtime::{
+    SemanticGradedNormalizationHopReceiptV2, SemanticGradedNormalizationProofReceiptV2,
     SemanticJudgmentProofReceipt, SemanticJudgmentProofStep, SemanticNormalizationHopReceiptV1,
     SemanticNormalizationStepReceiptV1, SemanticPremiseReceipt, SemanticResourceReceipt,
     SemanticTransitionReceipt,
@@ -197,8 +198,10 @@ impl<C: FnMut() -> bool> Comparator<'_, '_, C> {
         self.budget.charge(1, 0)?;
         match (a, b) {
             (NoSemanticGrade, NoSemanticGrade) => Ok(Ordering::Equal),
-            (NoSemanticGrade, Checked { .. }) => Ok(Ordering::Less),
-            (Checked { .. }, NoSemanticGrade) => Ok(Ordering::Greater),
+            (NoSemanticGrade, _) => Ok(Ordering::Less),
+            (_, NoSemanticGrade) => Ok(Ordering::Greater),
+            (Checked { .. }, CheckedTraceV2 { .. }) => Ok(Ordering::Less),
+            (CheckedTraceV2 { .. }, Checked { .. }) => Ok(Ordering::Greater),
             (
                 Checked {
                     grade_sort: asort,
@@ -211,7 +214,51 @@ impl<C: FnMut() -> bool> Comparator<'_, '_, C> {
                     cost_image_fingerprint: bi,
                 },
             ) => fields!(self.scalar(asort.0, bsort.0), self.bytes(ag, bg), self.bytes(ai, bi)),
+            (
+                CheckedTraceV2 {
+                    grade_sort: asort,
+                    grade: ag,
+                    cost_image_fingerprint: ai,
+                    entry_grade: ae,
+                    hops: ah,
+                },
+                CheckedTraceV2 {
+                    grade_sort: bsort,
+                    grade: bg,
+                    cost_image_fingerprint: bi,
+                    entry_grade: be,
+                    hops: bh,
+                },
+            ) => fields!(
+                self.scalar(asort.0, bsort.0),
+                self.bytes(ag, bg),
+                self.bytes(ai, bi),
+                self.bytes(ae, be),
+                self.roster(ah, bh, Self::graded_hop)
+            ),
         }
+    }
+
+    fn graded_proof(
+        &mut self,
+        a: &SemanticGradedNormalizationProofReceiptV2,
+        b: &SemanticGradedNormalizationProofReceiptV2,
+    ) -> Result<Ordering> {
+        fields!(self.step(&a.proof, &b.proof), self.bytes(&a.grade, &b.grade))
+    }
+
+    fn graded_hop(
+        &mut self,
+        a: &SemanticGradedNormalizationHopReceiptV2,
+        b: &SemanticGradedNormalizationHopReceiptV2,
+    ) -> Result<Ordering> {
+        fields!(
+            self.bytes(&a.before, &b.before),
+            self.bytes(&a.after, &b.after),
+            self.roster(&a.exhaustive_proofs, &b.exhaustive_proofs, Self::graded_proof),
+            self.scalar(a.selected_proof, b.selected_proof),
+            self.scalar(a.charged_work, b.charged_work)
+        )
     }
 
     fn step(

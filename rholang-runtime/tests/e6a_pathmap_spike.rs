@@ -111,6 +111,7 @@ fn sigma_echo_receiver(accept_channel: &str, arity: usize) -> Par {
             source: Some(quoted(accept_channel)),
             remainder: None,
             free_count: (arity + 1) as i32,
+            cost_signature: None,
         }],
         body,
         false,
@@ -211,6 +212,7 @@ async fn u1_set_pattern_does_not_cross_match_map_index() {
             source: Some(quoted(&e6a_index_channel(FP, ROOT_SITE))),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         new_send_par(
             quoted("u1:witness"),
@@ -237,6 +239,7 @@ async fn u1_set_pattern_does_not_cross_match_map_index() {
             source: Some(quoted(&e6a_index_channel(FP, ROOT_SITE))),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         new_send_par(
             quoted(OUT),
@@ -274,7 +277,10 @@ async fn u1_set_pattern_does_not_cross_match_map_index() {
     );
 
     // The cross-mode receive did NOT fire: no witness, and its consume rests.
-    let witness = runtime.get_data(&quoted("u1:witness")).await;
+    let witness = runtime
+        .get_data(&quoted("u1:witness"))
+        .await
+        .expect("read witness channel");
     assert!(
         witness.is_empty(),
         "homogeneous EPathMap modes must not cross-match; got {witness:?}"
@@ -376,7 +382,10 @@ async fn drive_flat_two_swap() -> (Vec<String>, Vec<String>, CommCounterSnapshot
 
     // Machine-side site enumeration readback.
     let sites_channel = e6a_sites_channel(FP, ROOT_SITE, "Swap");
-    let sites_data = runtime.get_data(&quoted(&sites_channel)).await;
+    let sites_data = runtime
+        .get_data(&quoted(&sites_channel))
+        .await
+        .expect("read sites channel");
     assert_eq!(sites_data.len(), 1, "exactly one discovery result rests on {sites_channel}");
     let decoded = decode_sites_par(&sites_data[0].a.pars[0], &e6a_tag_string(FP, "Swap"))
         .expect("the subtrie decodes");

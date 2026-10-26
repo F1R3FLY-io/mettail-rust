@@ -61,6 +61,81 @@ fn practical_regex_guest_boolean_uses_its_authored_where_projection() {
     }
 }
 
+/// The checked native-trace replay decides a guard through
+/// `check_commit_by_reference` (node `native_candidate/selection.rs`). The trait
+/// default calls `check_commit`, which has no language runtime, so it leaves an
+/// installed predicate undecided and refuses even the datum that
+/// `prepare_commit` admits. The demo's guard
+/// `where regex:Computation`fullMatch(a(b|c)+,${text:Text})`` must get the
+/// same answer from both hooks.
+#[test]
+fn practical_regex_where_guard_check_by_reference_agrees_with_prepare_commit() {
+    use crate::guard_par_substrate::SubstrateGuardMatcher;
+    use models::rhoapi::{
+        tagged_continuation::TaggedCont, BindPattern, ListParWithRandom, TaggedContinuation,
+    };
+    use models::rust::utils::new_boundvar_par;
+    use rspace_plus_plus::rspace::r#match::Match;
+
+    struct TraitDefault<'a>(&'a SubstrateGuardMatcher);
+
+    impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for TraitDefault<'_> {
+        fn get(
+            &self,
+            pattern: &BindPattern,
+            data: &ListParWithRandom,
+        ) -> Option<ListParWithRandom> {
+            self.0.get(pattern, data)
+        }
+
+        fn check_commit(&self, k: &TaggedContinuation, matched: &[&ListParWithRandom]) -> bool {
+            self.0.check_commit(k, matched)
+        }
+    }
+
+    let runtime = Arc::new(RholangLanguageRuntime::new(Arc::new(LanguageInstallService::new(
+        Arc::new(MemoryRegistry::default()),
+        LanguageInstallPolicy::default(),
+    ))));
+    let batch = runtime
+        .install_all(rholang_ddl_candidate(DATA_FREE_SOURCE))
+        .expect("the demo's Regex module installs");
+    let guard = crate::guard_predicate::encode_flt_predicate_descriptor(
+        batch.exports[0].handle.clone(),
+        &[
+            RuntimeTemplatePiece::Text("fullMatch(a(b|c)+,".into()),
+            RuntimeTemplatePiece::Hole(0),
+            RuntimeTemplatePiece::Text(")".into()),
+        ],
+        &[NamedRuntimeTemplateHole {
+            id: 0,
+            name: "text".into(),
+            category: Some("Text".into()),
+        }],
+        "Computation",
+        &BTreeMap::from([("text".into(), new_boundvar_par(0, Vec::new(), false))]),
+    );
+    let continuation = TaggedContinuation {
+        tagged_cont: Some(TaggedCont::ScalaBodyRef(718)),
+        guard: Some(guard),
+        cost_authority: None,
+    };
+    let matcher = SubstrateGuardMatcher::with_language_runtime(runtime);
+    let refusals = matcher.refusals();
+    for (text, admitted) in [("abcb", true), ("ax", false)] {
+        let datum = ListParWithRandom {
+            pars: vec![new_gstring_par(text.into(), Vec::new(), false)],
+            random_state: vec![4; 32],
+            ..ListParWithRandom::default()
+        };
+        assert_eq!(matcher.prepare_commit(&continuation, &[&datum]).is_some(), admitted, "{text}");
+        assert_eq!(matcher.check_commit_by_reference(&continuation, &[&datum]), admitted, "{text}");
+        assert!(refusals.is_empty(), "{text}: the predicate is decided: {:?}", refusals.take());
+        assert!(!TraitDefault(&matcher).check_commit_by_reference(&continuation, &[&datum]));
+        assert!(!refusals.take().is_empty(), "{text}: the trait default leaves it undecided");
+    }
+}
+
 #[test]
 fn practical_regex_default_mode_tokens_have_original_wpda_observations() {
     let service = LanguageInstallService::new(
@@ -797,12 +872,17 @@ fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_en
         Arc::new(MemoryRegistry::default()),
         LanguageInstallPolicy::default(),
     )));
+    let started = std::time::Instant::now();
+    eprintln!("Regex: parse inline declaration");
+    let candidate = rholang_ddl_candidate(ACTION_SOURCE);
+    eprintln!("Regex: install declaration at {:?}", started.elapsed());
     let batch = runtime
-        .install_all(rholang_ddl_candidate(ACTION_SOURCE))
+        .install_all(candidate)
         .expect("practical regex declaration installs through the actual inline DDL path");
     assert_eq!(batch.exports.len(), 1);
     assert_eq!(batch.exports[0].name, "Regex");
     let token = &batch.exports[0].handle;
+    eprintln!("Regex: installation complete at {:?}", started.elapsed());
     for (source, action, expected) in [
         ("nullable((?!))", "nullable", "doneBool(no)"),
         ("nullable(())", "nullable", "doneBool(yes)"),
@@ -831,6 +911,7 @@ fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_en
         ("derivative(b,a?b)", "derivative", "donePattern(())"),
         ("derivative(a,a*)", "derivative", "donePattern(a*)"),
     ] {
+        eprintln!("{source}: construct request at {:?}", started.elapsed());
         let input = runtime
             .construct_template(
                 token,
@@ -840,6 +921,7 @@ fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_en
                 &BTreeMap::new(),
             )
             .unwrap_or_else(|error| panic!("declared request {source} must parse: {error:?}"));
+        eprintln!("{source}: construct expected result at {:?}", started.elapsed());
         let expected = runtime
             .construct_template(
                 token,
@@ -849,6 +931,7 @@ fn practical_regex_gslt_executes_declared_rules_through_the_generated_rholang_en
                 &BTreeMap::new(),
             )
             .expect("declared result syntax");
+        eprintln!("{source}: execute at {:?}", started.elapsed());
         let report = runtime.execute_semantic(
             SemanticServiceRequest {
                 handle: token,

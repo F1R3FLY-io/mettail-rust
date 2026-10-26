@@ -21,12 +21,12 @@ use mettail_elab::resolve::{
 use mettail_elab::wire::{decode_ddl_value, ParsedDdl};
 use mettail_grammar_core::{
     CategoryId, DefaultRuntimeHost, ExecutableLanguageInstall, ExecutableLanguageInstallRequest,
-    ExecutableProjectedLanguageInstall, InstallLanguageError, InstalledHostProfileGrant,
-    InstalledHostProfileHandle, InstalledHostProfileSnapshot, InstalledLanguageHandle,
-    InstalledLanguageTable, InstalledParseError, LanguageAccessError, LanguageRevocationAuthority,
-    LanguageRight, LanguageRights, ParserImageAdmissionLimits, RuntimeCapabilityError,
-    RuntimeError, RuntimeHost, RuntimePolicy, RuntimeTemplateHole, RuntimeTemplatePiece,
-    TheoryImageAdmissionLimits, WeightedParse,
+    ExecutableProjectedLanguageInstall, FundingProjectionVerifierV2, InstallLanguageError,
+    InstalledHostProfileGrant, InstalledHostProfileHandle, InstalledHostProfileSnapshot,
+    InstalledLanguageHandle, InstalledLanguageTable, InstalledParseError, LanguageAccessError,
+    LanguageRevocationAuthority, LanguageRight, LanguageRights, ParserImageAdmissionLimits,
+    RuntimeCapabilityError, RuntimeError, RuntimeHost, RuntimePolicy, RuntimeTemplateHole,
+    RuntimeTemplatePiece, TheoryImageAdmissionLimits, WeightedParse,
 };
 use mettail_prattail::runtime_backend::{
     compile_parser_image, RuntimeCompileError, RUNTIME_COMPILER_ABI, RUNTIME_UNICODE_ABI,
@@ -366,14 +366,37 @@ pub struct LanguageInstallService {
 }
 
 impl LanguageInstallService {
-    pub fn new(registry: Arc<dyn RegistrySnapshot>, mut policy: LanguageInstallPolicy) -> Self {
-        // Public policy fields may have been adjusted by the host. Freeze the
-        // actual values, never a stale caller-supplied fingerprint.
-        policy.refresh_fingerprint();
+    pub fn new(registry: Arc<dyn RegistrySnapshot>, policy: LanguageInstallPolicy) -> Self {
         let table = Arc::new(InstalledLanguageTable::with_runtime_and_projection_compiler(
             Arc::new(mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory),
             Arc::new(crate::host_profile::SharedProjectedTheoryImageCompiler),
         ));
+        Self::with_table(registry, policy, table)
+    }
+
+    /// Only trusted node setup can inject the V2 proof checker. Ordinary
+    /// installations remain unable to select a Cost(G) funding projection.
+    pub fn new_with_funding_verifier_v2(
+        registry: Arc<dyn RegistrySnapshot>,
+        policy: LanguageInstallPolicy,
+        verifier: Arc<dyn FundingProjectionVerifierV2>,
+    ) -> Self {
+        let table = Arc::new(InstalledLanguageTable::with_runtime_projection_and_funding_verifier(
+            Arc::new(mettail_prattail::wpda_owned::backend::SharedWpdaRuntimeFactory),
+            Arc::new(crate::host_profile::SharedProjectedTheoryImageCompiler),
+            verifier,
+        ));
+        Self::with_table(registry, policy, table)
+    }
+
+    fn with_table(
+        registry: Arc<dyn RegistrySnapshot>,
+        mut policy: LanguageInstallPolicy,
+        table: Arc<InstalledLanguageTable>,
+    ) -> Self {
+        // Public policy fields may have been adjusted by the host. Freeze the
+        // actual values, never a stale caller-supplied fingerprint.
+        policy.refresh_fingerprint();
         // The policy ceiling is independent of guest rights, but this built-in
         // provider only needs its bridge and reflection capabilities. Do not
         // install unrelated rights merely because a host policy contains them.
@@ -1579,7 +1602,12 @@ impl PreparedCapturePlan {
             .iter()
             .map(|&occurrence| matched.pars.get(occurrence).cloned())
             .collect::<Option<Vec<_>>>()?;
-        Some(ListParWithRandom { pars, random_state: matched.random_state })
+        Some(ListParWithRandom {
+            pars,
+            random_state: matched.random_state,
+            cost_authority: matched.cost_authority,
+            cost_stack: matched.cost_stack,
+        })
     }
 }
 
@@ -2202,7 +2230,7 @@ impl RholangLanguageRuntime {
                 Some((first, first_categories))
                     if first != &ground || first_categories != &categories =>
                 {
-                    return Err(LanguageFltConstructionError::AmbiguousPattern)
+                    return Err(LanguageFltConstructionError::AmbiguousPattern);
                 },
                 Some(_) => {},
                 None => recognized = Some((ground, categories)),
@@ -2415,30 +2443,35 @@ impl fmt::Display for LanguageFltConstructionError {
                 formatter,
                 "FLT hole ids must be dense in declaration order: expected {expected}, found {found}",
             ),
-            Self::InvalidHoleName(name) => write!(formatter, "invalid or duplicate FLT hole name `{name}`"),
+            Self::InvalidHoleName(name) => {
+                write!(formatter, "invalid or duplicate FLT hole name `{name}`")
+            },
             Self::FillSetMismatch { declared, supplied } => write!(
                 formatter,
                 "FLT fill names do not equal the declared telescope: declared {declared:?}, supplied {supplied:?}",
             ),
-            Self::Reflection(error) => write!(formatter, "dynamic syntax reflection failed: {error}"),
+            Self::Reflection(error) => {
+                write!(formatter, "dynamic syntax reflection failed: {error}")
+            },
             Self::Admission(error) => write!(formatter, "dynamic syntax admission failed: {error}"),
-            Self::Construction(error) => write!(formatter, "FLT construction reflection failed: {error}"),
+            Self::Construction(error) => {
+                write!(formatter, "FLT construction reflection failed: {error}")
+            },
             Self::FillCategoryMismatch { hole, category } => write!(
                 formatter,
                 "FLT fill `${{{hole}}}` is not a well-formed term of category `{category}`",
             ),
-            Self::AmbiguousHoleCategories => formatter.write_str(
-                "FLT template alternatives infer different hole categories",
-            ),
+            Self::AmbiguousHoleCategories => {
+                formatter.write_str("FLT template alternatives infer different hole categories")
+            },
             Self::AmbiguousConstruction => formatter.write_str(
                 "FLT construction has more than one structurally distinct weighted parse",
             ),
             Self::AmbiguousPattern => formatter.write_str(
                 "FLT receive pattern has more than one structurally distinct weighted parse",
             ),
-            Self::PatternTelescopeMismatch => formatter.write_str(
-                "reflected FLT pattern bindings do not equal the declared telescope",
-            ),
+            Self::PatternTelescopeMismatch => formatter
+                .write_str("reflected FLT pattern bindings do not equal the declared telescope"),
             Self::TemplateHoleLimit { limit, found } => write!(
                 formatter,
                 "FLT template declares {found} holes, exceeding the host limit {limit}",
@@ -3936,6 +3969,7 @@ pub(crate) mod tests {
     mod predicate_where;
     mod regex_gslt;
     mod regex_quantifiers;
+    mod source_derivation;
 
     use super::*;
     use mettail_grammar_core::{
@@ -5098,6 +5132,7 @@ pub(crate) mod tests {
             .execute_accounted(
                 TheoryActionId(0),
                 input,
+                None,
                 installed.language_core().theory.limits.into(),
                 || false,
             )
@@ -8097,6 +8132,7 @@ pub(crate) mod tests {
                 .project_admitted_captures(ListParWithRandom {
                     pars: vec![new_gint_par(73, Vec::new(), false)],
                     random_state: Vec::new(),
+                    ..ListParWithRandom::default()
                 })
                 .is_none(),
             "a raw Rho integer is not a forged Expr AST capture",
@@ -8141,6 +8177,7 @@ pub(crate) mod tests {
             .project(ListParWithRandom {
                 pars: vec![x.clone(), x.clone(), y.clone()],
                 random_state: vec![4, 2],
+                ..ListParWithRandom::default()
             })
             .expect("equal normalized occurrences satisfy the repeated hole");
         assert_eq!(projected.pars, vec![x.clone(), y]);
@@ -8149,6 +8186,7 @@ pub(crate) mod tests {
             plan.project(ListParWithRandom {
                 pars: vec![x.clone(), new_gint_par(8, Vec::new(), false), x],
                 random_state: Vec::new(),
+                ..ListParWithRandom::default()
             })
             .is_none(),
             "a mismatch must publish no partial telescope",
@@ -8213,6 +8251,7 @@ pub(crate) mod tests {
         assert!(!prepared.admits_subject(&ListParWithRandom {
             pars: vec![other],
             random_state: Vec::new(),
+            ..ListParWithRandom::default()
         }));
     }
 

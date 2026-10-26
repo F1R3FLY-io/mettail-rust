@@ -3,7 +3,10 @@
 //! The two halves of the lookahead feature were built and measured separately — the SURFACE
 //! (`x5_lookahead_lowering.rs`: `x!(P)[*] ⟿ @"^spec-all"!(⟦P⟧, x)`, and the fail-closed
 //! resting request when nothing serves it) and the ENGINE (`s2_lookahead_service.rs`:
-//! `LookaheadService::serve` over a genuine tuplespace conflict). Neither of them makes a
+// Changed by the merge of feature/cost-accounted-rho: was "`LookaheadService::serve` over a
+// genuine tuplespace conflict). Neither of them makes a". The s2 engine tests now take the
+// standalone path, because the node refuses a resting commit outside CostV2.
+//! `LookaheadService::serve_local` over a genuine tuplespace conflict). Neither of them makes a
 //! `[*]` in a running program *do* anything. This file is the bolt, and its central cell is
 //! the acceptance program:
 //!
@@ -48,6 +51,7 @@ use mettail_rholang_runtime::lookahead::{
     SPEC_ALL_CHANNEL, SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL,
     SPEC_LEAF_CHANNEL, SPEC_N_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
 };
+use mettail_rholang_runtime::run_normalized_par_with_standalone_lookahead_engine;
 use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
 use mettail_rholang_runtime::{
@@ -144,7 +148,11 @@ fn observed() -> Vec<&'static str> {
 async fn run(source: &str) -> HashMap<String, Vec<Par>> {
     let program = lower(source);
     let engine = lambda_engine();
-    let rest = run_normalized_par_with_lookahead_engine(&program, &engine, &observed())
+    // Changed by the merge of feature/cost-accounted-rho: the node now refuses a resting
+    // commit in a space that is not CostV2 (rspace++ `ops_resting.rs`), so a `[*]`
+    // exploration that fires a COMM takes the standalone path. The call was
+    // `run_normalized_par_with_lookahead_engine(`.
+    let rest = run_normalized_par_with_standalone_lookahead_engine(&program, &engine, &observed())
         .await
         .expect("the lookahead-bearing program must run to rest");
     for channel in observed() {
@@ -548,10 +556,17 @@ async fn installing_the_server_changes_nothing_a_lookahead_free_program_observes
 
     for (label, source) in corpus {
         let program = lower(&source);
-        let with_server =
-            run_normalized_par_with_lookahead_engine(&program, &lambda_engine(), &["OUT", "r"])
-                .await
-                .expect("the program runs with the request server installed");
+        // Changed by the merge of feature/cost-accounted-rho: the `rholang` interpreter now
+        // runs every program through the standalone lookahead path (`src/bin/rholang.rs`), so
+        // this check of what such a program observes uses that path too. The call was
+        // `run_normalized_par_with_lookahead_engine(`.
+        let with_server = run_normalized_par_with_standalone_lookahead_engine(
+            &program,
+            &lambda_engine(),
+            &["OUT", "r"],
+        )
+        .await
+        .expect("the program runs with the request server installed");
         let without_server =
             mettail_rholang_runtime::run_normalized_par_for_oracle_and_read_par_channels(
                 &program,

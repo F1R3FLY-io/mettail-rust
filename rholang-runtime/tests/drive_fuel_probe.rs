@@ -137,6 +137,7 @@ fn probe_receiver() -> Par {
             source: Some(probe_channel()),
             remainder: None,
             free_count: 1,
+            cost_signature: None,
         }],
         body: Some(match_par),
         persistent: true,
