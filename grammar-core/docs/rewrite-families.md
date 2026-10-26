@@ -6,7 +6,73 @@ It does not execute transitions or construct a second syntax tree.
 
 ![Rewrite-family checking and publication](rewrite-families.svg)
 
-## Surface meaning
+## Proposed named rewrite sort
+
+Status: proposal for review. The implementation still accepts the parameterized spelling documented below.
+
+A language declares its process category and rewrite-sort name once.
+The rewrite sort describes directed steps between processes in that category.
+For example, `R` names the rewrite sort over `Proc`.
+The source projection `s` and target projection `t` both return a `Proc`.
+
+The proposed DDL block header makes that declaration explicit:
+
+```text
+Rewrites R(Proc) {
+  Body(f:[Name -> R]):
+    (New ^x.(s (f x))) ~> (New ^x.(t (f x)));
+}
+```
+
+Here, `R(Proc)` declares the name `R` and its process category.
+Individual family types use the name `R` without a type argument.
+The block contains rule declarations. The family `f` supplies rewrite witnesses indexed by bound names.
+The constructor `New` binds a `Name` within a `Proc` body.
+Both projections use the same bound name and preserve the enclosing binder.
+
+The corresponding proposed `language!` spelling retains its existing rule header:
+
+```text
+rewrites R(Proc) {
+  Body . f:[Name -> R] |-
+    (New ^x.(s (f x))) ~> (New ^x.(t (f x)));
+}
+```
+
+These examples specify proposed syntax. They are not runnable examples of the current parser.
+The language supplies all category and constructor names.
+Another language can select `P` or `Term` as its process category.
+The implementation must not infer this role from a hardcoded name.
+Function domains remain independently typed, so a family can depend on names or processes while its endpoints remain processes.
+
+The declaration resolver must check the following conditions:
+
+- The selected process category exists in the composed language signature.
+- Each rewrite-sort name has one unambiguous process-category declaration in its scope.
+- The resolver rejects rewrite-sort names that collide with ordinary category names or conflicting declarations.
+- Each family endpoint has the declared process category.
+- Every rule in the named block has both its source and target in the declared process category.
+- Both projections preserve the same family, ordered lexical arguments, and surrounding constructor context.
+- Existing blocks without this declaration retain their current interpretation.
+
+The resolver converts each named family to the existing explicit family descriptor.
+For this example, the canonical descriptor can remain `["arrow", "Name", ["rewrite", "Proc"]]`.
+The shared checker then performs its existing normalization into transition premises.
+The diagram above describes those existing downstream checks.
+No new parser generator, transition engine, or runtime witness representation is required.
+
+The existing normalization, lexical binding, freshness, premise ordering, atomic publication, and root-projection proofs remain applicable.
+Before implementation, declaration resolution needs proofs for unique carrier selection, collision refusal, exact descriptor conversion, and unchanged legacy declarations.
+The proofs must establish the declared process category for both endpoints of every rule in the named block.
+Property tests must exercise these laws through the macro, module, generated DDL, and canonical adapters.
+The implementation must preserve the existing rejection of unsupported executable types.
+
+This proposal follows Mike's distinguished process and rewrite sorts.
+The broader definition in Williams and Stay permits a graph for each sort, while its process-calculus example uses one graph over processes.
+See [Native Type Theory, Definition 3 and Example 5](https://doi.org/10.4204/EPTCS.372.9).
+The parameterized implementation therefore has a general mathematical interpretation, but Mike's interface does not need repeated endpoint parameters.
+
+## Current surface meaning
 
 An explicit family has the type `Rewrite(P)` or an ordered function type that ends in `Rewrite(P)`.
 Here, `P` denotes the endpoint category.
